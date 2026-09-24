@@ -474,8 +474,11 @@ Item {
           }
         }
 
+        // Left-justified with a margin (not centred), vertically centred.
         Column {
-          anchors.centerIn: parent
+          anchors.left: parent.left
+          anchors.leftMargin: overlay.margin
+          anchors.verticalCenter: parent.verticalCenter
           spacing: overlay.gap
 
           // ▲ worlds above the visible ones
