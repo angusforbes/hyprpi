@@ -6,6 +6,8 @@ Vimarchy-style overview for hyprwrlds "worlds" (world A = workspaces 1-10, B = 1
 |---|---|
 | ALT+CTRL+SPACE | Current world: its occupied workspaces side by side |
 | ALT+SHIFT+SPACE | All worlds: one row per world that has windows |
+| ALT+SPACE | Current workspace only (replaces Vimarchy's hints) |
+| ALT+SHIFT+CTRL+SPACE | The original Vimarchy (kept for reference) |
 
 Windows are outlined boxes at their real position and size inside a mini-screen per workspace,
 styled like Vimarchy: each window gets a colour from Vimarchy's palette (tinted box, coloured
@@ -55,6 +57,9 @@ the overview opens; no restart needed.
 | `uppercaseHints` | true | After the lowercase keys, use Shift+uppercase before two-letter hints |
 | `shortenAppNames` | true | `chrome-web.whatsapp.com__-Default` -> `whatsapp` |
 | `showPreviews` | true | Still capture of each app inside its box |
+| `doubleTap` | true | A quick repeat of a hint's last key (within `doubleTapMs`) toggles fullscreen on the window you jumped to |
+| `doubleTapMode` | `"maximized"` | `"maximized"` (full working area, bar stays; like Vimarchy and SUPER+F) or `"fullscreen"` |
+| `doubleTapMs` | 300 | Double-tap window in ms (120-800) |
 | `shiftRing` | false | Extra ring around uppercase (Shift) hints |
 | `badgeBacking` | false | Cream disc under each circle for legibility over busy previews (Vimarchy has none) |
 | `hintScale` | 1.0 | Circle size multiplier (0.5-5); Ctrl+= / Ctrl+- change it by 15% per press and save it |

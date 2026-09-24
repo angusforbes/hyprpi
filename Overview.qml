@@ -68,6 +68,9 @@ Item {
   property real edgeMargin: 48
   property bool uppercaseHints: true     // Shift+A-Z after 26 windows (else two letters)
   property bool shortenAppNames: true
+  property bool doubleTap: true          // quick repeat of a hint's last key toggles fullscreen
+  property string doubleTapMode: "maximized"   // "maximized" (full working area) | "fullscreen"
+  property int doubleTapMs: 300
   property bool badgeBacking: false      // cream disc under each circle (not in Vimarchy)
   property real maxTileWidth: 460        // largest workspace tile width in px (shrinks to fit)
   property real windowTintOpacity: 0.07
@@ -91,6 +94,9 @@ Item {
     shortenAppNames: true,
     showPreviews: true,
     shiftRing: false,
+    doubleTap: true,
+    doubleTapMode: "maximized",
+    doubleTapMs: 300,
     badgeBacking: false,
     hintScale: 1.0,
     badgeMin: 72,
@@ -130,6 +136,9 @@ Item {
     root.shortenAppNames = data.shortenAppNames !== false
     root.showPreviews = data.showPreviews !== false
     root.shiftRing = data.shiftRing === true
+    root.doubleTap = data.doubleTap !== false
+    root.doubleTapMode = data.doubleTapMode === "fullscreen" ? "fullscreen" : "maximized"
+    root.doubleTapMs = Math.round(num(data.doubleTapMs, 120, 800, d.doubleTapMs))
     root.badgeBacking = data.badgeBacking === true
     root.hintScale = num(data.hintScale, root.minHintScale, root.maxHintScale, d.hintScale)
     root.badgeMin = num(data.badgeMin, 8, 400, d.badgeMin)
@@ -466,16 +475,23 @@ Item {
   function press(key) {
     if (!root.opened) return
     var next = root.typed + String(key)
-    if (root.hints[next]) { root.jump(root.hints[next]); return }
+    if (root.hints[next]) { root.jump(root.hints[next], true); return }
     for (var hint in root.hints) {
       if (hint.indexOf(next) === 0) { root.typed = next; return }
     }
     root.typed = ""       // no match: start over
   }
 
-  function jump(win) {
-    jumpProcess.command = ["hyprctl", "dispatch",
-      "hl.dsp.focus({ window = \"address:" + win.address + "\" })"]
+  // Jump to a window. For a typed hint, also arm the double-tap: a quick
+  // repeat of the hint's last key toggles fullscreen on it (handled in
+  // ~/.config/hypr/hyprwrlds.lua, so other keys pass straight to the app).
+  function jump(win, viaKey) {
+    var cmd = "hyprctl dispatch 'hl.dsp.focus({ window = \"address:" + win.address + "\" })' >/dev/null"
+    if (viaKey && root.doubleTap) {
+      var key = String(win.hint).slice(-1)
+      cmd += "; hyprctl eval 'hyprwrlds.arm_double_tap(\"" + key + "\", \"" + root.doubleTapMode + "\", " + root.doubleTapMs + ")' >/dev/null"
+    }
+    jumpProcess.command = ["sh", "-c", cmd]
     jumpProcess.running = true
     root.close()
   }
