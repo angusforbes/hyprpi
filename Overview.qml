@@ -54,7 +54,15 @@ Item {
     "#2dd4bf", "#22d3ee", "#38bdf8", "#60a5fa"
   ]
   property real hintScale: 1.0           // Ctrl+= / Ctrl+- while open (0.75-1.5)
-  property real badgeBase: 30            // hint circle diameter at scale 1.0 ("badgeSize")
+  // Circle size, exactly Vimarchy's rule: shorter side of the REAL window x
+  // badgeFraction, clamped to [badgeMin, badgeMax] px, x hintScale; then
+  // scaled down by the mini-map factor like everything else in the tile.
+  property real badgeMin: 72
+  property real badgeMax: 132
+  property real badgeFraction: 0.34
+  function vimarchyBadge(w, h) {
+    return Math.max(badgeMin, Math.min(badgeMax, Math.min(w, h) * badgeFraction)) * hintScale
+  }
   property real backdropOpacity: 0.94
   property string align: "left"          // "left" | "center"
   property real edgeMargin: 48
@@ -85,7 +93,9 @@ Item {
     shiftRing: false,
     badgeBacking: false,
     hintScale: 1.0,
-    badgeSize: 30,
+    badgeMin: 72,
+    badgeMax: 132,
+    badgeFraction: 0.34,
     windowTintOpacity: 0.07,
     badgeTintOpacity: 0.21,
     backdropOpacity: 0.94,
@@ -122,7 +132,9 @@ Item {
     root.shiftRing = data.shiftRing === true
     root.badgeBacking = data.badgeBacking === true
     root.hintScale = num(data.hintScale, root.minHintScale, root.maxHintScale, d.hintScale)
-    root.badgeBase = num(data.badgeSize, 12, 80, d.badgeSize)
+    root.badgeMin = num(data.badgeMin, 8, 400, d.badgeMin)
+    root.badgeMax = Math.max(root.badgeMin, num(data.badgeMax, 8, 600, d.badgeMax))
+    root.badgeFraction = num(data.badgeFraction, 0.05, 1, d.badgeFraction)
     root.windowTintOpacity = num(data.windowTintOpacity, 0, 0.30, d.windowTintOpacity)
     root.badgeTintOpacity = num(data.badgeTintOpacity, 0, 0.30, d.badgeTintOpacity)
     root.backdropOpacity = num(data.backdropOpacity, 0, 1, d.backdropOpacity)
@@ -712,8 +724,7 @@ Item {
                         Rectangle {
                           id: badge
                           readonly property bool shifted: root.isShiftHint(winBox.modelData.hint)
-                          // One size for every hint (like Vimarchy); only Ctrl+= / Ctrl+- change it.
-                          readonly property real d: root.badgeBase * root.hintScale
+                          readonly property real d: root.vimarchyBadge(winBox.modelData.w, winBox.modelData.h) * overlay.sx
                           anchors.centerIn: parent
                           width: d
                           height: d

@@ -58,7 +58,7 @@ the overview opens; no restart needed.
 | `shiftRing` | false | Extra ring around uppercase (Shift) hints |
 | `badgeBacking` | false | Cream disc under each circle for legibility over busy previews (Vimarchy has none) |
 | `hintScale` | 1.0 | Circle size multiplier (0.5-5); Ctrl+= / Ctrl+- change it by 15% per press and save it |
-| `badgeSize` | 30 | Circle diameter in px at scale 1.0 |
+| `badgeMin` / `badgeMax` / `badgeFraction` | 72 / 132 / 0.34 | Vimarchy's circle rule: shorter side of the real window x fraction, clamped to min..max px, x hintScale, then scaled to the mini-map |
 | `windowTintOpacity` | 0.07 | Tint of each window box (0-0.3) |
 | `badgeTintOpacity` | 0.21 | Colour tint of each circle (0-0.3) |
 | `backdropOpacity` | 0.94 | How opaque the backdrop is (0-1) |
