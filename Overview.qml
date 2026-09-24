@@ -298,12 +298,25 @@ Item {
   // Hints: windows 1-26 get a-z, 27-52 get A-Z (Shift + the same key), in
   // reading order (world, workspace, then left-to-right / top-to-bottom).
   // Beyond 52 every window gets a two-letter lowercase hint.
-  function hintFor(index, total) {
-    var n = hintKeys.length
-    if (total <= n || (root.uppercaseHints && total <= n * 2)) {
-      return index < n ? hintKeys.charAt(index) : hintKeys.charAt(index - n).toUpperCase()
-    }
-    return hintKeys.charAt(Math.floor(index / n) % n) + hintKeys.charAt(index % n)
+  // Hints for `total` windows, most of them single keys. Single keys are the
+  // hint letters, then (with uppercaseHints) their Shift versions. Only when
+  // there are more windows than single keys do the LAST few single keys become
+  // prefixes for two-key hints (prefix + lowercase letter), so e.g. 57 windows
+  // get a-z, A-Y, then Za..Zf.
+  function buildHints(total) {
+    var lower = hintKeys.split("")
+    var singles = lower.slice()
+    if (root.uppercaseHints) singles = singles.concat(lower.map(function(k) { return k.toUpperCase() }))
+    var k = singles.length
+    if (total <= k) return singles.slice(0, total)
+    var p = 1
+    while ((k - p) + p * lower.length < total && p < k) p++
+    var out = singles.slice(0, k - p)
+    var prefixes = singles.slice(k - p)
+    for (var i = 0; i < prefixes.length && out.length < total; i++)
+      for (var j = 0; j < lower.length && out.length < total; j++)
+        out.push(prefixes[i] + lower[j])
+    return out
   }
 
   function isShiftHint(hint) { return hint !== hint.toLowerCase() }
@@ -375,8 +388,9 @@ Item {
     }
 
     var map = {}
+    var allHints = buildHints(ordered.length + root.hintStart)
     for (var h = 0; h < ordered.length; h++) {
-      ordered[h].hint = hintFor(h + root.hintStart, ordered.length + root.hintStart)
+      ordered[h].hint = allHints[h + root.hintStart]
       ordered[h].color = hintPalette[(h + root.hintStart) % hintPalette.length]
       if (ordered[h].shown) map[ordered[h].hint] = ordered[h]
     }
