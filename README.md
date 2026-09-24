@@ -19,7 +19,7 @@ hidden workspaces). All hint circles are the same size. Settings in the JSON fil
 `windowTintOpacity`, `badgeTintOpacity`. App labels are shortened
 (`chrome-web.whatsapp.com__-Default` -> `whatsapp`). At most 3 worlds and 4 workspaces per row are shown. Arrow keys move a selected workspace
 (dark border, "▸"): Left/Right within the row, Up/Down between worlds, wrapping at the ends;
-the view scrolls to follow ("‹ n" / "n ›" / "▲ n" / "▼ n" mark hidden ones). Enter goes to the
+the view scrolls to follow. When a row has more than fits, "‹ 9" / "5 ›" name the workspace just outside the view on each side, wrapping; likewise "▲ G" / "▼ D" name the world above/below. Enter goes to the
 selected workspace. Hints keep their letters while scrolling. Typing a hint jumps to that window (Hyprland switches to its workspace). Case comes
 from Shift, so Caps Lock can't flip a hint. Escape, Backspace on an empty entry, or a click on
 the backdrop closes. Clicking a window box jumps to it too. Jumping only (moving windows: later).

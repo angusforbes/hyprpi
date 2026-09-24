@@ -316,6 +316,8 @@ Item {
   property int rowOffset: 0
   property var colOffsets: ({})          // row index -> first visible workspace index
 
+  function slotLabel(ws) { return ws ? (ws.slot === 10 ? "0" : String(ws.slot)) : "" }
+
   function colCount(r) { return rows[r] ? rows[r].workspaces.length : 0 }
   function colOffset(r) { return colOffsets[r] || 0 }
 
@@ -480,8 +482,8 @@ Item {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             visible: root.mode === "all" && root.rows.length > root.visibleRows
-            opacity: root.rowOffset > 0 ? 0.8 : 0.2
-            text: "▲ " + root.rowOffset
+            opacity: 0.8
+            text: visible ? "▲ " + root.rows[(root.rowOffset - 1 + root.rows.length) % root.rows.length].letter : ""
             color: root.fg
             font.family: root.fontFamily
             font.pixelSize: 14
@@ -496,8 +498,14 @@ Item {
               readonly property int rowIndex: modelData
               readonly property var rowData: root.rows[rowIndex] || ({ world: 1, letter: "", workspaces: [] })
               readonly property color hue: root.worldColor(rowData.world)
-              readonly property int hiddenLeft: root.colOffset(rowIndex)
-              readonly property int hiddenRight: Math.max(0, rowData.workspaces.length - hiddenLeft - root.visibleCols)
+              // Workspace just outside the view on each side (wrapping), shown
+              // only when the row has more workspaces than fit.
+              readonly property int wsCount: rowData.workspaces.length
+              readonly property bool overflows: wsCount > root.visibleCols
+              readonly property string leftLabel: overflows
+                ? root.slotLabel(rowData.workspaces[(root.colOffset(rowIndex) - 1 + wsCount) % wsCount]) : ""
+              readonly property string rightLabel: overflows
+                ? root.slotLabel(rowData.workspaces[(root.colOffset(rowIndex) + root.visibleCols) % wsCount]) : ""
               spacing: overlay.gap
 
               // World letter (all-worlds mode only)
@@ -523,7 +531,7 @@ Item {
                 verticalAlignment: Text.AlignVCenter
                 horizontalAlignment: Text.AlignRight
                 topPadding: overlay.headerH
-                text: worldRow.hiddenLeft > 0 ? "‹ " + worldRow.hiddenLeft : ""
+                text: worldRow.leftLabel !== "" ? "‹ " + worldRow.leftLabel : ""
                 color: worldRow.hue
                 font.family: root.fontFamily
                 font.pixelSize: 16
@@ -675,7 +683,7 @@ Item {
                 verticalAlignment: Text.AlignVCenter
                 horizontalAlignment: Text.AlignLeft
                 topPadding: overlay.headerH
-                text: worldRow.hiddenRight > 0 ? worldRow.hiddenRight + " ›" : ""
+                text: worldRow.rightLabel !== "" ? worldRow.rightLabel + " ›" : ""
                 color: worldRow.hue
                 font.family: root.fontFamily
                 font.pixelSize: 16
@@ -687,10 +695,9 @@ Item {
           // ▼ worlds below the visible ones
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            readonly property int below: Math.max(0, root.rows.length - root.rowOffset - root.visibleRows)
             visible: root.mode === "all" && root.rows.length > root.visibleRows
-            opacity: below > 0 ? 0.8 : 0.2
-            text: "▼ " + below
+            opacity: 0.8
+            text: visible ? "▼ " + root.rows[(root.rowOffset + root.visibleRows) % root.rows.length].letter : ""
             color: root.fg
             font.family: root.fontFamily
             font.pixelSize: 14
