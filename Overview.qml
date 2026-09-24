@@ -284,7 +284,95 @@ Item {
     if (ordered.length === 0) { root.close(); return }
     root.hints = map
     root.rows = out
+
+    // Start with the current workspace selected (else the current world's
+    // first workspace, else the first row).
+    var sr = -1, sc = 0
+    for (var r = 0; r < out.length; r++) {
+      for (var q = 0; q < out[r].workspaces.length; q++) {
+        if (out[r].workspaces[q].id === root.activeWorkspace) { sr = r; sc = q }
+      }
+    }
+    if (sr < 0) {
+      for (var r2 = 0; r2 < out.length; r2++) if (out[r2].world === currentWorld) sr = r2
+      if (sr < 0) sr = 0
+    }
+    root.selRow = sr
+    root.selCol = sc
+    root.rowOffset = 0
+    root.colOffsets = ({})
+    root.ensureVisible()
     root.opened = !root.dry
+  }
+
+  // ---- selection / paging --------------------------------------------------
+  // At most visibleRows worlds and visibleCols workspaces per row are drawn.
+  // Arrows move a selected workspace (wrapping); the view follows it. Hints
+  // keep their letters while scrolling and work for off-screen windows too.
+  readonly property int visibleRows: 3
+  readonly property int visibleCols: 4
+  property int selRow: 0
+  property int selCol: 0
+  property int rowOffset: 0
+  property var colOffsets: ({})          // row index -> first visible workspace index
+
+  function colCount(r) { return rows[r] ? rows[r].workspaces.length : 0 }
+  function colOffset(r) { return colOffsets[r] || 0 }
+
+  function ensureVisible() {
+    var vr = Math.min(visibleRows, rows.length)
+    var ro = rowOffset
+    if (selRow < ro) ro = selRow
+    if (selRow >= ro + vr) ro = selRow - vr + 1
+    rowOffset = Math.max(0, Math.min(ro, rows.length - vr))
+    var n = colCount(selRow), vc = Math.min(visibleCols, n)
+    var co = colOffset(selRow)
+    if (selCol < co) co = selCol
+    if (selCol >= co + vc) co = selCol - vc + 1
+    co = Math.max(0, Math.min(co, n - vc))
+    var next = {}
+    for (var k in colOffsets) next[k] = colOffsets[k]
+    next[selRow] = co
+    colOffsets = next
+  }
+
+  function moveSel(dr, dc) {
+    if (!rows.length) return
+    if (dr !== 0) {
+      selRow = (selRow + dr + rows.length) % rows.length
+      selCol = Math.min(selCol, colCount(selRow) - 1)
+    }
+    if (dc !== 0) {
+      var n = colCount(selRow)
+      if (n > 0) selCol = (selCol + dc + n) % n
+    }
+    ensureVisible()
+  }
+
+  function visibleRowIndices() {
+    var out = []
+    var vr = Math.min(visibleRows, rows.length)
+    for (var i = 0; i < vr; i++) out.push(rowOffset + i)
+    return out
+  }
+
+  function visibleWorkspaces(r) {
+    var co = colOffset(r)
+    return rows[r] ? rows[r].workspaces.slice(co, co + visibleCols) : []
+  }
+
+  function selectedWorkspaceId() {
+    var row = rows[selRow]
+    return row && row.workspaces[selCol] ? row.workspaces[selCol].id : 0
+  }
+
+  // Enter: go to the selected workspace.
+  function enterSelected() {
+    var id = selectedWorkspaceId()
+    if (!id) return
+    jumpProcess.command = ["hyprctl", "dispatch", "hl.dsp.focus({ workspace = \"" + id + "\" })"]
+    jumpProcess.running = true
+    root.close()
   }
 
   // ---- keys ----------------------------------------------------------------
@@ -315,7 +403,7 @@ Item {
   readonly property int maxCols: {
     var m = 1
     for (var i = 0; i < rows.length; i++) m = Math.max(m, rows[i].workspaces.length)
-    return m
+    return Math.min(visibleCols, m)
   }
   readonly property real aspect: monitor ? monitor.width / Math.max(1, monitor.height) : 16 / 10
 
@@ -338,11 +426,12 @@ Item {
       readonly property real margin: 48
       readonly property real gap: 18
       readonly property real labelW: root.mode === "all" ? 44 : 0
+      readonly property real arrowW: 40
       readonly property real headerH: 22
       readonly property real tileW: {
-        var byWidth = (width - margin * 2 - labelW - gap * (root.maxCols - 1)) / root.maxCols
-        var rowsN = Math.max(1, root.rows.length)
-        var byHeight = ((height - margin * 2 - gap * (rowsN - 1)) / rowsN - headerH) * root.aspect
+        var byWidth = (width - margin * 2 - labelW - arrowW * 2 - gap * (root.maxCols + 1)) / root.maxCols
+        var rowsN = Math.max(1, Math.min(root.visibleRows, root.rows.length))
+        var byHeight = ((height - margin * 2 - 60 - gap * (rowsN - 1)) / rowsN - headerH) * root.aspect
         return Math.max(120, Math.min(360, byWidth, byHeight))
       }
       readonly property real tileH: tileW / root.aspect
@@ -365,6 +454,11 @@ Item {
             if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) { root.adjustHintScale(-1); event.accepted = true; return }
             return
           }
+          if (event.key === Qt.Key_Left)  { root.moveSel(0, -1); event.accepted = true; return }
+          if (event.key === Qt.Key_Right) { root.moveSel(0, 1);  event.accepted = true; return }
+          if (event.key === Qt.Key_Up)    { root.moveSel(-1, 0); event.accepted = true; return }
+          if (event.key === Qt.Key_Down)  { root.moveSel(1, 0);  event.accepted = true; return }
+          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.enterSelected(); event.accepted = true; return }
           if (event.key === Qt.Key_Backspace) {
             if (root.typed === "") root.close(); else root.typed = ""
             event.accepted = true; return
@@ -382,13 +476,28 @@ Item {
           anchors.centerIn: parent
           spacing: overlay.gap
 
+          // ▲ worlds above the visible ones
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.mode === "all" && root.rows.length > root.visibleRows
+            opacity: root.rowOffset > 0 ? 0.8 : 0.2
+            text: "▲ " + root.rowOffset
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: 14
+          }
+
           Repeater {
-            model: root.rows
+            model: root.visibleRowIndices()
 
             Row {
               id: worldRow
-              required property var modelData
-              readonly property color hue: root.worldColor(modelData.world)
+              required property int modelData
+              readonly property int rowIndex: modelData
+              readonly property var rowData: root.rows[rowIndex] || ({ world: 1, letter: "", workspaces: [] })
+              readonly property color hue: root.worldColor(rowData.world)
+              readonly property int hiddenLeft: root.colOffset(rowIndex)
+              readonly property int hiddenRight: Math.max(0, rowData.workspaces.length - hiddenLeft - root.visibleCols)
               spacing: overlay.gap
 
               // World letter (all-worlds mode only)
@@ -399,7 +508,7 @@ Item {
                 Text {
                   anchors.centerIn: parent
                   anchors.verticalCenterOffset: overlay.headerH / 2
-                  text: worldRow.modelData.letter
+                  text: worldRow.rowData.letter
                   color: worldRow.hue
                   font.family: root.fontFamily
                   font.pixelSize: 26
@@ -407,23 +516,38 @@ Item {
                 }
               }
 
+              // ‹ n workspaces to the left
+              Text {
+                width: overlay.arrowW
+                height: overlay.tileH + overlay.headerH
+                verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: Text.AlignRight
+                topPadding: overlay.headerH
+                text: worldRow.hiddenLeft > 0 ? "‹ " + worldRow.hiddenLeft : ""
+                color: worldRow.hue
+                font.family: root.fontFamily
+                font.pixelSize: 16
+                font.bold: true
+              }
+
               Repeater {
-                model: worldRow.modelData.workspaces
+                model: root.visibleWorkspaces(worldRow.rowIndex)
 
                 Column {
                   id: wsCol
                   required property var modelData
                   readonly property bool isActive: modelData.id === root.activeWorkspace
+                  readonly property bool isSelected: worldRow.rowIndex === root.selRow && modelData.id === root.selectedWorkspaceId()
                   spacing: 4
 
                   Text {
                     height: overlay.headerH - 4
-                    text: (root.mode === "all" ? worldRow.modelData.letter + " · " : "") +
+                    text: (wsCol.isSelected ? "▸ " : "") + (root.mode === "all" ? worldRow.rowData.letter + " · " : "") +
                           (wsCol.modelData.slot === 10 ? "0" : String(wsCol.modelData.slot))
                     color: worldRow.hue
                     font.family: root.fontFamily
                     font.pixelSize: 14
-                    font.bold: wsCol.isActive
+                    font.bold: wsCol.isActive || wsCol.isSelected
                   }
 
                   // Mini-screen for this workspace
@@ -432,8 +556,9 @@ Item {
                     height: overlay.tileH
                     radius: 8
                     color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.95)
-                    border.width: wsCol.isActive ? 3 : 1.5
-                    border.color: wsCol.isActive ? worldRow.hue : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.35)
+                    border.width: wsCol.isSelected ? 4 : (wsCol.isActive ? 3 : 1.5)
+                    border.color: wsCol.isSelected ? root.fg
+                                : (wsCol.isActive ? worldRow.hue : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.35))
                     clip: true
 
                     Repeater {
@@ -542,7 +667,33 @@ Item {
                   }
                 }
               }
+
+              // n workspaces to the right ›
+              Text {
+                width: overlay.arrowW
+                height: overlay.tileH + overlay.headerH
+                verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: Text.AlignLeft
+                topPadding: overlay.headerH
+                text: worldRow.hiddenRight > 0 ? worldRow.hiddenRight + " ›" : ""
+                color: worldRow.hue
+                font.family: root.fontFamily
+                font.pixelSize: 16
+                font.bold: true
+              }
             }
+          }
+
+          // ▼ worlds below the visible ones
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            readonly property int below: Math.max(0, root.rows.length - root.rowOffset - root.visibleRows)
+            visible: root.mode === "all" && root.rows.length > root.visibleRows
+            opacity: below > 0 ? 0.8 : 0.2
+            text: "▼ " + below
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: 14
           }
         }
       }

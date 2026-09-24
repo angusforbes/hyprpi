@@ -33,6 +33,14 @@ ShellRoot {
     function dry(mode: string): void { overview.open(JSON.stringify({ mode: mode, dry: true })) }
     function openTest(mode: string, hintStart: int): void { overview.open(JSON.stringify({ mode: mode, hintStart: hintStart })) }
     function press(key: string): void { overview.press(key) }
+    // Arrow keys for testing: dr/dc = -1, 0, 1
+    function move(dr: int, dc: int): string {
+      overview.moveSel(dr, dc)
+      var vis = overview.visibleRowIndices().map(function(r) {
+        return overview.rows[r].letter + ":" + overview.visibleWorkspaces(r).map(function(w) { return w.slot % 10 }).join("")
+      })
+      return "sel=" + overview.rows[overview.selRow].letter + "·" + (overview.selectedWorkspaceId() - 1) % 10 + 1 + " view=[" + vis.join(" ") + "]"
+    }
     // Dry run: what would this key sequence select? (Does not jump.)
     function resolve(seq: string): string {
       var w = overview.resolve(seq)

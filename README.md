@@ -17,7 +17,10 @@ left-to-right/top-to-bottom): `a`-`z` for the first 26, then `A`-`Z` with Shift 
 hidden workspaces). All hint circles are the same size. Settings in the JSON file:
 `hintScale`, `showPreviews` (default true), `shiftRing` (ring around A-Z hints, default false),
 `windowTintOpacity`, `badgeTintOpacity`. App labels are shortened
-(`chrome-web.whatsapp.com__-Default` -> `whatsapp`). Typing a hint jumps to that window (Hyprland switches to its workspace). Case comes
+(`chrome-web.whatsapp.com__-Default` -> `whatsapp`). At most 3 worlds and 4 workspaces per row are shown. Arrow keys move a selected workspace
+(dark border, "▸"): Left/Right within the row, Up/Down between worlds, wrapping at the ends;
+the view scrolls to follow ("‹ n" / "n ›" / "▲ n" / "▼ n" mark hidden ones). Enter goes to the
+selected workspace. Hints keep their letters while scrolling. Typing a hint jumps to that window (Hyprland switches to its workspace). Case comes
 from Shift, so Caps Lock can't flip a hint. Escape, Backspace on an empty entry, or a click on
 the backdrop closes. Clicking a window box jumps to it too. Jumping only (moving windows: later).
 
