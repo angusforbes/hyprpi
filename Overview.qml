@@ -69,6 +69,7 @@ Item {
   property real edgeMargin: 48
   property bool uppercaseHints: true     // Shift+A-Z after 26 windows (else two letters)
   property bool shortenAppNames: true
+  property bool showEmptyWorkspaces: true   // world views show all 10 slots of each world
   property bool doubleTap: true          // quick repeat of a hint's last key toggles fullscreen
   property string doubleTapMode: "maximized"   // "maximized" (full working area) | "fullscreen"
   property int doubleTapMs: 300
@@ -93,6 +94,7 @@ Item {
     hintKeys: "abcdefghijklmnopqrstuvwxyz",
     uppercaseHints: true,
     shortenAppNames: true,
+    showEmptyWorkspaces: true,
     showPreviews: true,
     shiftRing: false,
     doubleTap: true,
@@ -135,6 +137,7 @@ Item {
     root.hintKeys = uniq.length >= 2 ? uniq : d.hintKeys
     root.uppercaseHints = data.uppercaseHints !== false
     root.shortenAppNames = data.shortenAppNames !== false
+    root.showEmptyWorkspaces = data.showEmptyWorkspaces !== false
     root.showPreviews = data.showPreviews !== false
     root.shiftRing = data.shiftRing === true
     root.doubleTap = data.doubleTap !== false
@@ -436,6 +439,30 @@ Item {
       out.sort(function(a, b) { return a.world - b.world })
     }
 
+    // Show every slot (1-9, 0) of each shown world, empty ones as tiles you can
+    // arrow to and drop into (Hyprland deletes empty workspaces, so these are
+    // only in the overview until a window lands there).
+    if (root.showEmptyWorkspaces && root.mode !== "workspace") {
+      for (var fr = 0; fr < out.length; fr++) {
+        var frow = out[fr]
+        for (var fs = 1; fs <= size; fs++) {
+          var fid = (frow.world - 1) * size + fs
+          var have = false
+          for (var fe = 0; fe < frow.workspaces.length; fe++) if (frow.workspaces[fe].id === fid) have = true
+          if (!have) frow.workspaces.push({ id: fid, slot: fs, windows: [], virtual: true })
+        }
+        frow.workspaces.sort(function(a, b) { return a.id - b.id })
+      }
+    }
+
+    // Single-workspace view of an empty workspace: show it (empty) instead of
+    // closing, so a held window can still be dropped with a digit.
+    if (out.length === 0 && root.mode === "workspace" && root.activeWorkspace > 0) {
+      var aw = worldOf(root.activeWorkspace)
+      out.push({ world: aw, letter: letters.charAt(aw - 1),
+                 workspaces: [{ id: root.activeWorkspace, slot: root.activeWorkspace - (aw - 1) * size, windows: [], virtual: true }] })
+    }
+
     if (out.length === 0) { root.close(); return }
     root.hints = map
     root.rows = out
@@ -542,7 +569,9 @@ Item {
         return
       }
     }
-    root.notice = "World " + row.letter + " already has 10 workspaces"
+    root.notice = root.showEmptyWorkspaces
+      ? "All 10 workspaces of world " + row.letter + " are already shown — arrow to an empty one"
+      : "World " + row.letter + " already has 10 workspaces"
   }
 
   function newWorld() {
@@ -880,8 +909,7 @@ Item {
                   Text {
                     height: overlay.headerH - 4
                     text: (wsCol.isSelected ? "▸ " : "") + (root.mode !== "world" ? worldRow.rowData.letter + " · " : "") +
-                          (wsCol.modelData.slot === 10 ? "0" : String(wsCol.modelData.slot)) +
-                          (wsCol.modelData.virtual ? "  (new)" : "")
+                          (wsCol.modelData.slot === 10 ? "0" : String(wsCol.modelData.slot))
                     color: worldRow.hue
                     font.family: root.fontFamily
                     font.pixelSize: 14

@@ -55,6 +55,7 @@ the overview opens; no restart needed.
 | `maxTileWidth` | 460 | Largest workspace tile width in px (tiles shrink to fit the screen) |
 | `hintKeys` | `"abcdefghijklmnopqrstuvwxyz"` | Hint letters, in order (unique a-z, at least 2) |
 | `uppercaseHints` | true | After the lowercase keys, use Shift+uppercase before two-letter hints |
+| `showEmptyWorkspaces` | true | World views show all 10 workspaces (1-9, 0) of each world; empty ones can be selected and dropped into |
 | `shortenAppNames` | true | `chrome-web.whatsapp.com__-Default` -> `whatsapp` |
 | `showPreviews` | true | Still capture of each app inside its box |
 | `doubleTap` | true | A quick repeat of a hint's last key (within `doubleTapMs`) toggles fullscreen on the window you jumped to |
