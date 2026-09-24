@@ -33,6 +33,7 @@ Item {
   property int activeWorkspace: 0
   property string activeAddress: ""
   property int loadGeneration: 0
+  property int hintStart: 0              // testing only: pretend this many windows come first
 
   readonly property int size: 10
   readonly property string letters: "ABCDEFGHI"
@@ -81,6 +82,7 @@ Item {
     var payload = {}
     try { payload = JSON.parse(String(payloadJson || "{}")) } catch (e) { payload = {} }
     root.mode = payload.mode === "all" ? "all" : "world"
+    root.hintStart = Math.max(0, Number(payload.hintStart) || 0)
     root.typed = ""
     colorsFile.reload()
     root.loadGeneration++
@@ -113,11 +115,17 @@ Item {
 
   function worldOf(id) { return id >= 1 ? Math.floor((id - 1) / size) + 1 : 0 }
 
+  // Hints: windows 1-26 get a-z (home row first), 27-52 get A-Z (Shift +
+  // the same key). Beyond 52 every window gets a two-letter lowercase hint.
   function hintFor(index, total) {
     var n = hintKeys.length
-    if (total <= n) return hintKeys.charAt(index)
+    if (total <= n * 2) {
+      return index < n ? hintKeys.charAt(index) : hintKeys.charAt(index - n).toUpperCase()
+    }
     return hintKeys.charAt(Math.floor(index / n) % n) + hintKeys.charAt(index % n)
   }
+
+  function isShiftHint(hint) { return hint !== hint.toLowerCase() }
 
   function applySnapshot(raw, generation) {
     if (generation !== root.loadGeneration) return
@@ -177,7 +185,7 @@ Item {
 
     var map = {}
     for (var h = 0; h < ordered.length; h++) {
-      ordered[h].hint = hintFor(h, ordered.length)
+      ordered[h].hint = hintFor(h + root.hintStart, ordered.length + root.hintStart)
       map[ordered[h].hint] = ordered[h]
     }
 
@@ -188,9 +196,12 @@ Item {
   }
 
   // ---- keys ----------------------------------------------------------------
+  // Returns the window a key sequence would select (no side effects).
+  function resolve(seq) { return root.hints[seq] || null }
+
   function press(key) {
     if (!root.opened) return
-    var next = root.typed + String(key).toLowerCase()
+    var next = root.typed + String(key)
     if (root.hints[next]) { root.jump(root.hints[next]); return }
     for (var hint in root.hints) {
       if (hint.indexOf(next) === 0) { root.typed = next; return }
@@ -261,8 +272,13 @@ Item {
             if (root.typed === "") root.close(); else root.typed = ""
             event.accepted = true; return
           }
+          // Case comes from Shift, not from the produced text, so Caps Lock
+          // can't flip a hint.
           var t = String(event.text || "").toLowerCase()
-          if (t.length === 1 && root.hintKeys.indexOf(t) >= 0) { root.press(t); event.accepted = true }
+          if (t.length === 1 && root.hintKeys.indexOf(t) >= 0) {
+            root.press((event.modifiers & Qt.ShiftModifier) ? t.toUpperCase() : t)
+            event.accepted = true
+          }
         }
 
         Column {
@@ -353,18 +369,22 @@ Item {
                           font.pixelSize: 10
                         }
 
-                        // Hint badge
+                        // Hint badge: filled for a-z, outlined for Shift hints (A-Z).
                         Rectangle {
+                          readonly property bool shifted: root.isShiftHint(winBox.modelData.hint)
                           anchors.centerIn: parent
                           width: Math.max(26, hintText.implicitWidth + 12)
                           height: 26
                           radius: 13
-                          color: worldRow.hue
+                          color: shifted ? root.bg : worldRow.hue
+                          border.width: shifted ? 2 : 0
+                          border.color: worldRow.hue
                           Text {
                             id: hintText
                             anchors.centerIn: parent
-                            text: winBox.modelData.hint.toUpperCase()
-                            color: root.bg
+                            anchors.verticalCenterOffset: -1
+                            text: winBox.modelData.hint
+                            color: parent.shifted ? worldRow.hue : root.bg
                             font.family: root.fontFamily
                             font.pixelSize: 15
                             font.bold: true

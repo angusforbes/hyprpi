@@ -30,7 +30,13 @@ ShellRoot {
     target: "hwv"
     function open(mode: string): void { overview.open(JSON.stringify({ mode: mode })) }
     function close(): void { overview.close() }
+    function openTest(mode: string, hintStart: int): void { overview.open(JSON.stringify({ mode: mode, hintStart: hintStart })) }
     function press(key: string): void { overview.press(key) }
+    // Dry run: what would this key sequence select? (Does not jump.)
+    function resolve(seq: string): string {
+      var w = overview.resolve(seq)
+      return w ? JSON.stringify({ hint: w.hint, workspace: w.workspace, cls: w.cls, address: w.address }) : "none"
+    }
     function state(): string {
       var hints = Object.keys(overview.hints).sort()
       return JSON.stringify({ opened: overview.opened, mode: overview.mode, rows: overview.rows.length,
