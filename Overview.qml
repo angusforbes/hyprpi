@@ -259,7 +259,7 @@ Item {
       // Backdrop: dims the desktop; a click anywhere closes.
       Rectangle {
         anchors.fill: parent
-        color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.82)
+        color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.94)
         MouseArea { anchors.fill: parent; onClicked: root.close() }
       }
 
@@ -372,10 +372,12 @@ Item {
                         // Hint badge: filled for a-z, outlined for Shift hints (A-Z).
                         Rectangle {
                           readonly property bool shifted: root.isShiftHint(winBox.modelData.hint)
+                          // Shrinks to fit small boxes so crowded workspaces stay legible.
+                          readonly property real d: Math.max(15, Math.min(26, winBox.width - 4, winBox.height - 4))
                           anchors.centerIn: parent
-                          width: Math.max(26, hintText.implicitWidth + 12)
-                          height: 26
-                          radius: 13
+                          width: Math.max(d, hintText.implicitWidth + d * 0.45)
+                          height: d
+                          radius: d / 2
                           color: shifted ? root.bg : worldRow.hue
                           border.width: shifted ? 2 : 0
                           border.color: worldRow.hue
@@ -386,7 +388,7 @@ Item {
                             text: winBox.modelData.hint
                             color: parent.shifted ? worldRow.hue : root.bg
                             font.family: root.fontFamily
-                            font.pixelSize: 15
+                            font.pixelSize: Math.max(10, Math.round(parent.d * 0.58))
                             font.bold: true
                           }
                         }
