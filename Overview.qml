@@ -38,6 +38,7 @@ Item {
   property bool dry: false               // testing only: build hints but never show/grab keys
 
   readonly property int size: 10
+  readonly property int maxWorlds: 9
   readonly property string letters: "ABCDEFGHI"
   // Alphabetical so hints read contiguously: a, b, c ... through a workspace
   // and on into the next workspace of the same world (then the next world).
@@ -241,6 +242,12 @@ Item {
     root.hintStart = Math.max(0, Number(payload.hintStart) || 0)
     root.dry = payload.dry === true
     root.typed = ""
+    root.held = null
+    root.holdCandidate = ""
+    root.virtualWs = ({})
+    root.virtualWorlds = []
+    root.keepSelectId = 0
+    root.notice = ""
     colorsFile.reload()
     root.loadGeneration++
     snapshot.generation = root.loadGeneration
@@ -323,6 +330,7 @@ Item {
 
   function applySnapshot(raw, generation) {
     if (generation !== root.loadGeneration) return
+    root.lastRaw = raw
     var data
     try { data = JSON.parse(raw) } catch (e) { console.warn("hyprwrlds-vimarchy: bad snapshot", e); root.close(); return }
 
@@ -395,6 +403,39 @@ Item {
       if (ordered[h].shown) map[ordered[h].hint] = ordered[h]
     }
 
+    // Empty workspaces/worlds added with Alt+N / Alt+Shift+N (not in the
+    // single-workspace view). They become real once a window is dropped in.
+    if (root.mode !== "workspace") {
+      var vw = {}
+      for (var vk in root.virtualWs) vw[vk] = root.virtualWs[vk].slice()
+      if (root.mode === "all") {
+        for (var vi = 0; vi < root.virtualWorlds.length; vi++) {
+          var nw = root.virtualWorlds[vi]
+          if (!vw[nw]) vw[nw] = []
+          if (vw[nw].indexOf(1) < 0) vw[nw].push(1)
+        }
+      }
+      for (var vwKey in vw) {
+        var vWorld = Number(vwKey)
+        if (root.mode === "world" && vWorld !== currentWorld) continue
+        var row = null
+        for (var ri = 0; ri < out.length; ri++) if (out[ri].world === vWorld) row = out[ri]
+        if (!row) {
+          row = { world: vWorld, letter: letters.charAt(vWorld - 1), workspaces: [] }
+          out.push(row)
+        }
+        for (var vs = 0; vs < vw[vwKey].length; vs++) {
+          var slot = vw[vwKey][vs]
+          var vid = (vWorld - 1) * size + slot
+          var exists = false
+          for (var ei = 0; ei < row.workspaces.length; ei++) if (row.workspaces[ei].id === vid) exists = true
+          if (!exists) row.workspaces.push({ id: vid, slot: slot, windows: [], virtual: true })
+        }
+        row.workspaces.sort(function(a, b) { return a.id - b.id })
+      }
+      out.sort(function(a, b) { return a.world - b.world })
+    }
+
     if (out.length === 0) { root.close(); return }
     root.hints = map
     root.rows = out
@@ -402,11 +443,13 @@ Item {
     // Start with the current workspace selected (else the current world's
     // first workspace, else the first row).
     var sr = -1, sc = 0
+    var want = root.keepSelectId || root.activeWorkspace
     for (var r = 0; r < out.length; r++) {
       for (var q = 0; q < out[r].workspaces.length; q++) {
-        if (out[r].workspaces[q].id === root.activeWorkspace) { sr = r; sc = q }
+        if (out[r].workspaces[q].id === want) { sr = r; sc = q }
       }
     }
+    root.keepSelectId = 0
     if (sr < 0) {
       for (var r2 = 0; r2 < out.length; r2++) if (out[r2].world === currentWorld) sr = r2
       if (sr < 0) sr = 0
@@ -417,6 +460,104 @@ Item {
     root.colOffsets = ({})
     root.ensureVisible()
     root.opened = !root.dry
+  }
+
+  // ---- moving windows (keyboard-first) ---------------------------------------
+  // Alt+hold a hint (holdMs) picks the window up. Then drop it with Enter (the
+  // selected workspace), a digit 1-9/0 (that workspace of the selected row's
+  // world), or a click on a workspace tile. Alt+N adds an empty workspace to
+  // the selected row's world; Alt+Shift+N adds a new world (all-worlds view).
+  // Moves are silent (you stay put) and the overview refreshes.
+  property var held: null
+  property string holdCandidate: ""
+  property var virtualWs: ({})          // world -> [slot, ...]
+  property var virtualWorlds: []
+  property int keepSelectId: 0
+  property string notice: ""
+  property string lastRaw: ""
+  readonly property int holdMs: 350
+
+  Timer {
+    id: holdTimer
+    interval: root.holdMs
+    onTriggered: {
+      var w = root.hints[root.holdCandidate]
+      if (w) { root.held = w; root.typed = ""; root.notice = "" }
+      root.holdCandidate = ""
+    }
+  }
+
+  function beginHold(seq) { root.holdCandidate = seq; holdTimer.restart() }
+  function cancelHold() { holdTimer.stop(); root.holdCandidate = "" }
+
+  function selectedWorld() {
+    var row = rows[selRow]
+    return row ? row.world : (worldOf(activeWorkspace) || 1)
+  }
+
+  function dropInto(wsId) {
+    if (!root.held || !wsId) return
+    if (root.held.workspace === wsId) { root.notice = "Already on that workspace"; return }
+    moveProcess.command = ["hyprctl", "dispatch",
+      "hl.dsp.window.move({ window = \"address:" + root.held.address + "\", workspace = \"" + wsId + "\", follow = false })"]
+    root.keepSelectId = wsId
+    root.held = null
+    root.notice = ""
+    moveProcess.running = true
+  }
+
+  function dropDigit(d) {
+    var slot = d === 0 ? 10 : d
+    var world = root.mode === "workspace" ? (worldOf(activeWorkspace) || 1) : selectedWorld()
+    dropInto((world - 1) * size + slot)
+  }
+
+  Process { id: moveProcess; running: false; onExited: root.refresh() }
+
+  // Re-read windows but keep the overview open (after a move).
+  function refresh() {
+    root.loadGeneration++
+    snapshot.generation = root.loadGeneration
+    snapshot.running = true
+  }
+
+  // Rebuild from the last snapshot (after adding an empty workspace/world).
+  function rebuild() { if (root.lastRaw) root.applySnapshot(root.lastRaw, root.loadGeneration) }
+
+  function newWorkspace() {
+    if (root.mode === "workspace") { root.notice = "Alt+N works in the world views"; return }
+    var row = rows[selRow]
+    if (!row) return
+    var used = row.workspaces.map(function(w) { return w.slot })
+    for (var slot = 1; slot <= size; slot++) {
+      if (used.indexOf(slot) < 0) {
+        var next = {}
+        for (var k in root.virtualWs) next[k] = root.virtualWs[k].slice()
+        if (!next[row.world]) next[row.world] = []
+        next[row.world].push(slot)
+        root.virtualWs = next
+        root.keepSelectId = (row.world - 1) * size + slot
+        root.notice = ""
+        root.rebuild()
+        return
+      }
+    }
+    root.notice = "World " + row.letter + " already has 10 workspaces"
+  }
+
+  function newWorld() {
+    if (root.mode !== "all") { root.notice = "Alt+Shift+N works in the all-worlds view (Alt+Shift+Space)"; return }
+    var used = rows.map(function(r) { return r.world })
+    for (var w = 1; w <= maxWorlds; w++) {
+      if (used.indexOf(w) < 0) {
+        root.virtualWorlds = root.virtualWorlds.concat([w])
+        root.keepSelectId = (w - 1) * size + 1
+        root.notice = ""
+        root.rebuild()
+        return
+      }
+    }
+    root.notice = "All 9 worlds are in use"
   }
 
   // ---- selection / paging --------------------------------------------------
@@ -572,7 +713,14 @@ Item {
         anchors.fill: parent
         focus: true
         Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true; return }
+          var alt = (event.modifiers & Qt.AltModifier) !== 0
+          var shift = (event.modifiers & Qt.ShiftModifier) !== 0
+          if (event.key === Qt.Key_Escape) {
+            // Esc cancels a pick-up first; a second Esc closes.
+            if (root.held || root.holdCandidate !== "") { root.held = null; root.cancelHold(); root.notice = "" }
+            else root.close()
+            event.accepted = true; return
+          }
           if (event.modifiers & Qt.ControlModifier) {
             if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) { root.adjustHintScale(1); event.accepted = true; return }
             if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) { root.adjustHintScale(-1); event.accepted = true; return }
@@ -582,17 +730,72 @@ Item {
           if (event.key === Qt.Key_Right) { root.moveSel(0, 1);  event.accepted = true; return }
           if (event.key === Qt.Key_Up)    { root.moveSel(-1, 0); event.accepted = true; return }
           if (event.key === Qt.Key_Down)  { root.moveSel(1, 0);  event.accepted = true; return }
-          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.enterSelected(); event.accepted = true; return }
+          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            if (root.held) root.dropInto(root.selectedWorkspaceId()); else root.enterSelected()
+            event.accepted = true; return
+          }
+          if (alt && event.key === Qt.Key_N) {
+            if (!event.isAutoRepeat) { if (shift) root.newWorld(); else root.newWorkspace() }
+            event.accepted = true; return
+          }
+          if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && !alt) {
+            if (root.held) root.dropDigit(event.key - Qt.Key_0)
+            event.accepted = true; return
+          }
           if (event.key === Qt.Key_Backspace) {
             if (root.typed === "") root.close(); else root.typed = ""
             event.accepted = true; return
           }
-          // Case comes from Shift, not from the produced text, so Caps Lock
-          // can't flip a hint.
-          var t = String(event.text || "").toLowerCase()
-          if (t.length === 1 && root.hintKeys.indexOf(t) >= 0) {
-            root.press((event.modifiers & Qt.ShiftModifier) ? t.toUpperCase() : t)
+          // Letters by key code (works with Alt held). Case comes from Shift,
+          // not the produced text, so Caps Lock can't flip a hint.
+          if (event.key >= Qt.Key_A && event.key <= Qt.Key_Z) {
+            var ch = String.fromCharCode(event.key).toLowerCase()
+            if (root.hintKeys.indexOf(ch) < 0) return
             event.accepted = true
+            if (event.isAutoRepeat) return
+            var k = shift ? ch.toUpperCase() : ch
+            if (alt) {
+              // Alt+hold: pick the window up once held for holdMs.
+              var seq = root.typed + k
+              if (root.hints[seq]) { root.typed = ""; root.beginHold(seq); return }
+              for (var h in root.hints) if (h.indexOf(seq) === 0) { root.typed = seq; return }
+              root.typed = ""
+              return
+            }
+            if (root.held) { root.notice = "Moving — pick a workspace (Esc cancels)"; return }
+            root.press(k)
+          }
+        }
+
+        Keys.onReleased: function(event) {
+          if (event.isAutoRepeat) return
+          // Letting go of the letter before holdMs cancels the pick-up.
+          if (root.holdCandidate !== "" && event.key >= Qt.Key_A && event.key <= Qt.Key_Z) {
+            var ch = String.fromCharCode(event.key).toLowerCase()
+            if (root.holdCandidate.slice(-1).toLowerCase() === ch) root.cancelHold()
+          }
+        }
+
+        // Move banner / notices, top-left.
+        Rectangle {
+          x: overlay.margin
+          y: 14
+          z: 20
+          visible: root.held !== null || root.notice !== ""
+          width: bannerText.implicitWidth + 24
+          height: bannerText.implicitHeight + 12
+          radius: 8
+          color: root.held ? root.held.color : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
+          Text {
+            id: bannerText
+            anchors.centerIn: parent
+            text: root.held
+              ? "Moving  " + root.held.hint + " · " + root.held.cls + "   →   arrows + Enter,  1–9 / 0,  or click a workspace   ·   Alt+N new workspace   ·   Esc cancels"
+              : root.notice
+            color: root.held ? root.bg : root.fg
+            font.family: root.fontFamily
+            font.pixelSize: 14
+            font.bold: root.held !== null
           }
         }
 
@@ -677,7 +880,8 @@ Item {
                   Text {
                     height: overlay.headerH - 4
                     text: (wsCol.isSelected ? "▸ " : "") + (root.mode !== "world" ? worldRow.rowData.letter + " · " : "") +
-                          (wsCol.modelData.slot === 10 ? "0" : String(wsCol.modelData.slot))
+                          (wsCol.modelData.slot === 10 ? "0" : String(wsCol.modelData.slot)) +
+                          (wsCol.modelData.virtual ? "  (new)" : "")
                     color: worldRow.hue
                     font.family: root.fontFamily
                     font.pixelSize: 14
@@ -694,6 +898,24 @@ Item {
                     border.color: wsCol.isSelected ? root.fg
                                 : (wsCol.isActive ? worldRow.hue : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.35))
                     clip: true
+
+                    // While a window is held, clicking a tile drops it here.
+                    MouseArea {
+                      anchors.fill: parent
+                      enabled: root.held !== null
+                      cursorShape: root.held ? Qt.PointingHandCursor : Qt.ArrowCursor
+                      onClicked: root.dropInto(wsCol.modelData.id)
+                    }
+
+                    Text {
+                      anchors.centerIn: parent
+                      visible: wsCol.modelData.windows.length === 0
+                      text: root.held ? "drop here" : "empty"
+                      color: root.fg
+                      opacity: 0.45
+                      font.family: root.fontFamily
+                      font.pixelSize: 16
+                    }
 
                     Repeater {
                       model: wsCol.modelData.windows
@@ -759,9 +981,21 @@ Item {
                           }
                         }
 
+                        // The window being moved: heavy dark outline.
+                        Rectangle {
+                          anchors.fill: parent
+                          anchors.margins: -2
+                          radius: parent.radius + 2
+                          color: "transparent"
+                          border.width: 4
+                          border.color: root.fg
+                          visible: root.held !== null && root.held.address === winBox.modelData.address
+                          z: 6
+                        }
+
                         MouseArea {
                           anchors.fill: parent
-                          onClicked: root.jump(winBox.modelData)
+                          onClicked: root.held ? root.dropInto(wsCol.modelData.id) : root.jump(winBox.modelData)
                         }
                       }
                     }

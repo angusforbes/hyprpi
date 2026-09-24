@@ -33,6 +33,20 @@ ShellRoot {
     function dry(mode: string): void { overview.open(JSON.stringify({ mode: mode, dry: true })) }
     function openTest(mode: string, hintStart: int): void { overview.open(JSON.stringify({ mode: mode, hintStart: hintStart })) }
     function press(key: string): void { overview.press(key) }
+    // Move testing (no keyboard needed)
+    function pick(seq: string): string { var w = overview.hints[seq]; overview.held = w || null; return w ? "held " + seq + " on ws " + w.workspace : "no such hint" }
+    function dropDigit(d: int): void { overview.dropDigit(d) }
+    function newWorkspace(): string { overview.newWorkspace(); return overview.notice || "ok" }
+    function newWorld(): string { overview.newWorld(); return overview.notice || "ok" }
+    function selectWorkspace(id: int): string {
+      for (var r = 0; r < overview.rows.length; r++)
+        for (var c = 0; c < overview.rows[r].workspaces.length; c++)
+          if (overview.rows[r].workspaces[c].id === id) { overview.selRow = r; overview.selCol = c; overview.ensureVisible(); return "selected " + id }
+      return "not shown: " + id
+    }
+    function rowsSummary(): string {
+      return overview.rows.map(function(r) { return r.letter + ":" + r.workspaces.map(function(w) { return (w.slot % 10) + (w.virtual ? "*" : "") + "(" + w.windows.length + ")" }).join(",") }).join("  ")
+    }
     // Arrow keys for testing: dr/dc = -1, 0, 1
     function move(dr: int, dc: int): string {
       overview.moveSel(dr, dc)
