@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "agf.hyprwrlds-vimarchy",
+  "name": "hyprwrlds-vimarchy",
+  "version": "0.1.0",
+  "author": "agf",
+  "description": "Vimarchy-style overview for hyprwrlds worlds. ALT+CTRL+SPACE: the current world's occupied workspaces side by side; ALT+SHIFT+SPACE: one row per world. Windows are outlined boxes with letter hints (a-z, then Shift A-Z); typing a hint jumps to that window. Source: ~/Work/hyprwrlds-vimarchy (install with ./install.sh).",
+  "kinds": [
+    "overlay"
+  ],
+  "entryPoints": {
+    "overlay": "Overlay.qml"
+  }
+}
