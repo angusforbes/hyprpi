@@ -336,8 +336,6 @@ Item {
       var wsId = cl.workspace ? cl.workspace.id : 0
       if (wsId < 1 || !cl.mapped || cl.hidden) continue
       var w = worldOf(wsId)
-      if (root.mode === "world" && w !== currentWorld) continue
-      if (root.mode === "workspace" && wsId !== root.activeWorkspace) continue
       if (!byWorld[w]) byWorld[w] = {}
       if (!byWorld[w][wsId]) byWorld[w][wsId] = []
       byWorld[w][wsId].push({
@@ -347,8 +345,15 @@ Item {
       })
     }
 
-    // Rows in world order, workspaces in id order, windows left-to-right then
-    // top-to-bottom; hints follow that reading order.
+    // Hints are GLOBAL: assigned over every window in reading order (world,
+    // workspace, then left-to-right / top-to-bottom), so a window has the same
+    // letter (and colour) in all three views. Each view then shows, and
+    // accepts keys for, only its own windows.
+    function shown(world, wsId) {
+      if (root.mode === "world") return world === currentWorld
+      if (root.mode === "workspace") return wsId === root.activeWorkspace
+      return true
+    }
     var out = []
     var ordered = []
     var worldIds = Object.keys(byWorld).map(Number).sort(function(a, b) { return a - b })
@@ -359,20 +364,24 @@ Item {
       for (var si = 0; si < wsIds.length; si++) {
         var wins = byWorld[world][wsIds[si]]
         wins.sort(function(a, b) { return (a.x - b.x) || (a.y - b.y) })
-        for (var k = 0; k < wins.length; k++) ordered.push(wins[k])
-        wsList.push({ id: wsIds[si], slot: wsIds[si] - (world - 1) * size, windows: wins })
+        for (var k = 0; k < wins.length; k++) {
+          wins[k].shown = shown(world, wsIds[si])
+          ordered.push(wins[k])
+        }
+        if (shown(world, wsIds[si]))
+          wsList.push({ id: wsIds[si], slot: wsIds[si] - (world - 1) * size, windows: wins })
       }
-      out.push({ world: world, letter: letters.charAt(world - 1), workspaces: wsList })
+      if (wsList.length) out.push({ world: world, letter: letters.charAt(world - 1), workspaces: wsList })
     }
 
     var map = {}
     for (var h = 0; h < ordered.length; h++) {
       ordered[h].hint = hintFor(h + root.hintStart, ordered.length + root.hintStart)
       ordered[h].color = hintPalette[(h + root.hintStart) % hintPalette.length]
-      map[ordered[h].hint] = ordered[h]
+      if (ordered[h].shown) map[ordered[h].hint] = ordered[h]
     }
 
-    if (ordered.length === 0) { root.close(); return }
+    if (out.length === 0) { root.close(); return }
     root.hints = map
     root.rows = out
 

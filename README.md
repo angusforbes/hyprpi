@@ -12,7 +12,7 @@ Vimarchy-style overview for hyprwrlds "worlds" (world A = workspaces 1-10, B = 1
 Windows are outlined boxes at their real position and size inside a mini-screen per workspace,
 styled like Vimarchy: each window gets a colour from Vimarchy's palette (tinted box, coloured
 outline, translucent circle with the letter in full colour). Only workspaces with windows are
-shown. Hints run alphabetically and contiguously in reading order (world, workspace, then
+shown. Hints are global: every window has the same letter (and colour) in all three views. They run alphabetically and contiguously in reading order over ALL windows (world, workspace, then
 left-to-right/top-to-bottom): `a`-`z` for the first 26, then `A`-`Z` with Shift for 27-52
 , then two lowercase letters. Ctrl+= / Ctrl+- resize the circles
 (0.75-1.5x, saved in `~/.config/omarchy/hyprwrlds-vimarchy.json`). Each box shows a still capture of the app (taken when the overview opens, also for windows on
