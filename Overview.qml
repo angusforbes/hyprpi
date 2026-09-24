@@ -38,8 +38,67 @@ Item {
 
   readonly property int size: 10
   readonly property string letters: "ABCDEFGHI"
-  readonly property string hintKeys: "asdfghjklqwertyuiopzxcvbnm"
+  // Alphabetical so hints read contiguously: a, b, c ... through a workspace
+  // and on into the next workspace of the same world (then the next world).
+  readonly property string hintKeys: "abcdefghijklmnopqrstuvwxyz"
   property string fontFamily: "JetBrainsMono Nerd Font"
+
+  // ---- Vimarchy look -------------------------------------------------------
+  // Same palette and tint levels as Vimarchy: each window gets a colour in
+  // hint order; its box is tinted and outlined in it, and its hint is a
+  // translucent circle with the letter in full colour.
+  readonly property var hintPalette: [
+    "#818cf8", "#a78bfa", "#c084fc", "#e879f9", "#f472b6",
+    "#fb7185", "#fb923c", "#facc15", "#a3e635", "#4ade80",
+    "#2dd4bf", "#22d3ee", "#38bdf8", "#60a5fa"
+  ]
+  property real hintScale: 1.0           // Ctrl+= / Ctrl+- while open (0.75-1.5)
+  property real windowTintOpacity: 0.07
+  property real badgeTintOpacity: 0.21
+  property bool settingsLoaded: false
+  property var settingsData: ({})
+
+  function loadSettings(raw) {
+    var data = {}
+    try { data = JSON.parse(raw || "{}") } catch (e) { data = {} }
+    root.settingsData = data
+    var sc = Number(data.hintScale), wt = Number(data.windowTintOpacity), bt = Number(data.badgeTintOpacity)
+    root.hintScale = isFinite(sc) && sc > 0 ? Math.max(0.75, Math.min(1.50, sc)) : 1.0
+    root.windowTintOpacity = isFinite(wt) ? Math.max(0, Math.min(0.30, wt)) : 0.07
+    root.badgeTintOpacity = isFinite(bt) ? Math.max(0, Math.min(0.30, bt)) : 0.21
+    root.settingsLoaded = true
+  }
+
+  function saveSettings() {
+    if (!root.settingsLoaded) return
+    var data = {}
+    for (var k in root.settingsData) data[k] = root.settingsData[k]
+    data.hintScale = root.hintScale
+    data.windowTintOpacity = root.windowTintOpacity
+    data.badgeTintOpacity = root.badgeTintOpacity
+    root.settingsData = data
+    settingsFile.setText(JSON.stringify(data, null, 2) + "\n")
+  }
+
+  function adjustHintScale(delta) {
+    var next = root.hintScale + Number(delta || 0) * 0.10
+    root.hintScale = Math.max(0.75, Math.min(1.50, Math.round(next * 100) / 100))
+    if (root.settingsLoaded) settingsSaveTimer.restart()
+    return "ok"
+  }
+
+  FileView {
+    id: settingsFile
+    path: Quickshell.env("HOME") + "/.config/omarchy/hyprwrlds-vimarchy.json"
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.loadSettings(text())
+    onLoadFailed: root.loadSettings("")
+    onFileChanged: reload()
+  }
+
+  Timer { id: settingsSaveTimer; interval: 150; repeat: false; onTriggered: root.saveSettings() }
 
   // ---- theme ---------------------------------------------------------------
   property var themeColors: ({})
@@ -130,8 +189,9 @@ Item {
 
   function worldOf(id) { return id >= 1 ? Math.floor((id - 1) / size) + 1 : 0 }
 
-  // Hints: windows 1-26 get a-z (home row first), 27-52 get A-Z (Shift +
-  // the same key). Beyond 52 every window gets a two-letter lowercase hint.
+  // Hints: windows 1-26 get a-z, 27-52 get A-Z (Shift + the same key), in
+  // reading order (world, workspace, then left-to-right / top-to-bottom).
+  // Beyond 52 every window gets a two-letter lowercase hint.
   function hintFor(index, total) {
     var n = hintKeys.length
     if (total <= n * 2) {
@@ -201,6 +261,7 @@ Item {
     var map = {}
     for (var h = 0; h < ordered.length; h++) {
       ordered[h].hint = hintFor(h + root.hintStart, ordered.length + root.hintStart)
+      ordered[h].color = hintPalette[(h + root.hintStart) % hintPalette.length]
       map[ordered[h].hint] = ordered[h]
     }
 
@@ -283,6 +344,11 @@ Item {
         focus: true
         Keys.onPressed: function(event) {
           if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true; return }
+          if (event.modifiers & Qt.ControlModifier) {
+            if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) { root.adjustHintScale(1); event.accepted = true; return }
+            if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) { root.adjustHintScale(-1); event.accepted = true; return }
+            return
+          }
           if (event.key === Qt.Key_Backspace) {
             if (root.typed === "") root.close(); else root.typed = ""
             event.accepted = true; return
@@ -367,9 +433,10 @@ Item {
                         width: Math.max(18, modelData.w * overlay.sx)
                         height: Math.max(14, modelData.h * overlay.sx)
                         radius: 4
-                        color: Qt.rgba(worldRow.hue.r, worldRow.hue.g, worldRow.hue.b, isActive ? 0.22 : 0.08)
-                        border.width: isActive ? 2 : 1.25
-                        border.color: Qt.rgba(worldRow.hue.r, worldRow.hue.g, worldRow.hue.b, 0.9)
+                        readonly property color accent: modelData.color
+                        color: Qt.rgba(accent.r, accent.g, accent.b, isActive ? 0.20 : root.windowTintOpacity)
+                        border.width: 2
+                        border.color: accent
                         opacity: matches ? 1 : 0.25
                         z: modelData.floating ? 2 : 1
 
@@ -384,26 +451,27 @@ Item {
                           font.pixelSize: 10
                         }
 
-                        // Hint badge: filled for a-z, outlined for Shift hints (A-Z).
+                        // Hint badge, Vimarchy style: translucent circle in the
+                        // window's colour, letter in full colour. Size follows the
+                        // box and Ctrl+= / Ctrl+-. Shift hints (A-Z) get a solid ring.
                         Rectangle {
+                          id: badge
                           readonly property bool shifted: root.isShiftHint(winBox.modelData.hint)
-                          // Shrinks to fit small boxes so crowded workspaces stay legible.
-                          readonly property real d: Math.max(15, Math.min(26, winBox.width - 4, winBox.height - 4))
+                          readonly property real d: Math.max(16, Math.min(40, Math.min(winBox.width, winBox.height) * 0.55)) * root.hintScale
                           anchors.centerIn: parent
-                          width: Math.max(d, hintText.implicitWidth + d * 0.45)
+                          width: d
                           height: d
                           radius: d / 2
-                          color: shifted ? root.bg : worldRow.hue
-                          border.width: shifted ? 2 : 0
-                          border.color: worldRow.hue
+                          z: 5
+                          color: Qt.rgba(winBox.accent.r, winBox.accent.g, winBox.accent.b, root.badgeTintOpacity)
+                          border.width: shifted ? Math.max(1.5, d * 0.08) : 0
+                          border.color: winBox.accent
                           Text {
-                            id: hintText
                             anchors.centerIn: parent
-                            anchors.verticalCenterOffset: -1
                             text: winBox.modelData.hint
-                            color: parent.shifted ? worldRow.hue : root.bg
+                            color: winBox.accent
                             font.family: root.fontFamily
-                            font.pixelSize: Math.max(10, Math.round(parent.d * 0.58))
+                            font.pixelSize: Math.max(9, Math.round(badge.d * (text.length > 1 ? 0.46 : 0.62)))
                             font.bold: true
                           }
                         }
