@@ -228,7 +228,7 @@ Item {
   function open(payloadJson) {
     var payload = {}
     try { payload = JSON.parse(String(payloadJson || "{}")) } catch (e) { payload = {} }
-    root.mode = payload.mode === "all" ? "all" : "world"
+    root.mode = (payload.mode === "all" || payload.mode === "workspace") ? payload.mode : "world"
     root.hintStart = Math.max(0, Number(payload.hintStart) || 0)
     root.dry = payload.dry === true
     root.typed = ""
@@ -328,12 +328,13 @@ Item {
       if (wsId < 1 || !cl.mapped || cl.hidden) continue
       var w = worldOf(wsId)
       if (root.mode === "world" && w !== currentWorld) continue
+      if (root.mode === "workspace" && wsId !== root.activeWorkspace) continue
       if (!byWorld[w]) byWorld[w] = {}
       if (!byWorld[w][wsId]) byWorld[w][wsId] = []
       byWorld[w][wsId].push({
         address: cl.address, cls: root.shortenAppNames ? shortClass(cl["class"]) : (cl["class"] || ""), fullClass: cl["class"] || "", title: cl.title || "",
         x: cl.at[0] - mon.x, y: cl.at[1] - mon.y, w: cl.size[0], h: cl.size[1],
-        floating: cl.floating === true, workspace: wsId
+        floating: cl.floating === true, fullscreen: (cl.fullscreen || 0) !== 0, workspace: wsId
       })
     }
 
@@ -515,7 +516,8 @@ Item {
         var byWidth = (width - margin * 2 - labelW - arrowW * 2 - gap * (root.maxCols + 1)) / root.maxCols
         var rowsN = Math.max(1, Math.min(root.visibleRows, root.rows.length))
         var byHeight = ((height - margin * 2 - 60 - gap * (rowsN - 1)) / rowsN - headerH) * root.aspect
-        return Math.max(120, Math.min(root.maxTileWidth, byWidth, byHeight))
+        var cap = root.mode === "workspace" ? 100000 : root.maxTileWidth
+        return Math.max(120, Math.min(cap, byWidth, byHeight))
       }
       readonly property real tileH: tileW / root.aspect
       readonly property real sx: tileW / (root.monitor ? root.monitor.width : 1)
@@ -635,7 +637,7 @@ Item {
 
                   Text {
                     height: overlay.headerH - 4
-                    text: (wsCol.isSelected ? "▸ " : "") + (root.mode === "all" ? worldRow.rowData.letter + " · " : "") +
+                    text: (wsCol.isSelected ? "▸ " : "") + (root.mode !== "world" ? worldRow.rowData.letter + " · " : "") +
                           (wsCol.modelData.slot === 10 ? "0" : String(wsCol.modelData.slot))
                     color: worldRow.hue
                     font.family: root.fontFamily
@@ -697,7 +699,7 @@ Item {
                           border.color: winBox.accent
                         }
                         opacity: matches ? 1 : 0.25
-                        z: modelData.floating ? 2 : 1
+                        z: modelData.fullscreen ? 0 : (modelData.floating ? 2 : 1)
 
                         Rectangle {
                           anchors { left: parent.left; bottom: parent.bottom; margins: 3 }
@@ -718,13 +720,37 @@ Item {
                           }
                         }
 
+                        MouseArea {
+                          anchors.fill: parent
+                          onClicked: root.jump(winBox.modelData)
+                        }
+                      }
+                    }
+
+                    // Hint circles in their own layer above EVERY window box (like
+                    // Vimarchy's overlay), so sub-windows never cover a letter.
+                    Repeater {
+                      model: wsCol.modelData.windows
+
+                      Item {
+                        id: hintItem
+                        required property var modelData
+                        readonly property color accent: modelData.color
+                        readonly property bool matches: root.typed === "" || modelData.hint.indexOf(root.typed) === 0
+                        x: Math.max(0, modelData.x * overlay.sx)
+                        y: Math.max(0, modelData.y * overlay.sx)
+                        width: Math.max(18, modelData.w * overlay.sx)
+                        height: Math.max(14, modelData.h * overlay.sx)
+                        z: 10
+                        opacity: matches ? 1 : 0.25
+
                         // Hint badge, Vimarchy style: translucent circle in the
                         // window's colour, letter in full colour. Size follows the
                         // box and Ctrl+= / Ctrl+-. Shift hints (A-Z) get a solid ring.
                         Rectangle {
                           id: badge
-                          readonly property bool shifted: root.isShiftHint(winBox.modelData.hint)
-                          readonly property real d: root.vimarchyBadge(winBox.modelData.w, winBox.modelData.h) * overlay.sx
+                          readonly property bool shifted: root.isShiftHint(hintItem.modelData.hint)
+                          readonly property real d: root.vimarchyBadge(hintItem.modelData.w, hintItem.modelData.h) * overlay.sx
                           anchors.centerIn: parent
                           width: d
                           height: d
@@ -737,24 +763,20 @@ Item {
                           Rectangle {
                             anchors.fill: parent
                             radius: parent.radius
-                            color: Qt.rgba(winBox.accent.r, winBox.accent.g, winBox.accent.b, root.badgeTintOpacity)
+                            color: Qt.rgba(hintItem.accent.r, hintItem.accent.g, hintItem.accent.b, root.badgeTintOpacity)
                           }
                           border.width: (shifted && root.shiftRing) ? Math.max(1.5, d * 0.08) : 0
-                          border.color: winBox.accent
+                          border.color: hintItem.accent
                           Text {
                             anchors.centerIn: parent
-                            text: winBox.modelData.hint
-                            color: winBox.accent
+                            text: hintItem.modelData.hint
+                            color: hintItem.accent
                             font.family: root.fontFamily
                             font.pixelSize: Math.max(9, Math.round(badge.d * (text.length > 1 ? 0.46 : 0.62)))
                             font.bold: true
                           }
                         }
 
-                        MouseArea {
-                          anchors.fill: parent
-                          onClicked: root.jump(winBox.modelData)
-                        }
                       }
                     }
                   }
