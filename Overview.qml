@@ -41,20 +41,25 @@ Item {
   readonly property string letters: "ABCDEFGHI"
   // Alphabetical so hints read contiguously: a, b, c ... through a workspace
   // and on into the next workspace of the same world (then the next world).
-  readonly property string hintKeys: "abcdefghijklmnopqrstuvwxyz"
+  property string hintKeys: "abcdefghijklmnopqrstuvwxyz"
   property string fontFamily: "JetBrainsMono Nerd Font"
 
   // ---- Vimarchy look -------------------------------------------------------
   // Same palette and tint levels as Vimarchy: each window gets a colour in
   // hint order; its box is tinted and outlined in it, and its hint is a
   // translucent circle with the letter in full colour.
-  readonly property var hintPalette: [
+  property var hintPalette: [
     "#818cf8", "#a78bfa", "#c084fc", "#e879f9", "#f472b6",
     "#fb7185", "#fb923c", "#facc15", "#a3e635", "#4ade80",
     "#2dd4bf", "#22d3ee", "#38bdf8", "#60a5fa"
   ]
   property real hintScale: 1.0           // Ctrl+= / Ctrl+- while open (0.75-1.5)
-  readonly property real badgeBase: 30   // hint circle diameter at scale 1.0
+  property real badgeBase: 30            // hint circle diameter at scale 1.0 ("badgeSize")
+  property real backdropOpacity: 0.94
+  property string align: "left"          // "left" | "center"
+  property real edgeMargin: 48
+  property bool uppercaseHints: true     // Shift+A-Z after 26 windows (else two letters)
+  property bool shortenAppNames: true
   property real windowTintOpacity: 0.07
   property real badgeTintOpacity: 0.21
   property bool showPreviews: true       // captured app contents inside each box
@@ -62,28 +67,83 @@ Item {
   property bool settingsLoaded: false
   property var settingsData: ({})
 
+  // Every user-tunable setting, with its default. The file
+  // ~/.config/omarchy/hyprwrlds-vimarchy.json is (re)written with any missing
+  // keys filled in, so it always lists everything that can be changed.
+  readonly property var defaults: ({
+    workspacesPerRow: 3,
+    worldsVisible: 3,
+    align: "left",
+    margin: 48,
+    hintKeys: "abcdefghijklmnopqrstuvwxyz",
+    uppercaseHints: true,
+    shortenAppNames: true,
+    showPreviews: true,
+    shiftRing: false,
+    hintScale: 1.0,
+    badgeSize: 30,
+    windowTintOpacity: 0.07,
+    badgeTintOpacity: 0.21,
+    backdropOpacity: 0.94,
+    palette: ["#818cf8", "#a78bfa", "#c084fc", "#e879f9", "#f472b6",
+              "#fb7185", "#fb923c", "#facc15", "#a3e635", "#4ade80",
+              "#2dd4bf", "#22d3ee", "#38bdf8", "#60a5fa"]
+  })
+
+  function num(v, lo, hi, dflt) {
+    var n = Number(v)
+    return (v !== undefined && v !== null && v !== "" && isFinite(n)) ? Math.max(lo, Math.min(hi, n)) : dflt
+  }
+
   function loadSettings(raw) {
     var data = {}
     try { data = JSON.parse(raw || "{}") } catch (e) { data = {} }
+    if (typeof data !== "object" || data === null || Array.isArray(data)) data = {}
+    var d = root.defaults
     root.settingsData = data
-    var sc = Number(data.hintScale), wt = Number(data.windowTintOpacity), bt = Number(data.badgeTintOpacity)
-    root.hintScale = isFinite(sc) && sc > 0 ? Math.max(0.75, Math.min(1.50, sc)) : 1.0
-    root.windowTintOpacity = isFinite(wt) ? Math.max(0, Math.min(0.30, wt)) : 0.07
-    root.badgeTintOpacity = isFinite(bt) ? Math.max(0, Math.min(0.30, bt)) : 0.21
+
+    root.visibleCols = Math.round(num(data.workspacesPerRow, 1, 10, d.workspacesPerRow))
+    root.visibleRows = Math.round(num(data.worldsVisible, 1, 9, d.worldsVisible))
+    root.align = data.align === "center" ? "center" : "left"
+    root.edgeMargin = num(data.margin, 0, 400, d.margin)
+    // hintKeys: unique lowercase letters, at least 2; else the default.
+    var keys = String(data.hintKeys || "").toLowerCase().replace(/[^a-z]/g, "")
+    var uniq = ""
+    for (var i = 0; i < keys.length; i++) if (uniq.indexOf(keys.charAt(i)) < 0) uniq += keys.charAt(i)
+    root.hintKeys = uniq.length >= 2 ? uniq : d.hintKeys
+    root.uppercaseHints = data.uppercaseHints !== false
+    root.shortenAppNames = data.shortenAppNames !== false
     root.showPreviews = data.showPreviews !== false
     root.shiftRing = data.shiftRing === true
+    root.hintScale = num(data.hintScale, 0.75, 1.50, d.hintScale)
+    root.badgeBase = num(data.badgeSize, 12, 80, d.badgeSize)
+    root.windowTintOpacity = num(data.windowTintOpacity, 0, 0.30, d.windowTintOpacity)
+    root.badgeTintOpacity = num(data.badgeTintOpacity, 0, 0.30, d.badgeTintOpacity)
+    root.backdropOpacity = num(data.backdropOpacity, 0, 1, d.backdropOpacity)
+    var pal = Array.isArray(data.palette)
+      ? data.palette.filter(function(c) { return /^#[0-9A-Fa-f]{6}$/.test(String(c)) }) : []
+    root.hintPalette = pal.length ? pal : d.palette
+
     root.settingsLoaded = true
+    // Fill in any missing keys so the file documents every setting.
+    for (var k in d) {
+      if (!(k in data)) { settingsSaveTimer.restart(); break }
+    }
   }
 
   function saveSettings() {
     if (!root.settingsLoaded) return
     var data = {}
     for (var k in root.settingsData) data[k] = root.settingsData[k]
-    data.hintScale = root.hintScale
-    data.windowTintOpacity = root.windowTintOpacity
-    data.badgeTintOpacity = root.badgeTintOpacity
-    root.settingsData = data
-    settingsFile.setText(JSON.stringify(data, null, 2) + "\n")
+    var d = root.defaults
+    for (var dk in d) if (!(dk in data)) data[dk] = d[dk]
+    data.hintScale = root.hintScale      // the only setting changed from the UI (Ctrl+=/-)
+    // Stable, readable key order: known settings first, then anything else.
+    var ordered = {}
+    for (var ok in d) ordered[ok] = data[ok]
+    for (var ek in data) if (!(ek in ordered)) ordered[ek] = data[ek]
+    root.settingsData = ordered
+    settingsFile.setText(JSON.stringify(ordered, null, 2) + "\n")
   }
 
   function adjustHintScale(delta) {
@@ -210,7 +270,7 @@ Item {
   // Beyond 52 every window gets a two-letter lowercase hint.
   function hintFor(index, total) {
     var n = hintKeys.length
-    if (total <= n * 2) {
+    if (total <= n || (root.uppercaseHints && total <= n * 2)) {
       return index < n ? hintKeys.charAt(index) : hintKeys.charAt(index - n).toUpperCase()
     }
     return hintKeys.charAt(Math.floor(index / n) % n) + hintKeys.charAt(index % n)
@@ -250,7 +310,7 @@ Item {
       if (!byWorld[w]) byWorld[w] = {}
       if (!byWorld[w][wsId]) byWorld[w][wsId] = []
       byWorld[w][wsId].push({
-        address: cl.address, cls: shortClass(cl["class"]), fullClass: cl["class"] || "", title: cl.title || "",
+        address: cl.address, cls: root.shortenAppNames ? shortClass(cl["class"]) : (cl["class"] || ""), fullClass: cl["class"] || "", title: cl.title || "",
         x: cl.at[0] - mon.x, y: cl.at[1] - mon.y, w: cl.size[0], h: cl.size[1],
         floating: cl.floating === true, workspace: wsId
       })
@@ -309,8 +369,8 @@ Item {
   // At most visibleRows worlds and visibleCols workspaces per row are drawn.
   // Arrows move a selected workspace (wrapping); the view follows it. Hints
   // keep their letters while scrolling and work for off-screen windows too.
-  readonly property int visibleRows: 3
-  readonly property int visibleCols: 4
+  property int visibleRows: 3            // "worldsVisible"
+  property int visibleCols: 3            // "workspacesPerRow"
   property int selRow: 0
   property int selCol: 0
   property int rowOffset: 0
@@ -425,7 +485,7 @@ Item {
       WlrLayershell.layer: WlrLayer.Overlay
       WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
-      readonly property real margin: 48
+      readonly property real margin: root.edgeMargin
       readonly property real gap: 18
       readonly property real labelW: root.mode === "all" ? 44 : 0
       readonly property real arrowW: 40
@@ -442,7 +502,7 @@ Item {
       // Backdrop: dims the desktop; a click anywhere closes.
       Rectangle {
         anchors.fill: parent
-        color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.94)
+        color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, root.backdropOpacity)
         MouseArea { anchors.fill: parent; onClicked: root.close() }
       }
 
@@ -476,8 +536,9 @@ Item {
 
         // Left-justified with a margin (not centred), vertically centred.
         Column {
-          anchors.left: parent.left
+          anchors.left: root.align === "left" ? parent.left : undefined
           anchors.leftMargin: overlay.margin
+          anchors.horizontalCenter: root.align === "center" ? parent.horizontalCenter : undefined
           anchors.verticalCenter: parent.verticalCenter
           spacing: overlay.gap
 

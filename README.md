@@ -37,3 +37,29 @@ Keybindings live in `~/.config/hypr/hyprwrlds.lua`.
 ## Caveat
 The Omarchy shell may keep serving a cached copy of an already-loaded plugin's QML after
 `install.sh`. Iterate in the dev harness; a shell restart (ask first) picks up plugin changes.
+
+## Settings
+
+`~/.config/omarchy/hyprwrlds-vimarchy.json` is created with every setting at its default the
+first time the overview runs (missing keys are filled in later too). Edits apply the next time
+the overview opens; no restart needed.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `workspacesPerRow` | 3 | Workspaces visible per row (1-10); arrows scroll the rest |
+| `worldsVisible` | 3 | Worlds visible at once in the all-worlds view (1-9) |
+| `align` | `"left"` | `"left"` or `"center"` |
+| `margin` | 48 | Edge margin in px |
+| `hintKeys` | `"abcdefghijklmnopqrstuvwxyz"` | Hint letters, in order (unique a-z, at least 2) |
+| `uppercaseHints` | true | After the lowercase keys, use Shift+uppercase before two-letter hints |
+| `shortenAppNames` | true | `chrome-web.whatsapp.com__-Default` -> `whatsapp` |
+| `showPreviews` | true | Still capture of each app inside its box |
+| `shiftRing` | false | Extra ring around uppercase (Shift) hints |
+| `hintScale` | 1.0 | Circle size multiplier (0.75-1.5); Ctrl+= / Ctrl+- change and save it |
+| `badgeSize` | 30 | Circle diameter in px at scale 1.0 |
+| `windowTintOpacity` | 0.07 | Tint of each window box (0-0.3) |
+| `badgeTintOpacity` | 0.21 | Colour tint of each circle (0-0.3) |
+| `backdropOpacity` | 0.94 | How opaque the backdrop is (0-1) |
+| `palette` | Vimarchy's 14 colours | Window/circle colours, assigned in hint order |
+
+World colours (A blue, B red, ...) come from the Omarchy theme, not this file.
