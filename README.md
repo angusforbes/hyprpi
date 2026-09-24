@@ -50,6 +50,7 @@ the overview opens; no restart needed.
 | `worldsVisible` | 3 | Worlds visible at once in the all-worlds view (1-9) |
 | `align` | `"left"` | `"left"` or `"center"` |
 | `margin` | 48 | Edge margin in px |
+| `maxTileWidth` | 460 | Largest workspace tile width in px (tiles shrink to fit the screen) |
 | `hintKeys` | `"abcdefghijklmnopqrstuvwxyz"` | Hint letters, in order (unique a-z, at least 2) |
 | `uppercaseHints` | true | After the lowercase keys, use Shift+uppercase before two-letter hints |
 | `shortenAppNames` | true | `chrome-web.whatsapp.com__-Default` -> `whatsapp` |

@@ -60,6 +60,7 @@ Item {
   property real edgeMargin: 48
   property bool uppercaseHints: true     // Shift+A-Z after 26 windows (else two letters)
   property bool shortenAppNames: true
+  property real maxTileWidth: 460        // largest workspace tile width in px (shrinks to fit)
   property real windowTintOpacity: 0.07
   property real badgeTintOpacity: 0.21
   property bool showPreviews: true       // captured app contents inside each box
@@ -75,6 +76,7 @@ Item {
     worldsVisible: 3,
     align: "left",
     margin: 48,
+    maxTileWidth: 460,
     hintKeys: "abcdefghijklmnopqrstuvwxyz",
     uppercaseHints: true,
     shortenAppNames: true,
@@ -106,6 +108,7 @@ Item {
     root.visibleRows = Math.round(num(data.worldsVisible, 1, 9, d.worldsVisible))
     root.align = data.align === "center" ? "center" : "left"
     root.edgeMargin = num(data.margin, 0, 400, d.margin)
+    root.maxTileWidth = num(data.maxTileWidth, 120, 2000, d.maxTileWidth)
     // hintKeys: unique lowercase letters, at least 2; else the default.
     var keys = String(data.hintKeys || "").toLowerCase().replace(/[^a-z]/g, "")
     var uniq = ""
@@ -494,7 +497,7 @@ Item {
         var byWidth = (width - margin * 2 - labelW - arrowW * 2 - gap * (root.maxCols + 1)) / root.maxCols
         var rowsN = Math.max(1, Math.min(root.visibleRows, root.rows.length))
         var byHeight = ((height - margin * 2 - 60 - gap * (rowsN - 1)) / rowsN - headerH) * root.aspect
-        return Math.max(120, Math.min(360, byWidth, byHeight))
+        return Math.max(120, Math.min(root.maxTileWidth, byWidth, byHeight))
       }
       readonly property real tileH: tileW / root.aspect
       readonly property real sx: tileW / (root.monitor ? root.monitor.width : 1)
