@@ -34,6 +34,7 @@ Item {
   property string activeAddress: ""
   property int loadGeneration: 0
   property int hintStart: 0              // testing only: pretend this many windows come first
+  property bool dry: false               // testing only: build hints but never show/grab keys
 
   readonly property int size: 10
   readonly property string letters: "ABCDEFGHI"
@@ -83,6 +84,7 @@ Item {
     try { payload = JSON.parse(String(payloadJson || "{}")) } catch (e) { payload = {} }
     root.mode = payload.mode === "all" ? "all" : "world"
     root.hintStart = Math.max(0, Number(payload.hintStart) || 0)
+    root.dry = payload.dry === true
     root.typed = ""
     colorsFile.reload()
     root.loadGeneration++
@@ -111,6 +113,19 @@ Item {
       onStreamFinished: root.applySnapshot(text, snapshot.generation)
     }
     onExited: function(exitCode) { if (exitCode !== 0) root.close() }
+  }
+
+  // Short app label from a window class: what's after the last ".", ignoring a
+  // Chromium profile suffix ("__-Default") and web-domain endings, so
+  // "chrome-web.whatsapp.com__-Default" -> "whatsapp",
+  // "md.obsidian.Obsidian" -> "Obsidian", "foot" -> "foot".
+  readonly property var domainEndings: ["com", "org", "net", "io", "app", "dev", "ai", "co", "uk",
+    "us", "de", "fr", "eu", "me", "tv", "gg", "so", "sh", "edu", "gov", "info", "biz"]
+  function shortClass(cls) {
+    var s = String(cls || "").replace(/__.*$/, "")
+    var parts = s.split(".").filter(function(p) { return p.length > 0 })
+    while (parts.length > 1 && domainEndings.indexOf(parts[parts.length - 1].toLowerCase()) >= 0) parts.pop()
+    return parts.length ? parts[parts.length - 1] : String(cls || "")
   }
 
   function worldOf(id) { return id >= 1 ? Math.floor((id - 1) / size) + 1 : 0 }
@@ -159,7 +174,7 @@ Item {
       if (!byWorld[w]) byWorld[w] = {}
       if (!byWorld[w][wsId]) byWorld[w][wsId] = []
       byWorld[w][wsId].push({
-        address: cl.address, cls: cl["class"] || "", title: cl.title || "",
+        address: cl.address, cls: shortClass(cl["class"]), fullClass: cl["class"] || "", title: cl.title || "",
         x: cl.at[0] - mon.x, y: cl.at[1] - mon.y, w: cl.size[0], h: cl.size[1],
         floating: cl.floating === true, workspace: wsId
       })
@@ -192,7 +207,7 @@ Item {
     if (ordered.length === 0) { root.close(); return }
     root.hints = map
     root.rows = out
-    root.opened = true
+    root.opened = !root.dry
   }
 
   // ---- keys ----------------------------------------------------------------

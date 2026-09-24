@@ -30,6 +30,7 @@ ShellRoot {
     target: "hwv"
     function open(mode: string): void { overview.open(JSON.stringify({ mode: mode })) }
     function close(): void { overview.close() }
+    function dry(mode: string): void { overview.open(JSON.stringify({ mode: mode, dry: true })) }
     function openTest(mode: string, hintStart: int): void { overview.open(JSON.stringify({ mode: mode, hintStart: hintStart })) }
     function press(key: string): void { overview.press(key) }
     // Dry run: what would this key sequence select? (Does not jump.)
