@@ -12,8 +12,11 @@ styled like Vimarchy: each window gets a colour from Vimarchy's palette (tinted 
 outline, translucent circle with the letter in full colour). Only workspaces with windows are
 shown. Hints run alphabetically and contiguously in reading order (world, workspace, then
 left-to-right/top-to-bottom): `a`-`z` for the first 26, then `A`-`Z` with Shift for 27-52
-(circles with a solid ring), then two lowercase letters. Ctrl+= / Ctrl+- resize the circles
-(0.75-1.5x, saved in `~/.config/omarchy/hyprwrlds-vimarchy.json`). App labels are shortened
+, then two lowercase letters. Ctrl+= / Ctrl+- resize the circles
+(0.75-1.5x, saved in `~/.config/omarchy/hyprwrlds-vimarchy.json`). Each box shows a still capture of the app (taken when the overview opens, also for windows on
+hidden workspaces). All hint circles are the same size. Settings in the JSON file:
+`hintScale`, `showPreviews` (default true), `shiftRing` (ring around A-Z hints, default false),
+`windowTintOpacity`, `badgeTintOpacity`. App labels are shortened
 (`chrome-web.whatsapp.com__-Default` -> `whatsapp`). Typing a hint jumps to that window (Hyprland switches to its workspace). Case comes
 from Shift, so Caps Lock can't flip a hint. Escape, Backspace on an empty entry, or a click on
 the backdrop closes. Clicking a window box jumps to it too. Jumping only (moving windows: later).

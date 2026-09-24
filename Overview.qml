@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import QtQuick
 
 // hyprwrlds-vimarchy overview.
@@ -53,8 +54,11 @@ Item {
     "#2dd4bf", "#22d3ee", "#38bdf8", "#60a5fa"
   ]
   property real hintScale: 1.0           // Ctrl+= / Ctrl+- while open (0.75-1.5)
+  readonly property real badgeBase: 30   // hint circle diameter at scale 1.0
   property real windowTintOpacity: 0.07
   property real badgeTintOpacity: 0.21
+  property bool showPreviews: true       // captured app contents inside each box
+  property bool shiftRing: false         // extra ring around Shift (A-Z) hints
   property bool settingsLoaded: false
   property var settingsData: ({})
 
@@ -66,6 +70,8 @@ Item {
     root.hintScale = isFinite(sc) && sc > 0 ? Math.max(0.75, Math.min(1.50, sc)) : 1.0
     root.windowTintOpacity = isFinite(wt) ? Math.max(0, Math.min(0.30, wt)) : 0.07
     root.badgeTintOpacity = isFinite(bt) ? Math.max(0, Math.min(0.30, bt)) : 0.21
+    root.showPreviews = data.showPreviews !== false
+    root.shiftRing = data.shiftRing === true
     root.settingsLoaded = true
   }
 
@@ -185,6 +191,16 @@ Item {
     var parts = s.split(".").filter(function(p) { return p.length > 0 })
     while (parts.length > 1 && domainEndings.indexOf(parts[parts.length - 1].toLowerCase()) >= 0) parts.pop()
     return parts.length ? parts[parts.length - 1] : String(cls || "")
+  }
+
+  // Wayland toplevel for a Hyprland window address ("0x5579...").
+  function toplevelFor(address) {
+    var want = String(address || "").replace(/^0x/, "")
+    var values = Hyprland.toplevels.values
+    for (var i = 0; i < values.length; i++) {
+      if (String(values[i].address).replace(/^0x/, "") === want) return values[i].wayland
+    }
+    return null
   }
 
   function worldOf(id) { return id >= 1 ? Math.floor((id - 1) / size) + 1 : 0 }
@@ -434,21 +450,54 @@ Item {
                         height: Math.max(14, modelData.h * overlay.sx)
                         radius: 4
                         readonly property color accent: modelData.color
-                        color: Qt.rgba(accent.r, accent.g, accent.b, isActive ? 0.20 : root.windowTintOpacity)
-                        border.width: 2
-                        border.color: accent
+                        readonly property var toplevel: root.showPreviews ? root.toplevelFor(modelData.address) : null
+                        // Plain background while there is no preview.
+                        color: preview.hasContent ? "transparent" : Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 1)
+
+                        // Captured app contents (one still frame per open), clipped
+                        // to the box; the hint circle is NOT clipped.
+                        Item {
+                          anchors.fill: parent
+                          clip: true
+                          ScreencopyView {
+                            id: preview
+                            anchors.fill: parent
+                            captureSource: winBox.toplevel
+                            live: false
+                            constraintSize: Qt.size(Math.max(1, winBox.width), Math.max(1, winBox.height))
+                            visible: winBox.toplevel !== null && hasContent
+                          }
+                        }
+
+                        // Vimarchy tint + outline over the preview.
+                        Rectangle {
+                          anchors.fill: parent
+                          radius: parent.radius
+                          color: Qt.rgba(winBox.accent.r, winBox.accent.g, winBox.accent.b,
+                                         winBox.isActive ? 0.20 : root.windowTintOpacity)
+                          border.width: 2
+                          border.color: winBox.accent
+                        }
                         opacity: matches ? 1 : 0.25
                         z: modelData.floating ? 2 : 1
 
-                        Text {
-                          anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 4 }
+                        Rectangle {
+                          anchors { left: parent.left; bottom: parent.bottom; margins: 3 }
                           visible: parent.height > 34
-                          text: winBox.modelData.cls
-                          elide: Text.ElideRight
-                          color: root.fg
-                          opacity: 0.7
-                          font.family: root.fontFamily
-                          font.pixelSize: 10
+                          width: Math.min(parent.width - 6, appLabel.implicitWidth + 8)
+                          height: appLabel.implicitHeight + 2
+                          radius: 3
+                          color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.85)
+                          z: 4
+                          Text {
+                            id: appLabel
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 4; rightMargin: 4 }
+                            text: winBox.modelData.cls
+                            elide: Text.ElideRight
+                            color: root.fg
+                            font.family: root.fontFamily
+                            font.pixelSize: 10
+                          }
                         }
 
                         // Hint badge, Vimarchy style: translucent circle in the
@@ -457,14 +506,22 @@ Item {
                         Rectangle {
                           id: badge
                           readonly property bool shifted: root.isShiftHint(winBox.modelData.hint)
-                          readonly property real d: Math.max(16, Math.min(40, Math.min(winBox.width, winBox.height) * 0.55)) * root.hintScale
+                          // One size for every hint (like Vimarchy); only Ctrl+= / Ctrl+- change it.
+                          readonly property real d: root.badgeBase * root.hintScale
                           anchors.centerIn: parent
                           width: d
                           height: d
                           radius: d / 2
                           z: 5
-                          color: Qt.rgba(winBox.accent.r, winBox.accent.g, winBox.accent.b, root.badgeTintOpacity)
-                          border.width: shifted ? Math.max(1.5, d * 0.08) : 0
+                          // Cream disc so the letter reads over busy previews; the
+                          // Vimarchy tint sits on top of it (tintDisc below).
+                          color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.88)
+                          Rectangle {
+                            anchors.fill: parent
+                            radius: parent.radius
+                            color: Qt.rgba(winBox.accent.r, winBox.accent.g, winBox.accent.b, root.badgeTintOpacity)
+                          }
+                          border.width: (shifted && root.shiftRing) ? Math.max(1.5, d * 0.08) : 0
                           border.color: winBox.accent
                           Text {
                             anchors.centerIn: parent

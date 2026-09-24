@@ -38,6 +38,11 @@ ShellRoot {
       var w = overview.resolve(seq)
       return w ? JSON.stringify({ hint: w.hint, workspace: w.workspace, cls: w.cls, address: w.address }) : "none"
     }
+    function previews(): string {
+      var total = 0, matched = 0
+      for (var h in overview.hints) { total++; if (overview.toplevelFor(overview.hints[h].address)) matched++ }
+      return matched + "/" + total + " windows have a capture handle"
+    }
     function state(): string {
       var hints = Object.keys(overview.hints).sort()
       return JSON.stringify({ opened: overview.opened, mode: overview.mode, rows: overview.rows.length,
