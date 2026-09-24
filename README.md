@@ -56,7 +56,8 @@ the overview opens; no restart needed.
 | `shortenAppNames` | true | `chrome-web.whatsapp.com__-Default` -> `whatsapp` |
 | `showPreviews` | true | Still capture of each app inside its box |
 | `shiftRing` | false | Extra ring around uppercase (Shift) hints |
-| `hintScale` | 1.0 | Circle size multiplier (0.75-1.5); Ctrl+= / Ctrl+- change and save it |
+| `badgeBacking` | false | Cream disc under each circle for legibility over busy previews (Vimarchy has none) |
+| `hintScale` | 1.0 | Circle size multiplier (0.5-5); Ctrl+= / Ctrl+- change it by 15% per press and save it |
 | `badgeSize` | 30 | Circle diameter in px at scale 1.0 |
 | `windowTintOpacity` | 0.07 | Tint of each window box (0-0.3) |
 | `badgeTintOpacity` | 0.21 | Colour tint of each circle (0-0.3) |

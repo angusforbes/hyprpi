@@ -60,6 +60,7 @@ Item {
   property real edgeMargin: 48
   property bool uppercaseHints: true     // Shift+A-Z after 26 windows (else two letters)
   property bool shortenAppNames: true
+  property bool badgeBacking: false      // cream disc under each circle (not in Vimarchy)
   property real maxTileWidth: 460        // largest workspace tile width in px (shrinks to fit)
   property real windowTintOpacity: 0.07
   property real badgeTintOpacity: 0.21
@@ -82,6 +83,7 @@ Item {
     shortenAppNames: true,
     showPreviews: true,
     shiftRing: false,
+    badgeBacking: false,
     hintScale: 1.0,
     badgeSize: 30,
     windowTintOpacity: 0.07,
@@ -118,7 +120,8 @@ Item {
     root.shortenAppNames = data.shortenAppNames !== false
     root.showPreviews = data.showPreviews !== false
     root.shiftRing = data.shiftRing === true
-    root.hintScale = num(data.hintScale, 0.75, 1.50, d.hintScale)
+    root.badgeBacking = data.badgeBacking === true
+    root.hintScale = num(data.hintScale, root.minHintScale, root.maxHintScale, d.hintScale)
     root.badgeBase = num(data.badgeSize, 12, 80, d.badgeSize)
     root.windowTintOpacity = num(data.windowTintOpacity, 0, 0.30, d.windowTintOpacity)
     root.badgeTintOpacity = num(data.badgeTintOpacity, 0, 0.30, d.badgeTintOpacity)
@@ -149,9 +152,12 @@ Item {
     settingsFile.setText(JSON.stringify(ordered, null, 2) + "\n")
   }
 
+  // Ctrl+= / Ctrl+-: grow/shrink every circle by 15% per press, 0.5x-5x.
+  readonly property real minHintScale: 0.5
+  readonly property real maxHintScale: 5.0
   function adjustHintScale(delta) {
-    var next = root.hintScale + Number(delta || 0) * 0.10
-    root.hintScale = Math.max(0.75, Math.min(1.50, Math.round(next * 100) / 100))
+    var next = root.hintScale * Math.pow(1.15, Number(delta || 0))
+    root.hintScale = Math.max(minHintScale, Math.min(maxHintScale, Math.round(next * 100) / 100))
     if (root.settingsLoaded) settingsSaveTimer.restart()
     return "ok"
   }
@@ -713,9 +719,10 @@ Item {
                           height: d
                           radius: d / 2
                           z: 5
-                          // Cream disc so the letter reads over busy previews; the
-                          // Vimarchy tint sits on top of it (tintDisc below).
-                          color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.88)
+                          // Same as Vimarchy: only a translucent tint of the window's
+                          // colour. Optional cream backing ("badgeBacking") for
+                          // legibility over busy previews.
+                          color: root.badgeBacking ? Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.88) : "transparent"
                           Rectangle {
                             anchors.fill: parent
                             radius: parent.radius
