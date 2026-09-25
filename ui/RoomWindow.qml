@@ -1,35 +1,24 @@
-// The room widget: a fixed-size panel pinned under the bar's world letters.
+// A room window: a normal Hyprland window (at most one per workspace). The
+// daemon places a new one as the left-most root of the workspace's dwindle
+// tree; after that it is an ordinary window.
 // Agents (click to jump, @ to address) above the room's shared conversation.
 // Type to the whole room; start with @Name [@Name2 ...] to prompt only them.
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
-import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Controls
 
-PanelWindow {
+FloatingWindow {
   id: win
   property string room: "A"
+  property string key: ""
   property var app
-  visible: app.panelOpen
-  screen: {
-    var m = Hyprland.focusedMonitor
-    var s = Quickshell.screens
-    for (var i = 0; m && i < s.length; i++) if (s[i].name === m.name) return s[i]
-    return s[0]
-  }
-  // Docked on the left, full height below the bar. It reserves its strip like
-  // the bar does, so every workspace's windows re-tile to the right of it
-  // while it is open (the widget acts as the workspace's left-hand parent).
-  anchors { top: true; bottom: true; left: true }
-  margins { top: app.panelGap; bottom: app.panelGap; left: app.panelLeft }
-  exclusionMode: ExclusionMode.Auto
-  implicitWidth: app.panelWidth
-  color: "transparent"
-  WlrLayershell.namespace: "hyprpi-room"
-  WlrLayershell.layer: WlrLayer.Top
-  WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+  title: "hyprpi room " + room + " · " + key
+  implicitWidth: 430
+  implicitHeight: 700
+  color: app.popupBg
+  // Closed by the compositor (SUPER+W, the world click): drop it.
+  onVisibleChanged: if (!visible) app.forgetWindow(key)
 
   readonly property var members: app.agents.filter(a => a.room === room)
   readonly property color roomColor: app.roomColor(room)
@@ -78,8 +67,7 @@ PanelWindow {
 
   Process { id: newAgent; command: [Quickshell.shellDir + "/../bin/hyprpi", "new"] }
 
-  Rectangle { anchors.fill: parent; color: app.popupBg; radius: app.radius; border.color: app.popupBorder; border.width: app.popupBorderWidth }
-  Shortcut { sequence: "Escape"; onActivated: app.panelOpen = false }
+  Rectangle { anchors.fill: parent; color: app.popupBg }
 
   Column {
     id: top
@@ -95,7 +83,7 @@ PanelWindow {
         width: 26; height: 26; radius: app.radius
         color: closeMouse.containsMouse ? app.bg3 : "transparent"
         Text { anchors.centerIn: parent; text: "✕"; color: app.dimFg; font.pixelSize: 13 }
-        MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.panelOpen = false }
+        MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.visible = false }
       }
       Rectangle {
         id: searchBtn

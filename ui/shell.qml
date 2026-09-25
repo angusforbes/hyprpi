@@ -1,4 +1,6 @@
-// hyprpi room widget — a fixed-size panel pinned under the bar's world
+// hyprpi room windows (normal windows, one per workspace) and the search
+// window, served by one Quickshell process per Hyprland instance. The daemon
+// decides open / close / focus; this process only creates the windows. Was:
 // letters, one per Hyprland instance. Started by `hyprpi room [ROOM] [--toggle]`,
 // which passes the daemon socket in HYPRPI_SOCKET.
 //
@@ -16,14 +18,9 @@ ShellRoot {
   property var rooms: []
   property string activeRoom: ""
   property bool online: false
-  // ---- the panel ----
-  property bool panelOpen: false
-  property string panelRoom: "A"
-  property bool panelFollow: true        // opened for "current world": follow world changes
-  readonly property string shownRoom: panelFollow && activeRoom ? activeRoom : panelRoom
-  onShownRoomChanged: if (shownRoom && !messages[shownRoom]) loadRoom(shownRoom)
-  // Moving to another world while the widget is open shows that world's room,
-  // empty or not (it never pops up by itself).
+  // ---- room windows: [{ key, room }] ----
+  property var roomWindows: []
+  function forgetWindow(key) { roomWindows = roomWindows.filter(w => w.key !== key) }
   // ---- the search window ----
   property bool searchOpen: false
   property string searchRoom: "A"
@@ -33,10 +30,6 @@ ShellRoot {
     searchRoom = room
     searchOpen = true
   }
-  // Placement (logical px): under the bar, lined up with the world letters.
-  property int panelGap: 10   // = Hyprland gaps_out, so it lines up with tiled windows
-  property int panelLeft: 10   // whole physical pixels at scale 1.6 (x1.6 = 16), else the edge blurs
-  property int panelWidth: 430
   // room -> array of messages (kept per room; windows bind to their own)
   property var messages: ({})
   property int messagesVersion: 0
@@ -156,7 +149,7 @@ ShellRoot {
       if (connected) {
         shell.call("ui.subscribe", { windows: true }, function (r) { shell.applyList(r) })
         shell.messages = ({})
-        if (shell.shownRoom) shell.loadRoom(shell.shownRoom)
+        for (var i = 0; i < shell.roomWindows.length; i++) shell.loadRoom(shell.roomWindows[i].room)
       }
     }
     parser: SplitParser {
@@ -165,7 +158,7 @@ ShellRoot {
         try { m = JSON.parse(data) } catch (e) { return }
         if (m.event === "agents") shell.applyList(m.data)
         else if (m.event === "message") shell.onMessage(m.data)
-        else if (m.event === "open") shell.open(m.data.room || "", !!m.data.toggle)
+        else if (m.event === "open") shell.open(m.data.room, m.data.key)
         else if (m.event === "search") shell.openSearch(m.data.room || "", !!m.data.toggle)
         else if (m.id !== undefined && shell.callbacks[m.id]) {
           var cb = shell.callbacks[m.id]; delete shell.callbacks[m.id]
@@ -180,25 +173,28 @@ ShellRoot {
 
   // ---- open / toggle ----------------------------------------------------------
   // room "" = the current world's room (and keep following it).
-  function open(room, toggle) {
-    var follow = !room
-    var target = follow ? (activeRoom || "A") : String(room)
-    if (toggle && panelOpen && shownRoom === target) { panelOpen = false; return }
-    panelFollow = follow
-    panelRoom = target
-    if (!messages[target]) loadRoom(target)
-    panelOpen = true
+  function open(room, key) {
+    room = String(room || activeRoom || "A")
+    key = String(key || ("w" + Date.now().toString(36)))
+    if (!messages[room]) loadRoom(room)
+    roomWindows = roomWindows.concat([{ key: key, room: room }])
   }
 
-  RoomPanel { room: shell.shownRoom; app: shell }
+  Variants {
+    model: shell.roomWindows
+    RoomWindow {
+      required property var modelData
+      room: modelData.room
+      key: modelData.key
+      app: shell
+    }
+  }
   SearchWindow { app: shell }
 
   IpcHandler {
     target: "hyprpi"
     function ping(): string { return "pong" }
-    function open(room: string): void { shell.open(room, false) }
-    function toggle(room: string): void { shell.open(room, true) }
-    function close(): void { shell.panelOpen = false }
+    function open(room: string): void { shell.open(room, "") }
     function search(room: string): void { shell.openSearch(room, false) }
   }
 }

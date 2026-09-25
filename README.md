@@ -7,23 +7,27 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | Key | Does |
 |---|---|
 | SUPER+A | New Pi agent in its own foot window on the current workspace; it joins that world's room |
-| SUPER+ALT+A | Toggle the room widget for the current world |
+| SUPER+ALT+A | Room window for the current world (same as clicking the current world in the bar) |
 | SUPER+ALT+/ | Toggle the search window for the current world's room |
 | SUPER+SHIFT+A | Claude (moved here from SUPER+A) |
 
-## Room widget
+## Room window
 
-A fixed-width panel docked on the left, full height under the bar, styled like
-Omarchy's popups (theme popup border, square corners). While open it reserves
-its strip like the bar does, so every workspace's windows re-tile to its right
-(it acts as the workspace's left-hand parent). Clicking the current world in
-the bar (or SUPER+ALT+A) toggles it; it follows you to other worlds' rooms. Top: the room's agents with status
-(● grey idle · pulsing blue working · green done), workspace, model and folder.
-Click an agent to jump to its window; each `@` click adds `@Name` to the
-message box (several = send to just those agents). Below: the room's shared conversation. Typing without `@` posts to the
+A normal window — tile it, float it, move it anywhere; at most one per
+workspace. Clicking the current world in the bar (or SUPER+ALT+A):
+
+- this workspace has a room window → close it
+- another workspace has this world's room window → take you there
+- neither → open one here, placed as the left-most root of the dwindle tree
+  (left half, everything else moves right); alone it fills the workspace
+
+Top: the room's agents with status (● grey idle · pulsing blue working ·
+green done), workspace, model and folder. Click an agent to jump to its window;
+each `@` click adds `@Name` to the message box (several = send to just those
+agents). Below: the room's shared conversation. Typing without `@` posts to the
 whole room: every agent in it receives the message plus the room history it
 hasn't seen yet, and answers in the room (`room_reply`). `＋ agent` opens a new
-agent.
+agent, ⌕ opens search.
 
 ## Search window
 
