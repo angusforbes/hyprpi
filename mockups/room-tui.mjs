@@ -7,7 +7,7 @@
 // marked agents; Esc unmarks, Ctrl+A all) · Ctrl+W close · Ctrl+K kill (press
 // twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
-// the conversation · Shift+drag selects text · Ctrl+C quits.
+// the conversation · click-drag selects + copies text · Ctrl+C quits.
 //
 //   kitty --class hyprpi.mockup node ~/Work/hyprpi/mockups/room-tui.mjs [ROOM]
 // No ROOM = the current world's room. Several copies can run at once, on the
@@ -95,6 +95,33 @@ function mark(a) {
   return "○";
 }
 
+// ---- click-drag text selection (the TUI owns the mouse, so it selects itself)
+let screen = [], sel = null; // sel: { x0, y0, x1, y1, dragging } in 1-based cells
+function selRange() {
+  if (!sel || (sel.x0 === sel.x1 && sel.y0 === sel.y1)) return null;
+  const fwd = sel.y0 < sel.y1 || (sel.y0 === sel.y1 && sel.x0 <= sel.x1);
+  return fwd ? { y0: sel.y0, x0: sel.x0, y1: sel.y1, x1: sel.x1 } : { y0: sel.y1, x0: sel.x1, y1: sel.y0, x1: sel.x0 };
+}
+// Cells a..b (1-based, inclusive) of a plain line.
+function sliceCols(t, a, b) {
+  let col = 1, r = "";
+  for (const ch of t) { const w = cw(ch.codePointAt(0)); if (col >= a && col + w - 1 <= b) r += ch; col += w; if (col > b) break; }
+  return r;
+}
+function selectedText() {
+  const sr = selRange(); if (!sr) return "";
+  const W = process.stdout.columns || 100, out = [];
+  for (let y = sr.y0; y <= sr.y1; y++) out.push(sliceCols(screen[y - 1] || "", y === sr.y0 ? sr.x0 : 1, y === sr.y1 ? sr.x1 : W).trimEnd());
+  return out.join("\n");
+}
+function copy(text) {
+  if (!text) return;
+  // OSC 52 (kitty puts it on the clipboard) and wl-copy as a fallback.
+  process.stdout.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+  try { const p = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.end(text); } catch { /* OSC 52 only */ }
+  note = `copied ${text.length} character${text.length === 1 ? "" : "s"}`;
+}
+
 let batching = false, dirty = false;
 function render() { if (batching) { dirty = true; return; } draw(); }
 function draw() {
@@ -173,7 +200,17 @@ function draw() {
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi tui · room ${room}\x07`); // not "hyprpi room …": the daemon treats those titles as room windows
-  out(`${ESC}?25l${ESC}H` + rows.slice(0, H).map((r) => clip(r, W) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
+  const lines = rows.slice(0, H).map((r) => clip(r, W));
+  screen = lines.map(strip);
+  // Drag selection: redraw the selected cells of each line inverted.
+  const sr = selRange();
+  const shown2 = lines.map((l, i) => {
+    if (!sr || i + 1 < sr.y0 || i + 1 > sr.y1) return l;
+    const a = i + 1 === sr.y0 ? sr.x0 : 1, b = i + 1 === sr.y1 ? sr.x1 : W;
+    const t = screen[i];
+    return sliceCols(t, 1, a - 1) + `${ESC}7m` + sliceCols(t, a, b) + `${ESC}27m` + sliceCols(t, b + 1, W);
+  });
+  out(`${ESC}?25l${ESC}H` + shown2.map((l) => l + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
   // cursor at end of input
   out(`${ESC}${H - 1};${width(prompt) + width(input) + 1}H${ESC}?25h`);
 }
@@ -291,6 +328,7 @@ process.stdin.setEncoding("utf8");
 const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) draw(); } });
 function onKey(d) {
+  if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x03") return quit();
   if (d === "\t") return cycle(1);
   if (d === "\x1b[Z") return cycle(-1);
@@ -301,14 +339,25 @@ function onKey(d) {
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
-      const b = Number(m[1]), y = Number(m[3]);
+      const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
       const inList = y >= listRowY && y < listRowY + listRows;
+      // Left button: press starts a possible selection, motion drags it,
+      // release copies it (or, without a drag, counts as a click).
+      if (b === 0 && m[4] === "M") { sel = { x0: x, y0: y, x1: x, y1: y, dragging: false }; continue; }
+      if (b === 32 && sel) { sel.x1 = x; sel.y1 = y; sel.dragging = true; continue; }
+      if (b === 0 && m[4] === "m" && sel) {
+        sel.x1 = x; sel.y1 = y;
+        if (sel.dragging && selRange()) { copy(selectedText()); continue; } // highlight stays until the next key or click
+        sel = null;
+        if (inList) { // plain click: cursor there; click again: mark / unmark
+          const a = hereAgents()[listTop + y - listRowY];
+          if (a) { if (a.id === cursorId) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id); cursorId = a.id; confirm = null; }
+        }
+        continue;
+      }
       if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
         if (inList) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); const here = hereAgents(); const i = here.findIndex((a) => a.id === cursorId); if (i < listTop) cursorId = here[listTop]?.id || cursorId; else if (i >= listTop + listRows) cursorId = here[listTop + listRows - 1]?.id || cursorId; }
         else scroll += b === 64 ? 3 : -3;
-      } else if (b === 0 && m[4] === "M" && inList) { // left click: cursor there; click again: mark / unmark
-        const a = hereAgents()[listTop + y - listRowY];
-        if (a) { if (a.id === cursorId) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id); cursorId = a.id; confirm = null; }
       }
     }
     return render();
@@ -326,10 +375,10 @@ function onKey(d) {
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
   input += d.replace(/[\x00-\x1f]/g, ""); note = ""; render();
 }
-function quit() { out(`${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
+function quit() { out(`${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
 process.stdout.on("resize", render);
 setInterval(render, 30000); // clock
-out(`${ESC}?1049h${ESC}?1000h${ESC}?1006h`); // alt screen + mouse wheel (Shift+drag still selects text)
+out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h`); // alt screen + mouse (wheel, click, drag-select)
 render();
 start();
