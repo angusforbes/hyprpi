@@ -1,44 +1,56 @@
 # hyprwrlds-vimarchy
 
-Vimarchy-style overview for hyprwrlds "worlds" (world A = workspaces 1-10, B = 11-20, ...).
+A [Vimarchy](https://github.com/clickety-clacks/vimarchy)-style window overview for
+**[hyprwrlds](https://github.com/angusforbes/hyprwrlds)** worlds on Omarchy/Hyprland: see your
+workspaces as mini-screens with a live-looking preview of every app, jump to any window by typing
+its letter, and move windows between workspaces and worlds from the keyboard.
+
+(World A = workspaces 1-10, B = 11-20, ... see hyprwrlds.)
 
 | Keys | View |
 |---|---|
-| ALT+CTRL+SPACE | Current world: its occupied workspaces side by side |
-| ALT+SHIFT+SPACE | All worlds: one row per world that has windows |
-| ALT+SPACE | Current workspace only (replaces Vimarchy's hints) |
-| ALT+SHIFT+CTRL+SPACE | The original Vimarchy (kept for reference) |
+| ALT+SPACE | The current workspace (replaces Vimarchy's window hints) |
+| ALT+CTRL+SPACE | The current world: its workspaces side by side |
+| ALT+SHIFT+SPACE | All worlds: one row per world |
+| ALT+SHIFT+CTRL+SPACE | The original Vimarchy (kept for its own gestures) |
 
-Windows are outlined boxes at their real position and size inside a mini-screen per workspace,
-styled like Vimarchy: each window gets a colour from Vimarchy's palette (tinted box, coloured
-outline, translucent circle with the letter in full colour). Only workspaces with windows are
-shown. Hints are global: every window has the same letter (and colour) in all three views. They run alphabetically and contiguously in reading order over ALL windows (world, workspace, then
-left-to-right/top-to-bottom): `a`-`z` for the first 26, then `A`-`Z` with Shift for 27-52, then `aa`, `ab`, ... (a letter that also starts a pair, e.g. `a` once `aa` exists, waits 0.4 s for a second key; Enter/Space selects it at once; double-tapping such a letter selects the pair instead)
-, then two lowercase letters. Ctrl+= / Ctrl+- resize the circles
-(0.75-1.5x, saved in `~/.config/omarchy/hyprwrlds-vimarchy.json`). Each box shows a still capture of the app (taken when the overview opens, also for windows on
-hidden workspaces). All hint circles are the same size. Settings in the JSON file:
-`hintScale`, `showPreviews` (default true), `shiftRing` (ring around A-Z hints, default false),
-`windowTintOpacity`, `badgeTintOpacity`. App labels are shortened
-(`chrome-web.whatsapp.com__-Default` -> `whatsapp`). At most 3 worlds and 4 workspaces per row are shown. Arrow keys move a selected workspace
-(dark border, "▸"): Left/Right within the row, Up/Down between worlds, wrapping at the ends;
-the view scrolls to follow. When a row has more than fits, "‹ 9" / "5 ›" name the workspace just outside the view on each side, wrapping; likewise "▲ G" / "▼ D" name the world above/below. Enter goes to the
-selected workspace. Hints keep their letters while scrolling. Typing a hint jumps to that window (Hyprland switches to its workspace). Case comes
-from Shift, so Caps Lock can't flip a hint. Escape, Backspace on an empty entry, or a click on
-the backdrop closes. Clicking a window box jumps to it too. Jumping only (moving windows: later).
+## Overview
 
-## Layout
-- `Overview.qml`: the whole overview, self-contained (reads theme colours itself).
-- `plugin/`: Omarchy overlay plugin wrapper (`agf.hyprwrlds-vimarchy`).
-- `install.sh`: copies into `~/.config/omarchy/plugins/agf.hyprwrlds-vimarchy/`.
-- `shell.qml`: standalone dev harness (`qs -p ~/Work/hyprwrlds-vimarchy`), which never
-  touches the bar. IPC: `open world|all`, `openTest <mode> <hintStart>`, `resolve <seq>`
-  (dry run), `press <key>`, `close`, `state`. Auto-closes after 20 s (keyboard grab).
+- Each window is a box at its real position and size inside a mini-screen for its workspace,
+  with a still capture of the app (also for windows on hidden workspaces) and a small app label
+  (`chrome-web.whatsapp.com__-Default` -> `whatsapp`).
+- Vimarchy's look: every window gets a colour from Vimarchy's palette (tinted box, coloured
+  outline, translucent circle with the letter in full colour). Circle size follows Vimarchy's
+  rule; Ctrl+= / Ctrl+- resize all circles (saved). Circles are drawn above every box, so a
+  sub-window never hides a letter; fullscreen/maximized windows sit at the back.
+- World letters and workspace headers use the hyprwrlds world colours from the Omarchy theme.
+- Workspaces with windows are shown (plus any empty workspace that exists, e.g. the one you are
+  on). A workspace you empty by moving windows out stays as an empty tile until you close.
+- Left-aligned; at most 3 worlds and 3 workspaces per row by default.
 
-Keybindings live in `~/.config/hypr/hyprwrlds.lua`.
+## Hints
 
-## Caveat
-The Omarchy shell may keep serving a cached copy of an already-loaded plugin's QML after
-`install.sh`. Iterate in the dev harness; a shell restart (ask first) picks up plugin changes.
+- **Global:** a window has the same letter and colour in all three views. Letters run in reading
+  order over all windows (world, workspace, left-to-right/top-to-bottom): `a`-`z`, then `A`-`Z`
+  (Shift), then `aa`, `ab`, ...
+- A letter that also starts a pair (e.g. `a` once `aa` exists) waits 0.4 s for a second key;
+  Enter/Space selects it at once. Every other letter jumps instantly.
+- Letters never change while the overview is open (moves included); they are re-ordered on the
+  next open. Each view only accepts the letters it shows.
+- Case comes from Shift, so Caps Lock can't flip a hint.
+- **Double-tap** a hint (repeat its last key within 0.3 s) to jump and toggle fullscreen
+  (maximized by default). Other keys typed right after a jump go to the app as usual.
+
+## Navigation
+
+| Keys | Action |
+|---|---|
+| a-z, A-Z, aa... | Jump to that window (Hyprland switches to its workspace) |
+| Arrows | Move the selected workspace (dark border, "▸"); wraps at both ends. "‹ 9" / "5 ›" and "▲ G" / "▼ D" name what is just off-screen |
+| Enter | Go to the selected workspace |
+| Click a window | Jump to it |
+| Ctrl+= / Ctrl+- | Bigger / smaller circles |
+| Esc, Backspace (empty), click the backdrop | Close |
 
 ## Settings
 
@@ -87,3 +99,39 @@ World colours (A blue, B red, ...) come from the Omarchy theme, not this file.
 
 Moves are silent (you stay where you are) and the overview refreshes so you can keep going. Empty
 workspaces added with Alt+N / Alt+Shift+N become real once a window is dropped in.
+
+## Install
+
+Requires [hyprwrlds](https://github.com/angusforbes/hyprwrlds), Omarchy's Quickshell-based shell
+and Hyprland 0.56+ (Lua config).
+
+```
+git clone https://github.com/angusforbes/hyprwrlds-vimarchy ~/Work/hyprwrlds-vimarchy
+~/Work/hyprwrlds-vimarchy/install.sh
+```
+
+This installs the overlay plugin `agf.hyprwrlds-vimarchy` into `~/.config/omarchy/plugins/`
+(and enables it) and `hypr/hyprwrlds-vimarchy.lua` (the keys above + double-tap support) into
+`~/.config/hypr/`, required right after `hyprwrlds`. The original Vimarchy plugin is only needed
+for ALT+SHIFT+CTRL+SPACE. After updating an already-installed copy, run `omarchy-restart-shell`
+(the shell may otherwise keep a cached copy of the QML).
+
+## Development
+
+- `Overview.qml`: the whole overview, self-contained (reads theme colours and settings itself).
+- `plugin/`: the Omarchy overlay wrapper; summon with
+  `omarchy-shell shell summon agf.hyprwrlds-vimarchy '{"mode":"workspace"|"world"|"all"}'`.
+- `shell.qml`: a standalone Quickshell harness (`qs -p .`) that never touches the bar, with IPC
+  for testing without a keyboard: `dry <mode>` (build without showing), `state`, `resolve`,
+  `would <keys>`, `pick <hint>`, `dropDigit <n>`, `newWorkspace`, `newWorld`, `rowsSummary`,
+  `move <dr> <dc>`, `open`, `close`. The harness auto-closes the overlay after 20 s.
+
+## Credits
+
+Look and feel follow [Vimarchy](https://github.com/clickety-clacks/vimarchy) by Mike Manzano
+(MIT): its hint palette, tint levels, circle sizing rule and double-tap idea. No Vimarchy code is
+included; this is a separate plugin.
+
+## License
+
+MIT
