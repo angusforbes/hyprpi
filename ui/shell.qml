@@ -22,6 +22,12 @@ ShellRoot {
   property bool panelFollow: true        // opened for "current world": follow world changes
   readonly property string shownRoom: panelFollow && activeRoom ? activeRoom : panelRoom
   onShownRoomChanged: if (shownRoom && !messages[shownRoom]) loadRoom(shownRoom)
+  // Moving to another world while the widget is open: show that world's room
+  // if it has agents, otherwise close (it never pops up by itself).
+  onActiveRoomChanged: {
+    if (!panelOpen || !panelFollow) return
+    if (!agents.some(a => a.room === activeRoom)) panelOpen = false
+  }
   // ---- the search window ----
   property bool searchOpen: false
   property string searchRoom: "A"
@@ -156,7 +162,7 @@ ShellRoot {
         shell.call("ui.subscribe", { windows: true }, function (r) { shell.applyList(r) })
         shell.messages = ({})
         if (shell.shownRoom) shell.loadRoom(shell.shownRoom)
-      } else reconnect.start()
+      }
     }
     parser: SplitParser {
       onRead: data => {
@@ -173,7 +179,9 @@ ShellRoot {
       }
     }
   }
-  Timer { id: reconnect; interval: 2000; onTriggered: if (!sock.connected) sock.connected = true }
+  // Keep retrying while the daemon is away (restarts, crashes).
+  Timer { id: reconnect; interval: 1500; repeat: true; running: !shell.online
+    onTriggered: { sock.connected = false; sock.connected = true } }
 
   // ---- open / toggle ----------------------------------------------------------
   // room "" = the current world's room (and keep following it).

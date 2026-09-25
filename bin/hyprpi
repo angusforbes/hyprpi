@@ -44,8 +44,23 @@ async function alive() {
   try { await request("ping", {}, { timeout: 800 }); return true; } catch { return false; }
 }
 
+// Newest modification time of the daemon's code, to restart a stale daemon.
+function codeMtime() {
+  let m = 0;
+  for (const f of fs.readdirSync(path.join(ROOT, "lib"))) m = Math.max(m, fs.statSync(path.join(ROOT, "lib", f)).mtimeMs);
+  return m;
+}
+
 async function ensureDaemon() {
-  if (await alive()) return;
+  let info = null;
+  try { info = await request("ping", {}, { timeout: 800 }); } catch { /* not running */ }
+  if (info && (!info.started || info.started < codeMtime())) {
+    // Code changed since it started: restart it (agents reconnect by themselves).
+    try { await request("shutdown"); } catch { /* already gone */ }
+    for (let i = 0; i < 20 && (await alive()); i++) await new Promise((r) => setTimeout(r, 100));
+    info = null;
+  }
+  if (info) return;
   fs.mkdirSync(runtimeDir(), { recursive: true, mode: 0o700 });
   const logFile = path.join(runtimeDir(), `${instanceKey()}.log`);
   const out = fs.openSync(logFile, "a");
