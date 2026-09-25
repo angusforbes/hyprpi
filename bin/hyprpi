@@ -256,6 +256,8 @@ const commands = {
     const r = await request("agent.update", { agent_id: id, status, quiet });
     console.log(r.status);
   },
+  // Called by the Hyprland click hook with the clicked window's address.
+  seen: async () => { if (!args[0]) die("usage: hyprpi seen WINDOW_ADDRESS"); console.log(JSON.stringify(await request("agent.seen", { address: args[0] }))); },
   whoami: async () => console.log(JSON.stringify(await request("whoami", { agent_id: agentId() }), null, 1)),
 };
 
