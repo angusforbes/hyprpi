@@ -12,7 +12,8 @@ import { terminalCommand } from "../lib/terminal.mjs";
 const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
 
   hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [-- PI_ARGS...]
-                              open a Pi agent in its own terminal window (SUPER+A)
+                              open a Pi agent in its own terminal window (SUPER+A);
+                              starts in the focused terminal's/agent's folder unless --cwd
   hyprpi room [ROOM] [--toggle]  show (or toggle) the room widget; no ROOM = current world, following it
   hyprpi search [ROOM] [--toggle]  open the search window for a room (default: current world)
   hyprpi find [--room R] [--ai] QUERY  search from the terminal (keyword, or AI with --ai)
@@ -86,9 +87,47 @@ function childEnv(extra) {
 
 function newId() { return "hp-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
 
+// Folder of the focused window, for "new agent here": a hyprpi agent's own
+// folder, or the working directory of the newest process running inside a
+// terminal window (its shell, or whatever the shell is running). Else null.
+const TERMINAL_CLASSES = /^(kitty|foot|footclient|alacritty|com\.mitchellh\.ghostty|org\.wezfurlong\.wezterm|hyprpi\.agent|hyprpi\.mockup)$/i;
+async function focusedFolder() {
+  const w = await hypr.activeWindow().catch(() => null);
+  if (!w?.pid || !TERMINAL_CLASSES.test(w.class || "")) return null;
+  if (w.class === "hyprpi.agent") {
+    try {
+      const a = (await request("list")).agents.find((x) => x.address === w.address);
+      if (a?.cwd && fs.existsSync(a.cwd)) return a.cwd;
+    } catch { /* fall back to /proc */ }
+  }
+  // Descendants of the terminal process; newest first.
+  const kids = new Map();
+  for (const p of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(p)) continue;
+    try {
+      const st = fs.readFileSync(`/proc/${p}/stat`, "utf8");
+      const f = st.slice(st.lastIndexOf(")") + 2).split(" ");
+      const pp = Number(f[1]), start = Number(f[19]);
+      if (!kids.has(pp)) kids.set(pp, []);
+      kids.get(pp).push({ pid: Number(p), start });
+    } catch { /* gone */ }
+  }
+  const all = [], todo = [w.pid];
+  while (todo.length) for (const k of kids.get(todo.pop()) || []) { all.push(k); todo.push(k.pid); }
+  all.sort((a, b) => b.start - a.start);
+  for (const k of all) {
+    try { const d = fs.readlinkSync(`/proc/${k.pid}/cwd`); if (d && d !== "/" && fs.existsSync(d)) return d; } catch { /* not ours / gone */ }
+  }
+  return null;
+}
+
 async function cmdNew() {
   const cfg = loadConfig();
-  const cwd = (opt("--cwd") || cfg.cwd).replace(/^~(?=$|\/)/, process.env.HOME);
+  // --cwd wins; else the focused terminal's / agent's folder (cwdFromFocused,
+  // default on); else config cwd (~/Work).
+  let dir = opt("--cwd");
+  if (!dir && cfg.cwdFromFocused !== false && !args.includes("--beside")) dir = await focusedFolder().catch(() => null);
+  const cwd = (dir || cfg.cwd).replace(/^~(?=$|\/)/, process.env.HOME);
   const beside = opt("--beside");
   let workspace = Number(opt("--workspace")) || null;
   const twinOf = opt("--twin-of") || "";

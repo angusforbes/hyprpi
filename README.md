@@ -85,11 +85,17 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   "groups": {},
   "follow": true,
   "cwd": "~/Work",
+  "cwdFromFocused": true,
   "terminal": "auto",
   "pi": "pi",
   "piArgs": [],
   "searchModel": "claude-haiku-4-5"
 }
+
+- `cwdFromFocused` (default true): SUPER+A / `hyprpi new` starts the agent in the
+  focused window's folder: another agent's folder, or the current directory of
+  whatever runs in a focused terminal (kitty, foot, alacritty, ghostty, wezterm).
+  Other windows (browser etc.) fall back to `cwd`. `hyprpi new --cwd DIR` wins.
 ```
 
 - `rooms`: `"world"` (A = ws 1-10, B = 11-20, …), `"workspace"`, or `"single"`.
