@@ -1,0 +1,185 @@
+// One room: its agents (click to jump) above the room's shared conversation.
+// Type to the whole room; start with @Name to prompt one agent directly.
+import Quickshell
+import Quickshell.Io
+import QtQuick
+import QtQuick.Controls
+
+FloatingWindow {
+  id: win
+  property string room: "A"
+  property var app
+  title: "hyprpi room " + room
+  implicitWidth: 460
+  implicitHeight: 720
+  color: app.bg
+
+  onVisibleChanged: if (!visible) app.close(room)
+
+  readonly property var members: app.agents.filter(a => a.room === room)
+  readonly property color roomColor: app.roomColor(room)
+  property string note: ""
+
+  function send() {
+    var text = input.text.trim()
+    if (!text) return
+    var m = text.match(/^@(\S+)\s+([\s\S]+)$/)
+    if (m) {
+      var who = m[1], body = m[2]
+      app.call("agent.prompt", { agent: who, text: body, via: "room-window" }, function (r, err) {
+        win.note = r ? ("→ sent to " + r.name) : ("✗ " + err)
+        noteTimer.restart()
+      })
+    } else {
+      app.call("room.post", { room: room, text: text, as_human: true, via: "room-window" }, function (r, err) {
+        if (!r) { win.note = "✗ " + err; noteTimer.restart(); return }
+        win.note = r.delivered.length ? ("→ " + r.delivered.join(", ")) : "saved · no agents in this room yet"
+        noteTimer.restart()
+      })
+    }
+    input.text = ""
+  }
+  Timer { id: noteTimer; interval: 5000; onTriggered: win.note = "" }
+
+  Process { id: newAgent; command: [Quickshell.shellDir + "/../bin/hyprpi", "new"] }
+
+  Rectangle { anchors.fill: parent; color: app.bg }
+
+  Column {
+    id: top
+    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+    spacing: 8
+
+    // ---- header ----
+    Item {
+      width: parent.width; height: 34
+      Rectangle { id: badge; width: 34; height: 34; radius: 8; color: win.roomColor
+        Text { anchors.centerIn: parent; text: win.room; color: "white"; font.family: app.fontFamily; font.pixelSize: 17; font.bold: true } }
+      Column {
+        anchors { left: badge.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
+        Text { text: "Room " + win.room; color: app.fg; font.family: app.fontFamily; font.pixelSize: 15; font.bold: true }
+        Text { text: win.members.length + (win.members.length === 1 ? " agent" : " agents") + (app.online ? "" : "  ·  daemon offline")
+               color: app.online ? app.dimFg : "#b4637a"; font.family: app.fontFamily; font.pixelSize: 11 }
+      }
+      Rectangle {
+        anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+        width: addText.implicitWidth + 18; height: 26; radius: 6
+        color: addMouse.containsMouse ? app.bg3 : app.bg2; border.color: app.border
+        Text { id: addText; anchors.centerIn: parent; text: "＋ agent"; color: app.fg; font.family: app.fontFamily; font.pixelSize: 12 }
+        MouseArea { id: addMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newAgent.running = true }
+      }
+    }
+
+    // ---- agents ----
+    Column {
+      width: parent.width
+      spacing: 3
+      Repeater {
+        model: win.members
+        delegate: Rectangle {
+          required property var modelData
+          width: parent.width; height: 42; radius: 7
+          color: rowMouse.containsMouse ? app.bg3 : (modelData.focused ? app.bg2 : "transparent")
+          border.color: modelData.focused ? Qt.alpha(win.roomColor, 0.7) : "transparent"
+          border.width: modelData.focused ? 1.5 : 0
+          MouseArea { id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+            onClicked: app.call("agent.focus", { agent: modelData.id }, null) }
+          Rectangle { id: dot; width: 9; height: 9; radius: 4.5; color: app.statusColor(modelData.status)
+            anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
+            SequentialAnimation on opacity { running: modelData.status === "working"; loops: Animation.Infinite
+              NumberAnimation { to: 0.25; duration: 600 } NumberAnimation { to: 1; duration: 600 } } }
+          Text { id: glyph; text: modelData.icon || "🤖"; font.pixelSize: 17
+            anchors { left: dot.right; leftMargin: 9; verticalCenter: parent.verticalCenter } }
+          Column {
+            anchors { left: glyph.right; leftMargin: 8; right: at.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
+            Text { width: parent.width; elide: Text.ElideRight
+              text: modelData.display; color: modelData.color || app.fg; font.family: app.fontFamily; font.pixelSize: 13; font.bold: true }
+            Text { width: parent.width; elide: Text.ElideRight
+              text: [modelData.status, modelData.workspace_label, modelData.model, modelData.cwd.replace(/^\/home\/[^/]+/, "~")].filter(x => x).join(" · ")
+              color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 10 }
+          }
+          Rectangle { id: at; width: 26; height: 26; radius: 6
+            anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+            color: atMouse.containsMouse ? app.bg2 : "transparent"; border.color: atMouse.containsMouse ? app.border : "transparent"
+            Text { anchors.centerIn: parent; text: "@"; color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 13 }
+            MouseArea { id: atMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+              onClicked: { input.text = "@" + (modelData.name || modelData.display).replace(/\s+/g, "") + " "; input.forceActiveFocus(); input.cursorPosition = input.text.length } }
+          }
+        }
+      }
+      Text { visible: win.members.length === 0; width: parent.width; wrapMode: Text.WordWrap
+        text: "No agents here yet. SUPER+A opens one on the current workspace."
+        color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 11 }
+    }
+
+    Rectangle { width: parent.width; height: 1; color: app.border }
+  }
+
+  // ---- conversation ----
+  ListView {
+    id: chat
+    anchors { left: parent.left; right: parent.right; top: top.bottom; bottom: inputBox.top; margins: 12; topMargin: 6 }
+    clip: true
+    spacing: 8
+    model: { app.messagesVersion; return app.messages[win.room] || [] }
+    onCountChanged: Qt.callLater(() => chat.positionViewAtEnd())
+    Component.onCompleted: positionViewAtEnd()
+    ScrollBar.vertical: ScrollBar {}
+    delegate: Rectangle {
+      required property var modelData
+      readonly property bool human: modelData.author && modelData.author.kind === "human"
+      width: chat.width - 4
+      height: msgCol.implicitHeight + 12
+      radius: 8
+      color: human ? Qt.alpha(win.roomColor, 0.12) : app.bg2
+      Column {
+        id: msgCol
+        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 6; leftMargin: 9; rightMargin: 9 }
+        spacing: 2
+        Text {
+          width: parent.width; elide: Text.ElideRight
+          text: (human ? "Angus" : ((modelData.author.icon ? modelData.author.icon + " " : "") + modelData.author.name))
+                + (modelData.reply_to ? "  ↩ #" + modelData.reply_to : "")
+                + "   " + new Date(modelData.ts).toLocaleTimeString(Qt.locale(), "HH:mm")
+          color: human ? win.roomColor : (modelData.author.color || app.fg)
+          font.family: app.fontFamily; font.pixelSize: 11; font.bold: true
+        }
+        TextEdit {
+          width: parent.width; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
+          text: modelData.text; color: app.fg; font.family: app.fontFamily; font.pixelSize: 12
+        }
+      }
+    }
+  }
+
+  // ---- input ----
+  Rectangle {
+    id: inputBox
+    anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
+    height: Math.min(140, input.implicitHeight + 16) + (win.note ? 16 : 0)
+    radius: 8
+    color: app.bg2
+    border.color: input.activeFocus ? win.roomColor : app.border
+    Text {
+      visible: win.note !== ""; text: win.note; color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 10
+      anchors { left: parent.left; bottom: parent.bottom; leftMargin: 10; bottomMargin: 3 }
+    }
+    ScrollView {
+      anchors { fill: parent; margins: 6; bottomMargin: win.note ? 18 : 6 }
+      TextArea {
+        id: input
+        wrapMode: TextArea.Wrap
+        placeholderText: "Message room " + win.room + "   (@Name to prompt one agent · Shift+Enter newline)"
+        placeholderTextColor: app.dimFg
+        color: app.fg
+        font.family: app.fontFamily; font.pixelSize: 12
+        background: null
+        Keys.onPressed: event => {
+          if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) {
+            win.send(); event.accepted = true
+          }
+        }
+      }
+    }
+  }
+}

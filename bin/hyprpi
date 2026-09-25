@@ -1,0 +1,189 @@
+#!/usr/bin/env node
+// hyprpi — Pi agents in their own windows, grouped into rooms per hyprwrld.
+// Run `hyprpi help` for commands.
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { request, connect } from "../lib/client.mjs";
+import { ROOT, socketPath, runtimeDir, loadConfig, instanceKey } from "../lib/paths.mjs";
+import * as hypr from "../lib/hypr.mjs";
+
+const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
+
+  hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [-- PI_ARGS...]
+                              open a Pi agent in its own foot window (SUPER+A)
+  hyprpi room [ROOM]          open/focus the room window (default: current world)
+  hyprpi list [--json]        live agents and rooms
+  hyprpi post [--room R] TEXT post to a room as Angus (every agent there gets it)
+  hyprpi send AGENT TEXT      prompt one agent directly
+  hyprpi focus AGENT          jump to an agent's window
+  hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
+  hyprpi whoami               this agent (inside a hyprpi agent)
+  hyprpi daemon               run the daemon in the foreground
+  hyprpi ensure               start the daemon if it is not running
+  hyprpi stop                 stop the daemon
+
+Config: ~/.config/hyprpi/config.json   Socket: ${socketPath()}`;
+
+const args = process.argv.slice(2);
+const cmd = args.shift() || "help";
+
+function die(msg, code = 1) { console.error(`hyprpi: ${msg}`); process.exit(code); }
+function opt(name, dflt) {
+  const i = args.indexOf(name);
+  if (i < 0) return dflt;
+  const v = args[i + 1];
+  args.splice(i, 2);
+  return v;
+}
+function flag(name) { const i = args.indexOf(name); if (i < 0) return false; args.splice(i, 1); return true; }
+
+async function alive() {
+  try { await request("ping", {}, { timeout: 800 }); return true; } catch { return false; }
+}
+
+async function ensureDaemon() {
+  if (await alive()) return;
+  fs.mkdirSync(runtimeDir(), { recursive: true, mode: 0o700 });
+  const logFile = path.join(runtimeDir(), `${instanceKey()}.log`);
+  const out = fs.openSync(logFile, "a");
+  const child = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { detached: true, stdio: ["ignore", out, out], env: process.env });
+  child.unref();
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (await alive()) return;
+  }
+  die(`daemon did not start; see ${logFile}`);
+}
+
+function childEnv(extra) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (/^(HERDR_|PI_SESSION|HYPRPI_AGENT_ID|HYPRPI_WORKSPACE|HYPRPI_TWIN_OF)/.test(k)) continue;
+    env[k] = v;
+  }
+  return { ...env, ...extra };
+}
+
+function newId() { return "hp-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+
+async function cmdNew() {
+  const cfg = loadConfig();
+  const cwd = (opt("--cwd") || cfg.cwd).replace(/^~(?=$|\/)/, process.env.HOME);
+  const beside = opt("--beside");
+  let workspace = Number(opt("--workspace")) || null;
+  const twinOf = opt("--twin-of") || "";
+  const dd = args.indexOf("--");
+  const piArgs = dd >= 0 ? args.slice(dd + 1) : [];
+  await ensureDaemon();
+
+  const active = await hypr.activeWorkspace().catch(() => null);
+  if (beside) {
+    // Open next to another agent's window: focus it first when it is on the
+    // visible workspace (Hyprland splits the focused window), otherwise the
+    // daemon moves the new window to that workspace once it maps.
+    let target = null;
+    try {
+      const list = await request("list");
+      target = list.agents.find((a) => a.id === beside || a.address === beside || a.name.toLowerCase() === beside.toLowerCase());
+    } catch { /* fall through */ }
+    if (target?.address) {
+      workspace = target.workspace;
+      if (active && target.workspace === active.id) await hypr.focusWindow(target.address).catch(() => {});
+    }
+  }
+  if (!workspace && active && Number.isInteger(active.id) && active.id > 0) workspace = active.id;
+
+  const id = newId();
+  const ext = path.join(ROOT, "pi-extension", "index.ts");
+  const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}) });
+  const term = [cfg.terminal, `--app-id=hyprpi.agent`, `--title=pi`, `--working-directory=${cwd}`, "--", cfg.pi, "-e", ext, ...(cfg.piArgs || []), ...piArgs];
+  const child = spawn(term[0], term.slice(1), { cwd, env, detached: true, stdio: "ignore" });
+  child.unref();
+  console.log(id);
+}
+
+// Room windows are served by one Quickshell process per Hyprland instance,
+// connected to this instance's daemon; the daemon forwards "open" to it.
+async function cmdRoom() {
+  await ensureDaemon();
+  let r = await request("ui.open", { room: args[0] || undefined });
+  if (!r.delivered) {
+    const child = spawn("qs", ["-p", path.join(ROOT, "ui")], { detached: true, stdio: "ignore", env: childEnv({ HYPRPI_SOCKET: socketPath() }) });
+    child.unref();
+    for (let i = 0; i < 60 && !r.delivered; i++) {
+      await new Promise((res) => setTimeout(res, 100));
+      r = await request("ui.open", { room: r.room });
+    }
+    if (!r.delivered) die("room window process did not start (qs -p " + path.join(ROOT, "ui") + ")");
+  }
+  // Focus it if it already exists somewhere (a new one is focused by Hyprland).
+  for (let i = 0; i < 20; i++) {
+    const c = (await hypr.clients()).find((w) => w.title === `hyprpi room ${r.room}`);
+    if (c) { await hypr.focusWindow(c.address).catch(() => {}); break; }
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  console.log(r.room);
+}
+
+async function cmdList() {
+  const json = flag("--json");
+  const r = await request("list");
+  if (json) return console.log(JSON.stringify(r, null, 1));
+  for (const room of r.rooms) {
+    console.log(`Room ${room.id}${room.id === r.active_room ? "  (current)" : ""}`);
+    for (const a of r.agents.filter((x) => x.room === room.id)) {
+      console.log(`  ${(a.icon ? a.icon + " " : "") + a.display}\t${a.status}\t${a.workspace_label || "?"}\t${a.model}\t${a.id}`);
+    }
+  }
+}
+
+function agentId() {
+  const id = opt("--agent") || process.env.HYPRPI_AGENT_ID;
+  if (!id) die("not inside a hyprpi agent (no HYPRPI_AGENT_ID); pass --agent ID");
+  return id;
+}
+
+async function cmdName() {
+  const id = agentId();
+  if (args[0] === "--clear") return console.log(JSON.stringify(await request("agent.update", { agent_id: id, name: "", icon: "", color: "" })));
+  const fg = opt("--fg");
+  for (const f of ["--bold", "--italic", "--dim"]) flag(f);
+  const name = args[0];
+  if (!name || name.startsWith("-")) die("usage: hyprpi name NAME [--fg #rrggbb]");
+  const r = await request("agent.update", { agent_id: id, name, ...(fg ? { color: fg } : {}) });
+  console.log(`${r.icon ? r.icon + " " : ""}${r.name}`);
+}
+
+const commands = {
+  help: () => console.log(HELP),
+  "--help": () => console.log(HELP),
+  "-h": () => console.log(HELP),
+  daemon: async () => { const { runDaemon } = await import("../lib/daemon.mjs"); await runDaemon(); },
+  ensure: async () => { await ensureDaemon(); console.log(socketPath()); },
+  stop: async () => { if (await alive()) await request("shutdown"); },
+  new: cmdNew,
+  room: cmdRoom,
+  list: cmdList,
+  post: async () => {
+    const room = opt("--room");
+    const via = opt("--via") || "cli";
+    const text = args.join(" ");
+    if (!text.trim()) die("usage: hyprpi post [--room R] TEXT");
+    const r = await request("room.post", { room, text, as_human: true, via });
+    console.log(`Room ${r.room} #${r.sequence} → ${r.delivered.length ? r.delivered.join(", ") : "no agents"}`);
+  },
+  send: async () => {
+    const who = args.shift(); const text = args.join(" ");
+    if (!who || !text.trim()) die("usage: hyprpi send AGENT TEXT");
+    const r = await request("agent.prompt", { agent: who, text, via: "cli" });
+    console.log(`→ ${r.name}`);
+  },
+  focus: async () => { const r = await request("agent.focus", { agent: args[0] }); console.log(r.address); },
+  name: cmdName,
+  whoami: async () => console.log(JSON.stringify(await request("whoami", { agent_id: agentId() }), null, 1)),
+};
+
+const fn = commands[cmd];
+if (!fn) die(`unknown command '${cmd}'\n\n${HELP}`, 2);
+try { await fn(); } catch (e) { die(e.message); }
