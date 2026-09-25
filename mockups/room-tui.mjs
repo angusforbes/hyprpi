@@ -40,6 +40,17 @@ const worldBg = (room) => { const h = worldHex(room); return h ? `48;2;${rgb(h)}
 const dim = (s) => `${ESC}2m${s}${ESC}22m`;
 const bold = (s) => `${ESC}1m${s}${ESC}22m`;
 const fg = (c, s) => `${ESC}${c}m${s}${ESC}39m`;
+// herdr-name markup "{#f7768e}S{#ff9e64}p…": each part in its own colour
+// (text before the first tag in the fallback colour).
+function markupFg(markup, fallback) {
+  let out = "", color = fallback;
+  for (const part of String(markup).split(/(\{#[0-9a-fA-F]{6}\})/)) {
+    const t = part.match(/^\{(#[0-9a-fA-F]{6})\}$/);
+    if (t) { color = t[1]; continue; }
+    if (part) out += hexFg(color, part);
+  }
+  return out;
+}
 const hexFg = (hex, s) => { const m = /^#?([0-9a-f]{6})$/i.exec(hex || ""); if (!m) return s; const n = parseInt(m[1], 16); return `${ESC}38;2;${n >> 16};${(n >> 8) & 255};${n & 255}m${s}${ESC}39m`; };
 
 // Display width (emoji / CJK = 2, combining / ZWJ / VS = 0), enough for names and chat.
@@ -226,11 +237,14 @@ function draw() {
   for (const a of here.slice(listTop, listTop + listRows)) {
     // mark · name · model · topic (like herdr's sidebar). No status word: the mark says it.
     const name = cut((a.icon ? a.icon + " " : "") + a.display, nameW);
-    let styled = hexFg(a.color, bold(name));
-    // Cursor (follows the focused window): the name alone on light grey.
+    const iconPart = a.icon && name.startsWith(a.icon + " ") ? a.icon + " " : "";
+    const bare = name.slice(iconPart.length);
+    let styled = a.name_markup && !name.endsWith("…") ? bold(markupFg(a.name_markup, a.color)) : hexFg(a.color, bold(bare));
+    // Cursor (follows the focused window): the name alone (not its icon) on light grey.
     // Focused but the cursor moved elsewhere: the name underlined. Marks never change colour.
     if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
     else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
+    styled = iconPart + styled;
     const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
     const model = (a.model || "").replace(/^claude-/, "");
     const rest = dim(pad(model, Math.min(14, modelW) + 2)) + (a.topic ? `${ESC}2;3m${a.topic}${ESC}22;23m` : "");
@@ -249,7 +263,9 @@ function draw() {
   const convo = [];
   msgs.forEach((m, mi) => {
     const au = m.author || {};
-    const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW))) : hexFg(au.color, bold(cut(authorLabel(au), nameW)));
+    const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
+      : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
+      : hexFg(au.color, bold(cut(authorLabel(au), nameW)));
     const body = [];
     for (const para of String(m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => body.push({ l, hard: i === ls.length - 1 })); }
     if (narrow) {

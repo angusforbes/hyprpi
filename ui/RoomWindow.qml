@@ -23,6 +23,17 @@ FloatingWindow {
   readonly property var members: app.agents.filter(a => a.room === room)
   readonly property color roomColor: app.roomColor(room)
   property string note: ""
+  // "{#f7768e}S{#ff9e64}p…" -> <font color=…> spans (text before the first tag: fallback colour).
+  function markupHtml(m, fallback) {
+    var esc = function (t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") }
+    var parts = String(m).split(/(\{#[0-9a-fA-F]{6}\})/), color = String(fallback), out = ""
+    for (var i = 0; i < parts.length; i++) {
+      var t = parts[i].match(/^\{(#[0-9a-fA-F]{6})\}$/)
+      if (t) { color = t[1]; continue }
+      if (parts[i]) out += "<font color=\"" + color + "\">" + esc(parts[i]) + "</font>"
+    }
+    return out
+  }
 
   function send() {
     var text = input.text.trim()
@@ -144,7 +155,10 @@ FloatingWindow {
           Column {
             anchors { left: glyph.right; leftMargin: 8; right: at.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
             Text { width: parent.width; elide: Text.ElideRight
-              text: modelData.display; color: modelData.color || app.fg; font.family: app.fontFamily; font.pixelSize: 13; font.bold: true }
+              // Multicoloured names (herdr-name {#rrggbb} markup) as styled text.
+              textFormat: modelData.name_markup ? Text.StyledText : Text.PlainText
+              text: modelData.name_markup ? win.markupHtml(modelData.name_markup, modelData.color || app.fg) : modelData.display
+              color: modelData.color || app.fg; font.family: app.fontFamily; font.pixelSize: 13; font.bold: true }
             Text { width: parent.width; elide: Text.ElideRight
               text: [modelData.status, String(modelData.workspace_label || "").replace(/^.*:/, ""), modelData.model, modelData.cwd.replace(/^\/home\/[^/]+/, "~")].filter(x => x).join(" · ")
               color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 10 }
