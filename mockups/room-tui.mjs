@@ -247,9 +247,9 @@ function draw() {
     styled = iconPart + styled;
     const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
     const model = (a.model || "").replace(/^claude-/, "");
-    // name · model · topic, separated by dots like herdr's sidebar (no columns).
+    // name · topic · model, separated by dots like herdr's sidebar (no columns).
     const dot = dim(" · ");
-    const rest = (model ? dot + dim(model) : "") + (a.topic ? dot + `${ESC}2;3m${a.topic}${ESC}22;23m` : "");
+    const rest = (a.topic ? dot + `${ESC}2;3m${a.topic}${ESC}22;23m` : "") + (model ? dot + dim(model) : "");
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
 
