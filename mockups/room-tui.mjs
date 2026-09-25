@@ -204,8 +204,12 @@ function draw() {
     const extra = W < 72 ? "" : " " + dim(pad(cut(wsl(a), wsW), wsW + 1) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
     const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
     const line = `${sel}${fg(c, bold(mark(a)))} ${pad(hexFg(a.color, bold(cut(name, nameW))), nameW)}  ${pad(st, 8)}${W < 72 ? dim(wsl(a)) : extra}`;
-    // Cursor row: inverted. The focused window's agent: underlined name column.
-    rows.push(a.id === cursorId ? `${ESC}7m${pad(strip(line), W)}${ESC}27m` : a.focused ? `${ESC}4m${line}${ESC}24m` : line);
+    // The agent whose window is focused: inverted (as before). The list cursor:
+    // a light grey bar (the theme's muted colour), so both can be seen at once.
+    const curBg = theme.muted || theme.selection;
+    rows.push(a.focused ? `${ESC}7m${pad(strip(line), W)}${ESC}27m`
+      : a.id === cursorId ? (curBg ? `${ESC}48;2;${rgb(curBg)}m${pad(line.replace(/\x1b\[(?:0|49)m/g, ""), W)}${ESC}49m` : `${ESC}4m${line}${ESC}24m`)
+      : line);
   }
 
   // Conversation pane: fill what's left, newest at the bottom.
