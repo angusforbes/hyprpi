@@ -2,7 +2,10 @@
 // MOCKUP: a terminal / tmux-style hyprpi room, for comparison with the
 // Quickshell room window (ui/RoomWindow.qml), which stays the real one.
 // Live data from the daemon. Typing + Enter posts to the room as Angus (same
-// as the room window). Keys: Tab / Shift+Tab switch room · Ctrl+N (or
+// as the room window). Agent list: ↑↓ or click = cursor · Enter on an empty
+// line = jump to it · Space / second click = mark (Enter then sends only to the
+// marked agents; Esc unmarks, Ctrl+A all) · Ctrl+W close · Ctrl+K kill (press
+// twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
 // the conversation · Shift+drag selects text · Ctrl+C quits.
 //
@@ -75,6 +78,10 @@ const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).pa
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
 
 let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the newest
+// Agent list: cursor (by id), marked ids (multi-select recipients), list scroll,
+// and where the rows landed on screen (for mouse clicks).
+let cursorId = "", marked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
+const hereAgents = () => agents.filter((a) => a.room === room);
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 let api = null;
 
@@ -86,29 +93,45 @@ function mark(a) {
   return "○";
 }
 
-function render() {
+let batching = false, dirty = false;
+function render() { if (batching) { dirty = true; return; } draw(); }
+function draw() {
+  dirty = false;
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30;
   const c = worldFg(room);
   const here = agents.filter((a) => a.room === room);
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const rows = [];
 
-  // Agents pane
-  rows.push(rule(`agents · room ${room}`));
+  // Agents pane: scrolls when there are more agents than ~40% of the height.
+  if (!here.find((a) => a.id === cursorId)) cursorId = here[0]?.id || "";
+  for (const id of marked) if (!here.find((a) => a.id === id)) marked.delete(id);
+  const cur = Math.max(0, here.findIndex((a) => a.id === cursorId));
+  const maxList = Math.max(3, Math.floor((H - 6) * 0.4));
+  listRows = Math.min(here.length, maxList);
+  if (cur < listTop) listTop = cur;
+  if (cur >= listTop + listRows) listTop = cur - listRows + 1;
+  listTop = Math.max(0, Math.min(listTop, here.length - listRows));
+  const more = here.length - listRows;
+  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (marked.size ? ` · ${marked.size} marked` : "")));
+  listRowY = rows.length + 1; // 1-based screen row of the first agent row
   // "special:reprieve" -> "reprieve": only the part after the last ":".
   const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
   const wsW = Math.min(12, Math.max(2, ...here.map((a) => width(wsl(a)))));
   const nameW = Math.min(24, Math.max(8, ...here.map((a) => width(((a.icon ? a.icon + " " : "") + a.display)))));
   if (!here.length) rows.push(dim("  no agents here · SUPER+A opens one"));
-  for (const a of here) {
+  for (const a of here.slice(listTop, listTop + listRows)) {
     const name = (a.icon ? a.icon + " " : "") + a.display;
     const st = a.status === "done" && a.seen ? "idle" : a.status;
     const extra = W < 72 ? "" : " " + dim(pad(cut(wsl(a), wsW), wsW + 1) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
-    const line = ` ${fg(c, bold(mark(a)))} ${pad(hexFg(a.color, bold(cut(name, nameW))), nameW)}  ${pad(st, 8)}${W < 72 ? dim(wsl(a)) : extra}`;
-    rows.push(a.focused ? `${ESC}7m${pad(strip(line), W)}${ESC}27m` : line);
+    const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
+    const line = `${sel}${fg(c, bold(mark(a)))} ${pad(hexFg(a.color, bold(cut(name, nameW))), nameW)}  ${pad(st, 8)}${W < 72 ? dim(wsl(a)) : extra}`;
+    // Cursor row: inverted. The focused window's agent: underlined name column.
+    rows.push(a.id === cursorId ? `${ESC}7m${pad(strip(line), W)}${ESC}27m` : a.focused ? `${ESC}4m${line}${ESC}24m` : line);
   }
 
   // Conversation pane: fill what's left, newest at the bottom.
+  convoY = rows.length + 2;
   rows.push(rule(scroll > 0 ? `room · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : "room"));
   const bottom = 3; // input rule + input + status bar
   const avail = Math.max(1, H - rows.length - bottom);
@@ -135,8 +158,9 @@ function render() {
 
   // Input line
   rows.push(fg(c, "─".repeat(W)));
-  const prompt = fg(c, bold(`${room} ❯ `));
-  const hint = input ? "" : dim(note || (W < 72 ? "message the room" : "message the room · Tab: next room · ^N or /new [dir]: new agent"));
+  const to = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
+  const prompt = fg(c, bold(to.length ? `${room} → ${cut(to.join(", "), Math.max(10, Math.floor(W / 3)))} ❯ ` : `${room} ❯ `));
+  const hint = input ? "" : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ↑↓ agent · ⏎ jump · space mark · ^W close · ^K kill · ^N new · Tab room")));
   rows.push(prompt + input + hint);
 
   // tmux-style status bar
@@ -184,14 +208,17 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; render(); loadRoom(room);
+  note = ""; scroll = 0; lastConvoLen = 0; marked.clear(); cursorId = ""; listTop = 0; confirm = null; render(); loadRoom(room);
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
 // workspace (where this TUI is), in DIR or the config's default folder.
 import { spawn } from "node:child_process";
 import { loadConfig } from "../lib/paths.mjs";
+let lastNew = 0;
 function newAgent(dir) {
+  if (Date.now() - lastNew < 2000) return; // held / repeated Ctrl+N: one agent
+  lastNew = Date.now();
   const cwd = (dir || loadConfig().cwd).replace(/^~(?=$|\/)/, process.env.HOME);
   if (!fs.existsSync(cwd)) { note = "✗ no such folder: " + cwd; return render(); }
   const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
@@ -199,11 +226,56 @@ function newAgent(dir) {
   note = "opening a new agent in " + home(cwd) + " …"; render();
 }
 
+// Close (window close: Pi exits normally) or kill (SIGTERM, then SIGKILL) the
+// agent under the cursor; both ask for a second press within 3 s.
+import * as hypr from "../lib/hypr.mjs";
+function act(kind) {
+  const a = agents.find((x) => x.id === cursorId);
+  if (!a) return;
+  if (!confirm || confirm.kind !== kind || confirm.id !== a.id || Date.now() > confirm.until) {
+    confirm = { kind, id: a.id, until: Date.now() + 3000, label: `${kind === "close" ? "close" : "KILL"} ${a.display}? press ^${kind === "close" ? "W" : "K"} again` };
+    setTimeout(() => { if (confirm && Date.now() > confirm.until) { confirm = null; render(); } }, 3100);
+    return render();
+  }
+  confirm = null;
+  if (kind === "close") {
+    if (!a.address) { note = "✗ no window for " + a.display; return render(); }
+    hypr.closeWindow(a.address).then(() => { note = "closed " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  } else {
+    try { process.kill(a.pid, "SIGTERM"); note = "killed " + a.display; } catch (e) { note = "✗ " + e.message; }
+    setTimeout(() => { try { process.kill(a.pid, 0); process.kill(a.pid, "SIGKILL"); } catch { /* gone */ } }, 2000);
+  }
+  render();
+}
+function moveCursor(d) {
+  const here = hereAgents();
+  if (!here.length) return;
+  const i = Math.max(0, here.findIndex((a) => a.id === cursorId));
+  cursorId = here[Math.max(0, Math.min(here.length - 1, i + d))].id;
+  confirm = null; render();
+}
+
 async function send() {
   const text = input.trim(); input = "";
   const cmd = /^\/new(?:\s+(.+))?$/.exec(text);
   if (cmd) return newAgent(cmd[1]?.trim());
-  if (!text || !api) return render();
+  if (!text && !api) return render();
+  if (!text) { // Enter on an empty line: jump to the agent under the cursor
+    if (cursorId && api) api.call("agent.focus", { agent: cursorId }).catch((e) => { note = "✗ " + e.message; render(); });
+    return render();
+  }
+  if (!api) return render();
+  // Marked agents (space), or leading @Name tokens, get it directly (not the room).
+  let targets = [...marked], body = text;
+  const at = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/);
+  if (!targets.length && at) { targets = at[1].split(/[\s,]+/).filter((x) => x.length > 1).map((x) => x.slice(1)); body = at[2]; }
+  if (targets.length) {
+    const sent = [], failed = [];
+    await Promise.all(targets.map((who) => api.call("agent.prompt", { agent: who, text: body, via: "room-tui" })
+      .then((r) => sent.push(r.name || who)).catch((e) => failed.push(`${who} (${e.message})`))));
+    note = (sent.length ? "→ sent to " + sent.join(", ") : "") + (failed.length ? "  ✗ " + failed.join(", ") : "");
+    return render();
+  }
   try {
     const r = await api.call("room.post", { room, text, as_human: true, via: "room-tui" });
     note = r.delivered?.length ? "→ " + r.delivered.join(", ") : "saved · no agents in this room yet";
@@ -213,7 +285,10 @@ async function send() {
 
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (d) => {
+// Input arrives in chunks (held keys, pastes): split into single keys first.
+const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) draw(); } });
+function onKey(d) {
   if (d === "\x03") return quit();
   if (d === "\t") return cycle(1);
   if (d === "\x1b[Z") return cycle(-1);
@@ -223,15 +298,32 @@ process.stdin.on("data", (d) => {
   if (d === "\x0e") return newAgent(); // Ctrl+N
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
-    for (const m of d.matchAll(/\x1b\[<(\d+);\d+;\d+[Mm]/g)) { const b = Number(m[1]); if (b === 64) scroll += 3; else if (b === 65) scroll -= 3; }
+    for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
+      const b = Number(m[1]), y = Number(m[3]);
+      const inList = y >= listRowY && y < listRowY + listRows;
+      if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
+        if (inList) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); const here = hereAgents(); const i = here.findIndex((a) => a.id === cursorId); if (i < listTop) cursorId = here[listTop]?.id || cursorId; else if (i >= listTop + listRows) cursorId = here[listTop + listRows - 1]?.id || cursorId; }
+        else scroll += b === 64 ? 3 : -3;
+      } else if (b === 0 && m[4] === "M" && inList) { // left click: cursor there; click again: mark / unmark
+        const a = hereAgents()[listTop + y - listRowY];
+        if (a) { if (a.id === cursorId) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id); cursorId = a.id; confirm = null; }
+      }
+    }
     return render();
   }
+  if (d === "\x1b[A") return moveCursor(-1);
+  if (d === "\x1b[B") return moveCursor(1);
+  if (d === "\x1b") { marked.clear(); confirm = null; note = ""; return render(); } // Esc: unmark all
+  if (d === " " && !input) { if (cursorId) marked.has(cursorId) ? marked.delete(cursorId) : marked.add(cursorId); moveCursor(1); return; }
+  if (d === "\x17") return act("close"); // Ctrl+W
+  if (d === "\x0b") return act("kill");  // Ctrl+K
+  if (d === "\x01") { const here = hereAgents(); if (marked.size === here.length) marked.clear(); else here.forEach((a) => marked.add(a.id)); return render(); } // Ctrl+A
   const page = Math.max(1, lastAvail - 2);
-  const keys = { "\x1b[A": 1, "\x1b[B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[H": Infinity, "\x1b[1~": Infinity, "\x1b[F": -Infinity, "\x1b[4~": -Infinity };
+  const keys = { "\x1b[1;2A": 1, "\x1b[1;2B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[H": Infinity, "\x1b[1~": Infinity, "\x1b[F": -Infinity, "\x1b[4~": -Infinity };
   if (d in keys) { scroll = keys[d] === Infinity ? 1e9 : keys[d] === -Infinity ? 0 : scroll + keys[d]; if (scroll < 0) scroll = 0; return render(); }
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
   input += d.replace(/[\x00-\x1f]/g, ""); note = ""; render();
-});
+}
 function quit() { out(`${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
 process.stdout.on("resize", render);
