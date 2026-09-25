@@ -160,6 +160,7 @@ ShellRoot {
         else if (m.event === "message") shell.onMessage(m.data)
         else if (m.event === "open") shell.open(m.data.room, m.data.key)
         else if (m.event === "search") shell.openSearch(m.data.room || "", !!m.data.toggle)
+        else if (m.event === "sound") shell.playSound(m.data.sound)
         else if (m.id !== undefined && shell.callbacks[m.id]) {
           var cb = shell.callbacks[m.id]; delete shell.callbacks[m.id]
           cb(m.result === undefined ? null : m.result, m.error || "")
@@ -167,6 +168,13 @@ ShellRoot {
       }
     }
   }
+  // Herdr's notification sounds (assets/sounds, copied from herdr), via paplay
+  // like herdr on Linux. Detached so overlapping dings don't cancel each other.
+  function playSound(name) {
+    if (name !== "done" && name !== "request") return
+    Quickshell.execDetached(["paplay", Quickshell.shellDir + "/../assets/sounds/" + name + ".mp3"])
+  }
+
   // Keep retrying while the daemon is away (restarts, crashes).
   Timer { id: reconnect; interval: 1500; repeat: true; running: !shell.online
     onTriggered: { sock.connected = false; sock.connected = true } }

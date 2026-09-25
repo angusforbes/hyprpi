@@ -29,6 +29,10 @@ whole room: every agent in it receives the message plus the room history it
 hasn't seen yet, and answers in the room (`room_reply`). `＋ agent` opens a new
 agent, ⌕ opens search.
 
+Sounds: when an agent finishes a turn (working → done) the room app plays herdr's
+`done` ding (`assets/sounds/done.mp3`, via `paplay`), unless that agent's window
+is focused; an agent going `blocked` plays herdr's `request` sound.
+
 ## Search window
 
 Its own window (SUPER+ALT+/ or ⌕ in the room widget). Searches every agent's
