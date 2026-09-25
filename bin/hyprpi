@@ -12,7 +12,7 @@ import { terminalCommand } from "../lib/terminal.mjs";
 const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
 
   hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [-- PI_ARGS...]
-                              open a Pi agent in its own foot window (SUPER+A)
+                              open a Pi agent in its own terminal window (SUPER+A)
   hyprpi room [ROOM] [--toggle]  show (or toggle) the room widget; no ROOM = current world, following it
   hyprpi search [ROOM] [--toggle]  open the search window for a room (default: current world)
   hyprpi find [--room R] [--ai] QUERY  search from the terminal (keyword, or AI with --ai)
@@ -22,6 +22,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi focus AGENT          jump to an agent's window
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
+  hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; cleared when it works again)
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
   hyprpi stop                 stop the daemon
@@ -128,9 +129,33 @@ async function cmdNew() {
 // The room widget and search window are served by one Quickshell process per
 // Hyprland instance, connected to this instance's daemon; the daemon forwards
 // "open"/"search" to it. Start it if nobody answered.
+// Is a room UI (qs -p <ui>) already running for this daemon's socket?
+function pgrepUi() {
+  const ui = path.join(ROOT, "ui");
+  try {
+    for (const pid of fs.readdirSync("/proc")) {
+      if (!/^\d+$/.test(pid)) continue;
+      let cmd, env;
+      try { cmd = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0"); } catch { continue; }
+      if (cmd[0] !== "qs" || cmd[1] !== "-p" || cmd[2] !== ui) continue;
+      try { env = fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); } catch { continue; }
+      if (env.includes("HYPRPI_SOCKET=" + socketPath())) return true;
+    }
+  } catch { /* no /proc */ }
+  return false;
+}
+
 async function uiRequest(method, params) {
   await ensureDaemon();
   let r = await request(method, params);
+  // A running UI may just be reconnecting (it retries every 1.5 s after a
+  // daemon restart); give it a moment before starting a second copy.
+  if (!r.delivered && pgrepUi()) {
+    for (let i = 0; i < 25 && !r.delivered; i++) {
+      await new Promise((res) => setTimeout(res, 100));
+      r = await request(method, { ...params, toggle: false });
+    }
+  }
   if (!r.delivered) {
     const child = spawn("qs", ["-p", path.join(ROOT, "ui")], { detached: true, stdio: "ignore", env: childEnv({ HYPRPI_SOCKET: socketPath() }) });
     child.unref();
@@ -223,6 +248,14 @@ const commands = {
   },
   focus: async () => { const r = await request("agent.focus", { agent: args[0] }); console.log(r.address); },
   name: cmdName,
+  status: async () => {
+    const quiet = flag("--quiet");
+    const id = agentId();
+    const status = args[0];
+    if (!["idle", "working", "blocked", "done"].includes(status)) die("usage: hyprpi status idle|working|blocked|done [--quiet]");
+    const r = await request("agent.update", { agent_id: id, status, quiet });
+    console.log(r.status);
+  },
   whoami: async () => console.log(JSON.stringify(await request("whoami", { agent_id: agentId() }), null, 1)),
 };
 
