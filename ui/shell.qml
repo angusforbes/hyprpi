@@ -33,7 +33,7 @@ ShellRoot {
   }
   // Placement (logical px): under the bar, lined up with the world letters.
   property int panelTop: 41
-  property int panelLeft: 11
+  property int panelLeft: 10   // whole physical pixels at scale 1.6 (x1.6 = 16), else the edge blurs
   property int panelWidth: 430
   property int panelHeight: 700
   // room -> array of messages (kept per room; windows bind to their own)
@@ -54,23 +54,36 @@ ShellRoot {
   // (falls back to accent), 2px, corners = Hyprland decoration:rounding (0 here).
   readonly property color popupBorder: shellToml["popups.border"] || accent
   readonly property color popupBg: shellToml["popups.background"] || bg
-  readonly property int popupBorderWidth: 2
+  // Omarchy: Style.space(2) = round(2 * spacing.scale * font.base-size / 12)
+  // (spacing scale-with-font is on); user ~/.config/omarchy/shell.toml wins.
+  readonly property int popupBorderWidth: Math.max(1, Math.round(2 * spacingScale * Math.max(1 / 12, fontBase / 12)))
+  readonly property real spacingScale: Number(tomlUser["spacing.scale"] || tomlTheme["spacing.scale"] || 1)
+  readonly property real fontBase: Number(tomlUser["font.base-size"] || tomlTheme["font.base-size"] || 12)
   property int radius: 0
-  property var shellToml: ({})
+  property var tomlTheme: ({})
+  property var tomlUser: ({})
+  readonly property var shellToml: Object.assign({}, tomlTheme, tomlUser)
+  function parseToml(raw) {
+    var out = {}, section = "", lines = String(raw).split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var h = lines[i].match(/^\s*\[([^\]]+)\]/)
+      if (h) { section = h[1]; continue }
+      var m = lines[i].match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?(#[0-9A-Fa-f]{6,8}|-?[0-9.]+)/)
+      if (m) out[section + "." + m[1]] = m[2]
+    }
+    return out
+  }
   FileView {
     path: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme/shell.toml"
     watchChanges: true
     onFileChanged: reload()
-    onLoaded: {
-      var out = {}, section = "", lines = String(text()).split("\n")
-      for (var i = 0; i < lines.length; i++) {
-        var h = lines[i].match(/^\s*\[([^\]]+)\]/)
-        if (h) { section = h[1]; continue }
-        var m = lines[i].match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?(#[0-9A-Fa-f]{6,8})/)
-        if (m) out[section + "." + m[1]] = m[2]
-      }
-      shell.shellToml = out
-    }
+    onLoaded: shell.tomlTheme = shell.parseToml(text())
+  }
+  FileView {
+    path: Quickshell.env("HOME") + "/.config/omarchy/shell.toml"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: shell.tomlUser = shell.parseToml(text())
   }
   Process {
     running: true
