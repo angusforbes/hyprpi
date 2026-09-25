@@ -246,6 +246,7 @@ Item {
     root.dry = payload.dry === true
     root.typed = ""
     root.heldList = []
+    root.sessionHints = ({})
     root.holdCandidate = ""
     root.virtualWs = ({})
     root.virtualWorlds = []
@@ -409,12 +410,36 @@ Item {
     }
 
     var map = {}
-    var allHints = buildHints(ordered.length + root.hintStart)
+    // Within one open session a window keeps its letter and colour no matter
+    // what moves around (sessionHints, keyed by window address); only windows
+    // new to the session get fresh letters (the first unused ones). Each open
+    // starts clean, so letters are in proper order again after reopening.
+    var keep = root.sessionHints
+    var used = {}, usedCount = 0, fresh = []
+    for (var h0 = 0; h0 < ordered.length; h0++) {
+      var prev = keep[ordered[h0].address]
+      if (prev && !used[prev.hint]) {
+        ordered[h0].hint = prev.hint
+        ordered[h0].color = prev.color
+        used[prev.hint] = true
+        usedCount++
+      } else fresh.push(ordered[h0])
+    }
+    var cands = buildHints(ordered.length + usedCount + root.hintStart)
+    var ci = root.hintStart
+    for (var f = 0; f < fresh.length; f++) {
+      while (ci < cands.length && used[cands[ci]]) ci++
+      fresh[f].hint = cands[ci]
+      fresh[f].color = hintPalette[ci % hintPalette.length]
+      used[cands[ci]] = true
+      ci++
+    }
+    var nextSession = {}
     for (var h = 0; h < ordered.length; h++) {
-      ordered[h].hint = allHints[h + root.hintStart]
-      ordered[h].color = hintPalette[(h + root.hintStart) % hintPalette.length]
+      nextSession[ordered[h].address] = { hint: ordered[h].hint, color: ordered[h].color }
       if (ordered[h].shown) map[ordered[h].hint] = ordered[h]
     }
+    root.sessionHints = nextSession
 
     // Empty workspaces/worlds added with Alt+N / Alt+Shift+N (not in the
     // single-workspace view). They become real once a window is dropped in.
@@ -508,6 +533,7 @@ Item {
   // Moves are silent (you stay put) and the overview refreshes.
   // Windows picked up with Alt+hold (a move list; Alt+hold again removes one,
   // Alt+Esc clears). A drop moves all of them.
+  property var sessionHints: ({})        // address -> { hint, color } for this open session
   property var heldList: []
   readonly property bool holding: heldList.length > 0
   function isHeld(address) {
