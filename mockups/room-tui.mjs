@@ -115,6 +115,7 @@ function selSpans(W) {
   }
   for (let y = sr.y0; y <= sr.y1; y++) {
     let a = y === sr.y0 ? sr.x0 : 1, b = y === sr.y1 ? sr.x1 : W;
+    if (y >= listRowY && y < listRowY + listRows) a = Math.max(a, 4); // never the ▸ / status mark columns
     if (sel.mode === "text") {
       const r = rowMeta[y];
       if (!r || r.msg == null || r.header) continue;
@@ -165,7 +166,7 @@ function selectedText() {
   const W = process.stdout.columns || 100;
   if (sel.mode === "msg") { // whole messages, full text even if partly scrolled away
     const [m0, m1] = selMsgs(sr); if (m0 == null) return "";
-    return convoMsgs.slice(m0, m1 + 1).map((m) => `${hhmm(m.ts)} ${m.author?.kind === "human" ? m.author.name || "Angus" : m.author?.name || "agent"}: ${m.text}`).join("\n");
+    return convoMsgs.slice(m0, m1 + 1).map((m) => `${m.author?.kind === "human" ? m.author.name || "Angus" : m.author?.name || "agent"}: ${m.text}`).join("\n");
   }
   const spans = selSpans(W);
   if (sel.mode === "text") { // unwrap: rows of one paragraph join with a space
@@ -214,20 +215,24 @@ function draw() {
   // "special:reprieve" -> "reprieve": only the part after the last ":".
   const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
   const wsW = Math.min(12, Math.max(2, ...here.map((a) => width(wsl(a)))));
-  const nameW = Math.min(24, Math.max(8, ...here.map((a) => width(((a.icon ? a.icon + " " : "") + a.display)))));
+  // One name column for agents and messages, so message names line up with
+  // the agent names above (column 4, after the mark).
+  const msgs = messages[room] || [];
+  const authorLabel = (au = {}) => au.kind === "human" ? au.name || "Angus" : (au.icon ? au.icon + " " : "") + (au.name || "agent");
+  const nameW = Math.min(20, Math.max(6, ...here.map((a) => width((a.icon ? a.icon + " " : "") + a.display)), ...msgs.slice(-200).map((m) => width(authorLabel(m.author)))));
+  const nameBg = theme.muted || theme.selection;
   if (!here.length) rows.push(dim("  no agents here · SUPER+A opens one"));
   for (const a of here.slice(listTop, listTop + listRows)) {
-    const name = (a.icon ? a.icon + " " : "") + a.display;
-    const st = a.status === "done" && a.seen ? "idle" : a.status;
-    const extra = W < 72 ? "" : " " + dim(pad(cut(wsl(a), wsW), wsW + 1) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
+    // mark · name · workspace · model · folder. No status word: the mark says it.
+    const name = cut((a.icon ? a.icon + " " : "") + a.display, nameW);
+    let styled = hexFg(a.color, bold(name));
+    // Cursor (follows the focused window): the name alone on light grey.
+    // Focused but the cursor moved elsewhere: the name underlined. Marks never change colour.
+    if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
+    else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
     const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
-    const line = `${sel}${fg(c, bold(mark(a)))} ${pad(hexFg(a.color, bold(cut(name, nameW))), nameW)}  ${pad(st, 8)}${W < 72 ? dim(wsl(a)) : extra}`;
-    // The agent whose window is focused: inverted (as before). The list cursor:
-    // a light grey bar (the theme's muted colour), so both can be seen at once.
-    const curBg = theme.muted || theme.selection;
-    rows.push(a.focused ? `${ESC}7m${pad(strip(line), W)}${ESC}27m`
-      : a.id === cursorId ? (curBg ? `${ESC}48;2;${rgb(curBg)}m${pad(line.replace(/\x1b\[(?:0|49)m/g, ""), W)}${ESC}49m` : `${ESC}4m${line}${ESC}24m`)
-      : line);
+    const rest = W < 72 ? dim(wsl(a)) : dim(pad(cut(wsl(a), wsW), wsW + 2) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
+    rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${" ".repeat(Math.max(0, nameW - width(name)))}  ${rest}`);
   }
 
   // Conversation pane: fill what's left, newest at the bottom.
@@ -235,22 +240,21 @@ function draw() {
   const ruleAt = rows.length; rows.push(""); // filled in once scroll is clamped below
   const bottom = 3; // input rule + input + status bar
   const avail = Math.max(1, H - rows.length - bottom);
-  // Wide: "hh:mm  who  text" columns (irssi/weechat). Narrow: who on its own line.
-  const narrow = W < 72, whoW = narrow ? W - 8 : 14, textW = narrow ? W - 3 : Math.max(10, W - 7 - whoW - 2);
+  // Wide: "   name  text", the name under the agent names above. Narrow: name on its own line.
+  const narrow = W < 72, textX = narrow ? 4 : 4 + nameW + 2, textW = Math.max(10, W - textX + 1 - 1);
   // Each row: { line, msg (index into the room's messages), textX (1-based
   // column where message text starts), hard (last row of a paragraph) }.
-  const convo = [], msgs = messages[room] || [];
-  const textX = narrow ? 4 : whoW + 10;
+  const convo = [];
   msgs.forEach((m, mi) => {
     const au = m.author || {};
-    const who = au.kind === "human" ? fg(c, bold(cut(au.name || "Angus", whoW))) : hexFg(au.color, bold(cut((au.icon ? au.icon + " " : "") + (au.name || "agent"), whoW)));
+    const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW))) : hexFg(au.color, bold(cut(authorLabel(au), nameW)));
     const body = [];
     for (const para of String(m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => body.push({ l, hard: i === ls.length - 1 })); }
     if (narrow) {
       if (convo.length) convo.push({ line: "", msg: null });
-      convo.push({ line: ` ${who} ${dim(hhmm(m.ts))}`, msg: mi, header: true });
+      convo.push({ line: `   ${who}`, msg: mi, header: true });
       for (const b of body) convo.push({ line: `   ${b.l}`, msg: mi, textX, hard: b.hard });
-    } else body.forEach((b, i) => convo.push({ line: i === 0 ? ` ${dim(hhmm(m.ts))} ${pad(who, whoW)}  ${b.l}` : ` ${" ".repeat(5)} ${" ".repeat(whoW)}  ${b.l}`, msg: mi, textX, hard: b.hard }));
+    } else body.forEach((b, i) => convo.push({ line: i === 0 ? `   ${pad(who, nameW)}  ${b.l}` : " ".repeat(textX - 1) + b.l, msg: mi, textX, hard: b.hard }));
   });
   // Scrolled up: stay on the same lines when new ones arrive below.
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;

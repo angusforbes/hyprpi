@@ -92,6 +92,9 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   "searchModel": "claude-haiku-4-5"
 }
 
+- `offLimitsWorkspaces` (default `["special:reprieve"]`): an agent whose window is
+  on one of these workspaces (Reprieve) leaves its room: not in any room panel, no
+  room messages, can't post to a room. Moving it out puts it back in its world's room.
 - `cwdFromFocused` (default true): SUPER+A / `hyprpi new` starts the agent in the
   focused window's folder: another agent's folder, or the current directory of
   whatever runs in a focused terminal (kitty, foot, alacritty, ghostty, wezterm).
