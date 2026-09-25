@@ -13,6 +13,8 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [-- PI_ARGS...]
                               open a Pi agent in its own foot window (SUPER+A)
   hyprpi room [ROOM] [--toggle]  show (or toggle) the room widget; no ROOM = current world, following it
+  hyprpi search [ROOM] [--toggle]  open the search window for a room (default: current world)
+  hyprpi find [--room R] [--ai] QUERY  search from the terminal (keyword, or AI with --ai)
   hyprpi list [--json]        live agents and rooms
   hyprpi post [--room R] TEXT post to a room as Angus (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
@@ -105,21 +107,45 @@ async function cmdNew() {
 
 // Room windows are served by one Quickshell process per Hyprland instance,
 // connected to this instance's daemon; the daemon forwards "open" to it.
-async function cmdRoom() {
-  const toggle = flag("--toggle");
+// The room widget and search window are served by one Quickshell process per
+// Hyprland instance, connected to this instance's daemon; the daemon forwards
+// "open"/"search" to it. Start it if nobody answered.
+async function uiRequest(method, params) {
   await ensureDaemon();
-  const params = { room: args[0] || "", toggle };
-  let r = await request("ui.open", params);
+  let r = await request(method, params);
   if (!r.delivered) {
     const child = spawn("qs", ["-p", path.join(ROOT, "ui")], { detached: true, stdio: "ignore", env: childEnv({ HYPRPI_SOCKET: socketPath() }) });
     child.unref();
     for (let i = 0; i < 60 && !r.delivered; i++) {
       await new Promise((res) => setTimeout(res, 100));
-      r = await request("ui.open", { ...params, toggle: false });
+      r = await request(method, { ...params, toggle: false });
     }
-    if (!r.delivered) die("room widget process did not start (qs -p " + path.join(ROOT, "ui") + ")");
+    if (!r.delivered) die("hyprpi UI process did not start (qs -p " + path.join(ROOT, "ui") + ")");
   }
-  console.log(r.room);
+  return r;
+}
+
+async function cmdRoom() {
+  const toggle = flag("--toggle");
+  console.log((await uiRequest("ui.open", { room: args[0] || "", toggle })).room);
+}
+
+async function cmdSearch() {
+  const toggle = flag("--toggle");
+  console.log((await uiRequest("ui.search", { room: args[0] || "", toggle })).room);
+}
+
+async function cmdFind() {
+  const room = opt("--room");
+  const mode = flag("--ai") ? "ai" : "keyword";
+  const query = args.join(" ");
+  if (!query.trim()) die("usage: hyprpi find [--room R] [--ai] QUERY");
+  const r = await request("search", { room, query, mode }, { timeoutMs: 120000 });
+  if (flag("--json")) return console.log(JSON.stringify(r, null, 1));
+  console.log(`${r.results.length} results in room ${r.room} (${r.sources} sources${r.scanned ? `, ${r.scanned} entries read` : ""}, ${r.ms} ms)`);
+  for (const h of r.results) {
+    console.log(`${new Date(h.ts).toISOString().slice(5, 16).replace("T", " ")}  ${(h.icon ? h.icon + " " : "") + h.name} [${h.role}]  ${(h.pre + h.match + h.post).slice(0, 140)}${h.why ? "\n      ↳ " + h.why : ""}`);
+  }
 }
 
 async function cmdList() {
@@ -160,6 +186,8 @@ const commands = {
   stop: async () => { if (await alive()) await request("shutdown"); },
   new: cmdNew,
   room: cmdRoom,
+  search: cmdSearch,
+  find: cmdFind,
   list: cmdList,
   post: async () => {
     const room = opt("--room");

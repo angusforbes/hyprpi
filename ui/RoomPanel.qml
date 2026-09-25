@@ -95,6 +95,14 @@ PanelWindow {
         Text { anchors.centerIn: parent; text: "✕"; color: app.dimFg; font.pixelSize: 13 }
         MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.panelOpen = false }
       }
+      Rectangle {
+        id: searchBtn
+        anchors { right: closeBtn.left; rightMargin: 4; verticalCenter: parent.verticalCenter }
+        width: 26; height: 26; radius: 6
+        color: searchMouse.containsMouse ? app.bg3 : "transparent"
+        Text { anchors.centerIn: parent; text: "⌕"; color: app.dimFg; font.pixelSize: 16 }
+        MouseArea { id: searchMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.openSearch(win.room, false) }
+      }
       Rectangle { id: badge; width: 34; height: 34; radius: 8; color: win.roomColor
         Text { anchors.centerIn: parent; text: win.room; color: "white"; font.family: app.fontFamily; font.pixelSize: 17; font.bold: true } }
       Column {
@@ -104,7 +112,7 @@ PanelWindow {
                color: app.online ? app.dimFg : "#b4637a"; font.family: app.fontFamily; font.pixelSize: 11 }
       }
       Rectangle {
-        anchors { right: closeBtn.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
+        anchors { right: searchBtn.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
         width: addText.implicitWidth + 18; height: 26; radius: 6
         color: addMouse.containsMouse ? app.bg3 : app.bg2; border.color: app.border
         Text { id: addText; anchors.centerIn: parent; text: "＋ agent"; color: app.fg; font.family: app.fontFamily; font.pixelSize: 12 }

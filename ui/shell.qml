@@ -22,6 +22,15 @@ ShellRoot {
   property bool panelFollow: true        // opened for "current world": follow world changes
   readonly property string shownRoom: panelFollow && activeRoom ? activeRoom : panelRoom
   onShownRoomChanged: if (shownRoom && !messages[shownRoom]) loadRoom(shownRoom)
+  // ---- the search window ----
+  property bool searchOpen: false
+  property string searchRoom: "A"
+  function openSearch(room, toggle) {
+    room = String(room || activeRoom || "A")
+    if (toggle && searchOpen && searchRoom === room) { searchOpen = false; return }
+    searchRoom = room
+    searchOpen = true
+  }
   // Placement (logical px): under the bar, lined up with the world letters.
   property int panelTop: 41
   property int panelLeft: 11
@@ -116,6 +125,7 @@ ShellRoot {
         if (m.event === "agents") shell.applyList(m.data)
         else if (m.event === "message") shell.onMessage(m.data)
         else if (m.event === "open") shell.open(m.data.room || "", !!m.data.toggle)
+        else if (m.event === "search") shell.openSearch(m.data.room || "", !!m.data.toggle)
         else if (m.id !== undefined && shell.callbacks[m.id]) {
           var cb = shell.callbacks[m.id]; delete shell.callbacks[m.id]
           cb(m.result === undefined ? null : m.result, m.error || "")
@@ -138,6 +148,7 @@ ShellRoot {
   }
 
   RoomPanel { room: shell.shownRoom; app: shell }
+  SearchWindow { app: shell }
 
   IpcHandler {
     target: "hyprpi"
@@ -145,5 +156,6 @@ ShellRoot {
     function open(room: string): void { shell.open(room, false) }
     function toggle(room: string): void { shell.open(room, true) }
     function close(): void { shell.panelOpen = false }
+    function search(room: string): void { shell.openSearch(room, false) }
   }
 }
