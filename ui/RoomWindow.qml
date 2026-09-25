@@ -124,13 +124,21 @@ FloatingWindow {
           border.width: modelData.focused ? 1.5 : 0
           MouseArea { id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
             onClicked: app.call("agent.focus", { agent: modelData.id }, null) }
-          // Status dot, no animation: working = hollow ring, done (unseen) = full
-          // dot (with the ding), blocked = red, idle / seen = grey.
-          Rectangle { id: dot; width: 9; height: 9; radius: 4.5
-            property color c: modelData.status === "working" || (modelData.status === "done" && !modelData.seen) ? win.roomColor : modelData.status === "blocked" ? app.statusColor("blocked") : app.dimFg
-            color: modelData.status === "working" ? "transparent" : c
-            border.color: c; border.width: modelData.status === "working" ? 1.5 : 0
-            anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter } }
+          // Status mark, all in the world's colour, no animation:
+          // working = solid dot · done (unseen, with the ding) = \u2713 ·
+          // blocked = \u00d7 · idle (or done and seen) = hollow ring.
+          Item { id: dot; width: 11; height: 11
+            anchors { left: parent.left; leftMargin: 9; verticalCenter: parent.verticalCenter }
+            property string mark: modelData.status === "working" ? "solid"
+              : modelData.status === "blocked" ? "x"
+              : (modelData.status === "done" && !modelData.seen) ? "check" : "ring"
+            Rectangle { visible: dot.mark === "solid" || dot.mark === "ring"; anchors.centerIn: parent
+              width: 9; height: 9; radius: 4.5
+              color: dot.mark === "solid" ? win.roomColor : "transparent"
+              border.color: win.roomColor; border.width: dot.mark === "ring" ? 1.5 : 0 }
+            Text { visible: dot.mark === "check" || dot.mark === "x"; anchors.centerIn: parent
+              text: dot.mark === "check" ? "\u2713" : "\u00d7"; color: win.roomColor
+              font.pixelSize: dot.mark === "check" ? 13 : 15; font.bold: true } }
           Text { id: glyph; text: modelData.icon || "🤖"; font.pixelSize: 17
             anchors { left: dot.right; leftMargin: 9; verticalCenter: parent.verticalCenter } }
           Column {
