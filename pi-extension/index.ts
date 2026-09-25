@@ -54,8 +54,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     } else name = fgHex(d.color, d.display || d.name || "");
     const where = d.parked ? "in Reprieve · out of rooms" : d.room ? `room ${d.room}` : "no room";
     try { ctx.ui.setStatus?.("hyprpi", `${d.icon ? d.icon + " " : ""}\x1b[1m${name}\x1b[22m \x1b[2m· ${where}\x1b[22m`); } catch { /* no footer */ }
-    const plain = `${d.icon ? d.icon + " " : ""}${d.display || d.name || ""}`;
-    try { ctx.ui.setTitle?.(`π - ${plain} - ${String(ctx.cwd || process.cwd()).split("/").pop()}`); } catch { /* no title */ }
+    // Window title: the bare name only (no icon, colour tags or emoji).
+    const plain = String(d.name || d.display || "").replace(/\{#[0-9a-fA-F]{6}\}/g, "").replace(/[^\p{L}\p{N}\s\-_.']/gu, "").replace(/\s+/g, " ").trim();
+    if (plain) try { ctx.ui.setTitle?.(`π - ${plain} - ${String(ctx.cwd || process.cwd()).split("/").pop()}`); } catch { /* no title */ }
   }
 
   function onEvent(event: string, d: any) {
