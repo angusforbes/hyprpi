@@ -42,7 +42,7 @@ ShellRoot {
       return "no match"
     }
     // Move testing (no keyboard needed)
-    function pick(seq: string): string { var w = overview.hints[seq]; overview.held = w || null; return w ? "held " + seq + " on ws " + w.workspace : "no such hint" }
+    function pick(seq: string): string { var w = overview.hints[seq]; if (!w) { overview.heldList = []; return "cleared" } overview.toggleHeld(w); return "list: " + overview.heldList.map(function(x) { return x.hint + "@" + x.workspace }).join(" ") }
     function dropDigit(d: int): void { overview.dropDigit(d) }
     function newWorkspace(): string { overview.newWorkspace(); return overview.notice || "ok" }
     function newWorld(): string { overview.newWorld(); return overview.notice || "ok" }

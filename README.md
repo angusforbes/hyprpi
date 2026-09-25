@@ -76,13 +76,14 @@ World colours (A blue, B red, ...) come from the Omarchy theme, not this file.
 
 | Keys | Action |
 |---|---|
-| Alt+hold a hint (~0.35 s) | Pick the window up (heavy outline + banner). Two-key hints: type the prefix, then Alt+hold the last key |
+| Alt+hold a hint (~0.35 s) | Add the window to the move list (heavy outline; banner lists them). Alt+hold a listed one to remove it. Two-key hints: Alt+tap the first key, then Alt+hold the second |
 | Arrows | Move the workspace selection |
-| Enter / click a workspace | Drop the window into the selected / clicked workspace |
+| Enter / click a workspace | Move every listed window into the selected / clicked workspace |
 | 1-9, 0 | Drop into that workspace of the selected row's world (single-workspace view: current world) |
 | Alt+N | Add an empty workspace to the selected row's world (next free of 1-0; max 10) |
 | Alt+Shift+N | Add a new world (next free A-I) with an empty workspace 1 (all-worlds view) |
-| Esc | Cancel the pick-up (a second Esc closes) |
+| Alt+Esc | Clear the move list |
+| Esc | Close the overview |
 
 Moves are silent (you stay where you are) and the overview refreshes so you can keep going. Empty
 workspaces added with Alt+N / Alt+Shift+N become real once a window is dropped in.

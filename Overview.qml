@@ -245,7 +245,7 @@ Item {
     root.hintStart = Math.max(0, Number(payload.hintStart) || 0)
     root.dry = payload.dry === true
     root.typed = ""
-    root.held = null
+    root.heldList = []
     root.holdCandidate = ""
     root.virtualWs = ({})
     root.virtualWorlds = []
@@ -442,7 +442,7 @@ Item {
     // world, empty ones as tiles you can arrow to and drop into. Hyprland
     // deletes empty workspaces, so these exist only in the overview until a
     // window lands there.
-    if (root.showEmptyWorkspaces && root.held !== null && root.mode !== "workspace") {
+    if (root.showEmptyWorkspaces && root.holding && root.mode !== "workspace") {
       for (var fr = 0; fr < out.length; fr++) {
         var frow = out[fr]
         for (var fs = 1; fs <= size; fs++) {
@@ -495,10 +495,22 @@ Item {
   // world), or a click on a workspace tile. Alt+N adds an empty workspace to
   // the selected row's world; Alt+Shift+N adds a new world (all-worlds view).
   // Moves are silent (you stay put) and the overview refreshes.
-  property var held: null
+  // Windows picked up with Alt+hold (a move list; Alt+hold again removes one,
+  // Alt+Esc clears). A drop moves all of them.
+  property var heldList: []
+  readonly property bool holding: heldList.length > 0
+  function isHeld(address) {
+    for (var i = 0; i < heldList.length; i++) if (heldList[i].address === address) return true
+    return false
+  }
+  function toggleHeld(w) {
+    var next = heldList.filter(function(x) { return x.address !== w.address })
+    if (next.length === heldList.length) next.push(w)
+    heldList = next
+  }
   // Picking up / putting down re-lays the rows (empty slots come and go);
   // keep the current selection across that.
-  onHeldChanged: {
+  onHoldingChanged: {
     if (!root.lastRaw) return
     if (!root.keepSelectId) root.keepSelectId = root.selectedWorkspaceId()
     root.rebuild()
@@ -516,7 +528,7 @@ Item {
     interval: root.holdMs
     onTriggered: {
       var w = root.hints[root.holdCandidate]
-      if (w) { root.held = w; root.typed = ""; root.notice = ""; ambiguityTimer.stop() }
+      if (w) { root.toggleHeld(w); root.typed = ""; root.notice = ""; ambiguityTimer.stop() }
       root.holdCandidate = ""
     }
   }
@@ -530,11 +542,14 @@ Item {
   }
 
   function dropInto(wsId) {
-    if (!root.held || !wsId) return
-    if (root.held.workspace === wsId) { root.notice = "Already on that workspace"; return }
-    moveProcess.command = ["hyprctl", "dispatch",
-      "hl.dsp.window.move({ window = \"address:" + root.held.address + "\", workspace = \"" + wsId + "\", follow = false })"]
-    root.held = null
+    if (!root.holding || !wsId) return
+    var moving = root.heldList.filter(function(w) { return w.workspace !== wsId })
+    if (moving.length === 0) { root.notice = "Already on that workspace"; return }
+    var cmds = moving.map(function(w) {
+      return "hyprctl dispatch 'hl.dsp.window.move({ window = \"address:" + w.address + "\", workspace = \"" + wsId + "\", follow = false })' >/dev/null"
+    })
+    moveProcess.command = ["sh", "-c", cmds.join("; ")]
+    root.heldList = []
     root.keepSelectId = wsId
     root.notice = ""
     moveProcess.running = true
@@ -766,7 +781,8 @@ Item {
           var shift = (event.modifiers & Qt.ShiftModifier) !== 0
           if (event.key === Qt.Key_Escape) {
             // Esc cancels a pick-up first; a second Esc closes.
-            if (root.held || root.holdCandidate !== "") { root.held = null; root.cancelHold(); root.notice = "" }
+            // Alt+Esc clears the move list; Esc closes.
+            if (alt) { root.heldList = []; root.cancelHold(); root.notice = "" }
             else root.close()
             event.accepted = true; return
           }
@@ -780,11 +796,11 @@ Item {
           if (event.key === Qt.Key_Up)    { root.moveSel(-1, 0); event.accepted = true; return }
           if (event.key === Qt.Key_Down)  { root.moveSel(1, 0);  event.accepted = true; return }
           if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)
-              && !root.held && root.typed !== "" && root.hints[root.typed]) {
+              && !root.holding && root.typed !== "" && root.hints[root.typed]) {
             root.commitTyped(); event.accepted = true; return
           }
           if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.held) root.dropInto(root.selectedWorkspaceId()); else root.enterSelected()
+            if (root.holding) root.dropInto(root.selectedWorkspaceId()); else root.enterSelected()
             event.accepted = true; return
           }
           if (alt && event.key === Qt.Key_N) {
@@ -792,7 +808,7 @@ Item {
             event.accepted = true; return
           }
           if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9 && !alt) {
-            if (root.held) root.dropDigit(event.key - Qt.Key_0)
+            if (root.holding) root.dropDigit(event.key - Qt.Key_0)
             event.accepted = true; return
           }
           if (event.key === Qt.Key_Backspace) {
@@ -817,7 +833,7 @@ Item {
               root.typed = ""
               return
             }
-            if (root.held) { root.notice = "Moving — pick a workspace (Esc cancels)"; return }
+            if (root.holding) { root.notice = "Moving — pick a workspace (Alt+Esc clears the list)"; return }
             root.press(k)
           }
         }
@@ -836,21 +852,22 @@ Item {
           x: overlay.margin
           y: 14
           z: 20
-          visible: root.held !== null || root.notice !== ""
+          visible: root.holding || root.notice !== ""
           width: bannerText.implicitWidth + 24
           height: bannerText.implicitHeight + 12
           radius: 8
-          color: root.held ? root.held.color : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
+          color: root.holding ? root.fg : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
           Text {
             id: bannerText
             anchors.centerIn: parent
-            text: root.held
-              ? "Moving  " + root.held.hint + " · " + root.held.cls + "   →   arrows + Enter,  1–9 / 0,  or click a workspace   ·   Alt+N new workspace   ·   Esc cancels"
+            text: root.holding
+              ? "Moving " + root.heldList.length + ":  " + root.heldList.map(function(w) { return w.hint }).join(" · ") +
+                "   →   arrows + Enter,  1–9 / 0,  or click a workspace   ·   Alt+hold adds/removes   ·   Alt+Esc clears"
               : root.notice
-            color: root.held ? root.bg : root.fg
+            color: root.holding ? root.bg : root.fg
             font.family: root.fontFamily
             font.pixelSize: 14
-            font.bold: root.held !== null
+            font.bold: root.holding
           }
         }
 
@@ -956,15 +973,15 @@ Item {
                     // While a window is held, clicking a tile drops it here.
                     MouseArea {
                       anchors.fill: parent
-                      enabled: root.held !== null
-                      cursorShape: root.held ? Qt.PointingHandCursor : Qt.ArrowCursor
+                      enabled: root.holding
+                      cursorShape: root.holding ? Qt.PointingHandCursor : Qt.ArrowCursor
                       onClicked: root.dropInto(wsCol.modelData.id)
                     }
 
                     Text {
                       anchors.centerIn: parent
                       visible: wsCol.modelData.windows.length === 0
-                      text: root.held ? "drop here" : "empty"
+                      text: root.holding ? "drop here" : "empty"
                       color: root.fg
                       opacity: 0.45
                       font.family: root.fontFamily
@@ -1043,13 +1060,13 @@ Item {
                           color: "transparent"
                           border.width: 4
                           border.color: root.fg
-                          visible: root.held !== null && root.held.address === winBox.modelData.address
+                          visible: root.isHeld(winBox.modelData.address)
                           z: 6
                         }
 
                         MouseArea {
                           anchors.fill: parent
-                          onClicked: root.held ? root.dropInto(wsCol.modelData.id) : root.jump(winBox.modelData)
+                          onClicked: root.holding ? root.dropInto(wsCol.modelData.id) : root.jump(winBox.modelData)
                         }
                       }
                     }
