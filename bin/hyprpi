@@ -7,6 +7,7 @@ import path from "node:path";
 import { request, connect } from "../lib/client.mjs";
 import { ROOT, socketPath, runtimeDir, loadConfig, instanceKey } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
+import { terminalCommand } from "../lib/terminal.mjs";
 
 const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
 
@@ -114,7 +115,9 @@ async function cmdNew() {
   const id = newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");
   const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}) });
-  const term = [cfg.terminal, `--app-id=hyprpi.agent`, `--title=pi`, `--working-directory=${cwd}`, "--", cfg.pi, "-e", ext, ...(cfg.piArgs || []), ...piArgs];
+  let termPrefix;
+  try { termPrefix = terminalCommand(cfg, { title: "pi", cwd }); } catch (e) { die(e.message); }
+  const term = [...termPrefix, cfg.pi, "-e", ext, ...(cfg.piArgs || []), ...piArgs];
   const child = spawn(term[0], term.slice(1), { cwd, env, detached: true, stdio: "ignore" });
   child.unref();
   console.log(id);

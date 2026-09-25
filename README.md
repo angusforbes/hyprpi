@@ -6,7 +6,7 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 
 | Key | Does |
 |---|---|
-| SUPER+A | New Pi agent in its own foot window on the current workspace; it joins that world's room |
+| SUPER+A | New Pi agent in its own terminal window (Omarchy's default terminal) on the current workspace; it joins that world's room |
 | SUPER+ALT+A | Room window for the current world (same as clicking the current world in the bar) |
 | SUPER+ALT+/ | Toggle the search window for the current world's room |
 | SUPER+SHIFT+A | Claude (moved here from SUPER+A) |
@@ -41,7 +41,7 @@ the ones that match, each with a short reason. Also from the terminal:
 
 ## Agents
 
-`hyprpi new` runs `foot … pi -e ~/Work/hyprpi/pi-extension/index.ts` with
+`hyprpi new` runs `<terminal> … pi -e ~/Work/hyprpi/pi-extension/index.ts` with
 `HYPRPI_AGENT_ID` set. The extension gives the agent the same tools it has
 under Herdr — `room_read`, `room_post`, `room_reply`, `talk`, `demand` — plus
 `talk_reply` for answering `talk`/`demand`. Herdr's own room/peer-chat
@@ -81,7 +81,7 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   "groups": {},
   "follow": true,
   "cwd": "~/Work",
-  "terminal": "foot",
+  "terminal": "auto",
   "pi": "pi",
   "piArgs": [],
   "searchModel": "claude-haiku-4-5"
@@ -92,6 +92,13 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 - `groups`: named rooms that override the mode, e.g. `{"Research": [1, 2, 13]}`.
 - `follow`: `true` = an agent moved to another world moves to that room;
   `false` = it stays in the room it was born in.
+- `terminal`: `"auto"` (default) uses Omarchy's default terminal (`xdg-terminal-exec --print-id`,
+  i.e. `~/.config/xdg-terminals.list`), falling back to foot; or force `"kitty"`, `"foot"`,
+  `"alacritty"`, `"ghostty"`. Windows always get app-id/class `hyprpi.agent`; kitty windows
+  also get `copy_on_select=clipboard`.
+- `terminalCommand`: override for any other terminal, an array with `{class}` `{title}` `{cwd}`
+  placeholders; the pi command is appended. E.g.
+  `["wezterm", "start", "--class", "{class}", "--cwd", "{cwd}", "--"]`.
 - `piArgs`: extra `pi` flags for new agents (e.g. `["--model", "…"]`).
 
 ## Testing without touching the desktop
