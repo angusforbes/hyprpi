@@ -107,7 +107,7 @@ PanelWindow {
         Text { anchors.centerIn: parent; text: win.room; color: "white"; font.family: app.fontFamily; font.pixelSize: 17; font.bold: true } }
       Column {
         anchors { left: badge.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
-        Text { text: "Room " + win.room + (app.panelFollow ? "  · follows world" : ""); color: app.fg; font.family: app.fontFamily; font.pixelSize: 15; font.bold: true }
+        Text { text: "Room " + win.room; color: app.fg; font.family: app.fontFamily; font.pixelSize: 15; font.bold: true }
         Text { text: win.members.length + (win.members.length === 1 ? " agent" : " agents") + (app.online ? "" : "  ·  daemon offline")
                color: app.online ? app.dimFg : "#b4637a"; font.family: app.fontFamily; font.pixelSize: 11 }
       }
