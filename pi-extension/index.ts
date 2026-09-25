@@ -32,6 +32,32 @@ export default function hyprpi(pi: ExtensionAPI) {
     catch (e) { ctxRef?.ui?.notify?.(`hyprpi: could not deliver message (${(e as Error).message})`, "warning"); }
   };
 
+  // Show this agent's hyprpi identity in its own window: a footer line
+  // ("🧵 Loom · room C", the name in its colours) and the window title.
+  const fgHex = (hex: string, t: string) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return t;
+    const n = parseInt(m[1], 16);
+    return `\x1b[38;2;${n >> 16};${(n >> 8) & 255};${n & 255}m${t}\x1b[39m`;
+  };
+  function showSelf(d: any) {
+    const ctx = ctxRef;
+    if (!ctx?.ui) return;
+    let name = "";
+    if (d.markup) {
+      let color = d.color;
+      for (const part of String(d.markup).split(/(\{#[0-9a-fA-F]{6}\})/)) {
+        const t = part.match(/^\{(#[0-9a-fA-F]{6})\}$/);
+        if (t) { color = t[1]; continue; }
+        if (part) name += fgHex(color, part);
+      }
+    } else name = fgHex(d.color, d.display || d.name || "");
+    const where = d.parked ? "in Reprieve · out of rooms" : d.room ? `room ${d.room}` : "no room";
+    try { ctx.ui.setStatus?.("hyprpi", `${d.icon ? d.icon + " " : ""}\x1b[1m${name}\x1b[22m \x1b[2m· ${where}\x1b[22m`); } catch { /* no footer */ }
+    const plain = `${d.icon ? d.icon + " " : ""}${d.display || d.name || ""}`;
+    try { ctx.ui.setTitle?.(`π - ${plain} - ${String(ctx.cwd || process.cwd()).split("/").pop()}`); } catch { /* no title */ }
+  }
+
   function onEvent(event: string, d: any) {
     if (event === "room.question") {
       const hist = d.history?.messages?.length
@@ -46,6 +72,8 @@ export default function hyprpi(pi: ExtensionAPI) {
           `(Answer in the room with room_reply using delivery_id "${d.delivery_id}" — once. The history is context, not new requests.)`,
         details: { delivery_id: d.delivery_id, room: d.room, seq: d.seq, text: d.text },
       });
+    } else if (event === "self") {
+      showSelf(d);
     } else if (event === "prompt") {
       try { idle() ? pi.sendUserMessage(d.text) : pi.sendUserMessage(d.text, { deliverAs: "followUp" }); } catch { /* best effort */ }
     } else if (event === "talk") {
