@@ -5,14 +5,32 @@
 // as the room window). Keys: Tab / Shift+Tab switch room · Ctrl+C quits.
 //
 //   kitty --class hyprpi.mockup node ~/Work/hyprpi/mockups/room-tui.mjs [ROOM]
+// No ROOM = the current world's room. Several copies can run at once, on the
+// same room or different ones: each is just another subscriber of the daemon.
 import { connect } from "../lib/client.mjs";
 
 const ESC = "\x1b[";
 const out = (s) => process.stdout.write(s);
-// ANSI colours so the terminal's theme (Omarchy) supplies the actual shades.
-const WORLD = ["34", "31", "36", "33", "35", "32", "33", "31", "39"]; // A blue · B red · C cyan · D yellow · E magenta · F green …
-const worldFg = (room) => WORLD[Math.max(0, "ABCDEFGHI".indexOf(String(room)[0])) % WORLD.length] || "39";
-const worldBg = (room) => String(Number(worldFg(room)) + 10);
+// World colours: exactly the bar's (agf.hyprwrlds BarWidget.qml paletteKeys),
+// read from the Omarchy theme's colors.toml, re-read when the theme changes.
+import fs from "node:fs";
+const COLORS = `${process.env.HOME}/.local/state/omarchy/current/theme/colors.toml`;
+const PALETTE = [["blue", "color4"], ["red", "color1"], ["cyan", "color6"], ["yellow", "color3"], ["magenta", "color5"], ["green", "color2"], ["orange", "color11"], ["brown", "color9"], ["foreground", "color7"]];
+let theme = {};
+function loadTheme() {
+  theme = {};
+  try { for (const l of fs.readFileSync(COLORS, "utf8").split("\n")) { const m = l.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?#([0-9A-Fa-f]{6})/); if (m) theme[m[1]] = m[2]; } } catch { /* ANSI fallback */ }
+}
+loadTheme();
+try { fs.watchFile(COLORS, { interval: 2000 }, () => { loadTheme(); render(); }); } catch { /* fine */ }
+const rgb = (hex) => { const n = parseInt(hex, 16); return `${n >> 16};${(n >> 8) & 255};${n & 255}`; };
+function worldHex(room) {
+  const i = "ABCDEFGHI".indexOf(String(room)[0]);
+  for (const k of PALETTE[Math.max(0, i) % PALETTE.length]) if (theme[k]) return theme[k];
+  return null;
+}
+const worldFg = (room) => { const h = worldHex(room); return h ? `38;2;${rgb(h)}` : "34"; };
+const worldBg = (room) => { const h = worldHex(room); return h ? `48;2;${rgb(h)}` : "44"; };
 const dim = (s) => `${ESC}2m${s}${ESC}22m`;
 const bold = (s) => `${ESC}1m${s}${ESC}22m`;
 const fg = (c, s) => `${ESC}${c}m${s}${ESC}39m`;
@@ -79,7 +97,7 @@ function render() {
   for (const a of here) {
     const name = (a.icon ? a.icon + " " : "") + a.display;
     const st = a.status === "done" && a.seen ? "idle" : a.status;
-    const extra = W < 72 ? "" : " " + dim(pad(a.workspace_label || "", 4) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
+    const extra = W < 72 ? "" : " " + dim(pad(cut(a.workspace_label || "", 4), 5) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
     const line = ` ${fg(c, bold(mark(a)))} ${pad(hexFg(a.color, bold(cut(name, nameW))), nameW)}  ${pad(st, 8)}${W < 72 ? dim(a.workspace_label || "") : extra}`;
     rows.push(a.focused ? `${ESC}7m${pad(strip(line), W)}${ESC}27m` : line);
   }
@@ -118,6 +136,7 @@ function render() {
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
+  out(`\x1b]2;hyprpi tui · room ${room}\x07`); // not "hyprpi room …": the daemon treats those titles as room windows
   out(`${ESC}?25l${ESC}H` + rows.slice(0, H).map((r) => clip(r, W) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
   // cursor at end of input
   out(`${ESC}${H - 1};${width(prompt) + width(input) + 1}H${ESC}?25h`);
