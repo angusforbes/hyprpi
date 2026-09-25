@@ -33,6 +33,14 @@ ShellRoot {
     function dry(mode: string): void { overview.open(JSON.stringify({ mode: mode, dry: true })) }
     function openTest(mode: string, hintStart: int): void { overview.open(JSON.stringify({ mode: mode, hintStart: hintStart })) }
     function press(key: string): void { overview.press(key) }
+    // Dry: what would typing `seq` do?  jump / wait (ambiguous) / prefix / none
+    function would(seq: string): string {
+      var isHint = !!overview.hints[seq], longer = overview.hasLonger(seq)
+      if (isHint && !longer) return "jump " + seq + " (ws " + overview.hints[seq].workspace + ")"
+      if (isHint && longer) return "wait " + overview.ambiguityMs + "ms, then " + seq + " (ws " + overview.hints[seq].workspace + "); more keys -> longer hint"
+      if (longer) return "prefix, keep typing"
+      return "no match"
+    }
     // Move testing (no keyboard needed)
     function pick(seq: string): string { var w = overview.hints[seq]; overview.held = w || null; return w ? "held " + seq + " on ws " + w.workspace : "no such hint" }
     function dropDigit(d: int): void { overview.dropDigit(d) }

@@ -308,25 +308,24 @@ Item {
   // Hints: windows 1-26 get a-z, 27-52 get A-Z (Shift + the same key), in
   // reading order (world, workspace, then left-to-right / top-to-bottom).
   // Beyond 52 every window gets a two-letter lowercase hint.
-  // Hints for `total` windows, most of them single keys. Single keys are the
-  // hint letters, then (with uppercaseHints) their Shift versions. Only when
-  // there are more windows than single keys do the LAST few single keys become
-  // prefixes for two-key hints (prefix + lowercase letter), so e.g. 57 windows
-  // get a-z, A-Y, then Za..Zf.
+  // Hints for `total` windows: a-z, then (with uppercaseHints) A-Z, then
+  // two-letter lowercase pairs aa, ab, ... az, ba, ... A letter that is both a
+  // hint and the start of a pair (e.g. "a" once "aa" exists) waits
+  // ambiguityMs for a second key before selecting itself (Enter/Space = now).
   function buildHints(total) {
     var lower = hintKeys.split("")
     var singles = lower.slice()
     if (root.uppercaseHints) singles = singles.concat(lower.map(function(k) { return k.toUpperCase() }))
-    var k = singles.length
-    if (total <= k) return singles.slice(0, total)
-    var p = 1
-    while ((k - p) + p * lower.length < total && p < k) p++
-    var out = singles.slice(0, k - p)
-    var prefixes = singles.slice(k - p)
-    for (var i = 0; i < prefixes.length && out.length < total; i++)
+    var out = singles.slice(0, total)
+    for (var i = 0; i < lower.length && out.length < total; i++)
       for (var j = 0; j < lower.length && out.length < total; j++)
-        out.push(prefixes[i] + lower[j])
+        out.push(lower[i] + lower[j])
     return out
+  }
+
+  function hasLonger(seq) {
+    for (var h in root.hints) if (h.length > seq.length && h.indexOf(seq) === 0) return true
+    return false
   }
 
   function isShiftHint(hint) { return hint !== hint.toLowerCase() }
@@ -517,7 +516,7 @@ Item {
     interval: root.holdMs
     onTriggered: {
       var w = root.hints[root.holdCandidate]
-      if (w) { root.held = w; root.typed = ""; root.notice = "" }
+      if (w) { root.held = w; root.typed = ""; root.notice = ""; ambiguityTimer.stop() }
       root.holdCandidate = ""
     }
   }
@@ -675,13 +674,26 @@ Item {
 
   function press(key) {
     if (!root.opened) return
+    ambiguityTimer.stop()
     var next = root.typed + String(key)
-    if (root.hints[next]) { root.jump(root.hints[next], true); return }
-    for (var hint in root.hints) {
-      if (hint.indexOf(next) === 0) { root.typed = next; return }
-    }
+    var isHint = !!root.hints[next]
+    var longer = root.hasLonger(next)
+    if (isHint && !longer) { root.typed = ""; root.jump(root.hints[next], true); return }
+    if (isHint && longer) { root.typed = next; ambiguityTimer.restart(); return }  // e.g. "a" vs "aa"
+    if (longer) { root.typed = next; return }
     root.typed = ""       // no match: start over
   }
+
+  // Select the pending ambiguous hint now (timer, Enter or Space).
+  function commitTyped() {
+    ambiguityTimer.stop()
+    var w = root.hints[root.typed]
+    root.typed = ""
+    if (w) root.jump(w, true)
+  }
+
+  property int ambiguityMs: 400
+  Timer { id: ambiguityTimer; interval: root.ambiguityMs; onTriggered: root.commitTyped() }
 
   // Jump to a window. For a typed hint, also arm the double-tap: a quick
   // repeat of the hint's last key toggles fullscreen on it (handled in
@@ -767,6 +779,10 @@ Item {
           if (event.key === Qt.Key_Right) { root.moveSel(0, 1);  event.accepted = true; return }
           if (event.key === Qt.Key_Up)    { root.moveSel(-1, 0); event.accepted = true; return }
           if (event.key === Qt.Key_Down)  { root.moveSel(1, 0);  event.accepted = true; return }
+          if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)
+              && !root.held && root.typed !== "" && root.hints[root.typed]) {
+            root.commitTyped(); event.accepted = true; return
+          }
           if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             if (root.held) root.dropInto(root.selectedWorkspaceId()); else root.enterSelected()
             event.accepted = true; return
@@ -793,9 +809,11 @@ Item {
             var k = shift ? ch.toUpperCase() : ch
             if (alt) {
               // Alt+hold: pick the window up once held for holdMs.
+              ambiguityTimer.stop()
               var seq = root.typed + k
-              if (root.hints[seq]) { root.typed = ""; root.beginHold(seq); return }
-              for (var h in root.hints) if (h.indexOf(seq) === 0) { root.typed = seq; return }
+              var longer = root.hasLonger(seq)
+              if (root.hints[seq]) { root.typed = longer ? seq : ""; root.beginHold(seq); return }
+              if (longer) { root.typed = seq; return }
               root.typed = ""
               return
             }

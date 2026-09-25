@@ -13,7 +13,7 @@ Windows are outlined boxes at their real position and size inside a mini-screen 
 styled like Vimarchy: each window gets a colour from Vimarchy's palette (tinted box, coloured
 outline, translucent circle with the letter in full colour). Only workspaces with windows are
 shown. Hints are global: every window has the same letter (and colour) in all three views. They run alphabetically and contiguously in reading order over ALL windows (world, workspace, then
-left-to-right/top-to-bottom): `a`-`z` for the first 26, then `A`-`Z` with Shift for 27-52
+left-to-right/top-to-bottom): `a`-`z` for the first 26, then `A`-`Z` with Shift for 27-52, then `aa`, `ab`, ... (a letter that also starts a pair, e.g. `a` once `aa` exists, waits 0.4 s for a second key; Enter/Space selects it at once; double-tapping such a letter selects the pair instead)
 , then two lowercase letters. Ctrl+= / Ctrl+- resize the circles
 (0.75-1.5x, saved in `~/.config/omarchy/hyprwrlds-vimarchy.json`). Each box shows a still capture of the app (taken when the overview opens, also for windows on
 hidden workspaces). All hint circles are the same size. Settings in the JSON file:
