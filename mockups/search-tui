@@ -1,0 +1,3 @@
+#!/bin/sh
+# Open the terminal search mockup in its own kitty window.  search-tui [ROOM]
+exec kitty --class hyprpi.mockup -o copy_on_select=clipboard node "$(dirname "$(readlink -f "$0")")/search-tui.mjs" "$@"
