@@ -9,8 +9,8 @@
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
 // the conversation · drag selects + copies message text, Shift+click/drag whole messages · Ctrl+C quits.
 //
-//   kitty --class hyprpi.mockup -o terminal_select_modifiers=ctrl+shift node ~/Work/hyprpi/mockups/room-tui.mjs [ROOM]
-// (ctrl+shift: so Shift+click reaches the TUI; Ctrl+Shift+drag is kitty's own selection)
+//   ~/Work/hyprpi/mockups/room-tui [ROOM]   (kitty launcher with the mouse settings)
+// Shift+click/drag reach the TUI there; Ctrl+Shift+drag is kitty's own selection.
 // No ROOM = the current world's room. Several copies can run at once, on the
 // same room or different ones: each is just another subscriber of the daemon.
 import { connect } from "../lib/client.mjs";
@@ -97,6 +97,7 @@ function mark(a) {
 }
 
 // ---- click-drag text selection (the TUI owns the mouse, so it selects itself)
+let lastClick = { id: "", t: 0, toggled: false };
 let screen = [], sel = null; // sel: { x0, y0, x1, y1, dragging, mode } in 1-based cells
 // mode "text": plain drag in the conversation = message text only.
 // mode "msg":  Shift+click / Shift+drag = whole messages (time, name, text).
@@ -135,6 +136,23 @@ function selRange() {
   if (!sel || (sel.mode !== "msg" && sel.x0 === sel.x1 && sel.y0 === sel.y1)) return null;
   const fwd = sel.y0 < sel.y1 || (sel.y0 === sel.y1 && sel.x0 <= sel.x1);
   return fwd ? { y0: sel.y0, x0: sel.x0, y1: sel.y1, x1: sel.x1 } : { y0: sel.y1, x0: sel.x1, y1: sel.y0, x1: sel.x0 };
+}
+// Paint cells a..b of a styled line with a background, keeping every other
+// style (dim time, bold coloured name, …) as it was.
+function overlay(line, a, b, on, off) {
+  let col = 1, r = "", inside = false;
+  for (const part of line.split(/(\x1b\[[0-9;?]*[A-Za-z])/)) {
+    if (part.startsWith("\x1b")) { r += part; if (inside && /\x1b\[(?:0|49|27)?m$/.test(part)) r += on; continue; }
+    for (const ch of part) {
+      if (!inside && col >= a && col <= b) { r += on; inside = true; }
+      if (inside && col > b) { r += off; inside = false; }
+      r += ch; col += cw(ch.codePointAt(0));
+    }
+  }
+  if (inside && col <= b + 1) { r += " ".repeat(Math.max(0, b + 1 - col)); } // selection past the text: pad
+  else if (!inside && col <= a) { r += " ".repeat(a - col) + on + " ".repeat(b - a + 1); inside = true; }
+  if (inside) r += off;
+  return r;
 }
 // Cells a..b (1-based, inclusive) of a plain line.
 function sliceCols(t, a, b) {
@@ -214,7 +232,7 @@ function draw() {
 
   // Conversation pane: fill what's left, newest at the bottom.
   convoY = rows.length + 2;
-  rows.push(rule(scroll > 0 ? `room · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : "room"));
+  const ruleAt = rows.length; rows.push(""); // filled in once scroll is clamped below
   const bottom = 3; // input rule + input + status bar
   const avail = Math.max(1, H - rows.length - bottom);
   // Wide: "hh:mm  who  text" columns (irssi/weechat). Narrow: who on its own line.
@@ -238,6 +256,7 @@ function draw() {
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
+  rows[ruleAt] = rule(scroll > 0 ? `room · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : "room");
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim("  (no messages yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
@@ -269,8 +288,7 @@ function draw() {
   const shown2 = lines.map((l, i) => {
     const sp = spans[i + 1];
     if (!sp) return l;
-    const t = screen[i];
-    return sliceCols(t, 1, sp[0] - 1) + selOn + pad(sliceCols(t, sp[0], sp[1]), sp[1] - sp[0] + 1) + selOff + sliceCols(t, sp[1] + 1, W);
+    return overlay(l, sp[0], sp[1], selOn, selOff);
   });
   out(`${ESC}?25l${ESC}H` + shown2.map((l) => l + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
   // cursor at end of input
@@ -421,9 +439,24 @@ function onKey(d) {
         sel.x1 = x; sel.y1 = y;
         if ((sel.dragging || sel.mode === "msg") && selRange()) { copy(selectedText()); continue; } // highlight stays until the next key or click
         sel = null;
-        if (inList) { // plain click: cursor there; click again: mark / unmark
+        if (inList) {
           const a = hereAgents()[listTop + y - listRowY];
-          if (a) { if (a.id === cursorId) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id); cursorId = a.id; confirm = null; }
+          if (!a) continue;
+          const now = Date.now();
+          if (lastClick.id === a.id && now - lastClick.t < 400) {
+            // Double-click: copy the agent's name (and undo the mark the first click toggled).
+            if (lastClick.toggled) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id);
+            copy(a.display);
+            const nx = 4 + (a.icon ? width(a.icon) + 1 : 0);
+            sel = { x0: nx, y0: y, x1: nx + width(a.display) - 1, y1: y, dragging: true, mode: "plain" }; // show what was copied
+            lastClick = { id: "", t: 0, toggled: false };
+            continue;
+          }
+          // Click: cursor there; click the cursor row again: mark / unmark.
+          const toggled = a.id === cursorId;
+          if (toggled) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id);
+          cursorId = a.id; confirm = null;
+          lastClick = { id: a.id, t: now, toggled };
         }
         continue;
       }
