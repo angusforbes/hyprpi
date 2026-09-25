@@ -2,7 +2,9 @@
 // MOCKUP: a terminal / tmux-style hyprpi room, for comparison with the
 // Quickshell room window (ui/RoomWindow.qml), which stays the real one.
 // Live data from the daemon. Typing + Enter posts to the room as Angus (same
-// as the room window). Keys: Tab / Shift+Tab switch room · Ctrl+C quits.
+// as the room window). Keys: Tab / Shift+Tab switch room · Ctrl+N (or
+// "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
+// the conversation · Shift+drag selects text · Ctrl+C quits.
 //
 //   kitty --class hyprpi.mockup node ~/Work/hyprpi/mockups/room-tui.mjs [ROOM]
 // No ROOM = the current world's room. Several copies can run at once, on the
@@ -72,6 +74,7 @@ function wrap(text, n) {
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
 
+let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the newest
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 let api = null;
 
@@ -106,7 +109,7 @@ function render() {
   }
 
   // Conversation pane: fill what's left, newest at the bottom.
-  rows.push(rule("room"));
+  rows.push(rule(scroll > 0 ? `room · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : "room"));
   const bottom = 3; // input rule + input + status bar
   const avail = Math.max(1, H - rows.length - bottom);
   // Wide: "hh:mm  who  text" columns (irssi/weechat). Narrow: who on its own line.
@@ -121,7 +124,11 @@ function render() {
       for (const l of wrap(m.text, textW)) convo.push(`   ${l}`);
     } else wrap(m.text, textW).forEach((l, i) => convo.push(i === 0 ? ` ${dim(hhmm(m.ts))} ${pad(who, whoW)}  ${l}` : ` ${" ".repeat(5)} ${" ".repeat(whoW)}  ${l}`));
   }
-  const shown = convo.slice(-avail);
+  // Scrolled up: stay on the same lines when new ones arrive below.
+  if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
+  lastConvoLen = convo.length; lastAvail = avail;
+  scroll = Math.max(0, Math.min(scroll, convo.length - avail));
+  const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push(dim("  (no messages yet)"));
   while (shown.length < avail) shown.unshift("");
   rows.push(...shown);
@@ -129,7 +136,7 @@ function render() {
   // Input line
   rows.push(fg(c, "─".repeat(W)));
   const prompt = fg(c, bold(`${room} ❯ `));
-  const hint = input ? "" : dim(note || (W < 72 ? "message the room" : "message the room · @Name to address · Tab: next room"));
+  const hint = input ? "" : dim(note || (W < 72 ? "message the room" : "message the room · Tab: next room · ^N or /new [dir]: new agent"));
   rows.push(prompt + input + hint);
 
   // tmux-style status bar
@@ -177,11 +184,25 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; render(); loadRoom(room);
+  note = ""; scroll = 0; lastConvoLen = 0; render(); loadRoom(room);
+}
+
+// New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
+// workspace (where this TUI is), in DIR or the config's default folder.
+import { spawn } from "node:child_process";
+import { loadConfig } from "../lib/paths.mjs";
+function newAgent(dir) {
+  const cwd = (dir || loadConfig().cwd).replace(/^~(?=$|\/)/, process.env.HOME);
+  if (!fs.existsSync(cwd)) { note = "✗ no such folder: " + cwd; return render(); }
+  const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+  spawn(new URL("../bin/hyprpi", import.meta.url).pathname, ["new", "--cwd", cwd], { detached: true, stdio: "ignore", env }).unref();
+  note = "opening a new agent in " + home(cwd) + " …"; render();
 }
 
 async function send() {
   const text = input.trim(); input = "";
+  const cmd = /^\/new(?:\s+(.+))?$/.exec(text);
+  if (cmd) return newAgent(cmd[1]?.trim());
   if (!text || !api) return render();
   try {
     const r = await api.call("room.post", { room, text, as_human: true, via: "room-tui" });
@@ -199,13 +220,22 @@ process.stdin.on("data", (d) => {
   if (d === "\r") return send();
   if (d === "\x7f" || d === "\b") { input = [...input].slice(0, -1).join(""); return render(); }
   if (d === "\x15") { input = ""; return render(); } // Ctrl+U
+  if (d === "\x0e") return newAgent(); // Ctrl+N
+  // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
+  if (d.startsWith("\x1b[<")) {
+    for (const m of d.matchAll(/\x1b\[<(\d+);\d+;\d+[Mm]/g)) { const b = Number(m[1]); if (b === 64) scroll += 3; else if (b === 65) scroll -= 3; }
+    return render();
+  }
+  const page = Math.max(1, lastAvail - 2);
+  const keys = { "\x1b[A": 1, "\x1b[B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[H": Infinity, "\x1b[1~": Infinity, "\x1b[F": -Infinity, "\x1b[4~": -Infinity };
+  if (d in keys) { scroll = keys[d] === Infinity ? 1e9 : keys[d] === -Infinity ? 0 : scroll + keys[d]; if (scroll < 0) scroll = 0; return render(); }
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
   input += d.replace(/[\x00-\x1f]/g, ""); note = ""; render();
 });
-function quit() { out(`${ESC}?1049l${ESC}?25h`); process.exit(0); }
+function quit() { out(`${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
 process.stdout.on("resize", render);
 setInterval(render, 30000); // clock
-out(`${ESC}?1049h`);
+out(`${ESC}?1049h${ESC}?1000h${ESC}?1006h`); // alt screen + mouse wheel (Shift+drag still selects text)
 render();
 start();
