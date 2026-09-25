@@ -9,7 +9,8 @@
 // AI mode: describe what you mean, press Enter; a small model picks matches and
 // says why. Ctrl+/ (or Ctrl+T) switches mode · Tab / Shift+Tab switch room ·
 // ↑↓ / wheel / click select · PgUp/PgDn page · Enter on a result jumps to that
-// agent's window (live agents) · Ctrl+U clear · Esc / Ctrl+C quit.
+// agent's window (live agents) · ←→ Home End Ctrl+←→ move in the search box,
+// Backspace/Delete, Ctrl+W word, Ctrl+U clear · Esc / Ctrl+C quit.
 // Shift+drag selects text (kitty's own selection).
 import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
@@ -80,6 +81,7 @@ const ROLE = { angus: "Angus", agent: "agent", room: "room", talk: "talk" };
 
 // ---- state ------------------------------------------------------------------
 let api = null, online = false, rooms = [], room = (process.argv[2] || "").toUpperCase();
+let qc = 0; // cursor position in the query, in graphemes
 let mode = "keyword", query = "", results = [], status = "", busy = false, gen = 0;
 let selected = -1, top = 0, lastMeta = null, resultRows = []; // resultRows: screen row -> result index
 
@@ -184,7 +186,7 @@ function render() {
 
   out(`\x1b]2;hyprpi search · room ${room}\x07`);
   out(`${ESC}?25l${ESC}H` + rows.slice(0, H).map((r) => clip(r, W) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
-  out(`${ESC}${cursorRow};${width(prompt) + width(query) + 1}H${ESC}?25h`);
+  out(`${ESC}${cursorRow};${width(prompt) + width(graphemes(query).slice(0, qc).join("")) + 1}H${ESC}?25h`);
 }
 
 function jump() {
@@ -213,7 +215,7 @@ function applyRooms(r) {
 }
 
 // ---- input --------------------------------------------------------------------
-const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bf]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); });
@@ -228,8 +230,23 @@ function onKey(d) {
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
   if (d === "\r") { if (mode === "ai" && query.trim() && (!results.length || lastMeta !== query)) { lastMeta = query; return run(); } return jump(); }
-  if (d === "\x15") { query = ""; return mode === "keyword" ? run() : render(); }
-  if (d === "\x7f" || d === "\b") { query = graphemes(query).slice(0, -1).join(""); lastMeta = null; return mode === "keyword" ? debounce() : render(); }
+  // Editing the search box: ←/→ (Ctrl: by word), Home/End or Ctrl+A/E,
+  // Backspace / Delete at the cursor, Ctrl+W delete word, Ctrl+U clear.
+  const gs = graphemes(query);
+  qc = Math.max(0, Math.min(qc, gs.length));
+  const edited = (next, c) => { query = next.join(""); qc = c; lastMeta = null; return mode === "keyword" ? debounce() : render(); };
+  const wordLeft = () => { let i = qc; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
+  const wordRight = () => { let i = qc; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
+  if (d === "\x1b[D") { qc = Math.max(0, qc - 1); return render(); }
+  if (d === "\x1b[C") { qc = Math.min(gs.length, qc + 1); return render(); }
+  if (d === "\x1b[1;5D" || d === "\x1bb") { qc = wordLeft(); return render(); }
+  if (d === "\x1b[1;5C" || d === "\x1bf") { qc = wordRight(); return render(); }
+  if (d === "\x1b[H" || d === "\x1b[1~" || d === "\x01") { qc = 0; return render(); }
+  if (d === "\x1b[F" || d === "\x1b[4~" || d === "\x05") { qc = gs.length; return render(); }
+  if (d === "\x15") return edited([], 0);
+  if (d === "\x17") { const i = wordLeft(); return edited([...gs.slice(0, i), ...gs.slice(qc)], i); }
+  if (d === "\x7f" || d === "\b") { if (!qc) return; return edited([...gs.slice(0, qc - 1), ...gs.slice(qc)], qc - 1); }
+  if (d === "\x1b[3~") { if (qc >= gs.length) return; return edited([...gs.slice(0, qc), ...gs.slice(qc + 1)], qc); }
   if (d.startsWith("\x1b[<")) {
     const m = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(d); if (!m) return;
     const b = Number(m[1]), y = Number(m[3]);
@@ -243,8 +260,9 @@ function onKey(d) {
     return;
   }
   if (d.startsWith("\x1b")) return;
-  query += d.replace(/[\x00-\x1f]/g, ""); lastMeta = null;
-  if (mode === "keyword") debounce(); else render();
+  const ins = graphemes(d.replace(/[\x00-\x1f]/g, ""));
+  if (!ins.length) return;
+  edited([...gs.slice(0, qc), ...ins, ...gs.slice(qc)], qc + ins.length);
 }
 function quit() { out(`${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
