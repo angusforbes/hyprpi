@@ -115,15 +115,33 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
   const update = (p: any) => { if (conn && !conn.closed) conn.call("agent.update", p).catch(() => {}); };
 
-  pi.on("session_start", async (_e: any, ctx: any) => { ctxRef = ctx; stopped = false; await ensure(); });
+  // Typing in this window marks a finished turn (\u2713 in the room window) as
+  // seen, like a click in it (Hyprland hook). One call per finish, not per key.
+  let unseen = false, stopInput: (() => void) | null = null;
+  const TERMINAL_REPORT = /^\x1b\[(?:I|O|\?[\d;]*[uc]|[\d;]+[tR])$/; // focus/size/capability replies, not typing
+  function watchTyping(ctx: any) {
+    if (stopInput || ctx?.mode !== "tui" || typeof ctx?.ui?.onTerminalInput !== "function") return;
+    try {
+      stopInput = ctx.ui.onTerminalInput((data: string) => {
+        if (unseen && typeof data === "string" && data && !TERMINAL_REPORT.test(data)) {
+          unseen = false;
+          if (conn && !conn.closed) conn.call("agent.seen", {}).catch(() => {});
+        }
+        return undefined;
+      });
+    } catch { stopInput = null; }
+  }
+
+  pi.on("session_start", async (_e: any, ctx: any) => { ctxRef = ctx; stopped = false; watchTyping(ctx); await ensure(); });
   pi.on("session_shutdown", async () => {
     stopped = true;
+    try { stopInput?.(); } catch { /* gone */ } stopInput = null;
     if (retry) clearTimeout(retry);
     for (const w of demands.values()) w.done();
     conn?.close(); conn = null;
   });
-  pi.on("agent_start", async (_e: any, ctx: any) => { ctxRef = ctx; update({ status: "working" }); });
-  pi.on("agent_settled", async (_e: any, ctx: any) => { ctxRef = ctx; update({ status: "done" }); });
+  pi.on("agent_start", async (_e: any, ctx: any) => { ctxRef = ctx; unseen = false; watchTyping(ctx); update({ status: "working" }); });
+  pi.on("agent_settled", async (_e: any, ctx: any) => { ctxRef = ctx; unseen = true; watchTyping(ctx); update({ status: "done" }); });
   pi.on("model_select", async (e: any) => update({ model: e?.model?.id || "" }));
   pi.on("thinking_level_select", async () => update({ thinking: safe(() => pi.getThinkingLevel()) || "" }));
   pi.on("session_info_changed", async (e: any) => {
