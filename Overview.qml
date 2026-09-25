@@ -271,8 +271,8 @@ Item {
     property int generation: 0
     running: false
     command: ["sh", "-c",
-      "printf '{\"clients\":%s,\"monitors\":%s,\"active\":%s}' " +
-      "\"$(hyprctl -j clients)\" \"$(hyprctl -j monitors)\" \"$(hyprctl -j activewindow)\""]
+      "printf '{\"clients\":%s,\"monitors\":%s,\"active\":%s,\"workspaces\":%s}' " +
+      "\"$(hyprctl -j clients)\" \"$(hyprctl -j monitors)\" \"$(hyprctl -j activewindow)\" \"$(hyprctl -j workspaces)\""]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.applySnapshot(text, snapshot.generation)
@@ -366,6 +366,17 @@ Item {
         x: cl.at[0] - mon.x, y: cl.at[1] - mon.y, w: cl.size[0], h: cl.size[1],
         floating: cl.floating === true, fullscreen: (cl.fullscreen || 0) !== 0, workspace: wsId
       })
+    }
+
+    // Workspaces that exist but have no windows (e.g. the one you're on after
+    // moving everything out) still get a tile.
+    var wsl = data.workspaces || []
+    for (var wx = 0; wx < wsl.length; wx++) {
+      var eid = wsl[wx].id
+      if (eid < 1 || eid > maxWorlds * size) continue
+      var ew = worldOf(eid)
+      if (!byWorld[ew]) byWorld[ew] = {}
+      if (!byWorld[ew][eid]) byWorld[ew][eid] = []
     }
 
     // Hints are GLOBAL: assigned over every window in reading order (world,
@@ -549,6 +560,16 @@ Item {
       return "hyprctl dispatch 'hl.dsp.window.move({ window = \"address:" + w.address + "\", workspace = \"" + wsId + "\", follow = false })' >/dev/null"
     })
     moveProcess.command = ["sh", "-c", cmds.join("; ")]
+    // Keep where the windows came from on screen even if Hyprland deletes the
+    // now-empty workspace (it only keeps the one you're on).
+    var next = {}
+    for (var k in root.virtualWs) next[k] = root.virtualWs[k].slice()
+    moving.forEach(function(w) {
+      var ww = root.worldOf(w.workspace), slot = w.workspace - (ww - 1) * root.size
+      if (!next[ww]) next[ww] = []
+      if (next[ww].indexOf(slot) < 0) next[ww].push(slot)
+    })
+    root.virtualWs = next
     root.heldList = []
     root.keepSelectId = wsId
     root.notice = ""
