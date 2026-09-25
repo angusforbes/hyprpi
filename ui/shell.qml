@@ -22,12 +22,8 @@ ShellRoot {
   property bool panelFollow: true        // opened for "current world": follow world changes
   readonly property string shownRoom: panelFollow && activeRoom ? activeRoom : panelRoom
   onShownRoomChanged: if (shownRoom && !messages[shownRoom]) loadRoom(shownRoom)
-  // Moving to another world while the widget is open: show that world's room
-  // if it has agents, otherwise close (it never pops up by itself).
-  onActiveRoomChanged: {
-    if (!panelOpen || !panelFollow) return
-    if (!agents.some(a => a.room === activeRoom)) panelOpen = false
-  }
+  // Moving to another world while the widget is open shows that world's room,
+  // empty or not (it never pops up by itself).
   // ---- the search window ----
   property bool searchOpen: false
   property string searchRoom: "A"
