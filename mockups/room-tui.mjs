@@ -51,6 +51,11 @@ function markupFg(markup, fallback) {
   }
   return out;
 }
+// Only a chosen name gets its own colour; unnamed agents (pi·xxxx, including twins
+// that inherited a parent's colour) use the normal text colour (bold, like every
+// name), so they read slightly darker than the topic and model.
+const unnamed = (name) => !name || /^pi·[0-9a-z]{4}$/.test(String(name));
+const nameFg = (name, color, s) => unnamed(name) ? bold(s) : hexFg(color, bold(s));
 const hexFg = (hex, s) => { const m = /^#?([0-9a-f]{6})$/i.exec(hex || ""); if (!m) return s; const n = parseInt(m[1], 16); return `${ESC}38;2;${n >> 16};${(n >> 8) & 255};${n & 255}m${s}${ESC}39m`; };
 
 // Display width (emoji / CJK = 2, combining / ZWJ / VS = 0), enough for names and chat.
@@ -61,15 +66,26 @@ function cw(cp) {
   if ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xff00 && cp <= 0xff60)) return 2;
   return 1;
 }
+// Grapheme clusters (what the terminal puts in cells): an emoji with a variation
+// selector (✔️), a ZWJ sequence or a flag is one 2-wide cell pair in kitty, even
+// though its code points would add up differently. Every measurement goes
+// through these so a row can never come out wider on screen than we think.
+const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const graphemes = (s) => Array.from(segmenter.segment(String(s)), (x) => x.segment);
+function gw(g) {
+  const cps = [...g].map((c) => c.codePointAt(0));
+  if (cps.length > 1 && cps.some((cp) => cp === 0xfe0f || cp === 0x200d || (cp >= 0x1f1e6 && cp <= 0x1f1ff) || /\p{Extended_Pictographic}/u.test(String.fromCodePoint(cp)))) return 2;
+  let w = 0; for (const cp of cps) w += cw(cp); return w;
+}
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
-const width = (s) => { let w = 0; for (const ch of strip(s)) w += cw(ch.codePointAt(0)); return w; };
-function cut(s, n) { let w = 0, r = ""; for (const ch of s) { const c = cw(ch.codePointAt(0)); if (w + c > n) return r + "…"; w += c; r += ch; } return r; }
+const width = (s) => { let w = 0; for (const g of graphemes(strip(s))) w += gw(g); return w; };
+function cut(s, n) { let w = 0, r = ""; for (const g of graphemes(s)) { const c = gw(g); if (w + c > n) return w + 1 <= n ? r + "…" : cut(r, n - 1) ; w += c; r += g; } return r; }
 // Cut a styled line to n columns, keeping its escape codes intact.
 function clip(s, n) {
   let w = 0, r = "";
   for (const part of s.split(/(\x1b\[[0-9;?]*[A-Za-z])/)) {
     if (part.startsWith("\x1b")) { r += part; continue; }
-    for (const ch of part) { const c = cw(ch.codePointAt(0)); if (w + c > n) return r + `${ESC}0m`; w += c; r += ch; }
+    for (const g of graphemes(part)) { const c = gw(g); if (w + c > n) return r + `${ESC}0m`; w += c; r += g; }
   }
   return r;
 }
@@ -81,11 +97,18 @@ function wrap(text, n) {
     for (const word of para.split(/(\s+)/)) {
       const ww = width(word);
       if (lw + ww > n && line.trim()) { lines.push(line.trimEnd()); line = ""; lw = 0; if (/^\s+$/.test(word)) continue; }
-      if (ww > n) { for (const ch of word) { const c = cw(ch.codePointAt(0)); if (lw + c > n) { lines.push(line); line = ""; lw = 0; } line += ch; lw += c; } continue; }
+      if (ww > n) { for (const g of graphemes(word)) { const c = gw(g); if (lw + c > n) { lines.push(line); line = ""; lw = 0; } line += g; lw += c; } continue; }
       line += word; lw += ww;
     }
     lines.push(line.trimEnd());
   }
+  return lines;
+}
+// Hard wrap by display width (keeps spaces, so the typed input never loses its trailing blank).
+function hardWrap(text, n) {
+  const lines = []; let line = "", lw = 0;
+  for (const g of graphemes(text)) { const c = gw(g); if (lw + c > n) { lines.push(line); line = ""; lw = 0; } line += g; lw += c; }
+  lines.push(line);
   return lines;
 }
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
@@ -97,6 +120,7 @@ let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the 
 let cursorId = "", marked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
 const hereAgents = () => agents.filter((a) => a.room === room);
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
+let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
 
 function mark(a) {
@@ -155,10 +179,10 @@ function overlay(line, a, b, on, off) {
   let col = 1, r = "", inside = false;
   for (const part of line.split(/(\x1b\[[0-9;?]*[A-Za-z])/)) {
     if (part.startsWith("\x1b")) { r += part; if (inside && /\x1b\[(?:0|49|27)?m$/.test(part)) r += on; continue; }
-    for (const ch of part) {
+    for (const g of graphemes(part)) {
       if (!inside && col >= a && col <= b) { r += on; inside = true; }
       if (inside && col > b) { r += off; inside = false; }
-      r += ch; col += cw(ch.codePointAt(0));
+      r += g; col += gw(g);
     }
   }
   if (inside && col <= b + 1) { r += " ".repeat(Math.max(0, b + 1 - col)); } // selection past the text: pad
@@ -169,7 +193,7 @@ function overlay(line, a, b, on, off) {
 // Cells a..b (1-based, inclusive) of a plain line.
 function sliceCols(t, a, b) {
   let col = 1, r = "";
-  for (const ch of t) { const w = cw(ch.codePointAt(0)); if (col >= a && col + w - 1 <= b) r += ch; col += w; if (col > b) break; }
+  for (const g of graphemes(t)) { const w = gw(g); if (col >= a && col + w - 1 <= b) r += g; col += w; if (col > b) break; }
   return r;
 }
 function selectedText() {
@@ -239,7 +263,7 @@ function draw() {
     const name = cut((a.icon ? a.icon + " " : "") + a.display, nameW);
     const iconPart = a.icon && name.startsWith(a.icon + " ") ? a.icon + " " : "";
     const bare = name.slice(iconPart.length);
-    let styled = a.name_markup && !name.endsWith("…") ? bold(markupFg(a.name_markup, a.color)) : hexFg(a.color, bold(bare));
+    let styled = a.name_markup && !name.endsWith("…") && !unnamed(a.name) ? bold(markupFg(a.name_markup, a.color)) : nameFg(a.name, a.color, bare);
     // Cursor (follows the focused window): the name alone (not its icon) on light grey.
     // Focused but the cursor moved elsewhere: the name underlined. Marks never change colour.
     if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
@@ -248,18 +272,24 @@ function draw() {
     const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
     const model = (a.model || "").replace(/^claude-/, "");
     // name · topic · model, separated by dots like herdr's sidebar (no columns).
-    const dot = dim(" · ");
-    const rest = (a.topic ? dot + `${ESC}2;3m${a.topic}${ESC}22;23m` : "") + (model ? dot + dim(model) : "");
+    // Topic, model and the dot separators in the normal text colour (same as message text).
+    const dot = " · ";
+    const rest = (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
 
   // Conversation pane: fill what's left, newest at the bottom.
   convoY = rows.length + 2;
   const ruleAt = rows.length; rows.push(""); // filled in once scroll is clamped below
-  const bottom = 3; // input rule + input + status bar
+  // Input: a long message wraps onto further lines (all shown), continuation
+  // lines indented under the text.
+  const to = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
+  const prompt = fg(c, bold(to.length ? `${room} → ${cut(to.join(", "), Math.max(10, Math.floor(W / 3)))} ❯ ` : `${room} ❯ `));
+  const promptW = width(prompt), inputLines = hardWrap(input, Math.max(10, W - promptW));
+  const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
-  // Wide: "   name  text", the name under the agent names above. Narrow: name on its own line.
-  const narrow = W < 72, textX = narrow ? 4 : 4 + nameW + 2, textW = Math.max(10, W - textX + 1 - 1);
+  // Every message: the author on its own line, the text on the next (no name column).
+  const narrow = true, textX = 4, textW = Math.max(10, W - textX + 1 - 1);
   // Each row: { line, msg (index into the room's messages), textX (1-based
   // column where message text starts), hard (last row of a paragraph) }.
   const convo = [];
@@ -267,7 +297,7 @@ function draw() {
     const au = m.author || {};
     const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
       : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
-      : hexFg(au.color, bold(cut(authorLabel(au), nameW)));
+      : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
     const body = [];
     for (const para of String(m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => body.push({ l, hard: i === ls.length - 1 })); }
     if (narrow) {
@@ -288,12 +318,10 @@ function draw() {
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
   rows.push(...shown.map((r) => r.line));
 
-  // Input line
+  // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
-  const to = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
-  const prompt = fg(c, bold(to.length ? `${room} → ${cut(to.join(", "), Math.max(10, Math.floor(W / 3)))} ❯ ` : `${room} ❯ `));
   const hint = input ? "" : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ↑↓ agent · ⏎ jump · space mark · ^W close · ^K kill · ^N new · Tab room")));
-  rows.push(prompt + input + hint);
+  inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
@@ -314,9 +342,16 @@ function draw() {
     if (!sp) return l;
     return overlay(l, sp[0], sp[1], selOn, selOff);
   });
-  out(`${ESC}?25l${ESC}H` + shown2.map((l) => l + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
-  // cursor at end of input
-  out(`${ESC}${H - 1};${width(prompt) + width(input) + 1}H${ESC}?25h`);
+  // Each row at its absolute position: if a row still renders wider than we
+  // measured, the next row simply paints over the spill instead of shifting the
+  // whole frame up one line. (The last row is never wider than W, so no scroll.)
+  out(`${ESC}?25l` + shown2.map((l, i) => `${ESC}${i + 1};1H` + l + `${ESC}0m${ESC}K`).join("") + (shown2.length < H ? `${ESC}${shown2.length + 1};1H${ESC}J` : ""));
+  // cursor at the end of the input's last line
+  // Cursor at ic inside the (possibly wrapped) message.
+  ic = Math.max(0, Math.min(ic, graphemes(input).length));
+  const before = hardWrap(graphemes(input).slice(0, ic).join(""), Math.max(10, W - promptW));
+  const crow = H - inputLines.length + before.length - 1, ccol = Math.min(W, promptW + width(before[before.length - 1]) + 1);
+  out(`${ESC}${crow};${ccol}H${ESC}?25h`);
 }
 
 async function loadRoom(r) {
@@ -404,7 +439,7 @@ function moveCursor(d) {
 }
 
 async function send() {
-  const text = input.trim(); input = "";
+  const text = input.trim(); input = ""; ic = 0;
   const cmd = /^\/new(?:\s+(.+))?$/.exec(text);
   if (cmd) return newAgent(cmd[1]?.trim());
   if (!text && !api) return render();
@@ -434,7 +469,7 @@ async function send() {
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 // Input arrives in chunks (held keys, pastes): split into single keys first.
-const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bf\x7f]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) draw(); } });
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
@@ -442,8 +477,25 @@ function onKey(d) {
   if (d === "\t") return cycle(1);
   if (d === "\x1b[Z") return cycle(-1);
   if (d === "\r") return send();
-  if (d === "\x7f" || d === "\b") { input = [...input].slice(0, -1).join(""); return render(); }
-  if (d === "\x15") { input = ""; return render(); } // Ctrl+U
+  // Editing the message: ←/→ (Ctrl or Alt+B/F: by word), Home/End or Ctrl+E
+  // while typing, Backspace / Delete at the cursor, Alt+Backspace word, Ctrl+U clear.
+  {
+    const gs = graphemes(input);
+    ic = Math.max(0, Math.min(ic, gs.length));
+    const edited = (next, c) => { input = next.join(""); ic = c; note = ""; return render(); };
+    const wordLeft = () => { let i = ic; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
+    const wordRight = () => { let i = ic; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
+    if (d === "\x1b[D") { ic = Math.max(0, ic - 1); return render(); }
+    if (d === "\x1b[C") { ic = Math.min(gs.length, ic + 1); return render(); }
+    if (d === "\x1b[1;5D" || d === "\x1bb") { ic = wordLeft(); return render(); }
+    if (d === "\x1b[1;5C" || d === "\x1bf") { ic = wordRight(); return render(); }
+    if (input && (d === "\x1b[H" || d === "\x1b[1~")) { ic = 0; return render(); }
+    if (d === "\x05" || (input && (d === "\x1b[F" || d === "\x1b[4~"))) { ic = gs.length; return render(); }
+    if (d === "\x7f" || d === "\b") { if (!ic) return; return edited([...gs.slice(0, ic - 1), ...gs.slice(ic)], ic - 1); }
+    if (d === "\x1b[3~") { if (ic >= gs.length) return; return edited([...gs.slice(0, ic), ...gs.slice(ic + 1)], ic); }
+    if (d === "\x1b\x7f") { const i = wordLeft(); return edited([...gs.slice(0, i), ...gs.slice(ic)], i); }
+    if (d === "\x15") return edited([], 0); // Ctrl+U
+  }
   if (d === "\x0e") return newAgent(); // Ctrl+N
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
@@ -502,7 +554,7 @@ function onKey(d) {
   const keys = { "\x1b[1;2A": 1, "\x1b[1;2B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[H": Infinity, "\x1b[1~": Infinity, "\x1b[F": -Infinity, "\x1b[4~": -Infinity };
   if (d in keys) { scroll = keys[d] === Infinity ? 1e9 : keys[d] === -Infinity ? 0 : scroll + keys[d]; if (scroll < 0) scroll = 0; return render(); }
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
-  input += d.replace(/[\x00-\x1f]/g, ""); note = ""; render();
+  { const gs = graphemes(input), ins = graphemes(d.replace(/[\x00-\x1f]/g, "")); if (!ins.length) return; ic = Math.max(0, Math.min(ic, gs.length)); input = [...gs.slice(0, ic), ...ins, ...gs.slice(ic)].join(""); ic += ins.length; note = ""; render(); }
 }
 function quit() { out(`${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);

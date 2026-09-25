@@ -120,9 +120,12 @@ function cycle(d) {
 // One result as screen lines.
 function resultLines(r, i, W) {
   const c = worldFg(room), sel = i === selected;
-  const head = `${r.icon ? r.icon + " " : ""}${hexFg(r.color, bold(r.name))}${r.live ? "" : dim(" (closed)")}` +
+  // Selected result: its name on light grey (like the room TUI's agent cursor), no side bar.
+  const nameBg = theme.muted || theme.selection;
+  const nm = hexFg(r.color, bold(r.name));
+  const head = `${r.icon ? r.icon + " " : ""}${sel ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${nm}${ESC}49m` : `${ESC}4m${nm}${ESC}24m`) : nm}${r.live ? "" : dim(" (closed)")}` +
     dim(` · ${ROLE[r.role] || r.role} · ${when(r.ts)}${r.count > 1 ? " · ×" + r.count : ""}`);
-  const bar = sel ? fg(c, "▌") : " ";
+  const bar = " ";
   const textW = Math.max(10, W - 4);
   // Snippet: pre + MATCH + post, wrapped, the match in the world colour, max 4 lines.
   const pre = String(r.pre || ""), match = String(r.match || ""), post = String(r.post || "");
@@ -158,7 +161,7 @@ function render() {
   rows.push(`${prompt}${query}${hint}`);
   const cursorRow = rows.length;
   rows.push(` ${modeTag}  ${busy ? fg(c, "… ") : ""}${status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status)}`);
-  rows.push(rule(""));
+  const ruleAt = rows.length; rows.push(""); // "results · ↑ N above · ↓ N below", filled in below
 
   // Results: flatten to lines, keep the selected one in view.
   const avail = Math.max(1, H - rows.length - 1);
@@ -171,6 +174,11 @@ function render() {
   }
   top = Math.max(0, Math.min(top, Math.max(0, flat.length - avail)));
   const shown = flat.slice(top, top + avail);
+  // Results (not lines) wholly or partly out of view, like the room TUI's "↓ N more".
+  const firstShown = shown.length ? shown[0].i : 0, lastShown = shown.length ? shown[shown.length - 1].i : -1;
+  const above = shown.length ? firstShown + (top > (starts[firstShown] ?? 0) ? 1 : 0) : 0;
+  const below = shown.length ? results.length - 1 - lastShown : 0;
+  rows[ruleAt] = rule(results.length ? ["results", above ? `↑ ${above} above` : "", below ? `↓ ${below} below` : ""].filter(Boolean).join(" · ") : "");
   resultRows = {};
   shown.forEach((x, k) => { resultRows[rows.length + 1 + k] = x.i; });
   if (!results.length && !busy && query.trim() && /result/.test(status)) shown.push({ l: dim(mode === "ai" ? "  Nothing matched that idea." : "  No exact matches.") });
