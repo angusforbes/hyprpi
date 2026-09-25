@@ -44,7 +44,9 @@ const hexFg = (hex, s) => { const m = /^#?([0-9a-f]{6})$/i.exec(hex || ""); if (
 // Display width (emoji / CJK = 2, combining / ZWJ / VS = 0), enough for names and chat.
 function cw(cp) {
   if (cp === 0x200d || (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0x300 && cp <= 0x36f)) return 0;
-  if ((cp >= 0x1f300 && cp <= 0x1faff) || (cp >= 0x2600 && cp <= 0x27bf && cp !== 0x2713 && cp !== 0x2715) || (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xff00 && cp <= 0xff60)) return 2;
+  // Emoji that draw as emoji by default are 2 wide; text symbols like ❯ ✓ × ● are 1.
+  if (/\p{Emoji_Presentation}/u.test(String.fromCodePoint(cp))) return 2;
+  if ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xff00 && cp <= 0xff60)) return 2;
   return 1;
 }
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
