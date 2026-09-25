@@ -19,11 +19,13 @@ PanelWindow {
     for (var i = 0; m && i < s.length; i++) if (s[i].name === m.name) return s[i]
     return s[0]
   }
-  anchors { top: true; left: true }
-  margins { top: app.panelTop; left: app.panelLeft }
-  exclusionMode: ExclusionMode.Ignore
+  // Docked on the left, full height below the bar. It reserves its strip like
+  // the bar does, so every workspace's windows re-tile to the right of it
+  // while it is open (the widget acts as the workspace's left-hand parent).
+  anchors { top: true; bottom: true; left: true }
+  margins { top: app.panelGap; bottom: app.panelGap; left: app.panelLeft }
+  exclusionMode: ExclusionMode.Auto
   implicitWidth: app.panelWidth
-  implicitHeight: Math.min(app.panelHeight, (screen ? screen.height : 900) - app.panelTop - 12)
   color: "transparent"
   WlrLayershell.namespace: "hyprpi-room"
   WlrLayershell.layer: WlrLayer.Top

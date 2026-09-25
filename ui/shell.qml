@@ -34,10 +34,9 @@ ShellRoot {
     searchOpen = true
   }
   // Placement (logical px): under the bar, lined up with the world letters.
-  property int panelTop: 41
+  property int panelGap: 10   // = Hyprland gaps_out, so it lines up with tiled windows
   property int panelLeft: 10   // whole physical pixels at scale 1.6 (x1.6 = 16), else the edge blurs
   property int panelWidth: 430
-  property int panelHeight: 700
   // room -> array of messages (kept per room; windows bind to their own)
   property var messages: ({})
   property int messagesVersion: 0
