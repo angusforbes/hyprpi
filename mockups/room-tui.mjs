@@ -7,9 +7,10 @@
 // marked agents; Esc unmarks, Ctrl+A all) · Ctrl+W close · Ctrl+K kill (press
 // twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
-// the conversation · click-drag selects + copies text · Ctrl+C quits.
+// the conversation · drag selects + copies message text, Shift+click/drag whole messages · Ctrl+C quits.
 //
-//   kitty --class hyprpi.mockup node ~/Work/hyprpi/mockups/room-tui.mjs [ROOM]
+//   kitty --class hyprpi.mockup -o terminal_select_modifiers=ctrl+shift node ~/Work/hyprpi/mockups/room-tui.mjs [ROOM]
+// (ctrl+shift: so Shift+click reaches the TUI; Ctrl+Shift+drag is kitty's own selection)
 // No ROOM = the current world's room. Several copies can run at once, on the
 // same room or different ones: each is just another subscriber of the daemon.
 import { connect } from "../lib/client.mjs";
@@ -96,9 +97,42 @@ function mark(a) {
 }
 
 // ---- click-drag text selection (the TUI owns the mouse, so it selects itself)
-let screen = [], sel = null; // sel: { x0, y0, x1, y1, dragging } in 1-based cells
+let screen = [], sel = null; // sel: { x0, y0, x1, y1, dragging, mode } in 1-based cells
+// mode "text": plain drag in the conversation = message text only.
+// mode "msg":  Shift+click / Shift+drag = whole messages (time, name, text).
+// mode "plain": anywhere else = cells as on screen.
+let rowMeta = {}, convoMsgs = [];
+// Screen row -> [fromCol, toCol] to highlight.
+function selSpans(W) {
+  const sr = selRange(), out = {};
+  if (!sr) return out;
+  if (sel.mode === "msg") {
+    const [m0, m1] = selMsgs(sr);
+    if (m0 == null) return out;
+    for (const [y, r] of Object.entries(rowMeta)) if (r.msg != null && r.msg >= m0 && r.msg <= m1) out[y] = [1, W];
+    return out;
+  }
+  for (let y = sr.y0; y <= sr.y1; y++) {
+    let a = y === sr.y0 ? sr.x0 : 1, b = y === sr.y1 ? sr.x1 : W;
+    if (sel.mode === "text") {
+      const r = rowMeta[y];
+      if (!r || r.msg == null || r.header) continue;
+      a = Math.max(a, r.textX);
+      b = Math.min(b, width(screen[y - 1].trimEnd())); // text only, not trailing blanks
+    }
+    if (a <= b) out[y] = [a, b];
+  }
+  return out;
+}
+// Messages covered by a Shift selection (by the rows it starts and ends on).
+function selMsgs(sr) {
+  const near = (y, d) => { for (let k = 0; k < 400; k++, y += d) { const r = rowMeta[y]; if (r && r.msg != null) return r.msg; if (!r && k) break; } return null; };
+  let m0 = near(sr.y0, 1), m1 = near(sr.y1, -1);
+  if (m0 == null || m1 == null) return [null, null];
+  return m0 <= m1 ? [m0, m1] : [m1, m0];
+}
 function selRange() {
-  if (!sel || (sel.x0 === sel.x1 && sel.y0 === sel.y1)) return null;
+  if (!sel || (sel.mode !== "msg" && sel.x0 === sel.x1 && sel.y0 === sel.y1)) return null;
   const fwd = sel.y0 < sel.y1 || (sel.y0 === sel.y1 && sel.x0 <= sel.x1);
   return fwd ? { y0: sel.y0, x0: sel.x0, y1: sel.y1, x1: sel.x1 } : { y0: sel.y1, x0: sel.x1, y1: sel.y0, x1: sel.x0 };
 }
@@ -110,8 +144,23 @@ function sliceCols(t, a, b) {
 }
 function selectedText() {
   const sr = selRange(); if (!sr) return "";
-  const W = process.stdout.columns || 100, out = [];
-  for (let y = sr.y0; y <= sr.y1; y++) out.push(sliceCols(screen[y - 1] || "", y === sr.y0 ? sr.x0 : 1, y === sr.y1 ? sr.x1 : W).trimEnd());
+  const W = process.stdout.columns || 100;
+  if (sel.mode === "msg") { // whole messages, full text even if partly scrolled away
+    const [m0, m1] = selMsgs(sr); if (m0 == null) return "";
+    return convoMsgs.slice(m0, m1 + 1).map((m) => `${hhmm(m.ts)} ${m.author?.kind === "human" ? m.author.name || "Angus" : m.author?.name || "agent"}: ${m.text}`).join("\n");
+  }
+  const spans = selSpans(W);
+  if (sel.mode === "text") { // unwrap: rows of one paragraph join with a space
+    let t = "", prev = null;
+    for (const y of Object.keys(spans).map(Number).sort((a, b) => a - b)) {
+      const r = rowMeta[y], piece = sliceCols(screen[y - 1], spans[y][0], spans[y][1]).trim();
+      if (prev) t += prev.msg !== r.msg ? "\n" : prev.hard ? "\n" : " ";
+      t += piece; prev = r;
+    }
+    return t;
+  }
+  const out = [];
+  for (const y of Object.keys(spans).map(Number).sort((a, b) => a - b)) out.push(sliceCols(screen[y - 1], spans[y][0], spans[y][1]).trimEnd());
   return out.join("\n");
 }
 function copy(text) {
@@ -166,24 +215,31 @@ function draw() {
   const avail = Math.max(1, H - rows.length - bottom);
   // Wide: "hh:mm  who  text" columns (irssi/weechat). Narrow: who on its own line.
   const narrow = W < 72, whoW = narrow ? W - 8 : 14, textW = narrow ? W - 3 : Math.max(10, W - 7 - whoW - 2);
-  const convo = [];
-  for (const m of messages[room] || []) {
+  // Each row: { line, msg (index into the room's messages), textX (1-based
+  // column where message text starts), hard (last row of a paragraph) }.
+  const convo = [], msgs = messages[room] || [];
+  const textX = narrow ? 4 : whoW + 10;
+  msgs.forEach((m, mi) => {
     const au = m.author || {};
     const who = au.kind === "human" ? fg(c, bold(cut(au.name || "Angus", whoW))) : hexFg(au.color, bold(cut((au.icon ? au.icon + " " : "") + (au.name || "agent"), whoW)));
+    const body = [];
+    for (const para of String(m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => body.push({ l, hard: i === ls.length - 1 })); }
     if (narrow) {
-      if (convo.length) convo.push("");
-      convo.push(` ${who} ${dim(hhmm(m.ts))}`);
-      for (const l of wrap(m.text, textW)) convo.push(`   ${l}`);
-    } else wrap(m.text, textW).forEach((l, i) => convo.push(i === 0 ? ` ${dim(hhmm(m.ts))} ${pad(who, whoW)}  ${l}` : ` ${" ".repeat(5)} ${" ".repeat(whoW)}  ${l}`));
-  }
+      if (convo.length) convo.push({ line: "", msg: null });
+      convo.push({ line: ` ${who} ${dim(hhmm(m.ts))}`, msg: mi, header: true });
+      for (const b of body) convo.push({ line: `   ${b.l}`, msg: mi, textX, hard: b.hard });
+    } else body.forEach((b, i) => convo.push({ line: i === 0 ? ` ${dim(hhmm(m.ts))} ${pad(who, whoW)}  ${b.l}` : ` ${" ".repeat(5)} ${" ".repeat(whoW)}  ${b.l}`, msg: mi, textX, hard: b.hard }));
+  });
   // Scrolled up: stay on the same lines when new ones arrive below.
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
-  if (!convo.length) shown.push(dim("  (no messages yet)"));
-  while (shown.length < avail) shown.unshift("");
-  rows.push(...shown);
+  if (!convo.length) shown.push({ line: dim("  (no messages yet)"), msg: null });
+  while (shown.length < avail) shown.unshift({ line: "", msg: null });
+  rowMeta = {}; convoMsgs = msgs;
+  shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
+  rows.push(...shown.map((r) => r.line));
 
   // Input line
   rows.push(fg(c, "─".repeat(W)));
@@ -202,13 +258,15 @@ function draw() {
   out(`\x1b]2;hyprpi tui · room ${room}\x07`); // not "hyprpi room …": the daemon treats those titles as room windows
   const lines = rows.slice(0, H).map((r) => clip(r, W));
   screen = lines.map(strip);
-  // Drag selection: redraw the selected cells of each line inverted.
-  const sr = selRange();
+  // Selection: repaint the selected cells with the theme's selection colour
+  // (what kitty uses for its own selection).
+  const spans = selSpans(W);
+  const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   const shown2 = lines.map((l, i) => {
-    if (!sr || i + 1 < sr.y0 || i + 1 > sr.y1) return l;
-    const a = i + 1 === sr.y0 ? sr.x0 : 1, b = i + 1 === sr.y1 ? sr.x1 : W;
+    const sp = spans[i + 1];
+    if (!sp) return l;
     const t = screen[i];
-    return sliceCols(t, 1, a - 1) + `${ESC}7m` + sliceCols(t, a, b) + `${ESC}27m` + sliceCols(t, b + 1, W);
+    return sliceCols(t, 1, sp[0] - 1) + selOn + pad(sliceCols(t, sp[0], sp[1]), sp[1] - sp[0] + 1) + selOff + sliceCols(t, sp[1] + 1, W);
   });
   out(`${ESC}?25l${ESC}H` + shown2.map((l) => l + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
   // cursor at end of input
@@ -343,11 +401,16 @@ function onKey(d) {
       const inList = y >= listRowY && y < listRowY + listRows;
       // Left button: press starts a possible selection, motion drags it,
       // release copies it (or, without a drag, counts as a click).
-      if (b === 0 && m[4] === "M") { sel = { x0: x, y0: y, x1: x, y1: y, dragging: false }; continue; }
-      if (b === 32 && sel) { sel.x1 = x; sel.y1 = y; sel.dragging = true; continue; }
-      if (b === 0 && m[4] === "m" && sel) {
+      // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
+      if ((b === 0 || b === 4) && m[4] === "M") {
+        const inConvo = !!rowMeta[y];
+        sel = { x0: x, y0: y, x1: x, y1: y, dragging: false, mode: b === 4 && inConvo ? "msg" : inConvo ? "text" : "plain" };
+        continue;
+      }
+      if ((b === 32 || b === 36) && sel) { sel.x1 = x; sel.y1 = y; sel.dragging = true; continue; }
+      if ((b === 0 || b === 4) && m[4] === "m" && sel) {
         sel.x1 = x; sel.y1 = y;
-        if (sel.dragging && selRange()) { copy(selectedText()); continue; } // highlight stays until the next key or click
+        if ((sel.dragging || sel.mode === "msg") && selRange()) { copy(selectedText()); continue; } // highlight stays until the next key or click
         sel = null;
         if (inList) { // plain click: cursor there; click again: mark / unmark
           const a = hereAgents()[listTop + y - listRowY];
