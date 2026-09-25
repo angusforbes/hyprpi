@@ -146,7 +146,7 @@ FloatingWindow {
             Text { width: parent.width; elide: Text.ElideRight
               text: modelData.display; color: modelData.color || app.fg; font.family: app.fontFamily; font.pixelSize: 13; font.bold: true }
             Text { width: parent.width; elide: Text.ElideRight
-              text: [modelData.status, modelData.workspace_label, modelData.model, modelData.cwd.replace(/^\/home\/[^/]+/, "~")].filter(x => x).join(" · ")
+              text: [modelData.status, String(modelData.workspace_label || "").replace(/^.*:/, ""), modelData.model, modelData.cwd.replace(/^\/home\/[^/]+/, "~")].filter(x => x).join(" · ")
               color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 10 }
           }
           Rectangle { id: at; width: 26; height: 26; radius: app.radius

@@ -92,13 +92,16 @@ function render() {
 
   // Agents pane
   rows.push(rule(`agents · room ${room}`));
+  // "special:reprieve" -> "reprieve": only the part after the last ":".
+  const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
+  const wsW = Math.min(12, Math.max(2, ...here.map((a) => width(wsl(a)))));
   const nameW = Math.min(24, Math.max(8, ...here.map((a) => width(((a.icon ? a.icon + " " : "") + a.display)))));
   if (!here.length) rows.push(dim("  no agents here · SUPER+A opens one"));
   for (const a of here) {
     const name = (a.icon ? a.icon + " " : "") + a.display;
     const st = a.status === "done" && a.seen ? "idle" : a.status;
-    const extra = W < 72 ? "" : " " + dim(pad(cut(a.workspace_label || "", 4), 5) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
-    const line = ` ${fg(c, bold(mark(a)))} ${pad(hexFg(a.color, bold(cut(name, nameW))), nameW)}  ${pad(st, 8)}${W < 72 ? dim(a.workspace_label || "") : extra}`;
+    const extra = W < 72 ? "" : " " + dim(pad(cut(wsl(a), wsW), wsW + 1) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
+    const line = ` ${fg(c, bold(mark(a)))} ${pad(hexFg(a.color, bold(cut(name, nameW))), nameW)}  ${pad(st, 8)}${W < 72 ? dim(wsl(a)) : extra}`;
     rows.push(a.focused ? `${ESC}7m${pad(strip(line), W)}${ESC}27m` : line);
   }
 
