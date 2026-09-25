@@ -12,7 +12,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
 
   hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [-- PI_ARGS...]
                               open a Pi agent in its own foot window (SUPER+A)
-  hyprpi room [ROOM]          open/focus the room window (default: current world)
+  hyprpi room [ROOM] [--toggle]  show (or toggle) the room widget; no ROOM = current world, following it
   hyprpi list [--json]        live agents and rooms
   hyprpi post [--room R] TEXT post to a room as Angus (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
@@ -106,22 +106,18 @@ async function cmdNew() {
 // Room windows are served by one Quickshell process per Hyprland instance,
 // connected to this instance's daemon; the daemon forwards "open" to it.
 async function cmdRoom() {
+  const toggle = flag("--toggle");
   await ensureDaemon();
-  let r = await request("ui.open", { room: args[0] || undefined });
+  const params = { room: args[0] || "", toggle };
+  let r = await request("ui.open", params);
   if (!r.delivered) {
     const child = spawn("qs", ["-p", path.join(ROOT, "ui")], { detached: true, stdio: "ignore", env: childEnv({ HYPRPI_SOCKET: socketPath() }) });
     child.unref();
     for (let i = 0; i < 60 && !r.delivered; i++) {
       await new Promise((res) => setTimeout(res, 100));
-      r = await request("ui.open", { room: r.room });
+      r = await request("ui.open", { ...params, toggle: false });
     }
-    if (!r.delivered) die("room window process did not start (qs -p " + path.join(ROOT, "ui") + ")");
-  }
-  // Focus it if it already exists somewhere (a new one is focused by Hyprland).
-  for (let i = 0; i < 20; i++) {
-    const c = (await hypr.clients()).find((w) => w.title === `hyprpi room ${r.room}`);
-    if (c) { await hypr.focusWindow(c.address).catch(() => {}); break; }
-    await new Promise((res) => setTimeout(res, 100));
+    if (!r.delivered) die("room widget process did not start (qs -p " + path.join(ROOT, "ui") + ")");
   }
   console.log(r.room);
 }

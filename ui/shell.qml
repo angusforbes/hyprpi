@@ -1,9 +1,9 @@
-// hyprpi room windows — one normal window per room, all served by this one
-// Quickshell instance. Started by `hyprpi room [ROOM]`, which passes the daemon
-// socket in HYPRPI_SOCKET.
+// hyprpi room widget — a fixed-size panel pinned under the bar's world
+// letters, one per Hyprland instance. Started by `hyprpi room [ROOM] [--toggle]`,
+// which passes the daemon socket in HYPRPI_SOCKET.
 //
-//   qs -p ~/Work/hyprpi/ui ipc call hyprpi open A
-//   qs -p ~/Work/hyprpi/ui ipc call hyprpi close A
+//   qs -p ~/Work/hyprpi/ui ipc call hyprpi toggle ""     (current world, follows it)
+//   qs -p ~/Work/hyprpi/ui ipc call hyprpi toggle B      (room B, pinned to B)
 import Quickshell
 import Quickshell.Io
 import QtQuick
@@ -16,7 +16,17 @@ ShellRoot {
   property var rooms: []
   property string activeRoom: ""
   property bool online: false
-  property var openRooms: []
+  // ---- the panel ----
+  property bool panelOpen: false
+  property string panelRoom: "A"
+  property bool panelFollow: true        // opened for "current world": follow world changes
+  readonly property string shownRoom: panelFollow && activeRoom ? activeRoom : panelRoom
+  onShownRoomChanged: if (shownRoom && !messages[shownRoom]) loadRoom(shownRoom)
+  // Placement (logical px): under the bar, lined up with the world letters.
+  property int panelTop: 41
+  property int panelLeft: 11
+  property int panelWidth: 430
+  property int panelHeight: 700
   // room -> array of messages (kept per room; windows bind to their own)
   property var messages: ({})
   property int messagesVersion: 0
@@ -95,7 +105,8 @@ ShellRoot {
       shell.online = connected
       if (connected) {
         shell.call("ui.subscribe", { windows: true }, function (r) { shell.applyList(r) })
-        for (var i = 0; i < shell.openRooms.length; i++) shell.loadRoom(shell.openRooms[i])
+        shell.messages = ({})
+        if (shell.shownRoom) shell.loadRoom(shell.shownRoom)
       } else reconnect.start()
     }
     parser: SplitParser {
@@ -104,7 +115,7 @@ ShellRoot {
         try { m = JSON.parse(data) } catch (e) { return }
         if (m.event === "agents") shell.applyList(m.data)
         else if (m.event === "message") shell.onMessage(m.data)
-        else if (m.event === "open") shell.open(m.data.room)
+        else if (m.event === "open") shell.open(m.data.room || "", !!m.data.toggle)
         else if (m.id !== undefined && shell.callbacks[m.id]) {
           var cb = shell.callbacks[m.id]; delete shell.callbacks[m.id]
           cb(m.result === undefined ? null : m.result, m.error || "")
@@ -114,27 +125,25 @@ ShellRoot {
   }
   Timer { id: reconnect; interval: 2000; onTriggered: if (!sock.connected) sock.connected = true }
 
-  // ---- windows ----------------------------------------------------------------
-  function open(room) {
-    room = String(room || activeRoom || "A")
-    if (openRooms.indexOf(room) < 0) { openRooms = openRooms.concat([room]); loadRoom(room) }
+  // ---- open / toggle ----------------------------------------------------------
+  // room "" = the current world's room (and keep following it).
+  function open(room, toggle) {
+    var follow = !room
+    var target = follow ? (activeRoom || "A") : String(room)
+    if (toggle && panelOpen && shownRoom === target) { panelOpen = false; return }
+    panelFollow = follow
+    panelRoom = target
+    if (!messages[target]) loadRoom(target)
+    panelOpen = true
   }
-  function close(room) { openRooms = openRooms.filter(r => r !== room) }
 
-  Variants {
-    model: shell.openRooms
-    RoomWindow {
-      required property var modelData
-      room: modelData
-      app: shell
-    }
-  }
+  RoomPanel { room: shell.shownRoom; app: shell }
 
   IpcHandler {
     target: "hyprpi"
     function ping(): string { return "pong" }
-    function open(room: string): void { shell.open(room) }
-    function close(room: string): void { shell.close(room) }
-    function rooms(): string { return JSON.stringify(shell.openRooms) }
+    function open(room: string): void { shell.open(room, false) }
+    function toggle(room: string): void { shell.open(room, true) }
+    function close(): void { shell.panelOpen = false }
   }
 }

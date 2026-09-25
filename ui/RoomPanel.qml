@@ -1,20 +1,33 @@
-// One room: its agents (click to jump) above the room's shared conversation.
-// Type to the whole room; start with @Name to prompt one agent directly.
+// The room widget: a fixed-size panel pinned under the bar's world letters.
+// Agents (click to jump, @ to address) above the room's shared conversation.
+// Type to the whole room; start with @Name [@Name2 ...] to prompt only them.
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
+import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Controls
 
-FloatingWindow {
+PanelWindow {
   id: win
   property string room: "A"
   property var app
-  title: "hyprpi room " + room
-  implicitWidth: 460
-  implicitHeight: 720
-  color: app.bg
-
-  onVisibleChanged: if (!visible) app.close(room)
+  visible: app.panelOpen
+  screen: {
+    var m = Hyprland.focusedMonitor
+    var s = Quickshell.screens
+    for (var i = 0; m && i < s.length; i++) if (s[i].name === m.name) return s[i]
+    return s[0]
+  }
+  anchors { top: true; left: true }
+  margins { top: app.panelTop; left: app.panelLeft }
+  exclusionMode: ExclusionMode.Ignore
+  implicitWidth: app.panelWidth
+  implicitHeight: Math.min(app.panelHeight, (screen ? screen.height : 900) - app.panelTop - 12)
+  color: "transparent"
+  WlrLayershell.namespace: "hyprpi-room"
+  WlrLayershell.layer: WlrLayer.Top
+  WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
   readonly property var members: app.agents.filter(a => a.room === room)
   readonly property color roomColor: app.roomColor(room)
@@ -23,12 +36,19 @@ FloatingWindow {
   function send() {
     var text = input.text.trim()
     if (!text) return
-    var m = text.match(/^@(\S+)\s+([\s\S]+)$/)
+    // Leading @Name tokens (any number) = prompt just those agents.
+    var m = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/)
     if (m) {
-      var who = m[1], body = m[2]
-      app.call("agent.prompt", { agent: who, text: body, via: "room-window" }, function (r, err) {
-        win.note = r ? ("→ sent to " + r.name) : ("✗ " + err)
-        noteTimer.restart()
+      var names = m[1].split(/[\s,]+/).filter(x => x.length > 1).map(x => x.slice(1))
+      var body = m[2], sent = [], failed = [], left = names.length
+      names.forEach(function (who) {
+        app.call("agent.prompt", { agent: who, text: body, via: "room-window" }, function (r, err) {
+          if (r) sent.push(r.name); else failed.push(who + " (" + err + ")")
+          if (--left === 0) {
+            win.note = (sent.length ? "→ sent to " + sent.join(", ") : "") + (failed.length ? "  ✗ " + failed.join(", ") : "")
+            noteTimer.restart()
+          }
+        })
       })
     } else {
       app.call("room.post", { room: room, text: text, as_human: true, via: "room-window" }, function (r, err) {
@@ -41,9 +61,23 @@ FloatingWindow {
   }
   Timer { id: noteTimer; interval: 5000; onTriggered: win.note = "" }
 
+  // @ adds "@Name " to the front block of mentions (once per agent).
+  function mention(a) {
+    var tag = "@" + (a.name || a.display).replace(/\s+/g, "")
+    var t = input.text
+    var lead = (t.match(/^(?:@\S+[\s,]*)*/) || [""])[0]
+    if (lead.split(/[\s,]+/).indexOf(tag) >= 0) { input.forceActiveFocus(); return }
+    var rest = t.slice(lead.length)
+    lead = lead.replace(/\s*$/, "")
+    input.text = (lead ? lead + " " : "") + tag + " " + rest
+    input.forceActiveFocus()
+    input.cursorPosition = input.text.length
+  }
+
   Process { id: newAgent; command: [Quickshell.shellDir + "/../bin/hyprpi", "new"] }
 
-  Rectangle { anchors.fill: parent; color: app.bg }
+  Rectangle { anchors.fill: parent; color: app.bg; radius: 10; border.color: app.border; border.width: 1 }
+  Shortcut { sequence: "Escape"; onActivated: app.panelOpen = false }
 
   Column {
     id: top
@@ -53,16 +87,24 @@ FloatingWindow {
     // ---- header ----
     Item {
       width: parent.width; height: 34
+      Rectangle {
+        id: closeBtn
+        anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+        width: 26; height: 26; radius: 6
+        color: closeMouse.containsMouse ? app.bg3 : "transparent"
+        Text { anchors.centerIn: parent; text: "✕"; color: app.dimFg; font.pixelSize: 13 }
+        MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.panelOpen = false }
+      }
       Rectangle { id: badge; width: 34; height: 34; radius: 8; color: win.roomColor
         Text { anchors.centerIn: parent; text: win.room; color: "white"; font.family: app.fontFamily; font.pixelSize: 17; font.bold: true } }
       Column {
         anchors { left: badge.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
-        Text { text: "Room " + win.room; color: app.fg; font.family: app.fontFamily; font.pixelSize: 15; font.bold: true }
+        Text { text: "Room " + win.room + (app.panelFollow ? "  · follows world" : ""); color: app.fg; font.family: app.fontFamily; font.pixelSize: 15; font.bold: true }
         Text { text: win.members.length + (win.members.length === 1 ? " agent" : " agents") + (app.online ? "" : "  ·  daemon offline")
                color: app.online ? app.dimFg : "#b4637a"; font.family: app.fontFamily; font.pixelSize: 11 }
       }
       Rectangle {
-        anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+        anchors { right: closeBtn.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
         width: addText.implicitWidth + 18; height: 26; radius: 6
         color: addMouse.containsMouse ? app.bg3 : app.bg2; border.color: app.border
         Text { id: addText; anchors.centerIn: parent; text: "＋ agent"; color: app.fg; font.family: app.fontFamily; font.pixelSize: 12 }
@@ -103,7 +145,7 @@ FloatingWindow {
             color: atMouse.containsMouse ? app.bg2 : "transparent"; border.color: atMouse.containsMouse ? app.border : "transparent"
             Text { anchors.centerIn: parent; text: "@"; color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 13 }
             MouseArea { id: atMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-              onClicked: { input.text = "@" + (modelData.name || modelData.display).replace(/\s+/g, "") + " "; input.forceActiveFocus(); input.cursorPosition = input.text.length } }
+              onClicked: win.mention(modelData) }
           }
         }
       }
@@ -122,8 +164,11 @@ FloatingWindow {
     clip: true
     spacing: 8
     model: { app.messagesVersion; return app.messages[win.room] || [] }
-    onCountChanged: Qt.callLater(() => chat.positionViewAtEnd())
-    Component.onCompleted: positionViewAtEnd()
+    // Delegate heights settle a frame late: scroll now and again shortly after.
+    onCountChanged: { chat.positionViewAtEnd(); toEnd.restart() }
+    onModelChanged: toEnd.restart()
+    onVisibleChanged: if (visible) toEnd.restart()
+    Timer { id: toEnd; interval: 60; onTriggered: chat.positionViewAtEnd() }
     ScrollBar.vertical: ScrollBar {}
     delegate: Rectangle {
       required property var modelData
@@ -169,7 +214,7 @@ FloatingWindow {
       TextArea {
         id: input
         wrapMode: TextArea.Wrap
-        placeholderText: "Message room " + win.room + "   (@Name to prompt one agent · Shift+Enter newline)"
+        placeholderText: "Message room " + win.room + "  (click @ to address agents · Shift+Enter newline)"
         placeholderTextColor: app.dimFg
         color: app.fg
         font.family: app.fontFamily; font.pixelSize: 12
