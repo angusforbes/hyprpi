@@ -283,8 +283,13 @@ async function loadRoom(r) {
   render();
 }
 
+let lastFocusedId = "";
 function applyList(r) {
   agents = r.agents || []; rooms = r.rooms || [];
+  // Focusing an agent's window moves the list cursor to it (and scrolls it into view).
+  const f = agents.find((a) => a.focused);
+  if (f && f.id !== lastFocusedId && f.room === (room || r.active_room)) cursorId = f.id;
+  lastFocusedId = f ? f.id : "";
   if (!room) room = r.active_room || rooms[0]?.id || "A";
   if (!rooms.find((x) => x.id === room)) rooms = [...rooms, { id: room }].sort((a, b) => a.id.localeCompare(b.id));
   render();
