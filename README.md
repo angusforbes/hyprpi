@@ -135,3 +135,6 @@ included; this is a separate plugin.
 ## License
 
 MIT
+
+<!-- TODO: screenshots of the three views (ALT+SPACE, ALT+CTRL+SPACE, ALT+SHIFT+SPACE) from a
+staged desktop or a synthetic demo mode; no personal windows/content in the images. -->
