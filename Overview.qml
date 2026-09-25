@@ -69,7 +69,7 @@ Item {
   property real edgeMargin: 48
   property bool uppercaseHints: true     // Shift+A-Z after 26 windows (else two letters)
   property bool shortenAppNames: true
-  property bool showEmptyWorkspaces: true   // world views show all 10 slots of each world
+  property bool showEmptyWorkspaces: false  // while holding, show all 10 slots of each world (else use Alt+N)
   property bool doubleTap: true          // quick repeat of a hint's last key toggles fullscreen
   property string doubleTapMode: "maximized"   // "maximized" (full working area) | "fullscreen"
   property int doubleTapMs: 300
@@ -94,7 +94,7 @@ Item {
     hintKeys: "abcdefghijklmnopqrstuvwxyz",
     uppercaseHints: true,
     shortenAppNames: true,
-    showEmptyWorkspaces: true,
+    showEmptyWorkspaces: false,
     showPreviews: true,
     shiftRing: false,
     doubleTap: true,
@@ -137,7 +137,7 @@ Item {
     root.hintKeys = uniq.length >= 2 ? uniq : d.hintKeys
     root.uppercaseHints = data.uppercaseHints !== false
     root.shortenAppNames = data.shortenAppNames !== false
-    root.showEmptyWorkspaces = data.showEmptyWorkspaces !== false
+    root.showEmptyWorkspaces = data.showEmptyWorkspaces === true
     root.showPreviews = data.showPreviews !== false
     root.shiftRing = data.shiftRing === true
     root.doubleTap = data.doubleTap !== false
