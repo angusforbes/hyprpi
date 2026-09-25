@@ -21,8 +21,8 @@ workspace. Clicking the current world in the bar (or SUPER+ALT+A):
 - neither → open one here, placed as the left-most root of the dwindle tree
   (left half, everything else moves right); alone it fills the workspace
 
-Top: the room's agents with status (● grey idle · pulsing blue working ·
-green done), workspace, model and folder. Click an agent to jump to its window;
+Top: the room's agents with status (○ hollow working · ● full done, unseen ·
+● grey idle or seen · ● red blocked), workspace, model and folder. Click an agent to jump to its window;
 each `@` click adds `@Name` to the message box (several = send to just those
 agents). Below: the room's shared conversation. Typing without `@` posts to the
 whole room: every agent in it receives the message plus the room history it

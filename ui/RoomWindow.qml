@@ -124,10 +124,13 @@ FloatingWindow {
           border.width: modelData.focused ? 1.5 : 0
           MouseArea { id: rowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
             onClicked: app.call("agent.focus", { agent: modelData.id }, null) }
-          Rectangle { id: dot; width: 9; height: 9; radius: 4.5; color: app.statusColor(modelData.status)
-            anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-            SequentialAnimation on opacity { running: modelData.status === "working"; loops: Animation.Infinite
-              NumberAnimation { to: 0.25; duration: 600 } NumberAnimation { to: 1; duration: 600 } } }
+          // Status dot, no animation: working = hollow ring, done (unseen) = full
+          // dot (with the ding), blocked = red, idle / seen = grey.
+          Rectangle { id: dot; width: 9; height: 9; radius: 4.5
+            property color c: modelData.status === "working" || (modelData.status === "done" && !modelData.seen) ? win.roomColor : modelData.status === "blocked" ? app.statusColor("blocked") : app.dimFg
+            color: modelData.status === "working" ? "transparent" : c
+            border.color: c; border.width: modelData.status === "working" ? 1.5 : 0
+            anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter } }
           Text { id: glyph; text: modelData.icon || "🤖"; font.pixelSize: 17
             anchors { left: dot.right; leftMargin: 9; verticalCenter: parent.verticalCenter } }
           Column {
