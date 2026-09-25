@@ -76,7 +76,7 @@ PanelWindow {
 
   Process { id: newAgent; command: [Quickshell.shellDir + "/../bin/hyprpi", "new"] }
 
-  Rectangle { anchors.fill: parent; color: app.bg; radius: 10; border.color: app.border; border.width: 1 }
+  Rectangle { anchors.fill: parent; color: app.popupBg; radius: app.radius; border.color: app.popupBorder; border.width: app.popupBorderWidth }
   Shortcut { sequence: "Escape"; onActivated: app.panelOpen = false }
 
   Column {
@@ -90,7 +90,7 @@ PanelWindow {
       Rectangle {
         id: closeBtn
         anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-        width: 26; height: 26; radius: 6
+        width: 26; height: 26; radius: app.radius
         color: closeMouse.containsMouse ? app.bg3 : "transparent"
         Text { anchors.centerIn: parent; text: "✕"; color: app.dimFg; font.pixelSize: 13 }
         MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.panelOpen = false }
@@ -98,12 +98,12 @@ PanelWindow {
       Rectangle {
         id: searchBtn
         anchors { right: closeBtn.left; rightMargin: 4; verticalCenter: parent.verticalCenter }
-        width: 26; height: 26; radius: 6
+        width: 26; height: 26; radius: app.radius
         color: searchMouse.containsMouse ? app.bg3 : "transparent"
         Text { anchors.centerIn: parent; text: "⌕"; color: app.dimFg; font.pixelSize: 16 }
         MouseArea { id: searchMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.openSearch(win.room, false) }
       }
-      Rectangle { id: badge; width: 34; height: 34; radius: 8; color: win.roomColor
+      Rectangle { id: badge; width: 34; height: 34; radius: app.radius; color: win.roomColor
         Text { anchors.centerIn: parent; text: win.room; color: "white"; font.family: app.fontFamily; font.pixelSize: 17; font.bold: true } }
       Column {
         anchors { left: badge.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
@@ -113,7 +113,7 @@ PanelWindow {
       }
       Rectangle {
         anchors { right: searchBtn.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
-        width: addText.implicitWidth + 18; height: 26; radius: 6
+        width: addText.implicitWidth + 18; height: 26; radius: app.radius
         color: addMouse.containsMouse ? app.bg3 : app.bg2; border.color: app.border
         Text { id: addText; anchors.centerIn: parent; text: "＋ agent"; color: app.fg; font.family: app.fontFamily; font.pixelSize: 12 }
         MouseArea { id: addMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newAgent.running = true }
@@ -128,7 +128,7 @@ PanelWindow {
         model: win.members
         delegate: Rectangle {
           required property var modelData
-          width: parent.width; height: 42; radius: 7
+          width: parent.width; height: 42; radius: app.radius
           color: rowMouse.containsMouse ? app.bg3 : (modelData.focused ? app.bg2 : "transparent")
           border.color: modelData.focused ? Qt.alpha(win.roomColor, 0.7) : "transparent"
           border.width: modelData.focused ? 1.5 : 0
@@ -148,7 +148,7 @@ PanelWindow {
               text: [modelData.status, modelData.workspace_label, modelData.model, modelData.cwd.replace(/^\/home\/[^/]+/, "~")].filter(x => x).join(" · ")
               color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 10 }
           }
-          Rectangle { id: at; width: 26; height: 26; radius: 6
+          Rectangle { id: at; width: 26; height: 26; radius: app.radius
             anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
             color: atMouse.containsMouse ? app.bg2 : "transparent"; border.color: atMouse.containsMouse ? app.border : "transparent"
             Text { anchors.centerIn: parent; text: "@"; color: app.dimFg; font.family: app.fontFamily; font.pixelSize: 13 }
@@ -183,7 +183,7 @@ PanelWindow {
       readonly property bool human: modelData.author && modelData.author.kind === "human"
       width: chat.width - 4
       height: msgCol.implicitHeight + 12
-      radius: 8
+      radius: app.radius
       color: human ? Qt.alpha(win.roomColor, 0.12) : app.bg2
       Column {
         id: msgCol
@@ -210,7 +210,7 @@ PanelWindow {
     id: inputBox
     anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
     height: Math.min(140, input.implicitHeight + 16) + (win.note ? 16 : 0)
-    radius: 8
+    radius: app.radius
     color: app.bg2
     border.color: input.activeFocus ? win.roomColor : app.border
     Text {

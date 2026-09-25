@@ -7,18 +7,31 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | Key | Does |
 |---|---|
 | SUPER+A | New Pi agent in its own foot window on the current workspace; it joins that world's room |
-| SUPER+ALT+A | Open/raise the room window for the current world |
+| SUPER+ALT+A | Toggle the room widget for the current world |
+| SUPER+ALT+/ | Toggle the search window for the current world's room |
 | SUPER+SHIFT+A | Claude (moved here from SUPER+A) |
 
-## Room window
+## Room widget
 
-A normal window (put it anywhere). Top: the room's agents with status
+A fixed-size panel pinned under the bar's world letters, styled like Omarchy's
+popups (theme popup border, square corners). With no room given it follows the
+world you're in. Top: the room's agents with status
 (● grey idle · pulsing blue working · green done), workspace, model and folder.
-Click an agent to jump to its window; `@` fills in `@Name ` to prompt just that
-agent. Below: the room's shared conversation. Typing without `@` posts to the
+Click an agent to jump to its window; each `@` click adds `@Name` to the
+message box (several = send to just those agents). Below: the room's shared conversation. Typing without `@` posts to the
 whole room: every agent in it receives the message plus the room history it
 hasn't seen yet, and answers in the room (`room_reply`). `＋ agent` opens a new
 agent.
+
+## Search window
+
+Its own window (SUPER+ALT+/ or ⌕ in the room widget). Searches every agent's
+conversation in the room — live agents and ones that have closed — plus the
+room log. **Keyword**: exact phrase, case-insensitive, live as you type.
+**✦ AI** (Ctrl+/): describe what you mean and press Enter; a small model
+(`searchModel`, default claude-haiku-4-5) reads the recent entries and returns
+the ones that match, each with a short reason. Also from the terminal:
+`hyprpi find [--ai] QUERY`. What choosing a result does is still open.
 
 ## Agents
 
@@ -64,7 +77,8 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   "cwd": "~/Work",
   "terminal": "foot",
   "pi": "pi",
-  "piArgs": []
+  "piArgs": [],
+  "searchModel": "claude-haiku-4-5"
 }
 ```
 
@@ -83,5 +97,5 @@ state directory.
 
 ## Later
 
-Search panel · restarting agents (crash / after reboot) · master list of all
+Shift+click (or right-click) a world in the bar to open its room · choosing a search result · restarting agents (crash / after reboot) · master list of all
 rooms · pop-up picker version · flagging an agent's window when it needs you.

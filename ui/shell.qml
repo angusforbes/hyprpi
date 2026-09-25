@@ -50,6 +50,33 @@ ShellRoot {
   readonly property color accent: theme.accent || "#56949f"
   readonly property color border: theme.muted || "#cecacd"
   readonly property string fontFamily: "JetBrainsMono Nerd Font"
+  // Match Omarchy's popups (e.g. the volume panel): theme popups border colour
+  // (falls back to accent), 2px, corners = Hyprland decoration:rounding (0 here).
+  readonly property color popupBorder: shellToml["popups.border"] || accent
+  readonly property color popupBg: shellToml["popups.background"] || bg
+  readonly property int popupBorderWidth: 2
+  property int radius: 0
+  property var shellToml: ({})
+  FileView {
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme/shell.toml"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: {
+      var out = {}, section = "", lines = String(text()).split("\n")
+      for (var i = 0; i < lines.length; i++) {
+        var h = lines[i].match(/^\s*\[([^\]]+)\]/)
+        if (h) { section = h[1]; continue }
+        var m = lines[i].match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?(#[0-9A-Fa-f]{6,8})/)
+        if (m) out[section + "." + m[1]] = m[2]
+      }
+      shell.shellToml = out
+    }
+  }
+  Process {
+    running: true
+    command: ["hyprctl", "getoption", "decoration:rounding", "-j"]
+    stdout: StdioCollector { onStreamFinished: { try { shell.radius = Math.max(0, Number(JSON.parse(text).int) || 0) } catch (e) {} } }
+  }
   readonly property var worldKeys: ["blue", "red", "cyan", "yellow", "magenta", "green", "orange", "brown", "foreground"]
   function roomColor(room) {
     var i = "ABCDEFGHI".indexOf(String(room).charAt(0))

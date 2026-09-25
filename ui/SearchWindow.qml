@@ -70,7 +70,7 @@ FloatingWindow {
 
     Item {
       width: parent.width; height: 30
-      Rectangle { id: badge; width: 30; height: 30; radius: 7; color: app.roomColor(win.room)
+      Rectangle { id: badge; width: 30; height: 30; radius: app.radius; color: app.roomColor(win.room)
         Text { anchors.centerIn: parent; text: win.room; color: "white"; font.family: app.fontFamily; font.pixelSize: 15; font.bold: true } }
       Column {
         anchors { left: badge.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
@@ -85,7 +85,7 @@ FloatingWindow {
           delegate: Rectangle {
             required property var modelData
             readonly property bool on: win.mode === modelData.m
-            width: chipText.implicitWidth + 20; height: 26; radius: 13
+            width: chipText.implicitWidth + 20; height: 26; radius: app.radius
             color: on ? app.roomColor(win.room) : (chipMouse.containsMouse ? app.bg3 : app.bg2)
             border.color: on ? "transparent" : app.border
             Text { id: chipText; anchors.centerIn: parent; text: modelData.t; color: on ? "white" : app.fg; font.family: app.fontFamily; font.pixelSize: 12; font.bold: on }
@@ -96,7 +96,7 @@ FloatingWindow {
     }
 
     Rectangle {
-      width: parent.width; height: 38; radius: 8
+      width: parent.width; height: 38; radius: app.radius
       color: app.bg2
       border.color: query.activeFocus ? app.roomColor(win.room) : app.border
       Text { id: glass; text: win.mode === "ai" ? "✦" : "⌕"; color: app.dimFg; font.pixelSize: 16
@@ -137,7 +137,7 @@ FloatingWindow {
       readonly property bool sel: index === win.selected
       width: list.width - 6
       height: col.implicitHeight + 14
-      radius: 8
+      radius: app.radius
       color: sel ? Qt.alpha(app.roomColor(win.room), 0.14) : (rowMouse.containsMouse ? app.bg3 : app.bg2)
       border.color: sel ? Qt.alpha(app.roomColor(win.room), 0.7) : "transparent"
       MouseArea { id: rowMouse; anchors.fill: parent; hoverEnabled: true; onClicked: win.selected = index }
