@@ -221,9 +221,10 @@ function draw() {
   const authorLabel = (au = {}) => au.kind === "human" ? au.name || "Angus" : (au.icon ? au.icon + " " : "") + (au.name || "agent");
   const nameW = Math.min(20, Math.max(6, ...here.map((a) => width((a.icon ? a.icon + " " : "") + a.display)), ...msgs.slice(-200).map((m) => width(authorLabel(m.author)))));
   const nameBg = theme.muted || theme.selection;
+  const modelW = Math.max(4, ...here.map((a) => width((a.model || "").replace(/^claude-/, ""))));
   if (!here.length) rows.push(dim("  no agents here · SUPER+A opens one"));
   for (const a of here.slice(listTop, listTop + listRows)) {
-    // mark · name · workspace · model · folder. No status word: the mark says it.
+    // mark · name · model · topic (like herdr's sidebar). No status word: the mark says it.
     const name = cut((a.icon ? a.icon + " " : "") + a.display, nameW);
     let styled = hexFg(a.color, bold(name));
     // Cursor (follows the focused window): the name alone on light grey.
@@ -231,7 +232,8 @@ function draw() {
     if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
     else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
     const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
-    const rest = W < 72 ? dim(wsl(a)) : dim(pad(cut(wsl(a), wsW), wsW + 2) + pad((a.model || "").replace(/^claude-/, ""), 12) + " " + home(a.cwd));
+    const model = (a.model || "").replace(/^claude-/, "");
+    const rest = dim(pad(model, Math.min(14, modelW) + 2)) + (a.topic ? `${ESC}2;3m${a.topic}${ESC}22;23m` : "");
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${" ".repeat(Math.max(0, nameW - width(name)))}  ${rest}`);
   }
 
