@@ -247,8 +247,10 @@ function draw() {
     styled = iconPart + styled;
     const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
     const model = (a.model || "").replace(/^claude-/, "");
-    const rest = dim(pad(model, Math.min(14, modelW) + 2)) + (a.topic ? `${ESC}2;3m${a.topic}${ESC}22;23m` : "");
-    rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${" ".repeat(Math.max(0, nameW - width(name)))}  ${rest}`);
+    // name · model · topic, separated by dots like herdr's sidebar (no columns).
+    const dot = dim(" · ");
+    const rest = (model ? dot + dim(model) : "") + (a.topic ? dot + `${ESC}2;3m${a.topic}${ESC}22;23m` : "");
+    rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
 
   // Conversation pane: fill what's left, newest at the bottom.
