@@ -22,7 +22,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi focus AGENT          jump to an agent's window
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
-  hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; cleared when it works again)
+  hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
   hyprpi stop                 stop the daemon

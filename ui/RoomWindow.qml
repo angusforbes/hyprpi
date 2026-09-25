@@ -126,11 +126,11 @@ FloatingWindow {
             onClicked: app.call("agent.focus", { agent: modelData.id }, null) }
           // Status mark, all in the world's colour, no animation:
           // working = solid dot · done (unseen, with the ding) = \u2713 ·
-          // blocked = \u00d7 · idle (or done and seen) = hollow ring.
+          // blocked (unseen) = \u00d7 · idle (or done/blocked and seen) = hollow ring.
           Item { id: dot; width: 11; height: 11
             anchors { left: parent.left; leftMargin: 9; verticalCenter: parent.verticalCenter }
             property string mark: modelData.status === "working" ? "solid"
-              : modelData.status === "blocked" ? "x"
+              : (modelData.status === "blocked" && !modelData.seen) ? "x"
               : (modelData.status === "done" && !modelData.seen) ? "check" : "ring"
             Rectangle { visible: dot.mark === "solid" || dot.mark === "ring"; anchors.centerIn: parent
               width: 9; height: 9; radius: 4.5
