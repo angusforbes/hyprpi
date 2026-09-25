@@ -439,10 +439,11 @@ Item {
       out.sort(function(a, b) { return a.world - b.world })
     }
 
-    // Show every slot (1-9, 0) of each shown world, empty ones as tiles you can
-    // arrow to and drop into (Hyprland deletes empty workspaces, so these are
-    // only in the overview until a window lands there).
-    if (root.showEmptyWorkspaces && root.mode !== "workspace") {
+    // While a window is held (Alt+hold), show every slot (1-9, 0) of each shown
+    // world, empty ones as tiles you can arrow to and drop into. Hyprland
+    // deletes empty workspaces, so these exist only in the overview until a
+    // window lands there.
+    if (root.showEmptyWorkspaces && root.held !== null && root.mode !== "workspace") {
       for (var fr = 0; fr < out.length; fr++) {
         var frow = out[fr]
         for (var fs = 1; fs <= size; fs++) {
@@ -496,6 +497,13 @@ Item {
   // the selected row's world; Alt+Shift+N adds a new world (all-worlds view).
   // Moves are silent (you stay put) and the overview refreshes.
   property var held: null
+  // Picking up / putting down re-lays the rows (empty slots come and go);
+  // keep the current selection across that.
+  onHeldChanged: {
+    if (!root.lastRaw) return
+    if (!root.keepSelectId) root.keepSelectId = root.selectedWorkspaceId()
+    root.rebuild()
+  }
   property string holdCandidate: ""
   property var virtualWs: ({})          // world -> [slot, ...]
   property var virtualWorlds: []
@@ -527,8 +535,8 @@ Item {
     if (root.held.workspace === wsId) { root.notice = "Already on that workspace"; return }
     moveProcess.command = ["hyprctl", "dispatch",
       "hl.dsp.window.move({ window = \"address:" + root.held.address + "\", workspace = \"" + wsId + "\", follow = false })"]
-    root.keepSelectId = wsId
     root.held = null
+    root.keepSelectId = wsId
     root.notice = ""
     moveProcess.running = true
   }
