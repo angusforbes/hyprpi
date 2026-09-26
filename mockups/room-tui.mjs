@@ -305,19 +305,40 @@ function draw() {
   const items = filter === "activity" ? [] : msgs.map((m, mi) => ({ ts: m.ts, m, mi }));
   for (const e of acts) items.push({ ts: e.ts, e });
   items.sort((x, y) => x.ts - y.ts);
-  let lastAct = null; // agent id of the previous activity row (group runs under one name)
-  const actGlyph = { tool: "›", topic: "◆", done: "✓", blocked: "×", talk: "→", demand: "?", reply: "↩", prompt: "»" };
+  // Activity rows: no indent, no glyphs; names (with their icons) in their own colours.
+  // "done" (finished) is logged but not shown here.
+  const agentByName = (n) => agents.find((x) => x.display === n || x.name === n);
+  const styledName = (n) => {
+    if (n === "Angus") return fg(c, bold("Angus"));
+    const x = agentByName(n);
+    return x ? (x.icon ? x.icon + " " : "") + nameFg(x.name, x.color, x.display || n) : bold(n);
+  };
+  const afterColon = (t) => { const i = String(t).indexOf(": "); return i >= 0 ? String(t).slice(i + 2) : String(t); };
+  let lastAct = null;
   items.forEach(({ m, mi, e }) => {
     if (e) {
+      if (e.kind === "done") return;
       const au = e.agent || {};
-      const loud = e.kind === "talk" || e.kind === "demand" || e.kind === "reply" || e.kind === "prompt" || e.kind === "blocked";
-      const who = lastAct === au.id && !loud ? " ".repeat(Math.min(nameW, width(authorLabel(au)))) : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
+      const sender = (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
+      const tos = (Array.isArray(e.to) ? e.to : []).map(styledName).join(", ");
+      let line, loud = true;
+      if (e.kind === "talk") line = `${sender} to ${tos}: ${afterColon(e.text)}`;
+      else if (e.kind === "demand") line = `${sender} asks ${tos}: ${afterColon(e.text)}`;
+      else if (e.kind === "reply") line = `${sender} replies to ${tos}: ${afterColon(e.text)}`;
+      else if (e.kind === "prompt") line = `${fg(c, bold("Angus"))} to ${sender}: ${afterColon(e.text)}`;
+      else if (e.kind === "blocked") line = `${sender} needs you`;
+      else { loud = false; line = `${sender} ${dim(e.kind === "topic" ? "topic: " + e.text : e.text)}`; }
       if (lastAct === null && convo.length) convo.push({ line: "", msg: null });
-      const g = actGlyph[e.kind] || "·";
-      const body = e.kind === "topic" ? `topic: ${e.text}` : e.text;
-      const lead = `   ${fg(c, g)} ${who} `;
-      const ls = wrap(body, Math.max(10, W - width(lead) - 1));
-      ls.forEach((l, i) => convo.push({ line: i === 0 ? lead + (loud ? l : dim(l)) : " ".repeat(width(lead)) + (loud ? l : dim(l)), msg: null, act: true }));
+      // Wrap by plain text width; continuation rows start at column 1 too.
+      const plain = strip(line);
+      const parts = wrap(plain, Math.max(10, W - 1));
+      if (parts.length <= 1) convo.push({ line, msg: null, act: true });
+      else {
+        // First row keeps the styling; the rest of the text continues unstyled (dim for quiet lines).
+        const firstW = width(parts[0]);
+        convo.push({ line: clip(line, firstW), msg: null, act: true });
+        for (const l of parts.slice(1)) convo.push({ line: loud ? l : dim(l), msg: null, act: true });
+      }
       lastAct = au.id;
       return;
     }
