@@ -9,7 +9,16 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | SUPER+A | New Pi agent in its own terminal window (Omarchy's default terminal) on the current workspace; it joins that world's room |
 | SUPER+ALT+A | Room window for the current world (same as clicking the current world in the bar) |
 | SUPER+ALT+/ | Toggle the search window for the current world's room |
-| SUPER+SHIFT+A | Claude (moved here from SUPER+A) |
+| SUPER+SHIFT+A | Claude (moved here from SUPER+A; a personal binding in `~/.config/hypr/bindings.lua`, not part of hyprpi) |
+
+These keys, the rule that tags agent windows as terminals (so Omarchy's SUPER+C/V copy and
+paste instead of sending Ctrl+C, which Pi treats as clear/interrupt) and the click-to-mark-seen
+handler are in `hypr/hyprpi.lua`. Install it once:
+
+`ln -s ~/Work/hyprpi/hypr/hyprpi.lua ~/.config/hypr/hyprpi.lua`
+
+then add `require("hypr.hyprpi")` to `~/.config/hypr/hyprland.lua` after
+`require("hypr.bindings")`. It finds `bin/hyprpi` under `~/Work/hyprpi` (or `$HYPRPI_HOME`).
 
 ## Room window
 
@@ -76,6 +85,8 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 - `ui/` — Quickshell room windows (`qs -p ~/Work/hyprpi/ui`, one process per
   Hyprland instance, started by `hyprpi room`).
 - `bin/hyprpi` — CLI (symlinked into `~/.local/bin`).
+- `hypr/hyprpi.lua` — Hyprland keys, the agent window rule and click-to-mark-seen
+  (symlinked into `~/.config/hypr/`).
 
 ## Config — `~/.config/hyprpi/config.json`
 
