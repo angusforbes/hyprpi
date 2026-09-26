@@ -130,6 +130,15 @@ readers should ignore kinds they don't know. The daemon method `activity.read { 
 returns the recent tail; UI connections also get each new event live as `activity`.
 Config: `"activity": false` turns the stream off; `"activityTools": false` keeps it but drops tool lines.
 
+## Ask (one-shot)
+
+The daemon method `ask { room, question }` answers a question about a room in up to three
+sentences, with citations: `{ answer, citations: [{ kind: "msg"|"agent"|"activity", who, ts, text }], model }`.
+It picks entries from the room's agents' conversations, the room log and the activity stream
+(entries sharing words with the question first, Angus's own words ranked higher, then recent ones),
+and makes one small-model call (`askModel`, else `searchModel`, default `claude-haiku-4-5`) with no
+tools and no memory: about 3 s. The room TUI's `/ask` uses it. For real questions, ask a Pi agent.
+
 ## Config — `~/.config/hyprpi/config.json`
 
 ```json
