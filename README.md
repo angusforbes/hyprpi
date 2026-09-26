@@ -47,10 +47,22 @@ is focused; an agent going `blocked` plays herdr's `request` sound.
 Its own window (SUPER+ALT+/ or ⌕ in the room widget). Searches every agent's
 conversation in the room — live agents and ones that have closed — plus the
 room log. **Keyword**: exact phrase, case-insensitive, live as you type.
-**✦ AI** (Ctrl+/): describe what you mean and press Enter; a small model
+**✦ AI** (Ctrl+/ here; Ctrl+S in the room TUI): describe what you mean and press Enter; a small model
 (`searchModel`, default claude-haiku-4-5) reads the recent entries and returns
 the ones that match, each with a short reason. Also from the terminal:
 `hyprpi find [--ai] QUERY`. What choosing a result does is still open.
+
+### Room TUI keys: three parts, one modifier each
+
+| Part | Keys |
+|---|---|
+| **Top: agent list** (Shift) | Shift+↑↓ cursor · Shift+Space (or Ctrl+Space) mark / unmark · Ctrl+A all off / on · Esc all on · Enter on an empty box (right after using the list) jumps to the agent |
+| **Middle: stream / search / ask** (Ctrl) | Ctrl+↑↓ a line or result · PgUp PgDn a page · Ctrl+Home/End top / bottom · Ctrl+/ next view (stream → search → ask) · Ctrl+S keyword ⇄ AI · Ctrl+F stream view |
+| **Bottom: message box** (plain keys) | multi-line: ↑↓ between lines, Shift+Enter new line, Home/End line start / end · Shift+←→, Ctrl+Shift+←→, Shift+Home/End select · typing replaces the selection · Ctrl+C copy (no selection: clear the box) · Ctrl+X cut · Ctrl+V or SUPER+V paste (line breaks kept) · SUPER+C copy · Enter send |
+| **Other** | Tab / Shift+Tab room · Ctrl+N new agent · Ctrl+W close / Ctrl+K kill (press twice) · Ctrl+Q quit (Ctrl+C never quits) |
+
+The launcher (`mockups/room-tui`) maps Shift+Space and Shift+Enter to CSI-u and Ctrl+Insert to
+`copy_or_noop` for its kitty window, so those keys reach the TUI.
 
 ### Search inside the terminal room (`mockups/room-tui.mjs`)
 
@@ -69,9 +81,9 @@ The room TUI's input line takes slash commands (`lib/search-view.mjs`; typing
 In search view the input is the search box: Enter searches and **never posts**
 (the prompt reads `⌕ C ❯`, or `✦ C ❯` in AI mode); Enter again on the same words
 (or on an empty line, or a double click) jumps to the selected hit's agent.
-Shift+↑↓ / PgUp PgDn / wheel select (plain ↑↓ always moves the agent list), Ctrl+/ switches keyword ⇄ AI, Alt+S toggles
-stream ⇄ search, Esc goes back. The query and results are kept, so Alt+S returns
-to them; Tab (room switch) clears them. `//text` posts `/text` to the room; an
+Ctrl+↑↓ / PgUp PgDn / wheel select, Ctrl+S switches keyword ⇄ AI, Ctrl+/ moves to
+the next view (stream → search → ask), Esc goes back. The query and results are kept, so
+coming back to search returns to them; Tab (room switch) clears them. `//text` posts `/text` to the room; an
 unknown `/word` is refused with a hint instead of being posted.
 
 ## Agents
@@ -115,7 +127,7 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 
 ## Marked agents filter everything (room TUI)
 
-Every agent in the list starts **marked** (▸), including ones that join later. ↑↓ + Shift+Space
+Every agent in the list starts **marked** (▸), including ones that join later. Shift+↑↓ + Shift+Space
 (or Ctrl+Space; works in every view, even while typing; plain Space is always text), or a click on
 the cursor row, turns one off and on; Ctrl+A turns all off / all on; Esc marks all again.
 The marks filter the whole TUI:

@@ -4,7 +4,9 @@
 # when a program has the mouse; unmap those (only while grabbed) so they reach
 # the TUI (Shift = whole messages), and give kitty's own selection to Ctrl+Shift.
 # Shift+Space is sent as CSI-u (kitty's legacy encoding would send a plain space),
-# so the TUI can use it to mark agents while you type.
+# so the TUI can use it to mark agents while you type. Shift+Enter (new line in the message)
+# likewise. SUPER+C (Ctrl+Insert) copies kitty's selection, else reaches the TUI (copies the
+# message box's selection); SUPER+V (Shift+Insert) pastes (bracketed, line breaks kept).
 exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=shift+left click grabbed" \
   -o "mouse_map=shift+left press grabbed" \
@@ -14,4 +16,7 @@ exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=ctrl+shift+left doublepress grabbed mouse_selection word" \
   -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" \
   -o 'map shift+space send_text all \x1b[32;2u' \
+  -o 'map shift+enter send_text all \x1b[13;2u' \
+  -o 'map ctrl+insert copy_or_noop' \
+  -o 'map shift+insert paste_from_clipboard' \
   node "$(dirname "$(readlink -f "$0")")/room-tui.mjs" "$@"

@@ -10,7 +10,7 @@
 // marked agents; every agent starts marked, Esc marks all again, Ctrl+A all on/off) · Ctrl+W close · Ctrl+K kill (press
 // twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
-// the conversation · drag selects + copies message text, Shift+click/drag whole messages, double-click a word, triple-click a whole message · Ctrl+C quits.
+// the conversation · drag selects + copies message text, Shift+click/drag whole messages, double-click a word, triple-click a whole message · Ctrl+Q quits (Ctrl+C copies).
 // Slash commands (lib/search-view.mjs, "/" shows them, Tab completes, /help lists):
 // /room · /stream [WORDS] (live word filter) · /search [WORDS] · /ai DESCRIPTION ·
 // /ask QUESTION · /new [DIR] · /help · "//text" posts "/text". Search view: the
@@ -133,6 +133,47 @@ function hardWrap(text, n) {
   for (const g of graphemes(text)) { const c = gw(g); if (lw + c > n) { lines.push(line); line = ""; lw = 0; } line += g; lw += c; }
   lines.push(line);
   return lines;
+}
+// ---- the message box (bottom): multi-line (Shift+Enter), wraps by width, Shift+←→ selects.
+let selA = null;      // selection anchor (grapheme index into input), or null
+let pasting = false;  // inside a bracketed paste (\x1b[200~ … \x1b[201~)
+function inputSel() { if (selA == null || selA === ic) return null; return selA < ic ? [selA, ic] : [ic, selA]; }
+// Rows of the input (styled, selection highlighted) and the cursor's row / column.
+function inputLayout(n) {
+  const gs = graphemes(input), rs = inputSel(), rows = [];
+  const on = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, off = theme.selection ? `${ESC}49m` : `${ESC}27m`;
+  let line = "", lw = 0, cRow = 0, cCol = 0;
+  for (let i = 0; i <= gs.length; i++) {
+    if (i < gs.length && gs[i] !== "\n" && lw + gw(gs[i]) > n) { rows.push(line); line = ""; lw = 0; } // soft wrap
+    if (i === ic) { cRow = rows.length; cCol = lw; }
+    if (i === gs.length) break;
+    if (gs[i] === "\n") { rows.push(rs && i >= rs[0] && i < rs[1] ? line + on + " " + off : line); line = ""; lw = 0; continue; }
+    line += rs && i >= rs[0] && i < rs[1] ? on + gs[i] + off : gs[i]; lw += gw(gs[i]);
+  }
+  rows.push(line);
+  return { rows, cRow, cCol };
+}
+// Insert text at the cursor, replacing the selection (paste keeps its line breaks).
+function insertText(t) {
+  let gs = graphemes(input); const rs = inputSel();
+  if (rs) { gs = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])]; ic = rs[0]; }
+  selA = null;
+  const ins = graphemes(String(t).replace(/\r\n?/g, "\n").replace(/[\x00-\x09\x0b-\x1f]/g, ""));
+  ic = Math.max(0, Math.min(ic, gs.length));
+  input = [...gs.slice(0, ic), ...ins, ...gs.slice(ic)].join(""); ic += ins.length; note = ""; focusArea = "input"; render();
+}
+function copyInputSel(cut) {
+  const rs = inputSel(); if (!rs) return;
+  const gs = graphemes(input);
+  copy(gs.slice(rs[0], rs[1]).join(""));
+  if (cut) { input = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])].join(""); ic = rs[0]; }
+  selA = null; render();
+}
+function pasteClipboard() {
+  try {
+    const p = spawn("wl-paste", ["--no-newline", "--type", "text/plain"], { stdio: ["ignore", "pipe", "ignore"] });
+    let buf = ""; p.stdout.on("data", (b) => { buf += b; }); p.on("error", () => {}); p.on("close", () => { if (buf) insertText(buf); });
+  } catch { /* no wl-paste */ }
 }
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
@@ -380,7 +421,11 @@ function draw() {
   const to = [...marked].map((id) => agents.find((a) => a.id === id)).filter(Boolean).map((a) => a.icon || a.display);
   const prompt = fg(c, bold(view === "search" ? `${search.mode === "ai" ? "✦" : "⌕"} ${room} ❯ ` : view === "ask" ? `? ${room} ❯ `
     : to.length ? `${room} → ${cut(to.join(" "), Math.max(10, Math.floor(W / 3)))} ❯ ` : !everyone && here.length ? `${room} → nobody ❯ ` : `${room} ❯ `));
-  const promptW = width(prompt), inputLines = hardWrap(input, Math.max(10, W - promptW));
+  const promptW = width(prompt);
+  ic = Math.max(0, Math.min(ic, graphemes(input).length));
+  const IL = inputLayout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
+  const inTop = IL.rows.length > MAXI ? Math.max(0, Math.min(IL.cRow - MAXI + 1, IL.rows.length - MAXI)) : 0;
+  const inputLines = IL.rows.slice(inTop, inTop + MAXI);
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
   if (view !== "stream") drawPane(rows, ruleAt, avail, W, c, rule);
@@ -488,7 +533,7 @@ function draw() {
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   const streamLabel = FILTER_LABEL[filter];
-  rows[ruleAt] = rule(`${streamLabel} (^F)` + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
+  rows[ruleAt] = rule(`${streamLabel} (^F)` + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim(words.length ? `  (nothing matches "${words.join(" ")}" · /stream alone clears)` : MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
@@ -501,8 +546,8 @@ function draw() {
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ keyword · Esc back" : "words, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ ai · Esc back")
-    : view === "ask" ? dim("a question about this room, ⏎ ask · ⇧↑↓ scroll · ↑↓ agent · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⇧↑↓ scroll · ⏎ jump · ⇧space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
+    : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ^↑↓ result · ^S keyword · ^/ next view · Esc back" : "words, ⏎ search · ⏎ again jumps · ^↑↓ result · ^S ai · ^/ next view · Esc back")
+    : view === "ask" ? dim("a question about this room, ⏎ ask · ^↑↓ scroll · ^/ next view · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ⇧↑↓ agent · ⇧Space mark · ^↑↓ scroll · ^/ search · ⇧⏎ new line · ⇧←→ select · ^F filter · / commands · Tab room")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -528,11 +573,8 @@ function draw() {
   // measured, the next row simply paints over the spill instead of shifting the
   // whole frame up one line. (The last row is never wider than W, so no scroll.)
   out(`${ESC}?25l` + shown2.map((l, i) => `${ESC}${i + 1};1H` + l + `${ESC}0m${ESC}K`).join("") + (shown2.length < H ? `${ESC}${shown2.length + 1};1H${ESC}J` : ""));
-  // cursor at the end of the input's last line
-  // Cursor at ic inside the (possibly wrapped) message.
-  ic = Math.max(0, Math.min(ic, graphemes(input).length));
-  const before = hardWrap(graphemes(input).slice(0, ic).join(""), Math.max(10, W - promptW));
-  const crow = H - inputLines.length + before.length - 1, ccol = Math.min(W, promptW + width(before[before.length - 1]) + 1);
+  // Cursor at ic inside the (possibly multi-line, wrapped) message.
+  const crow = H - inputLines.length + (IL.cRow - inTop), ccol = Math.min(W, promptW + IL.cCol + 1);
   out(`${ESC}${crow};${ccol}H${ESC}?25h`);
 }
 
@@ -757,7 +799,24 @@ const KEY = /\x1b[bfsS\x7f]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) render(); } });
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
-  if (d === "\x03") return quit();
+  // Key model: TOP agent list = Shift (⇧↑↓ cursor, ⇧Space mark) · MIDDLE pane = Ctrl (^↑↓, PgUp/PgDn,
+  // ^Home/End) · BOTTOM message box = plain keys (multi-line: ↑↓ lines, ⇧⏎ newline, ⇧←→ select).
+  // Ctrl+/ cycles the pane (stream → search → ask), Ctrl+S keyword ⇄ AI in search.
+  // Bracketed paste (Super+V / Ctrl+Shift+V): inserted as text, line breaks kept.
+  if (d === "\x1b[200~") { pasting = true; return; }
+  if (d === "\x1b[201~") { pasting = false; return render(); }
+  if (pasting) return insertText(d === "\r" ? "\n" : d);
+  // Ctrl+C: copy the selected text, else clear the message; it never quits (too easy to hit
+  // while copying). Ctrl+Q quits.
+  if (d === "\x03") {
+    if (inputSel()) return copyInputSel(false);
+    if (input) { input = ""; ic = 0; selA = null; note = ""; return render(); }
+    note = "Ctrl+Q quits"; return render();
+  }
+  if (d === "\x11") return quit(); // Ctrl+Q
+  if (d === "\x1b[2;5~") return copyInputSel(false); // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
+  if (d === "\x18") return copyInputSel(true); // Ctrl+X: cut
+  if (d === "\x16") return pasteClipboard();   // Ctrl+V: paste
   // Shift+Space (the launcher maps it to CSI 32;2u) or Ctrl+Space: toggle the cursor
   // agent's mark in every view, even while typing (plain Space is text then).
   if (d === "\x1b[32;2u" || d === "\x00") { toggleMark(cursorId); confirm = null; return render(); } // the cursor stays put
@@ -775,19 +834,27 @@ function onKey(d) {
   }
   if (d === "\t") return cycle(1);
   if (d === "\x1b[Z") return cycle(-1);
-  if (d === "\r") return send();
-  if (d === "\x1bs" || d === "\x1bS") return setView(view === "search" ? "stream" : "search"); // Alt+S
-  if (d === "\x1f") { if (view === "search") search.toggleMode(); return; } // Ctrl+/
-  if (view !== "stream") { // search / ask / help pane keys
-    if (d === "\x1b") { if (view === "search" && input === search.query) { input = ""; ic = 0; } view = "stream"; note = ""; return render(); }
-    if (view === "search") {
-      // ↑↓ stay with the agent list; Shift+↑↓ (and PgUp/PgDn) move in the results.
-      const mv = { "\x1b[1;2A": -1, "\x1b[1;2B": 1, "\x1b[5~": -5, "\x1b[6~": 5 }[d];
-      if (mv) { focusArea = "results"; return search.move(mv); }
-    }
-    if (view === "ask") {
-      const mv = { "\x1b[1;2A": -1, "\x1b[1;2B": 1, "\x1b[5~": -Math.max(1, lastAvail - 2), "\x1b[6~": Math.max(1, lastAvail - 2) }[d];
-      if (mv) { askTop = Math.max(0, askTop + mv); return render(); }
+  if (d === "\r") { selA = null; return send(); }
+  if (d === "\x1b[13;2u") return insertText("\n"); // Shift+Enter: new line in the message
+  if (d === "\x1bs" || d === "\x1bS") return setView(view === "search" ? "stream" : "search"); // Alt+S (still works)
+  if (d === "\x1f") { const order = ["stream", "search", "ask"]; return setView(order[(order.indexOf(view) + 1) % order.length]); } // Ctrl+/
+  if (d === "\x13") { if (view === "search") search.toggleMode(); return; } // Ctrl+S: keyword ⇄ AI
+  if (view !== "stream" && d === "\x1b") { // Esc: back to the stream
+    if (view === "search" && input === search.query) { input = ""; ic = 0; selA = null; }
+    view = "stream"; note = ""; return render();
+  }
+  // TOP: the agent list (Shift).
+  if (d === "\x1b[1;2A") return moveCursor(-1);
+  if (d === "\x1b[1;2B") return moveCursor(1);
+  // MIDDLE: the pane (Ctrl): Ctrl+↑↓ a line / result, PgUp PgDn a page, Ctrl+Home/End top / bottom.
+  {
+    const page = Math.max(1, lastAvail - 2);
+    const mv = { "\x1b[1;5A": -1, "\x1b[1;5B": 1, "\x1b[5~": -page, "\x1b[6~": page, "\x1b[1;5H": -Infinity, "\x1b[1;5F": Infinity }[d];
+    if (mv !== undefined) {
+      if (view === "search") { focusArea = "results"; return search.move(Number.isFinite(mv) ? (Math.abs(mv) > 1 ? Math.sign(mv) * 5 : mv) : Math.sign(mv) * 1e6); }
+      if (view === "ask") { askTop = Number.isFinite(mv) ? Math.max(0, askTop + mv) : mv < 0 ? 0 : 1e9; return render(); }
+      if (view === "stream") { scroll = Number.isFinite(mv) ? Math.max(0, scroll - mv) : mv < 0 ? 1e9 : 0; return render(); }
+      return;
     }
   }
   // Editing the message: ←/→ (Ctrl or Alt+B/F: by word), Home/End or Ctrl+E
@@ -795,17 +862,37 @@ function onKey(d) {
   {
     const gs = graphemes(input);
     ic = Math.max(0, Math.min(ic, gs.length));
-    const edited = (next, c) => { input = next.join(""); ic = c; note = ""; focusArea = "input"; return render(); };
+    const edited = (next, c) => { input = next.join(""); ic = c; selA = null; note = ""; focusArea = "input"; return render(); };
     const wordLeft = () => { let i = ic; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
     const wordRight = () => { let i = ic; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
-    if (d === "\x1b[D") { ic = Math.max(0, ic - 1); return render(); }
-    if (d === "\x1b[C") { ic = Math.min(gs.length, ic + 1); return render(); }
-    if (d === "\x1b[1;5D" || d === "\x1bb") { ic = wordLeft(); return render(); }
-    if (d === "\x1b[1;5C" || d === "\x1bf") { ic = wordRight(); return render(); }
-    if (input && (d === "\x1b[H" || d === "\x1b[1~")) { ic = 0; return render(); }
-    if (d === "\x05" || (input && (d === "\x1b[F" || d === "\x1b[4~"))) { ic = gs.length; return render(); }
-    if (d === "\x7f" || d === "\b") { if (!ic) return; return edited([...gs.slice(0, ic - 1), ...gs.slice(ic)], ic - 1); }
-    if (d === "\x1b[3~") { if (ic >= gs.length) return; return edited([...gs.slice(0, ic), ...gs.slice(ic + 1)], ic); }
+    const rs = inputSel();
+    const delSel = () => edited([...gs.slice(0, rs[0]), ...gs.slice(rs[1])], rs[0]);
+    // Logical lines (split at \n): start / end of the line the cursor is on.
+    const lineStart = (i) => { while (i > 0 && gs[i - 1] !== "\n") i--; return i; };
+    const lineEnd = (i) => { while (i < gs.length && gs[i] !== "\n") i++; return i; };
+    const moveTo = (i, extend) => { if (extend) { if (selA == null) selA = ic; } else selA = null; ic = Math.max(0, Math.min(gs.length, i)); focusArea = "input"; return render(); };
+    // Shift+←→ / Ctrl+Shift+←→ / Shift+Home End: select.
+    if (d === "\x1b[1;2D") return moveTo(ic - 1, true);
+    if (d === "\x1b[1;2C") return moveTo(ic + 1, true);
+    if (d === "\x1b[1;6D") return moveTo(wordLeft(), true);
+    if (d === "\x1b[1;6C") return moveTo(wordRight(), true);
+    if (d === "\x1b[1;2H") return moveTo(lineStart(ic), true);
+    if (d === "\x1b[1;2F") return moveTo(lineEnd(ic), true);
+    // ↑↓: the previous / next line of the message (same column), else its start / end.
+    if (d === "\x1b[A" || d === "\x1b[B") {
+      const s0 = lineStart(ic), col = ic - s0;
+      if (d === "\x1b[A") { if (!s0) return moveTo(0); const p0 = lineStart(s0 - 1); return moveTo(Math.min(p0 + col, s0 - 1)); }
+      const e0 = lineEnd(ic); if (e0 >= gs.length) return moveTo(gs.length);
+      const n1 = lineEnd(e0 + 1); return moveTo(Math.min(e0 + 1 + col, n1));
+    }
+    if (d === "\x1b[D") return moveTo(rs ? rs[0] : ic - 1);
+    if (d === "\x1b[C") return moveTo(rs ? rs[1] : ic + 1);
+    if (d === "\x1b[1;5D" || d === "\x1bb") return moveTo(wordLeft());
+    if (d === "\x1b[1;5C" || d === "\x1bf") return moveTo(wordRight());
+    if (d === "\x1b[H" || d === "\x1b[1~") return moveTo(lineStart(ic));
+    if (d === "\x05" || d === "\x1b[F" || d === "\x1b[4~") return moveTo(lineEnd(ic));
+    if (d === "\x7f" || d === "\b") { if (rs) return delSel(); if (!ic) return; return edited([...gs.slice(0, ic - 1), ...gs.slice(ic)], ic - 1); }
+    if (d === "\x1b[3~") { if (rs) return delSel(); if (ic >= gs.length) return; return edited([...gs.slice(0, ic), ...gs.slice(ic + 1)], ic); }
     if (d === "\x1b\x7f") { const i = wordLeft(); return edited([...gs.slice(0, i), ...gs.slice(ic)], i); }
     if (d === "\x15") return edited([], 0); // Ctrl+U
   }
@@ -871,22 +958,18 @@ function onKey(d) {
     }
     return render();
   }
-  if (d === "\x1b[A") return moveCursor(-1);
-  if (d === "\x1b[B") return moveCursor(1);
-  if (d === "\x1b") { unmarked.clear(); confirm = null; note = ""; return render(); } // Esc: mark all again
+  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } unmarked.clear(); confirm = null; note = ""; return render(); } // Esc: drop the text selection, else mark all again
   if (d === "\x17") return act("close"); // Ctrl+W
   if (d === "\x0b") return act("kill");  // Ctrl+K
   if (d === "\x01") { const here = hereAgents(); if (allMarked()) here.forEach((a) => unmarked.add(a.id)); else unmarked.clear(); return render(); } // Ctrl+A
-  const page = Math.max(1, lastAvail - 2);
-  const keys = { "\x1b[1;2A": 1, "\x1b[1;2B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[H": Infinity, "\x1b[1~": Infinity, "\x1b[F": -Infinity, "\x1b[4~": -Infinity };
-  if (d in keys) { scroll = keys[d] === Infinity ? 1e9 : keys[d] === -Infinity ? 0 : scroll + keys[d]; if (scroll < 0) scroll = 0; return render(); }
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
-  { const gs = graphemes(input), ins = graphemes(d.replace(/[\x00-\x1f]/g, "")); if (!ins.length) return; ic = Math.max(0, Math.min(ic, gs.length)); input = [...gs.slice(0, ic), ...ins, ...gs.slice(ic)].join(""); ic += ins.length; note = ""; focusArea = "input"; render(); }
+  if (!d.replace(/[\x00-\x1f]/g, "")) return;
+  insertText(d); // typing replaces the selection
 }
-function quit() { out(`${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
+function quit() { out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
 process.stdout.on("resize", render);
 setInterval(render, 30000); // clock
-out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h`); // alt screen + mouse (wheel, click, drag-select)
+out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
 render();
 start();
