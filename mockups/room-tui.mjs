@@ -40,6 +40,13 @@ function worldHex(room) {
 const worldFg = (room) => { const h = worldHex(room); return h ? `38;2;${rgb(h)}` : "34"; };
 const worldBg = (room) => { const h = worldHex(room); return h ? `48;2;${rgb(h)}` : "44"; };
 const dim = (s) => `${ESC}2m${s}${ESC}22m`;
+// Between normal text and dim: the theme's foreground mixed 65/35 with its background.
+function midFg(s) {
+  const f = theme.foreground, b = theme.background;
+  if (!f || !b) return s;
+  const F = parseInt(f, 16), B = parseInt(b, 16), m = (sh) => Math.round(((F >> sh) & 255) * 0.65 + ((B >> sh) & 255) * 0.35);
+  return `${ESC}38;2;${m(16)};${m(8)};${m(0)}m${s}${ESC}39m`;
+}
 const bold = (s) => `${ESC}1m${s}${ESC}22m`;
 const fg = (c, s) => `${ESC}${c}m${s}${ESC}39m`;
 // herdr-name markup "{#f7768e}S{#ff9e64}p…": each part in its own colour
@@ -348,7 +355,7 @@ function draw() {
         return;
       }
       // Topics: full text colour in italics (easy to read); tool lines stay dim.
-      const line = e.kind === "blocked" ? "needs you" : e.kind === "topic" ? `${ESC}3mtopic: ${e.text}${ESC}23m` : dim(e.text);
+      const line = e.kind === "blocked" ? "needs you" : e.kind === "topic" ? midFg(`${ESC}3mtopic: ${e.text}${ESC}23m`) : dim(e.text);
       if (lastAct !== au.id) {
         if (convo.length) convo.push({ line: "", msg: null });
         convo.push({ line: "   " + sender, msg: null, act: true });
