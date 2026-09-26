@@ -239,6 +239,8 @@ let screen = [], sel = null; // sel: { x0, y0, x1, y1, dragging, mode } in 1-bas
 // mode "msg":  Shift+click / Shift+drag = whole messages (time, name, text).
 // mode "plain": anywhere else = cells as on screen.
 let rowMeta = {}, convoMsgs = []; // convoMsgs: the stream items on screen ({ copy } = text for Shift-selection)
+// The selected stream item (Ctrl+↑↓), by a key that survives rebuilds; null = none (follow the newest).
+let streamSel = null, streamKeys = [];
 // Screen row -> [fromCol, toCol] to highlight.
 function selSpans(W) {
   const sr = selRange(), out = {};
@@ -468,7 +470,7 @@ function draw() {
   // index in sItems, and sItems[i].copy is what a Shift-selection copies.
   const sItems = [];
   items.forEach(({ m, e }) => {
-    const mi = sItems.push({ copy: "" }) - 1;
+    const mi = sItems.push({ copy: "", key: m ? `m${m.seq}` : `e${e.ts}|${e.agent?.id || ""}|${e.kind}` }) - 1;
     if (e) {
       const au = e.agent || {};
       // In the stream: icon + full name (only the prompt line uses icons alone).
@@ -531,9 +533,29 @@ function draw() {
   // Scrolled up: stay on the same lines when new ones arrive below.
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
   lastConvoLen = convo.length; lastAvail = avail;
+  // Selected item (Ctrl+↑↓): a bar in the world colour on all its rows and the selection
+  // background on its first row (like a selected search result); keep it in view.
+  streamKeys = sItems.map((x) => x.key);
+  const selIdx = streamSel == null ? -1 : streamKeys.indexOf(streamSel);
+  if (streamSel != null && selIdx < 0) streamSel = null; // filtered away
+  if (selIdx >= 0) {
+    const r0 = convo.findIndex((r) => r.msg === selIdx), r1 = convo.findLastIndex((r) => r.msg === selIdx);
+    const top = convo.length - avail - scroll;
+    if (r0 >= 0 && r0 < top) scroll = convo.length - avail - r0;
+    else if (r1 >= 0 && r1 >= top + avail) scroll = Math.max(0, convo.length - r1 - 1);
+    const hl = theme.muted || theme.selection;
+    let first = true;
+    for (const r of convo) {
+      if (r.msg !== selIdx || !r.line) continue;
+      let rest = r.line.startsWith("   ") ? r.line.slice(3) : r.line;
+      if (first && hl) rest = `${ESC}48;2;${rgb(hl)}m${rest}${ESC}49m`;
+      r.line = " " + fg(c, "▌") + " " + rest;
+      first = false;
+    }
+  }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   const streamLabel = FILTER_LABEL[filter];
-  rows[ruleAt] = rule(`${streamLabel} (^F)` + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
+  rows[ruleAt] = rule(`${streamLabel} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "") + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim(words.length ? `  (nothing matches "${words.join(" ")}" · /stream alone clears)` : MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
@@ -673,7 +695,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; unmarked.clear(); cursorId = ""; listTop = 0; confirm = null; search.reset(); render(); loadRoom(room);
+  note = ""; scroll = 0; lastConvoLen = 0; unmarked.clear(); streamSel = null; cursorId = ""; listTop = 0; confirm = null; search.reset(); render(); loadRoom(room);
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -853,7 +875,15 @@ function onKey(d) {
     if (mv !== undefined) {
       if (view === "search") { focusArea = "results"; return search.move(Number.isFinite(mv) ? (Math.abs(mv) > 1 ? Math.sign(mv) * 5 : mv) : Math.sign(mv) * 1e6); }
       if (view === "ask") { askTop = Number.isFinite(mv) ? Math.max(0, askTop + mv) : mv < 0 ? 0 : 1e9; return render(); }
-      if (view === "stream") { scroll = Number.isFinite(mv) ? Math.max(0, scroll - mv) : mv < 0 ? 1e9 : 0; return render(); }
+      if (view === "stream") {
+        if (d === "\x1b[5~" || d === "\x1b[6~") { scroll = Math.max(0, scroll - mv); return render(); } // PgUp/PgDn: a page
+        const n = streamKeys.length; if (!n) return render();
+        let i = streamSel == null ? n : streamKeys.indexOf(streamSel);
+        if (i < 0) i = n;
+        i = mv === -Infinity ? 0 : mv === Infinity ? n : i + mv; // Ctrl+Home: oldest · Ctrl+End: back to following the newest
+        if (i >= n) { streamSel = null; scroll = 0; } else streamSel = streamKeys[Math.max(0, i)];
+        focusArea = "stream"; return render();
+      }
       return;
     }
   }
@@ -958,7 +988,7 @@ function onKey(d) {
     }
     return render();
   }
-  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } unmarked.clear(); confirm = null; note = ""; return render(); } // Esc: drop the text selection, else mark all again
+  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } if (streamSel != null) { streamSel = null; return render(); } unmarked.clear(); confirm = null; note = ""; return render(); } // Esc: drop the text selection, else mark all again
   if (d === "\x17") return act("close"); // Ctrl+W
   if (d === "\x0b") return act("kill");  // Ctrl+K
   if (d === "\x01") { const here = hereAgents(); if (allMarked()) here.forEach((a) => unmarked.add(a.id)); else unmarked.clear(); return render(); } // Ctrl+A

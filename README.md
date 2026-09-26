@@ -57,7 +57,7 @@ the ones that match, each with a short reason. Also from the terminal:
 | Part | Keys |
 |---|---|
 | **Top: agent list** (Shift) | Shift+↑↓ cursor · Shift+Space (or Ctrl+Space) mark / unmark · Ctrl+A all off / on · Esc all on · Enter on an empty box (right after using the list) jumps to the agent |
-| **Middle: stream / search / ask** (Ctrl) | Ctrl+↑↓ a line or result · PgUp PgDn a page · Ctrl+Home/End top / bottom · Ctrl+/ next view (stream → search → ask) · Ctrl+S keyword ⇄ AI · Ctrl+F stream view |
+| **Middle: stream / search / ask** (Ctrl) | Ctrl+↑↓ select the previous / next stream item (highlighted like a search result; past the newest = follow new items again) or search result · PgUp PgDn a page · Ctrl+Home oldest item / Ctrl+End back to the newest · Esc clears the selection · Ctrl+/ next view (stream → search → ask) · Ctrl+S keyword ⇄ AI · Ctrl+F stream view |
 | **Bottom: message box** (plain keys) | multi-line: ↑↓ between lines, Shift+Enter new line, Home/End line start / end · Shift+←→, Ctrl+Shift+←→, Shift+Home/End select · typing replaces the selection · Ctrl+C copy (no selection: clear the box) · Ctrl+X cut · Ctrl+V or SUPER+V paste (line breaks kept) · SUPER+C copy · Enter send |
 | **Other** | Tab / Shift+Tab room · Ctrl+N new agent · Ctrl+W close / Ctrl+K kill (press twice) · Ctrl+Q quit (Ctrl+C never quits) |
 
