@@ -3,7 +3,7 @@
 // Quickshell room window (ui/RoomWindow.qml), which stays the real one.
 // Live data from the daemon. The room pane is a stream: messages plus agent activity
 // (tools, topics, talk between agents, joins/moves/renames); Ctrl+F cycles
-// all activity / messages / messages + topics / activity (no room messages).
+// room · all activity / stream · all activity / room + stream / room + stream · topics.
 // Typing + Enter posts to the room as Angus (same
 // as the room window). Agent list: ↑↓ or click = cursor · Enter on an empty
 // line = jump to it · Space / second click = mark (Enter then sends only to the
@@ -133,10 +133,17 @@ let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messa
 // The room is a stream: messages plus agent activity (tools, topics, talk between agents,
 // finishes) from the daemon. Ctrl+F cycles what it shows.
 let activity = {}; // room -> events
-// all = everything · messages = room messages only · topics = room messages + topic changes ·
-// activity = everything except room messages (agent-to-agent messages still show).
-const FILTERS = ["all", "messages", "topics", "activity"];
-const FILTER_LABEL = { all: "all activity", messages: "messages", topics: "messages + topics", activity: "activity (no room messages)" };
+// Ctrl+F modes. "done" and "blocked" are logged but never shown (the agent list shows ✓ / ×).
+const DIRECT = new Set(["talk", "demand", "reply", "prompt"]);
+const MODES = {
+  room:   { label: "room · all activity", msgs: true, act: (e) => DIRECT.has(e.kind) },        // room messages + agent-to-agent
+  stream: { label: "stream · all activity", msgs: false, act: () => true },                      // activity, no room messages
+  all:    { label: "room + stream", msgs: true, act: () => true },                               // everything
+  topics: { label: "room + stream · topics", msgs: true, act: (e) => e.kind !== "tool" },        // everything but tool use
+};
+const FILTERS = ["room", "stream", "all", "topics"];
+const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
+const HIDDEN = new Set(["done", "blocked"]);
 let filter = "all";
 let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
@@ -312,8 +319,9 @@ function draw() {
   // column where message text starts), hard (last row of a paragraph) }.
   const convo = [];
   // Stream items in time order: messages (mi = index into msgs, for selection) and activity.
-  const acts = filter === "messages" ? [] : filter === "topics" ? (activity[room] || []).filter((x) => x.kind === "topic") : (activity[room] || []);
-  const items = filter === "activity" ? [] : msgs.map((m, mi) => ({ ts: m.ts, m, mi }));
+  const mode = MODES[filter];
+  const acts = (activity[room] || []).filter((x) => !HIDDEN.has(x.kind) && mode.act(x));
+  const items = mode.msgs ? msgs.map((m, mi) => ({ ts: m.ts, m, mi })) : [];
   for (const e of acts) items.push({ ts: e.ts, e });
   items.sort((x, y) => x.ts - y.ts);
   // Activity rows: no indent, no glyphs; names (with their icons) in their own colours.
@@ -328,7 +336,6 @@ function draw() {
   let lastAct = null;
   items.forEach(({ m, mi, e }) => {
     if (e) {
-      if (e.kind === "done") return;
       const au = e.agent || {};
       const sender = (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
       const tos = (Array.isArray(e.to) ? e.to : []).map(styledName).join(", ");
@@ -387,10 +394,10 @@ function draw() {
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
-  const streamLabel = "stream · " + FILTER_LABEL[filter];
+  const streamLabel = FILTER_LABEL[filter];
   rows[ruleAt] = rule(`${streamLabel} (^F)` + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
-  if (!convo.length) shown.push({ line: dim(filter === "activity" ? "  (no activity yet)" : "  (no messages yet)"), msg: null });
+  if (!convo.length) shown.push({ line: dim(MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
   rowMeta = {}; convoMsgs = msgs;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
@@ -457,7 +464,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
-        else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 600) t.splice(0, t.length - 500); if (data.room === room && filter !== "messages") render(); }
+        else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 600) t.splice(0, t.length - 500); if (data.room === room) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });

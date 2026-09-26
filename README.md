@@ -94,9 +94,10 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 ## Activity stream
 
 The room TUI shows each room as a **stream**: its messages plus what its agents are doing.
-Ctrl+F cycles the filter: **all activity** (everything) · **messages** (room messages only) ·
-**messages + topics** · **activity** (everything except room messages; agent-to-agent messages
-still show). Activity is a history for you (and tools
+Ctrl+F cycles the view: **room · all activity** (room messages and agent-to-agent messages) ·
+**stream · all activity** (all activity, no room messages) · **room + stream** (everything, the
+default) · **room + stream · topics** (everything but tool use). Finishes and "needs you" are
+logged but not shown: the agent list's ✓ and × show them. Activity is a history for you (and tools
 like dashboards); it is never part of any agent's context.
 
 Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, or `$HYPRPI_STATE`):
