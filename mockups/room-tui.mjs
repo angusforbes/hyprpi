@@ -95,7 +95,11 @@ function gw(g) {
   let w = 0; for (const cp of cps) w += cw(cp); return w;
 }
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
-const width = (s) => { let w = 0; for (const g of graphemes(strip(s))) w += gw(g); return w; };
+// Widths and wraps are memoised: every frame re-lays out the whole stream, and
+// grapheme segmentation is the expensive part (a frame went from ~55 ms to a few).
+const memo = (max, f) => { const m = new Map(); return (k, ...a) => { let v = m.get(k); if (v === undefined) { if (m.size >= max) m.clear(); v = f(k, ...a); m.set(k, v); } return v; }; };
+const widthOf = memo(20000, (s) => { let w = 0; for (const g of graphemes(strip(s))) w += gw(g); return w; });
+const width = (s) => widthOf(String(s));
 function cut(s, n) { let w = 0, r = ""; for (const g of graphemes(s)) { const c = gw(g); if (w + c > n) return w + 1 <= n ? r + "…" : cut(r, n - 1) ; w += c; r += g; } return r; }
 // Cut a styled line to n columns, keeping its escape codes intact.
 function clip(s, n) {
@@ -107,7 +111,9 @@ function clip(s, n) {
   return r;
 }
 const pad = (s, n) => s + " ".repeat(Math.max(0, n - width(s)));
-function wrap(text, n) {
+const wrapMemo = memo(20000, (key, text, n) => wrapRaw(text, n));
+const wrap = (text, n) => wrapMemo(n + "\u0000" + text, String(text), n);
+function wrapRaw(text, n) {
   const lines = [];
   for (const para of String(text).split("\n")) {
     let line = "", lw = 0;
@@ -191,7 +197,7 @@ let screen = [], sel = null; // sel: { x0, y0, x1, y1, dragging, mode } in 1-bas
 // mode "text": plain drag in the conversation = message text only.
 // mode "msg":  Shift+click / Shift+drag = whole messages (time, name, text).
 // mode "plain": anywhere else = cells as on screen.
-let rowMeta = {}, convoMsgs = [];
+let rowMeta = {}, convoMsgs = []; // convoMsgs: the stream items on screen ({ copy } = text for Shift-selection)
 // Screen row -> [fromCol, toCol] to highlight.
 function selSpans(W) {
   const sr = selRange(), out = {};
@@ -255,7 +261,7 @@ function selectedText() {
   const W = process.stdout.columns || 100;
   if (sel.mode === "msg") { // whole messages, full text even if partly scrolled away
     const [m0, m1] = selMsgs(sr); if (m0 == null) return "";
-    return convoMsgs.slice(m0, m1 + 1).map((m) => `${m.author?.kind === "human" ? m.author.name || "Angus" : m.author?.name || "agent"}: ${m.text}`).join("\n");
+    return convoMsgs.slice(m0, m1 + 1).map((x) => x.copy).join("\n");
   }
   const spans = selSpans(W);
   if (sel.mode === "text") { // unwrap: rows of one paragraph join with a space
@@ -280,7 +286,8 @@ function copy(text) {
 }
 
 let batching = false, dirty = false;
-function render() { if (batching) { dirty = true; return; } draw(); }
+const PROF = process.env.HYPRPI_TUI_PROF; // file: one "ms view" line per frame
+function render() { if (batching) { dirty = true; return; } if (!PROF) return draw(); const t = performance.now(); draw(); fs.appendFileSync(PROF, `${(performance.now() - t).toFixed(1)} ${view}\n`); }
 function draw() {
   dirty = false;
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30;
@@ -381,7 +388,11 @@ function draw() {
   };
   const afterColon = (t) => { const i = String(t).indexOf(": "); return i >= 0 ? String(t).slice(i + 2) : String(t); };
   let lastAct = null;
-  items.forEach(({ m, mi, e }) => {
+  // Every stream item (message or activity) is selectable: its rows carry msg = its
+  // index in sItems, and sItems[i].copy is what a Shift-selection copies.
+  const sItems = [];
+  items.forEach(({ m, e }) => {
+    const mi = sItems.push({ copy: "" }) - 1;
     if (e) {
       const au = e.agent || {};
       // In the stream: icon + full name (only the prompt line uses icons alone).
@@ -395,9 +406,9 @@ function draw() {
       // Indented like messages: names and text at column 4.
       const push = (text, loud) => {
         const parts = wrap(strip(text), textW);
-        if (parts.length <= 1) return convo.push({ line: "   " + text, msg: null, act: true });
-        convo.push({ line: "   " + clip(text, width(parts[0])), msg: null, act: true });
-        for (const l of parts.slice(1)) convo.push({ line: "   " + (loud ? l : dim(l)), msg: null, act: true });
+        if (parts.length <= 1) return convo.push({ line: "   " + text, msg: mi, textX, hard: true, act: true });
+        convo.push({ line: "   " + clip(text, width(parts[0])), msg: mi, textX, act: true });
+        parts.slice(1).forEach((l, k) => convo.push({ line: "   " + (loud ? l : dim(l)), msg: mi, textX, hard: k === parts.length - 2, act: true }));
       };
       if (direct) {
         const from = e.kind === "prompt" ? fg(c, bold("Angus")) : sender;
@@ -407,7 +418,8 @@ function draw() {
         const lead = new RegExp(`^\\s*(?:\\S+\\s+)?${self.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:,—-]\\s*`, "u");
         if (self) body = body.replace(lead, "");
         if (convo.length) convo.push({ line: "", msg: null });
-        convo.push({ line: `   ${from} ${direct} ${to}`, msg: null, act: true });
+        convo.push({ line: `   ${from} ${direct} ${to}`, msg: mi, header: true, act: true });
+        sItems[mi].copy = `${strip(from)} ${direct} ${strip(to)}: ${body}`;
         push(body, true);
         lastAct = "direct:" + au.id; // the next activity starts a new block
         return;
@@ -419,14 +431,16 @@ function draw() {
         : e.kind === "topic" ? midFg(`${ESC}3mtopic: ${e.text}${ESC}23m`) : MID.has(e.kind) ? midFg(e.text) : dim(e.text);
       if (lastAct !== au.id) {
         if (convo.length) convo.push({ line: "", msg: null });
-        convo.push({ line: "   " + sender, msg: null, act: true });
+        convo.push({ line: "   " + sender, msg: mi, header: true, act: true });
       }
+      sItems[mi].copy = `${au.name || "agent"}: ${strip(line)}`;
       push(line, e.kind === "blocked" || e.kind === "error" || e.kind === "topic" || MID.has(e.kind));
       lastAct = au.id;
       return;
     }
     lastAct = null;
     const au = m.author || {};
+    sItems[mi].copy = `${authorLabel(au)}: ${m.text}`;
     const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
       : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
       : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
@@ -447,7 +461,7 @@ function draw() {
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim(words.length ? `  (nothing matches "${words.join(" ")}" · /stream alone clears)` : MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
-  rowMeta = {}; convoMsgs = msgs;
+  rowMeta = {}; convoMsgs = sItems;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
   rows.push(...shown.map((r) => r.line));
   }
@@ -691,7 +705,7 @@ process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 // Input arrives in chunks (held keys, pastes): split into single keys first.
 const KEY = /\x1b[bfsS\x7f]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
-process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) draw(); } });
+process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) render(); } });
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x03") return quit();
