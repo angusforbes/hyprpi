@@ -10,7 +10,7 @@
 // marked agents; every agent starts marked, Esc marks all again, Ctrl+A all on/off) · Ctrl+W close · Ctrl+K kill (press
 // twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
-// the conversation · drag selects + copies message text, Shift+click/drag whole messages · Ctrl+C quits.
+// the conversation · drag selects + copies message text, Shift+click/drag whole messages, double-click a word, triple-click a whole message · Ctrl+C quits.
 // Slash commands (lib/search-view.mjs, "/" shows them, Tab completes, /help lists):
 // /room · /stream [WORDS] (live word filter) · /search [WORDS] · /ai DESCRIPTION ·
 // /ask QUESTION · /new [DIR] · /help · "//text" posts "/text". Search view: the
@@ -276,6 +276,33 @@ function selectedText() {
   const out = [];
   for (const y of Object.keys(spans).map(Number).sort((a, b) => a - b)) out.push(sliceCols(screen[y - 1], spans[y][0], spans[y][1]).trimEnd());
   return out.join("\n");
+}
+// Double-click: the word under the pointer (surrounding punctuation left out).
+// Triple-click: the whole stream item (message, direct message, topic) under the
+// pointer, or the line elsewhere. Selected on screen and copied, like a drag.
+let clicks = 0, lastPress = { x: 0, y: 0, t: 0 };
+function multiClick(n, x, y) {
+  const line = screen[y - 1] || "";
+  const cells = []; // [col, grapheme] per grapheme
+  { let col = 1; for (const g of graphemes(line)) { cells.push([col, g]); col += gw(g); } }
+  if (n === 2) {
+    let i = cells.findIndex(([c, g], k) => c <= x && (cells[k + 1]?.[0] ?? c + gw(g)) > x);
+    if (i < 0 || /\s/.test(cells[i][1])) { sel = null; return render(); }
+    let a = i, b = i;
+    while (a > 0 && !/\s/.test(cells[a - 1][1])) a--;
+    while (b < cells.length - 1 && !/\s/.test(cells[b + 1][1])) b++;
+    const P = /^[\p{P}\p{S}]$/u;
+    while (a < b && P.test(cells[a][1]) && !/[@#~/$]/.test(cells[a][1])) a++;
+    while (b > a && P.test(cells[b][1])) b--;
+    sel = { x0: cells[a][0], y0: y, x1: cells[b][0] + gw(cells[b][1]) - 1, y1: y, dragging: true, mode: "plain" };
+  } else if (rowMeta[y]?.msg != null) sel = { x0: x, y0: y, x1: x, y1: y, dragging: true, mode: "msg" };
+  else {
+    const first = cells.find(([, g]) => !/\s/.test(g));
+    if (!first) { sel = null; return render(); }
+    sel = { x0: first[0], y0: y, x1: width(line.trimEnd()), y1: y, dragging: true, mode: "plain" };
+  }
+  copy(selectedText());
+  render();
 }
 function copy(text) {
   if (!text) return;
@@ -771,14 +798,18 @@ function onKey(d) {
       // release copies it (or, without a drag, counts as a click).
       // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
       if ((b === 0 || b === 4) && m[4] === "M") {
-        const inConvo = !!rowMeta[y];
-        sel = { x0: x, y0: y, x1: x, y1: y, dragging: false, mode: b === 4 && inConvo ? "msg" : inConvo ? "text" : "plain" };
+        const inConvo = !!rowMeta[y], now = Date.now();
+        // Count quick presses on the same spot: 2 = word, 3 = whole message (or line).
+        clicks = b === 0 && now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
+        lastPress = { x, y, t: now };
+        sel = { x0: x, y0: y, x1: x, y1: y, dragging: false, clicks, mode: b === 4 && inConvo ? "msg" : inConvo ? "text" : "plain" };
         continue;
       }
       if ((b === 32 || b === 36) && sel) { sel.x1 = x; sel.y1 = y; sel.dragging = true; continue; }
       if ((b === 0 || b === 4) && m[4] === "m" && sel) {
         sel.x1 = x; sel.y1 = y;
         if ((sel.dragging || sel.mode === "msg") && selRange()) { copy(selectedText()); continue; } // highlight stays until the next key or click
+        if (sel.clicks >= 2 && !inList && !(view === "search" && resultRowMap[y] !== undefined)) { multiClick(sel.clicks, x, y); continue; }
         sel = null;
         if (view === "search" && resultRowMap[y] !== undefined) { // click a result; click it again (quickly) to jump
           const i = resultRowMap[y], now = Date.now();
