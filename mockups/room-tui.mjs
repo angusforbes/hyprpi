@@ -337,8 +337,9 @@ function draw() {
   const ruleAt = rows.length; rows.push(""); // filled in once scroll is clamped below
   // Input: a long message wraps onto further lines (all shown), continuation
   // lines indented under the text.
-  // Recipients in the prompt: icons where they exist (names only for agents without one).
-  const to = everyone ? [] : [...marked].map((id) => agents.find((a) => a.id === id)).filter(Boolean).map((a) => a.icon || a.display);
+  // Recipients in the prompt, always shown (all marked = the room post goes to all of them):
+  // icons where they exist, names only for agents without one.
+  const to = [...marked].map((id) => agents.find((a) => a.id === id)).filter(Boolean).map((a) => a.icon || a.display);
   const prompt = fg(c, bold(view === "search" ? `${search.mode === "ai" ? "✦" : "⌕"} ${room} ❯ ` : view === "ask" ? `? ${room} ❯ `
     : to.length ? `${room} → ${cut(to.join(" "), Math.max(10, Math.floor(W / 3)))} ❯ ` : !everyone && here.length ? `${room} → nobody ❯ ` : `${room} ❯ `));
   const promptW = width(prompt), inputLines = hardWrap(input, Math.max(10, W - promptW));
