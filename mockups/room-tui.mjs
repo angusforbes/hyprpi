@@ -321,22 +321,23 @@ function draw() {
       const au = e.agent || {};
       const sender = (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
       const tos = (Array.isArray(e.to) ? e.to : []).map(styledName).join(", ");
+      // A run of activity from one agent: its name once on its own line, then the rows
+      // (no name, no indent). A message or another agent starts a new run.
       let line, loud = true;
-      if (e.kind === "talk") line = `${sender} to ${tos}: ${afterColon(e.text)}`;
-      else if (e.kind === "demand") line = `${sender} asks ${tos}: ${afterColon(e.text)}`;
-      else if (e.kind === "reply") line = `${sender} replies to ${tos}: ${afterColon(e.text)}`;
-      else if (e.kind === "prompt") line = `${fg(c, bold("Angus"))} to ${sender}: ${afterColon(e.text)}`;
-      else if (e.kind === "blocked") line = `${sender} needs you`;
-      else { loud = false; line = `${sender} ${dim(e.kind === "topic" ? "topic: " + e.text : e.text)}`; }
-      if (lastAct === null && convo.length) convo.push({ line: "", msg: null });
-      // Wrap by plain text width; continuation rows start at column 1 too.
-      const plain = strip(line);
-      const parts = wrap(plain, Math.max(10, W - 1));
+      if (e.kind === "talk") line = `to ${tos}: ${afterColon(e.text)}`;
+      else if (e.kind === "demand") line = `asks ${tos}: ${afterColon(e.text)}`;
+      else if (e.kind === "reply") line = `replies to ${tos}: ${afterColon(e.text)}`;
+      else if (e.kind === "prompt") line = `from ${fg(c, bold("Angus"))}: ${afterColon(e.text)}`;
+      else if (e.kind === "blocked") line = "needs you";
+      else { loud = false; line = dim(e.kind === "topic" ? "topic: " + e.text : e.text); }
+      if (lastAct !== au.id) {
+        if (convo.length) convo.push({ line: "", msg: null });
+        convo.push({ line: sender, msg: null, act: true });
+      }
+      const parts = wrap(strip(line), Math.max(10, W - 1));
       if (parts.length <= 1) convo.push({ line, msg: null, act: true });
       else {
-        // First row keeps the styling; the rest of the text continues unstyled (dim for quiet lines).
-        const firstW = width(parts[0]);
-        convo.push({ line: clip(line, firstW), msg: null, act: true });
+        convo.push({ line: clip(line, width(parts[0])), msg: null, act: true });
         for (const l of parts.slice(1)) convo.push({ line: loud ? l : dim(l), msg: null, act: true });
       }
       lastAct = au.id;
