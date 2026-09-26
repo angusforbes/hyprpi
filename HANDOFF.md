@@ -77,3 +77,66 @@ Then with `export HYPRPI_STATE=/tmp/hp-nested-state`: `hyprpi new`, `hyprpi room
 Choosing a search result (open/jump/quote?) · restarting agents (crash + after reboot) · master
 list of all rooms · pop-up picker version · flagging an agent's window when it needs you ·
 pop-out/pin toggle was discussed and parked.
+
+---
+
+# Loom's additions (2026-09-26 11:35 CDT)
+
+Loom was a hyprpi agent (room C). Everything below is committed and pushed (last commit `b1093dd`).
+
+## Current state
+
+- **Keys** now live in `hypr/hyprpi.lua` (symlinked as `~/.config/hypr/hyprpi.lua`, required from
+  `hyprland.lua` after Omarchy's defaults). They **supersede the key list above**:
+  - SUPER+A: new agent.
+  - SUPER+ALT+A: **room TUI** (`mockups/room-tui`, current world).
+  - SUPER+ALT+/: **search TUI** (`mockups/search-tui`).
+  - SUPER+SHIFT+/: Monitor scaling down. Omarchy's SUPER+ALT+/ binding is `hl.unbind`-ed there because it clashed.
+  - The QML room and search windows have no keys now; `hyprpi room|search --toggle` still works.
+- **TUIs** (`mockups/room-tui.mjs`, `mockups/search-tui.mjs`): the launchers `mockups/room-tui` and
+  `mockups/search-tui` open their **own** kitty window (`--class hyprpi.mockup`). With no ROOM
+  argument they use the current world's room. Every press opens a new window (no toggle).
+- **Search:** nothing runs until Enter, in both the TUI and `ui/SearchWindow.qml`. In the TUI, Enter
+  again with unchanged text jumps to the selected agent.
+- **Status marks:** ● working · ✓ done (dings; stays until a click or typing in that window, via
+  the click hook in `hypr/hyprpi.lua` + `hyprpi seen`) · ○ idle · × blocked (`bonk`, sticky).
+  An Esc-aborted turn ends as idle, with no ding.
+- **Topics:** the daemon labels each agent's subject in a short phrase (≤5 words / 40 chars;
+  `topicWords`, `topicChars`), relabelled on the ding.
+- **Names:** unique among live agents. `{#rrggbb}` markup is kept (`name_markup`). The agent
+  gets a footer and window title with its own name.
+- **Reprieve:** agents on `offLimitsWorkspaces` (default `special:reprieve`) leave their room.
+- **Outside this repo:**
+  - `~/.pi/agent/extensions/editor-select.ts`: Shift+Arrow selection in Pi's editor.
+  - `~/.pi/agent/keybindings.json`: Ctrl+Enter = newline.
+  - kitty `map ctrl+insert copy_or_noop`.
+  - Copies of the editor extension and kitty config are in `~/Work/herdr-agent-config`.
+
+## How to test without touching Angus's screen
+
+`hyprctl dispatch "hl.dsp.exec_cmd('kitty --class hyprpi.selftest -o allow_remote_control=yes --listen-on unix:/tmp/kt-test node /home/agf/Work/hyprpi/mockups/search-tui.mjs C', { workspace = 'special:selftest silent' })"`
+
+Then use `kitty @ --to unix:/tmp/kt-test send-text|send-key|get-text --extent screen`, and finish with `close-window`.
+- Run the `.mjs` directly, not the launcher (the launcher opens a second, visible window).
+- For Pi itself, run `env -u HYPRPI_AGENT_ID pi --no-session` in the same way.
+- Before adding any key: `hyprctl binds -j` and look for the same modmask+key (case-insensitive: `SLASH` = `slash`).
+
+## Decisions (with Angus)
+
+- Only the name gets the grey cursor highlight, never the status mark.
+- Agent rows: mark · name · topic · model, separated by dots like Herdr, not tabs.
+- Messages show the name aligned with the agent names above, then the text, with no time.
+- Search waits for Enter (typing must not search).
+- Keys open the TUIs, not the QML windows.
+
+## Known bugs / not verified
+
+- `SearchWindow.qml` "wait for Enter" was only linted, never opened.
+- A single-letter paste through kitty's own paste action was not reproducible from the harness.
+- The two TUIs were Angus's "mockups" but are now the default UI. Consider moving them out of `mockups/`.
+
+## Next steps
+
+- A toggle for the TUIs (close an existing room TUI on this workspace instead of opening another).
+- Move the TUIs out of `mockups/` and give them `hyprpi tui` / `hyprpi search-tui` commands.
+- Everything in Ghost's list above (choosing a search result, restarting agents, a master room list).
