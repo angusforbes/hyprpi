@@ -163,7 +163,7 @@ Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, o
 | `model` | "switched model to claude-opus-5-5" | model change |
 | `aborted` / `error` | "stopped (Esc)" / "error: …" | how a turn ended (the agent's Pi extension) |
 
-`ts` is milliseconds since the epoch; texts are cut to 200 characters. New kinds may be added;
+`ts` is milliseconds since the epoch. Texts of messages (`talk`, `demand`, `reply`, `prompt`) are kept whole (up to 4000 characters, line breaks kept); all other texts are one line cut to 200 characters. New kinds may be added;
 readers should ignore kinds they don't know. The daemon method `activity.read { room, limit }`
 returns the recent tail; UI connections also get each new event live as `activity`.
 Config: `"activity": false` turns the stream off; `"activityTools": false` keeps it but drops tool lines.
