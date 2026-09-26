@@ -711,7 +711,7 @@ function onKey(d) {
   if (d === "\x03") return quit();
   // Shift+Space (the launcher maps it to CSI 32;2u) or Ctrl+Space: toggle the cursor
   // agent's mark in every view, even while typing (plain Space is text then).
-  if (d === "\x1b[32;2u" || d === "\x00") { toggleMark(cursorId); moveCursor(1); return; }
+  if (d === "\x1b[32;2u" || d === "\x00") { toggleMark(cursorId); confirm = null; return render(); } // the cursor stays put
   if (d === "\t" && /^\/[^\s/]*$/.test(input)) { // complete a command
     // One match: complete it (plus a space). Several: their common prefix; Tab
     // again steps through the matches (/s \u2192 /stream \u2192 /search \u2192 /stream \u2026).
