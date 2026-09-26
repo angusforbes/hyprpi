@@ -3,6 +3,8 @@
 # kitty keeps Shift+click/drag/double/triple-click for its own selection even
 # when a program has the mouse; unmap those (only while grabbed) so they reach
 # the TUI (Shift = whole messages), and give kitty's own selection to Ctrl+Shift.
+# Shift+Space is sent as CSI-u (kitty's legacy encoding would send a plain space),
+# so the TUI can use it to mark agents while you type.
 exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=shift+left click grabbed" \
   -o "mouse_map=shift+left press grabbed" \
@@ -11,4 +13,5 @@ exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=ctrl+shift+left press grabbed mouse_selection normal" \
   -o "mouse_map=ctrl+shift+left doublepress grabbed mouse_selection word" \
   -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" \
+  -o 'map shift+space send_text all \x1b[32;2u' \
   node "$(dirname "$(readlink -f "$0")")/room-tui.mjs" "$@"

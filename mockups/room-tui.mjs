@@ -471,7 +471,7 @@ function draw() {
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ keyword · Esc back" : "words, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ ai · Esc back")
-    : view === "ask" ? dim("a question about this room, ⏎ ask · ⇧↑↓ scroll · ↑↓ agent · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⇧↑↓ scroll · ⏎ jump · space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
+    : view === "ask" ? dim("a question about this room, ⏎ ask · ⇧↑↓ scroll · ↑↓ agent · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⇧↑↓ scroll · ⏎ jump · space/⇧space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -709,6 +709,9 @@ process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of S
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x03") return quit();
+  // Shift+Space (the launcher maps it to CSI 32;2u) or Ctrl+Space: toggle the cursor
+  // agent's mark in every view, even while typing (plain Space is text then).
+  if (d === "\x1b[32;2u" || d === "\x00") { toggleMark(cursorId); moveCursor(1); return; }
   if (d === "\t" && /^\/[^\s/]*$/.test(input)) { // complete a command
     // One match: complete it (plus a space). Several: their common prefix; Tab
     // again steps through the matches (/s \u2192 /stream \u2192 /search \u2192 /stream \u2026).
