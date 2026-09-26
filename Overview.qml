@@ -252,6 +252,7 @@ Item {
     root.virtualWorlds = []
     root.keepSelectId = 0
     root.notice = ""
+    root.freshOpen = true
     colorsFile.reload()
     root.loadGeneration++
     snapshot.generation = root.loadGeneration
@@ -500,6 +501,18 @@ Item {
     }
 
     if (out.length === 0) { root.close(); return }
+    // On a rebuild/refresh while open (Alt+N, Alt+Shift+N, a drop, pick-up),
+    // remember the scroll position by world so the rows don't jump; only a
+    // fresh open starts from the top.
+    var keepScroll = !root.freshOpen && root.rows.length > 0
+    var prevTopWorld = 0, prevColByWorld = {}
+    if (keepScroll) {
+      if (root.rows[root.rowOffset]) prevTopWorld = root.rows[root.rowOffset].world
+      for (var pr = 0; pr < root.rows.length; pr++)
+        prevColByWorld[root.rows[pr].world] = root.colOffset(pr)
+    }
+    root.freshOpen = false
+
     root.hints = map
     root.rows = out
 
@@ -519,8 +532,15 @@ Item {
     }
     root.selRow = sr
     root.selCol = sc
-    root.rowOffset = 0
-    root.colOffsets = ({})
+    var ro0 = 0, co0 = {}
+    if (keepScroll) {
+      for (var nr = 0; nr < out.length; nr++) {
+        if (out[nr].world <= prevTopWorld) ro0 = nr
+        if (prevColByWorld[out[nr].world] !== undefined) co0[nr] = prevColByWorld[out[nr].world]
+      }
+    }
+    root.rowOffset = ro0
+    root.colOffsets = co0
     root.ensureVisible()
     root.opened = !root.dry
   }
@@ -556,6 +576,7 @@ Item {
   property var virtualWs: ({})          // world -> [slot, ...]
   property var virtualWorlds: []
   property int keepSelectId: 0
+  property bool freshOpen: true         // next snapshot is a new open (reset scroll)
   property string notice: ""
   property string lastRaw: ""
   readonly property int holdMs: 350
