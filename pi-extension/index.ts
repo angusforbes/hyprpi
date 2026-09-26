@@ -176,6 +176,11 @@ export default function hyprpi(pi: ExtensionAPI) {
     const msgs: any[] = Array.isArray(e?.messages) ? e.messages : [];
     aborted = msgs.some((m: any) => m?.stopReason === "aborted" || m?.message?.stopReason === "aborted" ||
       (m?.role === "toolResult" && m?.isError && /Operation aborted/.test(JSON.stringify(m?.content ?? ""))));
+    // Stream: a turn stopped with Esc, or one that ended in an error.
+    const err = [...msgs].reverse().find((m: any) => (m?.stopReason ?? m?.message?.stopReason) === "error");
+    const report = aborted ? { kind: "aborted", text: "stopped (Esc)" }
+      : err ? { kind: "error", text: `error: ${String(err?.errorMessage ?? err?.message?.errorMessage ?? "turn failed").replace(/\s+/g, " ").slice(0, 160)}` } : null;
+    if (report && conn && !conn.closed) { flushActivity(); conn.call("agent.activity", { items: [report] }).catch(() => {}); }
   });
   pi.on("agent_settled", async (_e: any, ctx: any) => {
     flushActivity();

@@ -94,7 +94,9 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 ## Activity stream
 
 The room TUI shows each room as a **stream**: its messages plus what its agents are doing.
-Ctrl+F cycles all / messages + topics / messages only / activity only. Activity is a history for you (and tools
+Ctrl+F cycles the filter: **all activity** (everything) · **messages** (room messages only) ·
+**messages + topics** · **activity** (everything except room messages; agent-to-agent messages
+still show). Activity is a history for you (and tools
 like dashboards); it is never part of any agent's context.
 
 Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, or `$HYPRPI_STATE`):
@@ -116,6 +118,11 @@ Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, o
 | `talk` / `demand` | "to Name: gist" / "asks Name: gist" (`to`: recipients) | `talk` / `demand` between agents |
 | `reply` | "replies to Name: gist" (`to`: the asker) | `talk_reply` |
 | `prompt` | "Angus → Name: gist" | a direct prompt from the room TUI / `hyprpi send` |
+| `joined` / `left` | "joined · ~/Work" (twins: "· twin of Name") / "left" | agent connects for the first time / is gone |
+| `renamed` | "pi·w96n is now 🗃️ Quartermaster" | a name or icon change |
+| `moved` | "moved to workspace C3", "moved to room A (A2)" (logged in both rooms), "went to Reprieve", "back from Reprieve, to C1" | window moves |
+| `model` | "switched model to claude-opus-5-5" | model change |
+| `aborted` / `error` | "stopped (Esc)" / "error: …" | how a turn ended (the agent's Pi extension) |
 
 `ts` is milliseconds since the epoch; texts are cut to 200 characters. New kinds may be added;
 readers should ignore kinds they don't know. The daemon method `activity.read { room, limit }`

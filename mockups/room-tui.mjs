@@ -2,7 +2,8 @@
 // MOCKUP: a terminal / tmux-style hyprpi room, for comparison with the
 // Quickshell room window (ui/RoomWindow.qml), which stays the real one.
 // Live data from the daemon. The room pane is a stream: messages plus agent activity
-// (tools, topics, talk between agents); Ctrl+F cycles all / messages + topics / messages / activity.
+// (tools, topics, talk between agents, joins/moves/renames); Ctrl+F cycles
+// all activity / messages / messages + topics / activity (no room messages).
 // Typing + Enter posts to the room as Angus (same
 // as the room window). Agent list: ↑↓ or click = cursor · Enter on an empty
 // line = jump to it · Space / second click = mark (Enter then sends only to the
@@ -132,8 +133,10 @@ let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messa
 // The room is a stream: messages plus agent activity (tools, topics, talk between agents,
 // finishes) from the daemon. Ctrl+F cycles what it shows.
 let activity = {}; // room -> events
-// all = messages + every activity · topics = messages + topic changes · messages · activity.
-const FILTERS = ["all", "topics", "messages", "activity"];
+// all = everything · messages = room messages only · topics = room messages + topic changes ·
+// activity = everything except room messages (agent-to-agent messages still show).
+const FILTERS = ["all", "messages", "topics", "activity"];
+const FILTER_LABEL = { all: "all activity", messages: "messages", topics: "messages + topics", activity: "activity (no room messages)" };
 let filter = "all";
 let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
@@ -354,13 +357,16 @@ function draw() {
         lastAct = "direct:" + au.id; // the next activity starts a new block
         return;
       }
-      // Topics: full text colour in italics (easy to read); tool lines stay dim.
-      const line = e.kind === "blocked" ? "needs you" : e.kind === "topic" ? midFg(`${ESC}3mtopic: ${e.text}${ESC}23m`) : dim(e.text);
+      // Topics: mid tone, italic. Agent events (joined, left, renamed, moved, model): mid tone.
+      // Errors and "needs you": normal text. Tool lines and Esc stops: dim.
+      const MID = new Set(["joined", "left", "renamed", "moved", "model"]);
+      const line = e.kind === "blocked" ? "needs you" : e.kind === "error" ? e.text
+        : e.kind === "topic" ? midFg(`${ESC}3mtopic: ${e.text}${ESC}23m`) : MID.has(e.kind) ? midFg(e.text) : dim(e.text);
       if (lastAct !== au.id) {
         if (convo.length) convo.push({ line: "", msg: null });
         convo.push({ line: "   " + sender, msg: null, act: true });
       }
-      push(line, e.kind === "blocked" || e.kind === "topic");
+      push(line, e.kind === "blocked" || e.kind === "error" || e.kind === "topic" || MID.has(e.kind));
       lastAct = au.id;
       return;
     }
@@ -381,7 +387,7 @@ function draw() {
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
-  const streamLabel = { all: "room + activity", topics: "room + topics", messages: "room · messages only", activity: "room · activity only" }[filter];
+  const streamLabel = "stream · " + FILTER_LABEL[filter];
   rows[ruleAt] = rule(`${streamLabel} (^F)` + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim(filter === "activity" ? "  (no activity yet)" : "  (no messages yet)"), msg: null });
@@ -571,7 +577,7 @@ function onKey(d) {
     if (d === "\x15") return edited([], 0); // Ctrl+U
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
-  if (d === "\x06") { filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${{ all: "messages + activity", topics: "messages + topics", messages: "messages only", activity: "activity only" }[filter]}`; return render(); } // Ctrl+F
+  if (d === "\x06") { filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${FILTER_LABEL[filter]}`; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
