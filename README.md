@@ -115,8 +115,9 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 
 ## Marked agents filter everything (room TUI)
 
-Every agent in the list starts **marked** (▸), including ones that join later. ↑↓ + Space (or a
-click on the cursor row) turns one off and on; Ctrl+A turns all off / all on; Esc marks all again.
+Every agent in the list starts **marked** (▸), including ones that join later. ↑↓ + Shift+Space
+(or Ctrl+Space; works in every view, even while typing; plain Space is always text), or a click on
+the cursor row, turns one off and on; Ctrl+A turns all off / all on; Esc marks all again.
 The marks filter the whole TUI:
 
 - **who you talk to:** all marked = a room post (as always); some = straight to them (the prompt
