@@ -581,7 +581,7 @@ function draw() {
 // The pane below the agent list when it isn't the stream: search results, an /ask answer, /help.
 let askTop = 0;
 function drawPane(rows, ruleAt, avail, W, c, rule) {
-  const T = { width, clip, dim, bold, italic, hexFg, rgb, theme };
+  const T = { width, clip, dim, bold, italic, hexFg, rgb, theme, wrap };
   let pane, label, top = 0;
   if (view === "search") {
     pane = searchRows(search, W, c, T); label = searchLabel(search) + onlyLabel();
