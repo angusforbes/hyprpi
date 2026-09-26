@@ -148,7 +148,7 @@ const MODES = {
   room:   { label: "room · all activity", msgs: true, act: (e) => DIRECT.has(e.kind) },        // room messages + agent-to-agent
   stream: { label: "stream · all activity", msgs: false, act: () => true },                      // activity, no room messages
   all:    { label: "room + stream", msgs: true, act: () => true },                               // everything
-  topics: { label: "room + stream · topics only", msgs: true, act: (e) => e.kind === "topic" },  // room messages + topic changes
+  topics: { label: "room + stream · topics only", msgs: true, act: (e) => e.kind === "topic" || DIRECT.has(e.kind) },  // room messages + agent-to-agent + topic changes (no tool lines)
 };
 const FILTERS = ["room", "stream", "all", "topics"];
 const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
