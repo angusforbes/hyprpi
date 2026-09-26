@@ -1,6 +1,6 @@
 // Search window: search the conversations of every agent in a room (plus the
-// room log). Keyword = exact phrase, live as you type. AI = describe what you
-// mean and press Enter; a small model picks matching entries and says why.
+// room log). Nothing runs until Enter. Keyword = exact phrase. AI = describe
+// what you mean; a small model picks matching entries and says why.
 // Ctrl+/ switches mode, ↑↓ move, Esc closes. (Choosing a result: later.)
 import Quickshell
 import QtQuick
@@ -27,7 +27,7 @@ FloatingWindow {
     if (!visible) { app.searchOpen = false; return }
     query.forceActiveFocus(); query.selectAll()
   }
-  onRoomChanged: if (visible) run()
+  onRoomChanged: if (visible) { generation++; busy = false; results = []; selected = -1; status = query.text.trim() ? "Enter to search room " + room : "" }
 
   function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") }
   function when(ts) {
@@ -37,8 +37,8 @@ FloatingWindow {
   function setMode(m) {
     if (mode === m) return
     mode = m; results = []; selected = -1
-    status = m === "ai" ? "Describe what you're looking for, then Enter." : ""
-    if (m === "keyword") run()
+    generation++; busy = false
+    status = m === "ai" ? "Describe what you're looking for, then Enter." : (query.text.trim() ? "Enter to search" : "")
   }
   function run() {
     var q = query.text.trim()
@@ -58,7 +58,6 @@ FloatingWindow {
       list.positionViewAtBeginning()
     })
   }
-  Timer { id: debounce; interval: 180; onTriggered: win.run() }
 
   Shortcut { sequence: "Escape"; onActivated: app.searchOpen = false }
   Shortcut { sequence: "Ctrl+/"; onActivated: win.setMode(win.mode === "ai" ? "keyword" : "ai") }
@@ -108,7 +107,6 @@ FloatingWindow {
         placeholderTextColor: app.dimFg
         color: app.fg; font.family: app.fontFamily; font.pixelSize: 13
         background: null
-        onTextChanged: if (win.mode === "keyword") debounce.restart()
         Keys.onReturnPressed: win.run()
         Keys.onEnterPressed: win.run()
         Keys.onUpPressed: { win.selected = Math.max(0, win.selected - 1); list.positionViewAtIndex(win.selected, ListView.Contain) }

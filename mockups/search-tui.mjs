@@ -5,9 +5,10 @@
 //
 //   ~/Work/hyprpi/mockups/search-tui [ROOM]   (kitty launcher)
 //
-// Keyword mode (default): exact words, case-insensitive, live as you type.
-// AI mode: describe what you mean, press Enter; a small model picks matches and
-// says why. Ctrl+/ (or Ctrl+T) switches mode · Tab / Shift+Tab switch room ·
+// Nothing searches until you press Enter (Enter again, with the text unchanged,
+// jumps to the selected result). Keyword mode (default): exact words,
+// case-insensitive. AI mode: describe what you mean; a small model picks
+// matches and says why. Ctrl+/ (or Ctrl+T) switches mode · Tab / Shift+Tab switch room ·
 // ↑↓ / wheel / click select · PgUp/PgDn page · Enter on a result jumps to that
 // agent's window (live agents) · ←→ Home End Ctrl+←→ move in the search box,
 // Backspace/Delete, Ctrl+W word, Ctrl+U clear · Esc / Ctrl+C quit.
@@ -100,21 +101,21 @@ function run() {
     render();
   }).catch((e) => { if (g !== gen) return; busy = false; results = []; selected = -1; status = "✗ " + e.message; render(); });
 }
-let debounceT = null;
-const debounce = () => { clearTimeout(debounceT); debounceT = setTimeout(run, 180); };
 
 function setMode(m) {
   if (m === mode) return;
   mode = m; results = []; selected = -1; top = 0;
-  status = m === "ai" ? "Describe what you're looking for, then Enter." : "";
-  if (m === "keyword") run(); else render();
+  gen++; busy = false; lastMeta = null;
+  status = m === "ai" ? "Describe what you're looking for, then Enter." : (query.trim() ? "Enter to search" : "");
+  render();
 }
 function cycle(d) {
   if (!rooms.length) return;
   const i = Math.max(0, rooms.indexOf(room));
   room = rooms[(i + d + rooms.length) % rooms.length];
   results = []; selected = -1; top = 0;
-  if (mode === "keyword" || query.trim() === "") run(); else { status = "Enter to search room " + room; render(); }
+  gen++; busy = false; lastMeta = null;
+  status = query.trim() ? "Enter to search room " + room : ""; render();
 }
 
 // One result as screen lines.
@@ -188,7 +189,7 @@ function render() {
   // status bar: rooms as tabs (like the room TUI)
   const tabs = rooms.map((r) => r === room ? `${ESC}${worldBg(r)};30m ${r} ${ESC}49;39m` : ` ${fg(worldFg(r), r)} `).join("");
   const left = ` hyprpi search ${online ? "" : "· daemon offline "}`;
-  const right = `${results.length ? (selected + 1) + "/" + results.length + " · " : ""}^/ mode · ⏎ ${mode === "ai" ? "search / " : ""}jump · Esc quit `;
+  const right = `${results.length ? (selected + 1) + "/" + results.length + " · " : ""}^/ mode · ⏎ search / jump · Esc quit `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
@@ -212,7 +213,7 @@ async function start() {
     });
     online = true;
     applyRooms(await api.call("ui.subscribe", { windows: false }));
-    if (query.trim()) run(); else { status = ""; render(); }
+    status = ""; render();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
 function applyRooms(r) {
@@ -237,12 +238,12 @@ function onKey(d) {
   if (d === "\x1b[B") return move(1);
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
-  if (d === "\r") { if (mode === "ai" && query.trim() && (!results.length || lastMeta !== query)) { lastMeta = query; return run(); } return jump(); }
+  if (d === "\r") { if (query.trim() && lastMeta !== query) { lastMeta = query; return run(); } return jump(); }
   // Editing the search box: ←/→ (Ctrl: by word), Home/End or Ctrl+A/E,
   // Backspace / Delete at the cursor, Ctrl+W delete word, Ctrl+U clear.
   const gs = graphemes(query);
   qc = Math.max(0, Math.min(qc, gs.length));
-  const edited = (next, c) => { query = next.join(""); qc = c; lastMeta = null; return mode === "keyword" ? debounce() : render(); };
+  const edited = (next, c) => { query = next.join(""); qc = c; lastMeta = null; return render(); };
   const wordLeft = () => { let i = qc; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
   const wordRight = () => { let i = qc; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
   if (d === "\x1b[D") { qc = Math.max(0, qc - 1); return render(); }
