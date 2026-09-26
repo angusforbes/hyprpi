@@ -326,11 +326,12 @@ function draw() {
       // (a leading repeat of the sender's own name dropped).
       // Other activity: a run from one agent shows its name once, then the rows (no indent).
       const direct = { talk: "to", demand: "asks", reply: "replies to", prompt: "to" }[e.kind];
+      // Indented like messages: names and text at column 4.
       const push = (text, loud) => {
-        const parts = wrap(strip(text), Math.max(10, W - 1));
-        if (parts.length <= 1) return convo.push({ line: text, msg: null, act: true });
-        convo.push({ line: clip(text, width(parts[0])), msg: null, act: true });
-        for (const l of parts.slice(1)) convo.push({ line: loud ? l : dim(l), msg: null, act: true });
+        const parts = wrap(strip(text), textW);
+        if (parts.length <= 1) return convo.push({ line: "   " + text, msg: null, act: true });
+        convo.push({ line: "   " + clip(text, width(parts[0])), msg: null, act: true });
+        for (const l of parts.slice(1)) convo.push({ line: "   " + (loud ? l : dim(l)), msg: null, act: true });
       };
       if (direct) {
         const from = e.kind === "prompt" ? fg(c, bold("Angus")) : sender;
@@ -340,7 +341,7 @@ function draw() {
         const lead = new RegExp(`^\\s*(?:\\S+\\s+)?${self.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:,—-]\\s*`, "u");
         if (self) body = body.replace(lead, "");
         if (convo.length) convo.push({ line: "", msg: null });
-        convo.push({ line: `${from} ${direct} ${to}`, msg: null, act: true });
+        convo.push({ line: `   ${from} ${direct} ${to}`, msg: null, act: true });
         push(body, true);
         lastAct = "direct:" + au.id; // the next activity starts a new block
         return;
@@ -348,7 +349,7 @@ function draw() {
       const line = e.kind === "blocked" ? "needs you" : dim(e.kind === "topic" ? "topic: " + e.text : e.text);
       if (lastAct !== au.id) {
         if (convo.length) convo.push({ line: "", msg: null });
-        convo.push({ line: sender, msg: null, act: true });
+        convo.push({ line: "   " + sender, msg: null, act: true });
       }
       push(line, e.kind === "blocked");
       lastAct = au.id;
