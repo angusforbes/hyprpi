@@ -123,6 +123,8 @@ export default function hyprpi(pi: ExtensionAPI) {
     try {
       conn = await connect({ onEvent, onClose: () => { conn = null; schedule(); } });
       await hello();
+      // Re-state where this agent is (a turn may have started or ended while the daemon was down).
+      if (myStatus !== "idle") conn.call("agent.update", { status: myStatus, resync: true }).catch(() => {});
     } catch {
       conn?.close(); conn = null; schedule();
     } finally { connecting = false; }
@@ -142,7 +144,8 @@ export default function hyprpi(pi: ExtensionAPI) {
     if (!conn || conn.closed) throw new Error("hyprpi daemon is not reachable");
     return conn.call(method, params, opts);
   }
-  const update = (p: any) => { if (conn && !conn.closed) conn.call("agent.update", p).catch(() => {}); };
+  let myStatus = "idle"; // last status this agent reported (re-sent after a reconnect)
+  const update = (p: any) => { if (p?.status) myStatus = p.status; if (conn && !conn.closed) conn.call("agent.update", p).catch(() => {}); };
 
   // Typing in this window marks a finished turn (\u2713 in the room window) as
   // seen, like a click in it (Hyprland hook). One call per finish, not per key.
