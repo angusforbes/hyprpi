@@ -87,6 +87,9 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 - `bin/hyprpi` — CLI (symlinked into `~/.local/bin`).
 - `hypr/hyprpi.lua` — Hyprland keys, the agent window rule and click-to-mark-seen
   (symlinked into `~/.config/hypr/`).
+- `terminal-helpers/kitty/` — kitty settings for agent windows (`pi.conf`: Ctrl+click links
+  and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
+  `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.
 
 ## Config — `~/.config/hyprpi/config.json`
 
@@ -98,6 +101,7 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   "cwd": "~/Work",
   "cwdFromFocused": true,
   "terminal": "auto",
+  "terminalHelpers": true,
   "pi": "pi",
   "piArgs": [],
   "searchModel": "claude-haiku-4-5"
@@ -116,6 +120,8 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 - `groups`: named rooms that override the mode, e.g. `{"Research": [1, 2, 13]}`.
 - `follow`: `true` = an agent moved to another world moves to that room;
   `false` = it stays in the room it was born in.
+- `terminalHelpers` (default true): agent windows also load `terminal-helpers/<terminal>/`
+  settings (kitty only for now: `pi.conf`, after your own `kitty.conf`).
 - `terminal`: `"auto"` (default) uses Omarchy's default terminal (`xdg-terminal-exec --print-id`,
   i.e. `~/.config/xdg-terminals.list`), falling back to foot; or force `"kitty"`, `"foot"`,
   `"alacritty"`, `"ghostty"`. Windows always get app-id/class `hyprpi.agent`; kitty windows
