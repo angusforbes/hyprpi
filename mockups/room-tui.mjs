@@ -321,25 +321,36 @@ function draw() {
       const au = e.agent || {};
       const sender = (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
       const tos = (Array.isArray(e.to) ? e.to : []).map(styledName).join(", ");
-      // A run of activity from one agent: its name once on its own line, then the rows
-      // (no name, no indent). A message or another agent starts a new run.
-      let line, loud = true;
-      if (e.kind === "talk") line = `to ${tos}: ${afterColon(e.text)}`;
-      else if (e.kind === "demand") line = `asks ${tos}: ${afterColon(e.text)}`;
-      else if (e.kind === "reply") line = `replies to ${tos}: ${afterColon(e.text)}`;
-      else if (e.kind === "prompt") line = `from ${fg(c, bold("Angus"))}: ${afterColon(e.text)}`;
-      else if (e.kind === "blocked") line = "needs you";
-      else { loud = false; line = dim(e.kind === "topic" ? "topic: " + e.text : e.text); }
+      // Direct messages (agent to agent(s), Angus to an agent): their own block, a header
+      // "🗃️ Quartermaster to 📊 Sankey, …" with every name in its colour, then the message
+      // (a leading repeat of the sender's own name dropped).
+      // Other activity: a run from one agent shows its name once, then the rows (no indent).
+      const direct = { talk: "to", demand: "asks", reply: "replies to", prompt: "to" }[e.kind];
+      const push = (text, loud) => {
+        const parts = wrap(strip(text), Math.max(10, W - 1));
+        if (parts.length <= 1) return convo.push({ line: text, msg: null, act: true });
+        convo.push({ line: clip(text, width(parts[0])), msg: null, act: true });
+        for (const l of parts.slice(1)) convo.push({ line: loud ? l : dim(l), msg: null, act: true });
+      };
+      if (direct) {
+        const from = e.kind === "prompt" ? fg(c, bold("Angus")) : sender;
+        const to = e.kind === "prompt" ? sender : tos;
+        const self = e.kind === "prompt" ? "Angus" : (au.name || "");
+        let body = afterColon(e.text);
+        const lead = new RegExp(`^\\s*(?:\\S+\\s+)?${self.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:,—-]\\s*`, "u");
+        if (self) body = body.replace(lead, "");
+        if (convo.length) convo.push({ line: "", msg: null });
+        convo.push({ line: `${from} ${direct} ${to}`, msg: null, act: true });
+        push(body, true);
+        lastAct = "direct:" + au.id; // the next activity starts a new block
+        return;
+      }
+      const line = e.kind === "blocked" ? "needs you" : dim(e.kind === "topic" ? "topic: " + e.text : e.text);
       if (lastAct !== au.id) {
         if (convo.length) convo.push({ line: "", msg: null });
         convo.push({ line: sender, msg: null, act: true });
       }
-      const parts = wrap(strip(line), Math.max(10, W - 1));
-      if (parts.length <= 1) convo.push({ line, msg: null, act: true });
-      else {
-        convo.push({ line: clip(line, width(parts[0])), msg: null, act: true });
-        for (const l of parts.slice(1)) convo.push({ line: loud ? l : dim(l), msg: null, act: true });
-      }
+      push(line, e.kind === "blocked");
       lastAct = au.id;
       return;
     }
