@@ -169,8 +169,19 @@ export default function hyprpi(pi: ExtensionAPI) {
     for (const w of demands.values()) w.done();
     conn?.close(); conn = null;
   });
-  pi.on("agent_start", async (_e: any, ctx: any) => { ctxRef = ctx; unseen = false; watchTyping(ctx); update({ status: "working" }); });
-  pi.on("agent_settled", async (_e: any, ctx: any) => { ctxRef = ctx; unseen = true; watchTyping(ctx); update({ status: "done" }); });
+  pi.on("agent_start", async (_e: any, ctx: any) => { ctxRef = ctx; unseen = false; aborted = false; watchTyping(ctx); update({ status: "working" }); });
+  // A turn you stopped with Esc ("Operation aborted") is not a finish: no ✓, no ding.
+  let aborted = false;
+  pi.on("agent_end", async (e: any) => {
+    const msgs: any[] = Array.isArray(e?.messages) ? e.messages : [];
+    aborted = msgs.some((m: any) => m?.stopReason === "aborted" || m?.message?.stopReason === "aborted" ||
+      (m?.role === "toolResult" && m?.isError && /Operation aborted/.test(JSON.stringify(m?.content ?? ""))));
+  });
+  pi.on("agent_settled", async (_e: any, ctx: any) => {
+    ctxRef = ctx; watchTyping(ctx);
+    if (aborted) { aborted = false; unseen = false; update({ status: "idle" }); return; }
+    unseen = true; update({ status: "done" });
+  });
   pi.on("model_select", async (e: any) => update({ model: e?.model?.id || "" }));
   pi.on("thinking_level_select", async () => update({ thinking: safe(() => pi.getThinkingLevel()) || "" }));
   pi.on("session_info_changed", async (e: any) => {
