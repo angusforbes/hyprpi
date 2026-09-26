@@ -211,7 +211,10 @@ const markedIds = () => new Set(hereAgents().filter((a) => !unmarked.has(a.id)).
 const allMarked = () => hereAgents().every((a) => !unmarked.has(a.id));
 const toggleMark = (id) => { if (!id) return; unmarked.has(id) ? unmarked.delete(id) : unmarked.add(id); };
 // Search / ask scope: all marked = the whole room (closed agents too); none = only Angus's posts.
-const search = createSearch({ api: () => api, room: () => room, onChange: () => render(),
+// /history: how far back the stream and /ask go, in interactions (a room message or one
+// agent turn, however many tool calls); "all" = everything. Default 200.
+let historyN = 200;
+const search = createSearch({ api: () => api, room: () => room, onChange: () => render(), history: () => historyN,
   only: () => allMarked() ? [] : markedIds().size ? [...markedIds()] : ["-none-"] });
 function onlyLabel() {
   if (allMarked()) return "";
@@ -575,7 +578,7 @@ function draw() {
   // tmux-style status bar
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi ${online ? "" : "· daemon offline "}`;
-  const right = `${here.length} agent${here.length === 1 ? "" : "s"} · ${hhmm(Date.now())} `;
+  const right = `history ${historyN} · ${here.length} agent${here.length === 1 ? "" : "s"} · ${hhmm(Date.now())} `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
@@ -649,8 +652,13 @@ function jumpToResult() {
 
 async function loadRoom(r) {
   if (!api || !r) return;
-  try { const res = await api.call("room.read", { room: r, tail: true, limit: 200 }); messages[r] = res.messages || []; } catch { /* keep old */ }
-  try { const res = await api.call("activity.read", { room: r, limit: 300 }); activity[r] = res.events || []; } catch { /* older daemon */ }
+  try {
+    const res = await api.call("history.read", { room: r, interactions: historyN });
+    messages[r] = res.messages || []; activity[r] = res.events || [];
+  } catch { // older daemon
+    try { const res = await api.call("room.read", { room: r, tail: true, limit: 200 }); messages[r] = res.messages || []; } catch { /* keep old */ }
+    try { const res = await api.call("activity.read", { room: r, limit: 300 }); activity[r] = res.events || []; } catch { /* none */ }
+  }
   render();
 }
 
@@ -681,7 +689,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
-        else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 600) t.splice(0, t.length - 500); if (data.room === room) render(); }
+        else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 50000) t.splice(0, t.length - 40000); if (data.room === room) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
@@ -764,6 +772,14 @@ function command(text) {
     case "search": setView("search"); if (search.mode === "ai" && arg) search.mode = "keyword"; if (arg) { input = arg; ic = graphemes(arg).length; search.run(arg, "keyword"); } return true;
     case "ai": setView("search"); if (arg) { input = arg; ic = graphemes(arg).length; search.run(arg, "ai"); } else if (search.mode !== "ai") search.toggleMode(); return true;
     case "ask": askTop = 0; setView("ask"); if (arg) search.askQuestion(arg); return true;
+    case "history": {
+      if (!arg) { note = `history: ${historyN === "all" ? "everything" : "last " + historyN + " interactions"} · /history N or /history all`; render(); return true; }
+      const n = /^all$/i.test(arg) ? "all" : Number.parseInt(arg, 10);
+      if (n !== "all" && !(n > 0)) { note = "✗ /history takes a number or all"; render(); return true; }
+      historyN = n; scroll = 0; lastConvoLen = 0;
+      note = `history: ${n === "all" ? "everything" : "last " + n + " interactions"} (stream and /ask)`;
+      setView("stream"); loadRoom(room); return true;
+    }
     case "help": setView("help"); return true;
   }
   input = text; ic = graphemes(text).length; note = `\u2717 unknown command /${m[1]} \u00b7 /help lists them \u00b7 //text posts "/text"`; render();
