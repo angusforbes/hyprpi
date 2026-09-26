@@ -11,7 +11,7 @@
 // matches and says why. Ctrl+/ (or Ctrl+T) switches mode · Tab / Shift+Tab switch room ·
 // ↑↓ / wheel / click select · PgUp/PgDn page · Enter on a result jumps to that
 // agent's window (live agents) · ←→ Home End Ctrl+←→ move in the search box,
-// Backspace/Delete, Ctrl+W / Alt+Backspace word, Ctrl+U or Esc / Ctrl+C clear · Ctrl+Q quit.
+// Backspace/Delete, Ctrl+W word, Ctrl+U clear · Esc / Ctrl+C quit.
 // Shift+drag selects text (kitty's own selection).
 import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
@@ -189,7 +189,7 @@ function render() {
   // status bar: rooms as tabs (like the room TUI)
   const tabs = rooms.map((r) => r === room ? `${ESC}${worldBg(r)};30m ${r} ${ESC}49;39m` : ` ${fg(worldFg(r), r)} `).join("");
   const left = ` hyprpi search ${online ? "" : "· daemon offline "}`;
-  const right = `${results.length ? (selected + 1) + "/" + results.length + " · " : ""}^/ mode · ⏎ search / jump · ^Q quit `;
+  const right = `${results.length ? (selected + 1) + "/" + results.length + " · " : ""}^/ mode · ⏎ search / jump · Esc quit `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
@@ -224,18 +224,13 @@ function applyRooms(r) {
 }
 
 // ---- input --------------------------------------------------------------------
-// Alt+<key> arrives as ESC + key: keep it together (it used to split into a lone ESC, which quit).
-const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b[^[O]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bf]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); });
 function move(d) { if (!results.length) return; selected = Math.max(0, Math.min(results.length - 1, selected + d)); render(); }
 function onKey(d) {
-  // Only Ctrl+Q quits (Esc and Ctrl+C used to, and closed the window by accident).
-  if (d === "\x11") return quit();
-  if (d === "\x1b" || d === "\x03") { if (query) { query = ""; qc = 0; render(); } return; } // Esc / Ctrl+C: clear the box
-  if (d === "\x1b\x7f") { const gs0 = graphemes(query); let i = qc; while (i > 0 && /\s/.test(gs0[i - 1])) i--; while (i > 0 && !/\s/.test(gs0[i - 1])) i--; query = [...gs0.slice(0, i), ...gs0.slice(qc)].join(""); qc = i; return render(); } // Alt+Backspace: delete a word
-  if (d.length === 2 && d[0] === "\x1b" && d !== "\x1bb" && d !== "\x1bf") return; // other Alt+keys: ignore
+  if (d === "\x03" || d === "\x1b") return quit();
   if (d === "\x1f" || d === "\x14") return setMode(mode === "ai" ? "keyword" : "ai"); // Ctrl+/ or Ctrl+T
   if (d === "\t") return cycle(1);
   if (d === "\x1b[Z") return cycle(-1);
