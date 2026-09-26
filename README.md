@@ -69,7 +69,7 @@ The room TUI's input line takes slash commands (`lib/search-view.mjs`; typing
 In search view the input is the search box: Enter searches and **never posts**
 (the prompt reads `⌕ C ❯`, or `✦ C ❯` in AI mode); Enter again on the same words
 (or on an empty line, or a double click) jumps to the selected hit's agent.
-↑↓ / PgUp PgDn / wheel select, Ctrl+/ switches keyword ⇄ AI, Alt+S toggles
+Shift+↑↓ / PgUp PgDn / wheel select (plain ↑↓ always moves the agent list), Ctrl+/ switches keyword ⇄ AI, Alt+S toggles
 stream ⇄ search, Esc goes back. The query and results are kept, so Alt+S returns
 to them; Tab (room switch) clears them. `//text` posts `/text` to the room; an
 unknown `/word` is refused with a hint instead of being posted.

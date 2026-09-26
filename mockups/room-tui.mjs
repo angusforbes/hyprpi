@@ -15,7 +15,7 @@
 // /room · /stream [WORDS] (live word filter) · /search [WORDS] · /ai DESCRIPTION ·
 // /ask QUESTION · /new [DIR] · /help · "//text" posts "/text". Search view: the
 // input is the search box (Enter searches, never posts; Enter again on the same
-// words jumps to the selected result), ↑↓ results, Ctrl+/ keyword ⇄ ai, Alt+S or
+// words jumps to the selected result), Shift+↑↓ results (↑↓ always = agent list), Ctrl+/ keyword ⇄ ai, Alt+S or
 // Esc back to the stream (the query and results are kept; Alt+S returns to them).
 //
 //   ~/Work/hyprpi/mockups/room-tui [ROOM]   (kitty launcher with the mouse settings)
@@ -445,8 +445,8 @@ function draw() {
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ^/ keyword · Esc back" : "words, ⏎ search · ⏎ again jumps · ↑↓ result · ^/ ai · Esc back")
-    : view === "ask" ? dim("a question about this room, ⏎ ask · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⏎ jump · space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
+    : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ keyword · Esc back" : "words, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ ai · Esc back")
+    : view === "ask" ? dim("a question about this room, ⏎ ask · ⇧↑↓ scroll · ↑↓ agent · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⇧↑↓ scroll · ⏎ jump · space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -697,11 +697,12 @@ function onKey(d) {
   if (view !== "stream") { // search / ask / help pane keys
     if (d === "\x1b") { if (view === "search" && input === search.query) { input = ""; ic = 0; } view = "stream"; note = ""; return render(); }
     if (view === "search") {
-      const mv = { "\x1b[A": -1, "\x1b[B": 1, "\x1b[5~": -5, "\x1b[6~": 5 }[d];
+      // ↑↓ stay with the agent list; Shift+↑↓ (and PgUp/PgDn) move in the results.
+      const mv = { "\x1b[1;2A": -1, "\x1b[1;2B": 1, "\x1b[5~": -5, "\x1b[6~": 5 }[d];
       if (mv) return search.move(mv);
     }
     if (view === "ask") {
-      const mv = { "\x1b[A": -1, "\x1b[B": 1, "\x1b[5~": -Math.max(1, lastAvail - 2), "\x1b[6~": Math.max(1, lastAvail - 2) }[d];
+      const mv = { "\x1b[1;2A": -1, "\x1b[1;2B": 1, "\x1b[5~": -Math.max(1, lastAvail - 2), "\x1b[6~": Math.max(1, lastAvail - 2) }[d];
       if (mv) { askTop = Math.max(0, askTop + mv); return render(); }
     }
   }
