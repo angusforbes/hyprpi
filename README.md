@@ -52,6 +52,28 @@ room log. **Keyword**: exact phrase, case-insensitive, live as you type.
 the ones that match, each with a short reason. Also from the terminal:
 `hyprpi find [--ai] QUERY`. What choosing a result does is still open.
 
+### Search inside the terminal room (`mockups/room-tui.mjs`)
+
+The room TUI's input line takes slash commands (`lib/search-view.mjs`; typing
+`/` shows the matches, Tab completes and steps through them, `/help` lists them):
+
+| command | what the pane below the agent list shows |
+|---|---|
+| `/room` | the stream, filter `room · all activity` |
+| `/stream [WORDS]` | the stream; with WORDS only rows containing all of them (live, heading shows `filter: …`); alone clears the filter |
+| `/search [WORDS]` | keyword search of the room (agents' conversations + room log), one line per hit |
+| `/ai DESCRIPTION` | the same, by meaning (`searchModel`) |
+| `/ask QUESTION` | a one-shot 2–3 sentence answer with its cited lines (daemon `ask`) |
+| `/new [DIR]`, `/help` | new agent · the command list |
+
+In search view the input is the search box: Enter searches and **never posts**
+(the prompt reads `⌕ C ❯`, or `✦ C ❯` in AI mode); Enter again on the same words
+(or on an empty line, or a double click) jumps to the selected hit's agent.
+↑↓ / PgUp PgDn / wheel select, Ctrl+/ switches keyword ⇄ AI, Alt+S toggles
+stream ⇄ search, Esc goes back. The query and results are kept, so Alt+S returns
+to them; Tab (room switch) clears them. `//text` posts `/text` to the room; an
+unknown `/word` is refused with a hint instead of being posted.
+
 ## Agents
 
 `hyprpi new` runs `<terminal> … pi -e ~/Work/hyprpi/pi-extension/index.ts` with

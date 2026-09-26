@@ -11,12 +11,19 @@
 // twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
 // the conversation · drag selects + copies message text, Shift+click/drag whole messages · Ctrl+C quits.
+// Slash commands (lib/search-view.mjs, "/" shows them, Tab completes, /help lists):
+// /room · /stream [WORDS] (live word filter) · /search [WORDS] · /ai DESCRIPTION ·
+// /ask QUESTION · /new [DIR] · /help · "//text" posts "/text". Search view: the
+// input is the search box (Enter searches, never posts; Enter again on the same
+// words jumps to the selected result), ↑↓ results, Ctrl+/ keyword ⇄ ai, Alt+S or
+// Esc back to the stream (the query and results are kept; Alt+S returns to them).
 //
 //   ~/Work/hyprpi/mockups/room-tui [ROOM]   (kitty launcher with the mouse settings)
 // Shift+click/drag reach the TUI there; Ctrl+Shift+drag is kitty's own selection.
 // No ROOM = the current world's room. Several copies can run at once, on the
 // same room or different ones: each is just another subscriber of the daemon.
 import { connect } from "../lib/client.mjs";
+import { createSearch, completions, searchLabel, searchRows, askRows, helpRows } from "../lib/search-view.mjs";
 
 const ESC = "\x1b[";
 const out = (s) => process.stdout.write(s);
@@ -145,6 +152,12 @@ const FILTERS = ["room", "stream", "all", "topics"];
 const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
 const HIDDEN = new Set(["done", "blocked"]);
 let filter = "topics"; // default view
+// What the pane below the agent list shows: "stream" | "search" | "ask" | "help".
+let view = "stream", words = []; // words: /stream WORDS live filter (lower case)
+let resultRowMap = {}; // screen row -> search result index (clicks)
+let tabCycle = null; // Tab through several matching commands
+const search = createSearch({ api: () => api, room: () => room, onChange: () => render() });
+const italic = (s) => `${ESC}3m${s}${ESC}23m`;
 let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
 
@@ -309,10 +322,13 @@ function draw() {
   // Input: a long message wraps onto further lines (all shown), continuation
   // lines indented under the text.
   const to = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
-  const prompt = fg(c, bold(to.length ? `${room} → ${cut(to.join(", "), Math.max(10, Math.floor(W / 3)))} ❯ ` : `${room} ❯ `));
+  const prompt = fg(c, bold(view === "search" ? `${search.mode === "ai" ? "✦" : "⌕"} ${room} ❯ ` : view === "ask" ? `? ${room} ❯ `
+    : to.length ? `${room} → ${cut(to.join(", "), Math.max(10, Math.floor(W / 3)))} ❯ ` : `${room} ❯ `));
   const promptW = width(prompt), inputLines = hardWrap(input, Math.max(10, W - promptW));
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
+  if (view !== "stream") drawPane(rows, ruleAt, avail, W, c, rule);
+  else {
   // Every message: the author on its own line, the text on the next (no name column).
   const narrow = true, textX = 4, textW = Math.max(10, W - textX + 1 - 1);
   // Each row: { line, msg (index into the room's messages), textX (1-based
@@ -324,6 +340,11 @@ function draw() {
   const items = mode.msgs ? msgs.map((m, mi) => ({ ts: m.ts, m, mi })) : [];
   for (const e of acts) items.push({ ts: e.ts, e });
   items.sort((x, y) => x.ts - y.ts);
+  // /stream WORDS: only rows containing every word (text, author, recipients).
+  if (words.length) {
+    const hay = ({ m, e }) => (m ? `${m.text} ${authorLabel(m.author)}` : `${e.text} ${e.agent?.name || ""} ${(Array.isArray(e.to) ? e.to : []).join(" ")}`).toLowerCase();
+    for (let k = items.length - 1; k >= 0; k--) { const h = hay(items[k]); if (!words.every((w) => h.includes(w))) items.splice(k, 1); }
+  }
   // Activity rows: no indent, no glyphs; names (with their icons) in their own colours.
   // "done" (finished) is logged but not shown here.
   const agentByName = (n) => agents.find((x) => x.display === n || x.name === n);
@@ -395,17 +416,21 @@ function draw() {
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   const streamLabel = FILTER_LABEL[filter];
-  rows[ruleAt] = rule(`${streamLabel} (^F)` + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
+  rows[ruleAt] = rule(`${streamLabel} (^F)` + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
-  if (!convo.length) shown.push({ line: dim(MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
+  if (!convo.length) shown.push({ line: dim(words.length ? `  (nothing matches "${words.join(" ")}" · /stream alone clears)` : MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
   rowMeta = {}; convoMsgs = msgs;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
   rows.push(...shown.map((r) => r.line));
+  }
 
   // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
-  const hint = input ? "" : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ↑↓ agent · ⏎ jump · space mark · ^F filter · ^W close · ^K kill · ^N new · Tab room")));
+  const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
+  const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
+    : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ^/ keyword · Esc back" : "words, ⏎ search · ⏎ again jumps · ↑↓ result · ^/ ai · Esc back")
+    : view === "ask" ? dim("a question about this room, ⏎ ask · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⏎ jump · space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -437,6 +462,53 @@ function draw() {
   const before = hardWrap(graphemes(input).slice(0, ic).join(""), Math.max(10, W - promptW));
   const crow = H - inputLines.length + before.length - 1, ccol = Math.min(W, promptW + width(before[before.length - 1]) + 1);
   out(`${ESC}${crow};${ccol}H${ESC}?25h`);
+}
+
+// The pane below the agent list when it isn't the stream: search results, an /ask answer, /help.
+let askTop = 0;
+function drawPane(rows, ruleAt, avail, W, c, rule) {
+  const T = { width, clip, dim, bold, italic, hexFg, rgb, theme };
+  let pane, label, top = 0;
+  if (view === "search") {
+    pane = searchRows(search, W, c, T); label = searchLabel(search);
+    // Keep the selected result in view.
+    const s0 = pane.findIndex((r) => r.i === search.selected), s1 = pane.findLastIndex((r) => r.i === search.selected);
+    if (s0 >= 0) { if (s0 < search.top) search.top = s0; if (s1 >= search.top + avail) search.top = s1 - avail + 1; }
+    search.top = top = Math.max(0, Math.min(search.top, pane.length - avail));
+    const shownIdx = pane.slice(top, top + avail).map((r) => r.i).filter((i) => i != null);
+    const above = shownIdx.length ? shownIdx[0] : 0, below = shownIdx.length ? search.results.length - 1 - shownIdx[shownIdx.length - 1] : 0;
+    if (above || below) label += [above ? ` \u00b7 \u2191 ${above}` : "", below ? ` \u00b7 \u2193 ${below}` : ""].join("");
+  } else if (view === "ask") {
+    pane = askRows(search, W, c, T, wrap).map((line) => ({ line }));
+    label = "ask \u00b7 one-shot, no memory (Esc back)";
+    askTop = top = Math.max(0, Math.min(askTop, pane.length - avail));
+    if (pane.length > avail) label += ` \u00b7 PgUp/PgDn`;
+  } else {
+    pane = [{ line: "" }, ...helpRows(T).map((line) => ({ line }))];
+    label = "commands (Esc back)";
+  }
+  rows[ruleAt] = rule(label);
+  const shown = pane.slice(top, top + avail);
+  rowMeta = {}; resultRowMap = {}; lastAvail = avail;
+  shown.forEach((r, k) => { if (r.i != null) resultRowMap[rows.length + 1 + k] = r.i; });
+  rows.push(...shown.map((r) => r.line));
+  for (let k = shown.length; k < avail; k++) rows.push("");
+}
+
+// Switch the pane. Entering search puts the last query back in the input (the
+// search box); leaving it empties the input.
+function setView(v) {
+  if (v === view) return render();
+  if (view === "search" && input === search.query) { input = ""; ic = 0; }
+  view = v; confirm = null; note = "";
+  if (v === "search" && !input) { input = search.query; ic = graphemes(input).length; }
+  render();
+}
+function jumpToResult() {
+  const r = search.current();
+  if (!r || !api) return;
+  if (r.kind !== "agent" || !r.live) { note = r.kind === "room" ? "that's the room log" : `${r.name} is closed`; return render(); }
+  api.call("agent.focus", { agent: r.source }).then(() => { note = "\u2192 " + r.name; render(); }).catch((e) => { note = "\u2717 " + e.message; render(); });
 }
 
 async function loadRoom(r) {
@@ -478,7 +550,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; marked.clear(); cursorId = ""; listTop = 0; confirm = null; render(); loadRoom(room);
+  note = ""; scroll = 0; lastConvoLen = 0; marked.clear(); cursorId = ""; listTop = 0; confirm = null; search.reset(); render(); loadRoom(room);
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -525,10 +597,38 @@ function moveCursor(d) {
   confirm = null; render();
 }
 
+// Slash commands; true when the input was one ("//text" is not: it posts "/text").
+function command(text) {
+  const m = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text);
+  if (!m || text.startsWith("//")) return false;
+  const arg = (m[2] || "").trim();
+  input = ""; ic = 0; note = "";
+  switch (m[1].toLowerCase()) {
+    case "new": newAgent(arg); return true;
+    case "room": filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); return true;
+    case "stream": words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } return true;
+    case "search": setView("search"); if (search.mode === "ai" && arg) search.mode = "keyword"; if (arg) { input = arg; ic = graphemes(arg).length; search.run(arg, "keyword"); } return true;
+    case "ai": setView("search"); if (arg) { input = arg; ic = graphemes(arg).length; search.run(arg, "ai"); } else if (search.mode !== "ai") search.toggleMode(); return true;
+    case "ask": askTop = 0; setView("ask"); if (arg) search.askQuestion(arg); return true;
+    case "help": setView("help"); return true;
+  }
+  input = text; ic = graphemes(text).length; note = `\u2717 unknown command /${m[1]} \u00b7 /help lists them \u00b7 //text posts "/text"`; render();
+  return true;
+}
+
 async function send() {
-  const text = input.trim(); input = ""; ic = 0;
-  const cmd = /^\/new(?:\s+(.+))?$/.exec(text);
-  if (cmd) return newAgent(cmd[1]?.trim());
+  const raw = input.trim();
+  if (command(raw)) return;
+  if (view === "search") { // the input is the search box: never posts
+    if (!raw) return jumpToResult();
+    const r = search.ranFor;
+    if (r && r.q === raw && r.mode === search.mode && r.room === room && !search.busy) return jumpToResult();
+    return search.run(raw);
+  }
+  if (view === "ask") { input = ""; ic = 0; askTop = 0; return search.askQuestion(raw); }
+  if (view === "help") view = "stream";
+  input = ""; ic = 0;
+  const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !api) return render();
   if (!text) { // Enter on an empty line: jump to the agent under the cursor
     if (cursorId && api) api.call("agent.focus", { agent: cursorId }).catch((e) => { note = "✗ " + e.message; render(); });
@@ -556,14 +656,39 @@ async function send() {
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 // Input arrives in chunks (held keys, pastes): split into single keys first.
-const KEY = /\x1b[bf\x7f]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bfsS\x7f]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) draw(); } });
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x03") return quit();
+  if (d === "\t" && /^\/[^\s/]*$/.test(input)) { // complete a command
+    // One match: complete it (plus a space). Several: their common prefix; Tab
+    // again steps through the matches (/s \u2192 /stream \u2192 /search \u2192 /stream \u2026).
+    if (tabCycle && tabCycle.list[tabCycle.i] === input) { tabCycle.i = (tabCycle.i + 1) % tabCycle.list.length; input = tabCycle.list[tabCycle.i]; }
+    else {
+      const cs = completions(input); tabCycle = null;
+      if (cs.length === 1) input = cs[0] + " ";
+      else if (cs.length) { let p = cs[0]; while (!cs.every((x) => x.startsWith(p))) p = p.slice(0, -1); if (p.length > input.length) input = p; else { tabCycle = { list: cs, i: 0 }; input = cs[0]; } }
+    }
+    ic = graphemes(input).length;
+    return render();
+  }
   if (d === "\t") return cycle(1);
   if (d === "\x1b[Z") return cycle(-1);
   if (d === "\r") return send();
+  if (d === "\x1bs" || d === "\x1bS") return setView(view === "search" ? "stream" : "search"); // Alt+S
+  if (d === "\x1f") { if (view === "search") search.toggleMode(); return; } // Ctrl+/
+  if (view !== "stream") { // search / ask / help pane keys
+    if (d === "\x1b") { if (view === "search" && input === search.query) { input = ""; ic = 0; } view = "stream"; note = ""; return render(); }
+    if (view === "search") {
+      const mv = { "\x1b[A": -1, "\x1b[B": 1, "\x1b[5~": -5, "\x1b[6~": 5 }[d];
+      if (mv) return search.move(mv);
+    }
+    if (view === "ask") {
+      const mv = { "\x1b[A": -1, "\x1b[B": 1, "\x1b[5~": -Math.max(1, lastAvail - 2), "\x1b[6~": Math.max(1, lastAvail - 2) }[d];
+      if (mv) { askTop = Math.max(0, askTop + mv); return render(); }
+    }
+  }
   // Editing the message: ←/→ (Ctrl or Alt+B/F: by word), Home/End or Ctrl+E
   // while typing, Backspace / Delete at the cursor, Alt+Backspace word, Ctrl+U clear.
   {
@@ -584,7 +709,7 @@ function onKey(d) {
     if (d === "\x15") return edited([], 0); // Ctrl+U
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
-  if (d === "\x06") { filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${FILTER_LABEL[filter]}`; return render(); } // Ctrl+F
+  if (d === "\x06") { if (view !== "stream") setView("stream"); filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${FILTER_LABEL[filter]}`; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
@@ -603,6 +728,12 @@ function onKey(d) {
         sel.x1 = x; sel.y1 = y;
         if ((sel.dragging || sel.mode === "msg") && selRange()) { copy(selectedText()); continue; } // highlight stays until the next key or click
         sel = null;
+        if (view === "search" && resultRowMap[y] !== undefined) { // click a result; click it again (quickly) to jump
+          const i = resultRowMap[y], now = Date.now();
+          if (i === search.selected && now - lastClick.t < 400 && lastClick.id === "result") { lastClick = { id: "", t: 0, toggled: false }; jumpToResult(); continue; }
+          search.selected = i; lastClick = { id: "result", t: now, toggled: false };
+          continue;
+        }
         if (inList) {
           const a = hereAgents()[listTop + y - listRowY];
           if (!a) continue;
@@ -626,6 +757,8 @@ function onKey(d) {
       }
       if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
         if (inList) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); const here = hereAgents(); const i = here.findIndex((a) => a.id === cursorId); if (i < listTop) cursorId = here[listTop]?.id || cursorId; else if (i >= listTop + listRows) cursorId = here[listTop + listRows - 1]?.id || cursorId; }
+        else if (view === "search") search.move(b === 64 ? -1 : 1);
+        else if (view === "ask") askTop = Math.max(0, askTop + (b === 64 ? -3 : 3));
         else scroll += b === 64 ? 3 : -3;
       }
     }
@@ -634,7 +767,7 @@ function onKey(d) {
   if (d === "\x1b[A") return moveCursor(-1);
   if (d === "\x1b[B") return moveCursor(1);
   if (d === "\x1b") { marked.clear(); confirm = null; note = ""; return render(); } // Esc: unmark all
-  if (d === " " && !input) { if (cursorId) marked.has(cursorId) ? marked.delete(cursorId) : marked.add(cursorId); moveCursor(1); return; }
+  if (d === " " && !input && view === "stream") { if (cursorId) marked.has(cursorId) ? marked.delete(cursorId) : marked.add(cursorId); moveCursor(1); return; }
   if (d === "\x17") return act("close"); // Ctrl+W
   if (d === "\x0b") return act("kill");  // Ctrl+K
   if (d === "\x01") { const here = hereAgents(); if (marked.size === here.length) marked.clear(); else here.forEach((a) => marked.add(a.id)); return render(); } // Ctrl+A
