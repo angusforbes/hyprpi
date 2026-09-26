@@ -664,9 +664,13 @@ async function send() {
   }
   if (!api) return render();
   // Everyone marked: a room post (or @Name tokens: just them). Some marked: directly to them.
-  // Nobody marked: nothing to send to.
+  // Nobody marked: written in the room, delivered to no agent.
   const m0 = markedIds(), all0 = allMarked();
-  if (!all0 && !m0.size) { note = "no agents marked · Space / click marks one · Esc marks all"; input = text; ic = graphemes(text).length; return render(); }
+  if (!all0 && !m0.size) { // nobody marked: write it in the room, send it to no agent
+    try { await api.call("room.post", { room, text, as_human: true, via: "room-tui", deliver: false }); note = "written to the room · sent to nobody"; }
+    catch (e) { note = "✗ " + e.message; }
+    return render();
+  }
   let targets = all0 ? [] : [...m0], body = text;
   const at = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/);
   if (!targets.length && at) { targets = at[1].split(/[\s,]+/).filter((x) => x.length > 1).map((x) => x.slice(1)); body = at[2]; }

@@ -120,7 +120,7 @@ click on the cursor row) turns one off and on; Ctrl+A turns all off / all on; Es
 The marks filter the whole TUI:
 
 - **who you talk to:** all marked = a room post (as always); some = straight to them (the prompt
-  shows `C → Name ❯`); none = nothing is sent (`C → nobody ❯`);
+  shows `C → Name ❯`); none = written in the room but sent to no agent (`C → nobody ❯`; daemon `room.post` with `deliver: false`);
 - **the stream:** only the marked agents' posts and activity and messages to them, plus all of
   Angus's room posts (none marked = just Angus's posts);
 - **search and `/ask`:** the marked agents' conversations, room posts and activity, plus Angus's
