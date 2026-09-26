@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // MOCKUP: a terminal / tmux-style hyprpi room, for comparison with the
 // Quickshell room window (ui/RoomWindow.qml), which stays the real one.
-// Live data from the daemon. Typing + Enter posts to the room as Angus (same
+// Live data from the daemon. The room pane is a stream: messages plus agent activity
+// (tools, topics, talk between agents, finishes); Ctrl+F cycles all / messages / activity.
+// Typing + Enter posts to the room as Angus (same
 // as the room window). Agent list: ↑↓ or click = cursor · Enter on an empty
 // line = jump to it · Space / second click = mark (Enter then sends only to the
 // marked agents; Esc unmarks, Ctrl+A all) · Ctrl+W close · Ctrl+K kill (press
@@ -120,6 +122,11 @@ let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the 
 let cursorId = "", marked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
 const hereAgents = () => agents.filter((a) => a.room === room);
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
+// The room is a stream: messages plus agent activity (tools, topics, talk between agents,
+// finishes) from the daemon. Ctrl+F cycles what it shows.
+let activity = {}; // room -> events
+const FILTERS = ["all", "messages", "activity"];
+let filter = "all";
 let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
 
@@ -293,7 +300,28 @@ function draw() {
   // Each row: { line, msg (index into the room's messages), textX (1-based
   // column where message text starts), hard (last row of a paragraph) }.
   const convo = [];
-  msgs.forEach((m, mi) => {
+  // Stream items in time order: messages (mi = index into msgs, for selection) and activity.
+  const acts = filter === "messages" ? [] : (activity[room] || []);
+  const items = filter === "activity" ? [] : msgs.map((m, mi) => ({ ts: m.ts, m, mi }));
+  for (const e of acts) items.push({ ts: e.ts, e });
+  items.sort((x, y) => x.ts - y.ts);
+  let lastAct = null; // agent id of the previous activity row (group runs under one name)
+  const actGlyph = { tool: "›", topic: "◆", done: "✓", blocked: "×", talk: "→", demand: "?", reply: "↩", prompt: "»" };
+  items.forEach(({ m, mi, e }) => {
+    if (e) {
+      const au = e.agent || {};
+      const loud = e.kind === "talk" || e.kind === "demand" || e.kind === "reply" || e.kind === "prompt" || e.kind === "blocked";
+      const who = lastAct === au.id && !loud ? " ".repeat(Math.min(nameW, width(authorLabel(au)))) : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
+      if (lastAct === null && convo.length) convo.push({ line: "", msg: null });
+      const g = actGlyph[e.kind] || "·";
+      const body = e.kind === "topic" ? `topic: ${e.text}` : e.text;
+      const lead = `   ${fg(c, g)} ${who} `;
+      const ls = wrap(body, Math.max(10, W - width(lead) - 1));
+      ls.forEach((l, i) => convo.push({ line: i === 0 ? lead + (loud ? l : dim(l)) : " ".repeat(width(lead)) + (loud ? l : dim(l)), msg: null, act: true }));
+      lastAct = au.id;
+      return;
+    }
+    lastAct = null;
     const au = m.author || {};
     const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
       : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
@@ -310,9 +338,10 @@ function draw() {
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
-  rows[ruleAt] = rule(scroll > 0 ? `room · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : "room");
+  const streamLabel = filter === "all" ? "room + activity" : filter === "messages" ? "room · messages only" : "room · activity only";
+  rows[ruleAt] = rule(`${streamLabel} (^F)` + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
-  if (!convo.length) shown.push({ line: dim("  (no messages yet)"), msg: null });
+  if (!convo.length) shown.push({ line: dim(filter === "activity" ? "  (no activity yet)" : "  (no messages yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
   rowMeta = {}; convoMsgs = msgs;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
@@ -320,7 +349,7 @@ function draw() {
 
   // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
-  const hint = input ? "" : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ↑↓ agent · ⏎ jump · space mark · ^W close · ^K kill · ^N new · Tab room")));
+  const hint = input ? "" : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ↑↓ agent · ⏎ jump · space mark · ^F filter · ^W close · ^K kill · ^N new · Tab room")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -357,6 +386,7 @@ function draw() {
 async function loadRoom(r) {
   if (!api || !r) return;
   try { const res = await api.call("room.read", { room: r, tail: true, limit: 200 }); messages[r] = res.messages || []; } catch { /* keep old */ }
+  try { const res = await api.call("activity.read", { room: r, limit: 300 }); activity[r] = res.events || []; } catch { /* older daemon */ }
   render();
 }
 
@@ -378,6 +408,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
+        else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 600) t.splice(0, t.length - 500); if (data.room === room && filter !== "messages") render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
@@ -497,6 +528,7 @@ function onKey(d) {
     if (d === "\x15") return edited([], 0); // Ctrl+U
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
+  if (d === "\x06") { filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${filter === "all" ? "messages + activity" : filter + " only"}`; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {

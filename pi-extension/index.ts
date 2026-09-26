@@ -178,10 +178,70 @@ export default function hyprpi(pi: ExtensionAPI) {
       (m?.role === "toolResult" && m?.isError && /Operation aborted/.test(JSON.stringify(m?.content ?? ""))));
   });
   pi.on("agent_settled", async (_e: any, ctx: any) => {
+    flushActivity();
     ctxRef = ctx; watchTyping(ctx);
     if (aborted) { aborted = false; unseen = false; update({ status: "idle" }); return; }
     unseen = true; update({ status: "done" });
   });
+  // ---- activity: one short line per tool call for the room's stream (never anyone's context).
+  // Batched: sent 2 s after the last call (at most every 6 s while busy); consecutive calls with
+  // the same verb merge ("reading a.ts, b.ts +3"). Room/talk tools are logged by the daemon itself.
+  const SKIP = new Set(["room_read", "room_post", "room_reply", "talk", "demand", "talk_reply"]);
+  const cwdOf = () => String(ctxRef?.cwd || process.cwd());
+  const short = (p: any) => {
+    let t = String(p ?? "").trim();
+    const cwd = cwdOf(), home = process.env.HOME || "";
+    if (t.startsWith(cwd + "/")) t = t.slice(cwd.length + 1);
+    else if (home && t.startsWith(home + "/")) t = "~" + t.slice(home.length);
+    return t.length > 60 ? "…" + t.slice(-59) : t;
+  };
+  const clip = (t: any, n = 70) => { const x = String(t ?? "").replace(/\s+/g, " ").trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
+  function describe(tool: string, input: any): { verb: string; obj: string } | null {
+    const i = input || {};
+    const t = tool.toLowerCase();
+    if (SKIP.has(t)) return null;
+    if (t === "bash") {
+      const cmd = String(i.command || "").split("\n")[0].replace(/^\s*cd\s+\S+\s*&&\s*/, "");
+      return { verb: "$", obj: clip(cmd, 80) };
+    }
+    if (t === "read") return { verb: "reading", obj: short(i.path) };
+    if (t === "edit") return { verb: "editing", obj: short(i.path) };
+    if (t === "write") return { verb: "writing", obj: short(i.path) };
+    if (t === "grep" || t === "find" || t === "ls") return { verb: "searching", obj: clip(i.pattern || i.path || "", 50) };
+    if (t === "web_search") return { verb: "web search", obj: clip(i.query || (Array.isArray(i.queries) ? i.queries[0] : ""), 60) };
+    if (t === "fetch_content") return { verb: "fetching", obj: clip(String(i.url || (Array.isArray(i.urls) ? i.urls[0] : "")).replace(/^https?:\/\//, ""), 60) };
+    if (t === "agent" || t === "subagent") return { verb: "delegating", obj: clip(i.description || i.name || i.task || "", 60) };
+    const first = Object.values(i).find((v) => typeof v === "string" && v.trim());
+    return { verb: tool, obj: first ? clip(first, 50) : "" };
+  }
+  let actQueue: { verb: string; obj: string }[] = [];
+  let actTimer: ReturnType<typeof setTimeout> | null = null, actFirst = 0;
+  function flushActivity() {
+    if (actTimer) { clearTimeout(actTimer); actTimer = null; }
+    const q = actQueue; actQueue = []; actFirst = 0;
+    if (!q.length || !conn || conn.closed) return;
+    const lines: string[] = [];
+    for (let k = 0; k < q.length;) {
+      let j = k; const objs: string[] = [];
+      while (j < q.length && q[j].verb === q[k].verb && q[k].verb !== "$") { if (q[j].obj && !objs.includes(q[j].obj)) objs.push(q[j].obj); j++; }
+      if (j === k) { lines.push(`$ ${q[k].obj}`); k++; continue; }
+      lines.push(`${q[k].verb} ${objs.slice(0, 2).join(", ")}${objs.length > 2 ? ` +${objs.length - 2}` : ""}`.trim());
+      k = j;
+    }
+    conn.call("agent.activity", { items: lines.slice(-10).map((text) => ({ text })) }).catch(() => {});
+  }
+  pi.on("tool_call", async (e: any) => {
+    try {
+      const d = describe(String(e?.toolName || ""), e?.input);
+      if (!d) return;
+      actQueue.push(d);
+      if (!actFirst) actFirst = Date.now();
+      if (actTimer) clearTimeout(actTimer);
+      actTimer = setTimeout(flushActivity, Date.now() - actFirst > 6000 ? 0 : 2000);
+    } catch { /* never block a tool */ }
+    return undefined;
+  });
+
   pi.on("model_select", async (e: any) => update({ model: e?.model?.id || "" }));
   pi.on("thinking_level_select", async () => update({ thinking: safe(() => pi.getThinkingLevel()) || "" }));
   pi.on("session_info_changed", async (e: any) => {

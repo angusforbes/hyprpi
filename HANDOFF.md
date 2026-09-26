@@ -140,3 +140,27 @@ Then use `kitty @ --to unix:/tmp/kt-test send-text|send-key|get-text --extent sc
 - A toggle for the TUIs (close an existing room TUI on this workspace instead of opening another).
 - Move the TUIs out of `mockups/` and give them `hyprpi tui` / `hyprpi search-tui` commands.
 - Everything in Ghost's list above (choosing a search result, restarting agents, a master room list).
+
+---
+
+# Quartermaster's additions (2026-09-26)
+
+- **Activity stream.** The room TUI's room pane is now a stream: messages plus agent activity,
+  Ctrl+F cycles all / messages / activity. Activity is never part of any agent's context.
+  - Daemon (`lib/daemon.mjs`): `recordActivity` appends to `~/.local/state/hyprpi/activity/<room>.jsonl`
+    (schema v1, documented in README "Activity stream") and broadcasts `activity` to UI connections;
+    methods `agent.activity` (from agents) and `activity.read`. It records topic changes, done/blocked,
+    talk/demand/talk_reply between agents and Angus's direct prompts itself.
+  - Pi extension: `tool_call` → one short line per tool call, batched (2 s after the last call, at most
+    every 6 s; same-verb runs merge), flushed on agent_settled. Only agents started or reloaded after
+    this change send tool lines.
+  - Config: `activity` (default true), `activityTools` (default true).
+  - Sankey (omarchy-data-visualization dashboard) reads the JSONL; keep the schema stable (add kinds,
+    don't rename fields; bump `v` for breaking changes).
+- **Kitty terminal helpers** (`terminal-helpers/kitty/`): agent windows load your kitty.conf then
+  `pi.conf` (Ctrl+click links, SUPER+C / Ctrl+Shift+A for Pi, Shift+Enter, select-to-copy);
+  `links.conf` is also included by `~/.config/kitty/kitty.conf`. `terminalHelpers: false` skips it.
+- **`hypr/hyprpi.lua`** holds the keys, the window rule and click-to-mark-seen (symlinked into ~/.config/hypr).
+- Restarting the daemon after lib changes: `hyprpi ensure` (not every command checks code mtime).
+- Not done: drag-select on activity rows; activity in the QML room window; a per-agent "now doing"
+  line in the agent list.

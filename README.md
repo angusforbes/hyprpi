@@ -91,6 +91,37 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
   `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.
 
+## Activity stream
+
+The room TUI shows each room as a **stream**: its messages plus what its agents are doing.
+Ctrl+F cycles all / messages only / activity only. Activity is a history for you (and tools
+like dashboards); it is never part of any agent's context.
+
+Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, or `$HYPRPI_STATE`):
+
+- `rooms/<room>.jsonl` — messages: `{ seq, ts, room, author: { kind: "human"|"agent", id?, name, icon?, color?, markup? }, text, reply_to? }`
+- `activity/<room>.jsonl` — activity, schema version 1:
+
+```json
+{ "v": 1, "ts": 1790000000000, "room": "C", "kind": "tool", "text": "editing lib/daemon.mjs",
+  "agent": { "id": "hp-…", "name": "Quartermaster", "icon": "🗃️", "color": "#e0af68", "markup": "" },
+  "to": ["Sankey"] }
+```
+
+| `kind` | `text` | Source |
+|---|---|---|
+| `tool` | one line per tool call, batched ("reading a.ts, b.ts +3", "$ git push", "web search: …") | the agent's Pi extension |
+| `topic` | the new topic label | topic labelling (on the ding) |
+| `done` / `blocked` | "finished" / "needs you" | status changes |
+| `talk` / `demand` | "to Name: gist" / "asks Name: gist" (`to`: recipients) | `talk` / `demand` between agents |
+| `reply` | "replies to Name: gist" (`to`: the asker) | `talk_reply` |
+| `prompt` | "Angus → Name: gist" | a direct prompt from the room TUI / `hyprpi send` |
+
+`ts` is milliseconds since the epoch; texts are cut to 200 characters. New kinds may be added;
+readers should ignore kinds they don't know. The daemon method `activity.read { room, limit }`
+returns the recent tail; UI connections also get each new event live as `activity`.
+Config: `"activity": false` turns the stream off; `"activityTools": false` keeps it but drops tool lines.
+
 ## Config — `~/.config/hyprpi/config.json`
 
 ```json
