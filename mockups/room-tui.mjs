@@ -156,7 +156,14 @@ let filter = "topics"; // default view
 let view = "stream", words = []; // words: /stream WORDS live filter (lower case)
 let resultRowMap = {}; // screen row -> search result index (clicks)
 let tabCycle = null; // Tab through several matching commands
-const search = createSearch({ api: () => api, room: () => room, onChange: () => render() });
+// Marked agents (▸ in the agent list) filter everything: who messages go to, whose history
+// search and /ask read, and whose rows the stream shows. Esc clears.
+const search = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: () => [...marked] });
+function onlyLabel() {
+  if (!marked.size) return "";
+  const names = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
+  return ` · only ▸ ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}`;
+}
 const italic = (s) => `${ESC}3m${s}${ESC}23m`;
 let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
@@ -283,7 +290,7 @@ function draw() {
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
   listTop = Math.max(0, Math.min(listTop, here.length - listRows));
   const more = here.length - listRows;
-  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (marked.size ? ` · ${marked.size} marked` : "")));
+  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (marked.size ? ` · ${marked.size} marked · filters all (Esc clears)` : "")));
   listRowY = rows.length + 1; // 1-based screen row of the first agent row
   // "special:reprieve" -> "reprieve": only the part after the last ":".
   const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
@@ -340,6 +347,15 @@ function draw() {
   const items = mode.msgs ? msgs.map((m, mi) => ({ ts: m.ts, m, mi })) : [];
   for (const e of acts) items.push({ ts: e.ts, e });
   items.sort((x, y) => x.ts - y.ts);
+  // Marked agents: only their rows (their posts and activity, direct messages to or from them),
+  // plus the posts of Angus's that one of them answered (for context).
+  if (marked.size) {
+    const names = new Set([...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean));
+    const answered = new Set(msgs.filter((m) => marked.has(m.author?.id) && m.reply_to).map((m) => m.reply_to));
+    const keep = ({ m, e }) => m ? (marked.has(m.author?.id) || (m.author?.kind === "human" && answered.has(m.seq)))
+      : marked.has(e.agent?.id) || (Array.isArray(e.to) && e.to.some((n) => names.has(n)));
+    for (let k = items.length - 1; k >= 0; k--) if (!keep(items[k])) items.splice(k, 1);
+  }
   // /stream WORDS: only rows containing every word (text, author, recipients).
   if (words.length) {
     const hay = ({ m, e }) => (m ? `${m.text} ${authorLabel(m.author)}` : `${e.text} ${e.agent?.name || ""} ${(Array.isArray(e.to) ? e.to : []).join(" ")}`).toLowerCase();
@@ -416,7 +432,7 @@ function draw() {
   lastConvoLen = convo.length; lastAvail = avail;
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   const streamLabel = FILTER_LABEL[filter];
-  rows[ruleAt] = rule(`${streamLabel} (^F)` + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
+  rows[ruleAt] = rule(`${streamLabel} (^F)` + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim(words.length ? `  (nothing matches "${words.join(" ")}" · /stream alone clears)` : MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
@@ -470,7 +486,7 @@ function drawPane(rows, ruleAt, avail, W, c, rule) {
   const T = { width, clip, dim, bold, italic, hexFg, rgb, theme };
   let pane, label, top = 0;
   if (view === "search") {
-    pane = searchRows(search, W, c, T); label = searchLabel(search);
+    pane = searchRows(search, W, c, T); label = searchLabel(search) + onlyLabel();
     // Keep the selected result in view.
     const s0 = pane.findIndex((r) => r.i === search.selected), s1 = pane.findLastIndex((r) => r.i === search.selected);
     if (s0 >= 0) { if (s0 < search.top) search.top = s0; if (s1 >= search.top + avail) search.top = s1 - avail + 1; }
@@ -480,7 +496,7 @@ function drawPane(rows, ruleAt, avail, W, c, rule) {
     if (above || below) label += [above ? ` \u00b7 \u2191 ${above}` : "", below ? ` \u00b7 \u2193 ${below}` : ""].join("");
   } else if (view === "ask") {
     pane = askRows(search, W, c, T, wrap).map((line) => ({ line }));
-    label = "ask \u00b7 one-shot, no memory (Esc back)";
+    label = "ask \u00b7 one-shot, no memory (Esc back)" + onlyLabel();
     askTop = top = Math.max(0, Math.min(askTop, pane.length - avail));
     if (pane.length > avail) label += ` \u00b7 PgUp/PgDn`;
   } else {

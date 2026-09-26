@@ -113,6 +113,19 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
   `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.
 
+## Marked agents filter everything (room TUI)
+
+Mark agents in the agent list (Space, or click the cursor row again; Ctrl+A all; Esc clears).
+While any are marked, they filter the whole TUI:
+
+- **who you talk to:** what you type goes to them, not the room (the prompt shows `C → Name ❯`);
+- **the stream:** only their posts and activity, messages to or from them, and the posts of yours
+  they answered;
+- **search and `/ask`:** only their conversations, room posts and activity (daemon `search` / `ask`
+  take `agents: [ids]`).
+
+The headings show `only ▸ Name, …`.
+
 ## Activity stream
 
 The room TUI shows each room as a **stream**: its messages plus what its agents are doing.
