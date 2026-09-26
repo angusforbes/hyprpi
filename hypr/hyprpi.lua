@@ -8,10 +8,10 @@ local HYPRPI_BIN = (os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/
 -- Keys.
 --   SUPER + A          new Pi agent in its own window on the current workspace (joins that world's room)
 --   SUPER + ALT + A    room TUI (kitty) for the current world
---   SUPER + ALT + /    search window for the current world's room
+--   SUPER + ALT + /    search TUI (kitty) for the current world's room
 o.bind("SUPER + A", "Pi agent (hyprpi)", HYPRPI_BIN .. " new")
 o.bind("SUPER + ALT + A", "hyprpi room TUI (current world)", "/home/agf/Work/hyprpi/mockups/room-tui")
-o.bind("SUPER + ALT + slash", "hyprpi search (current world)", HYPRPI_BIN .. " search --toggle")
+o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", "/home/agf/Work/hyprpi/mockups/search-tui")
 
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send
 -- Ctrl+Insert/Shift+Insert instead of Ctrl+C (which Pi treats as clear/interrupt).
