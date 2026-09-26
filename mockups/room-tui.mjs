@@ -377,15 +377,15 @@ function draw() {
   const styledName = (n) => {
     if (n === "Angus") return fg(c, bold("Angus"));
     const x = agentByName(n);
-    return x ? (x.icon ? x.icon : nameFg(x.name, x.color, x.display || n)) : bold(n);
+    return x ? (x.icon ? x.icon + " " : "") + nameFg(x.name, x.color, x.display || n) : bold(n);
   };
   const afterColon = (t) => { const i = String(t).indexOf(": "); return i >= 0 ? String(t).slice(i + 2) : String(t); };
   let lastAct = null;
   items.forEach(({ m, mi, e }) => {
     if (e) {
       const au = e.agent || {};
-      // In the stream an agent with an icon shows as just its icon (saves room); others by name.
-      const sender = au.icon ? au.icon : nameFg(au.name, au.color, au.name || "agent");
+      // In the stream: icon + full name (only the prompt line uses icons alone).
+      const sender = (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
       const tos = (Array.isArray(e.to) ? e.to : []).map(styledName).join(", ");
       // Direct messages (agent to agent(s), Angus to an agent): their own block, a header
       // "🗃️ Quartermaster to 📊 Sankey, …" with every name in its colour, then the message
@@ -428,8 +428,7 @@ function draw() {
     lastAct = null;
     const au = m.author || {};
     const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
-      : au.icon ? au.icon // icon alone saves room; the agent list above has the names
-      : au.markup && width(authorLabel(au)) <= nameW ? bold(markupFg(au.markup, au.color))
+      : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
       : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
     const body = [];
     for (const para of String(m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => body.push({ l, hard: i === ls.length - 1 })); }
