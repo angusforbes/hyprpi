@@ -95,8 +95,8 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 
 The room TUI shows each room as a **stream**: its messages plus what its agents are doing.
 Ctrl+F cycles the view: **room · all activity** (room messages and agent-to-agent messages) ·
-**stream · all activity** (all activity, no room messages) · **room + stream** (everything, the
-default) · **room + stream · topics** (everything but tool use). Finishes and "needs you" are
+**stream · all activity** (all activity, no room messages) · **room + stream** (everything) ·
+**room + stream · topics only** (room messages and topic changes; the default). Finishes and "needs you" are
 logged but not shown: the agent list's ✓ and × show them. Activity is a history for you (and tools
 like dashboards); it is never part of any agent's context.
 

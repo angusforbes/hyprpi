@@ -139,12 +139,12 @@ const MODES = {
   room:   { label: "room · all activity", msgs: true, act: (e) => DIRECT.has(e.kind) },        // room messages + agent-to-agent
   stream: { label: "stream · all activity", msgs: false, act: () => true },                      // activity, no room messages
   all:    { label: "room + stream", msgs: true, act: () => true },                               // everything
-  topics: { label: "room + stream · topics", msgs: true, act: (e) => e.kind !== "tool" },        // everything but tool use
+  topics: { label: "room + stream · topics only", msgs: true, act: (e) => e.kind === "topic" },  // room messages + topic changes
 };
 const FILTERS = ["room", "stream", "all", "topics"];
 const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
 const HIDDEN = new Set(["done", "blocked"]);
-let filter = "all";
+let filter = "topics"; // default view
 let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
 
