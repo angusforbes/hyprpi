@@ -7,7 +7,7 @@
 // Typing + Enter posts to the room as Angus (same
 // as the room window). Agent list: ↑↓ or click = cursor · Enter on an empty
 // line = jump to it · Space / second click = mark (Enter then sends only to the
-// marked agents; Esc unmarks, Ctrl+A all) · Ctrl+W close · Ctrl+K kill (press
+// marked agents; every agent starts marked, Esc marks all again, Ctrl+A all on/off) · Ctrl+W close · Ctrl+K kill (press
 // twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
 // the conversation · drag selects + copies message text, Shift+click/drag whole messages · Ctrl+C quits.
@@ -134,7 +134,9 @@ const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
 let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the newest
 // Agent list: cursor (by id), marked ids (multi-select recipients), list scroll,
 // and where the rows landed on screen (for mouse clicks).
-let cursorId = "", marked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
+// Marks: every agent is marked (▸) unless you turned it off; we keep the OFF set so
+// agents that join later start marked. markedIds() = the marked agents here.
+let cursorId = "", unmarked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
 const hereAgents = () => agents.filter((a) => a.room === room);
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The room is a stream: messages plus agent activity (tools, topics, talk between agents,
@@ -158,10 +160,17 @@ let resultRowMap = {}; // screen row -> search result index (clicks)
 let tabCycle = null; // Tab through several matching commands
 // Marked agents (▸ in the agent list) filter everything: who messages go to, whose history
 // search and /ask read, and whose rows the stream shows. Esc clears.
-const search = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: () => [...marked] });
+const markedIds = () => new Set(hereAgents().filter((a) => !unmarked.has(a.id)).map((a) => a.id));
+const allMarked = () => hereAgents().every((a) => !unmarked.has(a.id));
+const toggleMark = (id) => { if (!id) return; unmarked.has(id) ? unmarked.delete(id) : unmarked.add(id); };
+// Search / ask scope: all marked = the whole room (closed agents too); none = only Angus's posts.
+const search = createSearch({ api: () => api, room: () => room, onChange: () => render(),
+  only: () => allMarked() ? [] : markedIds().size ? [...markedIds()] : ["-none-"] });
 function onlyLabel() {
-  if (!marked.size) return "";
-  const names = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
+  if (allMarked()) return "";
+  const ids = markedIds();
+  if (!ids.size) return " · no agents ▸ (Esc: all)";
+  const names = [...ids].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
   return ` · only ▸ ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}`;
 }
 const italic = (s) => `${ESC}3m${s}${ESC}23m`;
@@ -282,7 +291,7 @@ function draw() {
 
   // Agents pane: scrolls when there are more agents than ~40% of the height.
   if (!here.find((a) => a.id === cursorId)) cursorId = here[0]?.id || "";
-  for (const id of marked) if (!here.find((a) => a.id === id)) marked.delete(id);
+  const marked = markedIds(), everyone = marked.size === here.length;
   const cur = Math.max(0, here.findIndex((a) => a.id === cursorId));
   const maxList = Math.max(3, Math.floor((H - 6) * 0.4));
   listRows = Math.min(here.length, maxList);
@@ -290,7 +299,7 @@ function draw() {
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
   listTop = Math.max(0, Math.min(listTop, here.length - listRows));
   const more = here.length - listRows;
-  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (marked.size ? ` · ${marked.size} marked · filters all (Esc clears)` : "")));
+  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (everyone ? "" : ` · ${marked.size}/${here.length} ▸ · Esc all`)));
   listRowY = rows.length + 1; // 1-based screen row of the first agent row
   // "special:reprieve" -> "reprieve": only the part after the last ":".
   const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
@@ -328,9 +337,9 @@ function draw() {
   const ruleAt = rows.length; rows.push(""); // filled in once scroll is clamped below
   // Input: a long message wraps onto further lines (all shown), continuation
   // lines indented under the text.
-  const to = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
+  const to = everyone ? [] : [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
   const prompt = fg(c, bold(view === "search" ? `${search.mode === "ai" ? "✦" : "⌕"} ${room} ❯ ` : view === "ask" ? `? ${room} ❯ `
-    : to.length ? `${room} → ${cut(to.join(", "), Math.max(10, Math.floor(W / 3)))} ❯ ` : `${room} ❯ `));
+    : to.length ? `${room} → ${cut(to.join(", "), Math.max(10, Math.floor(W / 3)))} ❯ ` : !everyone && here.length ? `${room} → nobody ❯ ` : `${room} ❯ `));
   const promptW = width(prompt), inputLines = hardWrap(input, Math.max(10, W - promptW));
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
@@ -347,13 +356,12 @@ function draw() {
   const items = mode.msgs ? msgs.map((m, mi) => ({ ts: m.ts, m, mi })) : [];
   for (const e of acts) items.push({ ts: e.ts, e });
   items.sort((x, y) => x.ts - y.ts);
-  // Marked agents: only their rows (their posts and activity, direct messages to or from them),
-  // plus the posts of Angus's that one of them answered (for context).
-  if (marked.size) {
+  // Not everyone marked: only the marked agents' rows (their posts and activity, direct
+  // messages to or from them) plus all of Angus's room posts. Nobody marked = just Angus.
+  if (!everyone) {
     const names = new Set([...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean));
-    const answered = new Set(msgs.filter((m) => marked.has(m.author?.id) && m.reply_to).map((m) => m.reply_to));
-    const keep = ({ m, e }) => m ? (marked.has(m.author?.id) || (m.author?.kind === "human" && answered.has(m.seq)))
-      : marked.has(e.agent?.id) || (Array.isArray(e.to) && e.to.some((n) => names.has(n)));
+    const keep = ({ m, e }) => m ? (m.author?.kind === "human" || marked.has(m.author?.id))
+      : marked.has(e.agent?.id) || (e.kind === "prompt" ? false : Array.isArray(e.to) && e.to.some((n) => names.has(n)));
     for (let k = items.length - 1; k >= 0; k--) if (!keep(items[k])) items.splice(k, 1);
   }
   // /stream WORDS: only rows containing every word (text, author, recipients).
@@ -367,14 +375,15 @@ function draw() {
   const styledName = (n) => {
     if (n === "Angus") return fg(c, bold("Angus"));
     const x = agentByName(n);
-    return x ? (x.icon ? x.icon + " " : "") + nameFg(x.name, x.color, x.display || n) : bold(n);
+    return x ? (x.icon ? x.icon : nameFg(x.name, x.color, x.display || n)) : bold(n);
   };
   const afterColon = (t) => { const i = String(t).indexOf(": "); return i >= 0 ? String(t).slice(i + 2) : String(t); };
   let lastAct = null;
   items.forEach(({ m, mi, e }) => {
     if (e) {
       const au = e.agent || {};
-      const sender = (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
+      // In the stream an agent with an icon shows as just its icon (saves room); others by name.
+      const sender = au.icon ? au.icon : nameFg(au.name, au.color, au.name || "agent");
       const tos = (Array.isArray(e.to) ? e.to : []).map(styledName).join(", ");
       // Direct messages (agent to agent(s), Angus to an agent): their own block, a header
       // "🗃️ Quartermaster to 📊 Sankey, …" with every name in its colour, then the message
@@ -417,7 +426,8 @@ function draw() {
     lastAct = null;
     const au = m.author || {};
     const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
-      : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
+      : au.icon ? au.icon // icon alone saves room; the agent list above has the names
+      : au.markup && width(authorLabel(au)) <= nameW ? bold(markupFg(au.markup, au.color))
       : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
     const body = [];
     for (const para of String(m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => body.push({ l, hard: i === ls.length - 1 })); }
@@ -566,7 +576,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; marked.clear(); cursorId = ""; listTop = 0; confirm = null; search.reset(); render(); loadRoom(room);
+  note = ""; scroll = 0; lastConvoLen = 0; unmarked.clear(); cursorId = ""; listTop = 0; confirm = null; search.reset(); render(); loadRoom(room);
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -651,8 +661,11 @@ async function send() {
     return render();
   }
   if (!api) return render();
-  // Marked agents (space), or leading @Name tokens, get it directly (not the room).
-  let targets = [...marked], body = text;
+  // Everyone marked: a room post (or @Name tokens: just them). Some marked: directly to them.
+  // Nobody marked: nothing to send to.
+  const m0 = markedIds(), all0 = allMarked();
+  if (!all0 && !m0.size) { note = "no agents marked · Space / click marks one · Esc marks all"; input = text; ic = graphemes(text).length; return render(); }
+  let targets = all0 ? [] : [...m0], body = text;
   const at = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/);
   if (!targets.length && at) { targets = at[1].split(/[\s,]+/).filter((x) => x.length > 1).map((x) => x.slice(1)); body = at[2]; }
   if (targets.length) {
@@ -757,7 +770,7 @@ function onKey(d) {
           const now = Date.now();
           if (lastClick.id === a.id && now - lastClick.t < 400) {
             // Double-click: copy the agent's name (and undo the mark the first click toggled).
-            if (lastClick.toggled) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id);
+            if (lastClick.toggled) toggleMark(a.id);
             copy(a.display);
             const nx = 4 + (a.icon ? width(a.icon) + 1 : 0);
             sel = { x0: nx, y0: y, x1: nx + width(a.display) - 1, y1: y, dragging: true, mode: "plain" }; // show what was copied
@@ -766,7 +779,7 @@ function onKey(d) {
           }
           // Click: cursor there; click the cursor row again: mark / unmark.
           const toggled = a.id === cursorId;
-          if (toggled) marked.has(a.id) ? marked.delete(a.id) : marked.add(a.id);
+          if (toggled) toggleMark(a.id);
           cursorId = a.id; confirm = null;
           lastClick = { id: a.id, t: now, toggled };
         }
@@ -783,11 +796,11 @@ function onKey(d) {
   }
   if (d === "\x1b[A") return moveCursor(-1);
   if (d === "\x1b[B") return moveCursor(1);
-  if (d === "\x1b") { marked.clear(); confirm = null; note = ""; return render(); } // Esc: unmark all
-  if (d === " " && !input && view === "stream") { if (cursorId) marked.has(cursorId) ? marked.delete(cursorId) : marked.add(cursorId); moveCursor(1); return; }
+  if (d === "\x1b") { unmarked.clear(); confirm = null; note = ""; return render(); } // Esc: mark all again
+  if (d === " " && !input && view === "stream") { toggleMark(cursorId); moveCursor(1); return; }
   if (d === "\x17") return act("close"); // Ctrl+W
   if (d === "\x0b") return act("kill");  // Ctrl+K
-  if (d === "\x01") { const here = hereAgents(); if (marked.size === here.length) marked.clear(); else here.forEach((a) => marked.add(a.id)); return render(); } // Ctrl+A
+  if (d === "\x01") { const here = hereAgents(); if (allMarked()) here.forEach((a) => unmarked.add(a.id)); else unmarked.clear(); return render(); } // Ctrl+A
   const page = Math.max(1, lastAvail - 2);
   const keys = { "\x1b[1;2A": 1, "\x1b[1;2B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[H": Infinity, "\x1b[1~": Infinity, "\x1b[F": -Infinity, "\x1b[4~": -Infinity };
   if (d in keys) { scroll = keys[d] === Infinity ? 1e9 : keys[d] === -Infinity ? 0 : scroll + keys[d]; if (scroll < 0) scroll = 0; return render(); }

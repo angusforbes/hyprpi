@@ -115,16 +115,19 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 
 ## Marked agents filter everything (room TUI)
 
-Mark agents in the agent list (Space, or click the cursor row again; Ctrl+A all; Esc clears).
-While any are marked, they filter the whole TUI:
+Every agent in the list starts **marked** (▸), including ones that join later. ↑↓ + Space (or a
+click on the cursor row) turns one off and on; Ctrl+A turns all off / all on; Esc marks all again.
+The marks filter the whole TUI:
 
-- **who you talk to:** what you type goes to them, not the room (the prompt shows `C → Name ❯`);
-- **the stream:** only their posts and activity, messages to or from them, and the posts of yours
-  they answered;
-- **search and `/ask`:** only their conversations, room posts and activity (daemon `search` / `ask`
-  take `agents: [ids]`).
+- **who you talk to:** all marked = a room post (as always); some = straight to them (the prompt
+  shows `C → Name ❯`); none = nothing is sent (`C → nobody ❯`);
+- **the stream:** only the marked agents' posts and activity and messages to them, plus all of
+  Angus's room posts (none marked = just Angus's posts);
+- **search and `/ask`:** the marked agents' conversations, room posts and activity, plus Angus's
+  room posts (daemon `search` / `ask` take `agents: [ids]`).
 
-The headings show `only ▸ Name, …`.
+Headings show `2/3 ▸` and `only ▸ Name, …`. In the stream, agents with an icon appear as just
+their icon (the list above has the names).
 
 ## Activity stream
 
