@@ -363,8 +363,12 @@ function draw() {
     // Topic, model and the dot separators in the normal text colour (same as message text).
     const dot = " · ";
     const rest = (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    if (closing.has(a.id)) { rows.push(dim(`${strip(sel)}${mark(a)} ${strip(styled)} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
+  // Agents being opened (/new, Ctrl+N): a placeholder until the daemon lists them.
+  pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
+  for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${home(p.cwd)} …`));
 
   // Conversation pane: fill what's left, newest at the bottom.
   convoY = rows.length + 2;
@@ -587,8 +591,17 @@ async function loadRoom(r) {
 }
 
 let lastFocusedId = "";
+// Feedback before the daemon confirms: agents being closed / killed (id -> kind)
+// and agents being opened ({ cwd, t, known: ids that existed then }).
+const closing = new Map();
+let pendingNew = [];
 function applyList(r) {
   agents = r.agents || []; rooms = r.rooms || [];
+  for (const id of closing.keys()) if (!agents.find((a) => a.id === id)) closing.delete(id);
+  for (const a of agents) { // each newly listed agent replaces one placeholder
+    const i = pendingNew.findIndex((p) => !p.known.has(a.id));
+    if (i >= 0) { pendingNew.splice(i, 1); for (const p of pendingNew) p.known.add(a.id); }
+  }
   // Focusing an agent's window moves the list cursor to it (and scrolls it into view).
   const f = agents.find((a) => a.focused);
   if (f && f.id !== lastFocusedId && f.room === (room || r.active_room)) cursorId = f.id;
@@ -633,7 +646,9 @@ function newAgent(dir) {
   if (!fs.existsSync(cwd)) { note = "✗ no such folder: " + cwd; return render(); }
   const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
   spawn(new URL("../bin/hyprpi", import.meta.url).pathname, ["new", "--cwd", cwd], { detached: true, stdio: "ignore", env }).unref();
-  note = "opening a new agent in " + home(cwd) + " …"; render();
+  pendingNew.push({ cwd, t: Date.now(), known: new Set(agents.map((a) => a.id)) });
+  setTimeout(render, 30500); // drop the placeholder if the agent never shows up
+  note = ""; render();
 }
 
 // Close (window close: Pi exits normally) or kill (SIGTERM, then SIGKILL) the
@@ -648,6 +663,8 @@ function act(kind) {
     return render();
   }
   confirm = null;
+  closing.set(a.id, kind);
+  setTimeout(() => { if (closing.delete(a.id)) render(); }, 10000); // never stuck on "closing…"
   if (kind === "close") {
     if (!a.address) { note = "✗ no window for " + a.display; return render(); }
     hypr.closeWindow(a.address).then(() => { note = "closed " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
