@@ -6,7 +6,7 @@
 // room · all activity / stream · all activity / room + stream / room + stream · topics.
 // Typing + Enter posts to the room as Angus (same
 // as the room window). Agent list: ↑↓ or click = cursor · Enter on an empty
-// line = jump to it · Space / second click = mark (Enter then sends only to the
+// line = jump to it · Shift+Space or Ctrl+Space / second click = mark (Enter then sends only to the
 // marked agents; every agent starts marked, Esc marks all again, Ctrl+A all on/off) · Ctrl+W close · Ctrl+K kill (press
 // twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
 // "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
@@ -502,7 +502,7 @@ function draw() {
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ keyword · Esc back" : "words, ⏎ search · ⏎ again jumps · ⇧↑↓ result · ↑↓ agent · ^/ ai · Esc back")
-    : view === "ask" ? dim("a question about this room, ⏎ ask · ⇧↑↓ scroll · ↑↓ agent · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⇧↑↓ scroll · ⏎ jump · space/⇧space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
+    : view === "ask" ? dim("a question about this room, ⏎ ask · ⇧↑↓ scroll · ↑↓ agent · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · / commands · ↑↓ agent · ⇧↑↓ scroll · ⏎ jump · ⇧space mark · ^F filter · Alt+S search · ^W close · ^K kill · ^N new · Tab room")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -874,7 +874,6 @@ function onKey(d) {
   if (d === "\x1b[A") return moveCursor(-1);
   if (d === "\x1b[B") return moveCursor(1);
   if (d === "\x1b") { unmarked.clear(); confirm = null; note = ""; return render(); } // Esc: mark all again
-  if (d === " " && !input && view === "stream") { toggleMark(cursorId); moveCursor(1); return; }
   if (d === "\x17") return act("close"); // Ctrl+W
   if (d === "\x0b") return act("kill");  // Ctrl+K
   if (d === "\x01") { const here = hereAgents(); if (allMarked()) here.forEach((a) => unmarked.add(a.id)); else unmarked.clear(); return render(); } // Ctrl+A
