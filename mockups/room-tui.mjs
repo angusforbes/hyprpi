@@ -657,7 +657,12 @@ function act(kind) {
   }
   render();
 }
+// Where the last interaction was: "list" (↑↓ / click / wheel on the agents),
+// "results" (a search result selected) or "input" (typing, clicking elsewhere).
+// An empty Enter jumps only from "list" (to the cursor agent) or "results".
+let focusArea = "input";
 function moveCursor(d) {
+  focusArea = "list";
   const here = hereAgents();
   if (!here.length) return;
   const i = Math.max(0, here.findIndex((a) => a.id === cursorId));
@@ -688,7 +693,7 @@ async function send() {
   const raw = input.trim();
   if (command(raw)) return;
   if (view === "search") { // the input is the search box: never posts
-    if (!raw) return jumpToResult();
+    if (!raw) return focusArea === "results" ? jumpToResult() : undefined;
     const r = search.ranFor;
     if (r && r.q === raw && r.mode === search.mode && r.room === room && !search.busy) return jumpToResult();
     return search.run(raw);
@@ -698,8 +703,8 @@ async function send() {
   input = ""; ic = 0;
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !api) return render();
-  if (!text) { // Enter on an empty line: jump to the agent under the cursor
-    if (cursorId && api) api.call("agent.focus", { agent: cursorId }).catch((e) => { note = "✗ " + e.message; render(); });
+  if (!text) { // Enter on an empty line: jump to the cursor agent, only right after using the list
+    if (cursorId && api && focusArea === "list") api.call("agent.focus", { agent: cursorId }).catch((e) => { note = "✗ " + e.message; render(); });
     return render();
   }
   if (!api) return render();
@@ -761,7 +766,7 @@ function onKey(d) {
     if (view === "search") {
       // ↑↓ stay with the agent list; Shift+↑↓ (and PgUp/PgDn) move in the results.
       const mv = { "\x1b[1;2A": -1, "\x1b[1;2B": 1, "\x1b[5~": -5, "\x1b[6~": 5 }[d];
-      if (mv) return search.move(mv);
+      if (mv) { focusArea = "results"; return search.move(mv); }
     }
     if (view === "ask") {
       const mv = { "\x1b[1;2A": -1, "\x1b[1;2B": 1, "\x1b[5~": -Math.max(1, lastAvail - 2), "\x1b[6~": Math.max(1, lastAvail - 2) }[d];
@@ -773,7 +778,7 @@ function onKey(d) {
   {
     const gs = graphemes(input);
     ic = Math.max(0, Math.min(ic, gs.length));
-    const edited = (next, c) => { input = next.join(""); ic = c; note = ""; return render(); };
+    const edited = (next, c) => { input = next.join(""); ic = c; note = ""; focusArea = "input"; return render(); };
     const wordLeft = () => { let i = ic; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
     const wordRight = () => { let i = ic; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
     if (d === "\x1b[D") { ic = Math.max(0, ic - 1); return render(); }
@@ -798,6 +803,7 @@ function onKey(d) {
       // release copies it (or, without a drag, counts as a click).
       // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
       if ((b === 0 || b === 4) && m[4] === "M") {
+        focusArea = inList ? "list" : view === "search" && resultRowMap[y] !== undefined ? "results" : "input";
         const inConvo = !!rowMeta[y], now = Date.now();
         // Count quick presses on the same spot: 2 = word, 3 = whole message (or line).
         clicks = b === 0 && now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
@@ -839,6 +845,7 @@ function onKey(d) {
         continue;
       }
       if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
+        if (inList) focusArea = "list"; else if (view === "search") focusArea = "results";
         if (inList) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); const here = hereAgents(); const i = here.findIndex((a) => a.id === cursorId); if (i < listTop) cursorId = here[listTop]?.id || cursorId; else if (i >= listTop + listRows) cursorId = here[listTop + listRows - 1]?.id || cursorId; }
         else if (view === "search") search.move(b === 64 ? -1 : 1);
         else if (view === "ask") askTop = Math.max(0, askTop + (b === 64 ? -3 : 3));
@@ -858,7 +865,7 @@ function onKey(d) {
   const keys = { "\x1b[1;2A": 1, "\x1b[1;2B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[H": Infinity, "\x1b[1~": Infinity, "\x1b[F": -Infinity, "\x1b[4~": -Infinity };
   if (d in keys) { scroll = keys[d] === Infinity ? 1e9 : keys[d] === -Infinity ? 0 : scroll + keys[d]; if (scroll < 0) scroll = 0; return render(); }
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
-  { const gs = graphemes(input), ins = graphemes(d.replace(/[\x00-\x1f]/g, "")); if (!ins.length) return; ic = Math.max(0, Math.min(ic, gs.length)); input = [...gs.slice(0, ic), ...ins, ...gs.slice(ic)].join(""); ic += ins.length; note = ""; render(); }
+  { const gs = graphemes(input), ins = graphemes(d.replace(/[\x00-\x1f]/g, "")); if (!ins.length) return; ic = Math.max(0, Math.min(ic, gs.length)); input = [...gs.slice(0, ic), ...ins, ...gs.slice(ic)].join(""); ic += ins.length; note = ""; focusArea = "input"; render(); }
 }
 function quit() { out(`${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
