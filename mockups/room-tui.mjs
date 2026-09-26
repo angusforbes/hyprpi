@@ -221,7 +221,7 @@ function copy(text) {
   if (!text) return;
   // OSC 52 (kitty puts it on the clipboard) and wl-copy as a fallback.
   process.stdout.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
-  try { const p = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.end(text); } catch { /* OSC 52 only */ }
+  try { const p = spawn("wl-copy", ["--type", "text/plain;charset=utf-8"], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.end(text); } catch { /* OSC 52 only */ }
   note = `copied ${text.length} character${text.length === 1 ? "" : "s"}`;
 }
 
