@@ -107,7 +107,6 @@ async function relayout(addrs) {
 // its reserved area (the bar) with `gap` between and around. Deterministic, unlike
 // resizing inside dwindle's tree.
 async function exactColumns(addrs) {
-  toast("panel mode on · equal columns");
   const mons = await hypr.hyprJson("monitors").catch(() => []);
   const mon = mons.find((m) => m.focused) || mons[0];
   if (!mon) return;
@@ -140,8 +139,6 @@ async function panelModeHere(ws) {
   return here.filter((c) => c.floating).length >= 2 ? here : null;
 }
 
-const toast = (text) => { try { spawn("notify-send", ["-t", "1500", "-a", "hyprpi", text], { detached: true, stdio: "ignore" }).unref(); } catch { /* no notify-send */ } };
-
 // Back to regular mode: tile the panels again and leave dwindle's own proportions
 // (50 / 25 / 25) — deliberately NOT even thirds, so one glance tells you which mode you
 // are in: three identical columns = panel mode, a wide left column = normal.
@@ -151,7 +148,6 @@ async function unpanel(here) {
   const addrs = sorted.map((c) => c.address);
   await relayout(addrs);
   await hypr.focusWindow(addrs[0]).catch(() => {});
-  toast("panel mode off · dwindle");
 }
 
 // Tiled mode: one exact resize of the left-most window makes thirds (the pair on its
