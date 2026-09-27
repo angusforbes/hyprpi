@@ -115,6 +115,7 @@ function draw() {
   const mid = W - width(left) - width(tabs.replace(/\x1b\[[0-9;]*m/g, "")) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
+  out(`\x1b]2;hyprpi agents · room ${room}\x07`); // how `mockups/panels` finds this window
   out(`${ESC}H${ESC}2J` + rows.slice(0, H).map((r) => clip(r, W) + `${ESC}0m${ESC}K`).join("\r\n"));
 }
 

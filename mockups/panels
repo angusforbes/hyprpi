@@ -1,79 +1,113 @@
 #!/usr/bin/env node
-// Open the three hyprpi panels side by side, full height, on one workspace:
+// Gather the three hyprpi panels of one world onto one workspace, side by side, full height:
 //
 //   agents (panel 1) │ room / stream (panel 2) │ search (panel 3)
 //
 //   ~/Work/hyprpi/mockups/panels [ROOM] [--workspace N] [--only 1,2]
 //
-// How: dwindle's own "preselect" (hl.dsp.layout("preselect r")) makes each new window
-// open to the right of the focused one, so the three land as columns; then each column is
-// resized to a third of the monitor. Existing panel windows on that workspace are reused
-// (focused and resized) instead of opening a second copy.
+// For each panel: if its window exists anywhere (another workspace, or parked in
+// Reprieve) it is MOVED here; otherwise it is opened here. Then they are put in order
+// (1 · 2 · 3, left to right) and given equal widths.
+//
+// How: dwindle's "preselect" (hl.dsp.layout("preselect r")) makes the next window open to
+// the right of the focused one; windows that are merely moved land wherever dwindle puts
+// them, so the order is fixed afterwards with swaps. An exact resize needs a non-zero
+// height (hl.dsp.window.resize({ x = W, y = H, relative = false })).
 import { spawn } from "node:child_process";
 import * as hypr from "./../lib/hypr.mjs";
+import { request } from "./../lib/client.mjs";
 
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
 const wantWs = Number(opt("--workspace")) || null;
 const only = (opt("--only") || "1,2,3").split(",").map((x) => x.trim());
-const room = (args[0] || "").toUpperCase();
 const here = new URL(".", import.meta.url).pathname;
-
-const PANELS = [
-  { n: "1", cmd: `${here}agents-tui`, cls: "hyprpi.agents" },
-  { n: "2", cmd: `${here}room-tui`, cls: "hyprpi.mockup", title: /room/ },
-  { n: "3", cmd: `${here}search-tui`, cls: "hyprpi.mockup", title: /search/ },
-].filter((p) => only.includes(p.n));
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clients = () => hypr.clients().catch(() => []);
 
-async function activeWorkspace() {
-  // --workspace N: go there first — new windows always open on the active workspace.
-  if (wantWs) {
+// Panel 1's title is "hyprpi agents · room C", panel 2's "hyprpi tui · room C",
+// panel 3's "hyprpi search · room C" — that is how an existing window is recognised.
+const panelsFor = (room) => [
+  { n: "1", cmd: `${here}agents-tui`, title: new RegExp(`^hyprpi agents · room ${room}$`) },
+  { n: "2", cmd: `${here}room-tui`, title: new RegExp(`^hyprpi tui · room ${room}$`) },
+  { n: "3", cmd: `${here}search-tui`, title: new RegExp(`^hyprpi search · room ${room}$`) },
+].filter((p) => only.includes(p.n));
+
+async function currentRoom() {
+  try { const r = await request("room.current", {}); return r.room || ""; } catch { return ""; }
+}
+
+async function targetWorkspace() {
+  if (wantWs) { // go there first: a new window always opens on the active workspace
     await hypr.dispatch(`hl.dsp.focus({ workspace = "${wantWs}" })`).catch(() => {});
     await sleep(250);
   }
   const w = await hypr.activeWorkspace().catch(() => null);
-  return w && Number.isInteger(w.id) ? w.id : wantWs || null;
+  return w && Number.isInteger(w.id) && w.id > 0 ? w.id : null;
 }
 
-const match = (c, p, ws) => c.workspace?.id === ws && c.class === p.cls && (!p.title || p.title.test(c.title || ""));
-
-async function openPanel(p, ws) {
+// Bring one panel here: move its window if it exists anywhere, else open it.
+async function bring(p, ws, room) {
   const before = await clients();
-  const existing = before.find((c) => match(c, p, ws));
-  if (existing) return existing.address;
+  // Several copies can exist: prefer one already here, then any on a normal workspace,
+  // then a parked one (special: workspace).
+  const rank = (c) => c.workspace?.id === ws ? 0 : c.workspace?.id > 0 ? 1 : 2;
+  const found = before.filter((c) => p.title.test(c.title || "")).sort((x, y) => rank(x) - rank(y))[0];
+  if (found) {
+    if (found.workspace?.id !== ws) {
+      await hypr.moveWindow(found.address, String(ws)).catch(() => {});
+      await sleep(200);
+    }
+    return found.address;
+  }
   const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
   spawn(p.cmd, room ? [room] : [], { detached: true, stdio: "ignore", env }).unref();
-  for (let i = 0; i < 60; i++) { // up to ~6 s for the window to map
+  for (let i = 0; i < 80; i++) { // up to ~8 s for the window to map and set its title
     await sleep(100);
-    const c = (await clients()).find((x) => match(x, p, ws) && !before.some((b) => b.address === x.address));
+    const c = (await clients()).find((x) => p.title.test(x.title || "") && !before.some((b) => b.address === x.address));
     if (c) return c.address;
   }
   return null;
 }
 
+// Left-to-right order = panel order. Swap neighbours until it is (three windows at most).
+async function sortColumns(addrs) {
+  for (let pass = 0; pass < addrs.length; pass++) {
+    const cs = await clients();
+    const pos = addrs.map((a) => cs.find((c) => c.address === a)).filter(Boolean);
+    let swapped = false;
+    for (let i = 0; i < pos.length - 1; i++) {
+      if (pos[i].at[0] <= pos[i + 1].at[0]) continue;
+      await hypr.focusWindow(pos[i].address).catch(() => {});
+      await hypr.dispatch('hl.dsp.window.swap({ direction = "l" })').catch(() => {});
+      await sleep(150);
+      swapped = true;
+      break;
+    }
+    if (!swapped) return;
+  }
+}
+
 const main = async () => {
-  const ws = await activeWorkspace();
-  if (!ws || ws < 1) { console.error("panels: no normal workspace is active (use --workspace N)"); process.exit(1); }
+  const room = (args[0] || "").toUpperCase() || await currentRoom();
+  const ws = await targetWorkspace();
+  if (!ws) { console.error("panels: no normal workspace is active (use --workspace N)"); process.exit(1); }
   const opened = [];
-  for (const p of PANELS) {
-    const addr = await openPanel(p, ws);
+  const list = panelsFor(room);
+  for (const p of list) {
+    const addr = await bring(p, ws, room);
     if (!addr) { console.error(`panels: panel ${p.n} did not open`); continue; }
     opened.push(addr);
     await hypr.focusWindow(addr).catch(() => {});
-    // The next window opens to the right of this one (dwindle preselect).
-    if (p !== PANELS[PANELS.length - 1]) await hypr.dispatch('hl.dsp.layout("preselect r")').catch(() => {});
+    if (p !== list[list.length - 1]) await hypr.dispatch('hl.dsp.layout("preselect r")').catch(() => {});
   }
   if (opened.length < 2) return;
-  // Equal columns: each window gets a third (or half) of the usable width. An exact
-  // resize needs a real height too (y = 0 is rejected as "Invalid size"), so pass the
-  // window's own height, which leaves it full height.
+  await sortColumns(opened);
+  // Equal columns, full height.
   const cs = await clients();
   const mine = opened.map((a) => cs.find((c) => c.address === a)).filter(Boolean);
   const usable = mine.reduce((w, c) => w + c.size[0], 0);
-  const share = Math.floor(usable / opened.length);
+  const share = Math.floor(usable / mine.length);
   for (const c of mine.slice(0, -1)) {
     await hypr.focusWindow(c.address).catch(() => {});
     await hypr.dispatch(`hl.dsp.window.resize({ x = ${share}, y = ${c.size[1]}, relative = false })`).catch(() => {});
