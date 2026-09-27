@@ -103,7 +103,7 @@ The world's agents, nothing else. Small window.
   eventually a key to retarget dictation to the selected agent(s).
 - No message box, no stream.
 
-### Panel 2 — room / stream (new key, proposal **SUPER+ALT+R**), `mockups/room-tui.mjs`
+### Panel 2 — room / stream (**SUPER+ALT+R**, agreed), `mockups/room-tui.mjs`
 
 Keeps the name and most of today's code, minus the agent list.
 
@@ -163,7 +163,7 @@ recoverable, plus this document. No file copies needed — the whole thing is in
 
 ## 4. Open questions for Angus
 
-1. **Key for panel 2 (room/stream)**: SUPER+ALT+R? (free here; SUPER+ALT+Z, W, F, F9, Tab, 1–5 are taken.)
+1. ~~Key for panel 2~~ **SUPER+ALT+R** (agreed 2026-09-27; SUPER+ALT+S is Reprieve stash).
 2. **Should panel 1 be able to send a prompt** to the selected agent (a one-line input), or
    is it strictly a view + selector, with all typing in panel 2?
 3. **Does panel 2 keep a built-in search pane** (`^/`), or should `^/` there just open panel 3?
