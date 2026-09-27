@@ -426,7 +426,7 @@ function draw() {
       // stream's grey; ◌ instead of the status mark.
       const cur = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
       const what = a.parked ? "parked" : "closed";
-      const how = a.parked ? " · ⏎ bring back here" : " · ⏎ resume · ^W^W forget";
+      const how = a.parked ? " · ⏎ revive" : " · ⏎ resume · ^W^W forget";
       rows.push(midFg(` ◌ ${iconPart}${cur}${rest}${dot}${what}${a.id === cursorId ? how : ""}`));
       continue;
     }
