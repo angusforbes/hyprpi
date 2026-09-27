@@ -40,9 +40,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     const n = parseInt(m[1], 16);
     return `\x1b[38;2;${n >> 16};${(n >> 8) & 255};${n & 255}m${t}\x1b[39m`;
   };
-  let myRoom = "";
   function showSelf(d: any) {
-    myRoom = d.parked ? "" : String(d.room || "");
     const ctx = ctxRef;
     if (!ctx?.ui) return;
     let name = "";
@@ -78,14 +76,10 @@ export default function hyprpi(pi: ExtensionAPI) {
     } else if (event === "self") {
       showSelf(d);
     } else if (event === "prompt") {
-      // A prompt sent from a room panel gets a one-line label so the agent can tell it
-      // apart from typing in its own window. No auto-post: the agent decides whether
-      // the room should see its answer (room_post).
+      // A prompt sent from a room panel is labelled so the agent can tell it apart from
+      // typing in its own window. No auto-post: the agent decides whether to room_post.
       let text = String(d.text ?? "");
-      if (d.via === "room-tui") {
-        const room = String(d.room || myRoom || "").replace(/[^A-Za-z0-9 _.-]/g, "").slice(0, 32);
-        text = `[hyprpi · Angus → you, sent from ${room ? `room ${room}'s` : "a room"} panel. Your answer stays in your window; room_post it if the room should see it.]\n${text}`;
-      }
+      if (d.via === "room-tui") text = `[hyprpi · Angus → you]\n${text}`;
       try { idle() ? pi.sendUserMessage(text) : pi.sendUserMessage(text, { deliverAs: "followUp" }); } catch { /* best effort */ }
     } else if (event === "talk") {
       const how = d.mode === "demand"
@@ -132,9 +126,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     connecting = true;
     try {
       conn = await connect({ onEvent, onClose: () => { conn = null; schedule(); } });
-      const me: any = await hello();
-      // The daemon only pushes "self" when it changes, so a reloaded agent learns its room here.
-      if (me && typeof me.room === "string" && !myRoom) myRoom = me.room;
+      await hello();
       // Re-state where this agent is (a turn may have started or ended while the daemon was down).
       if (myStatus !== "idle") conn.call("agent.update", { status: myStatus, resync: true }).catch(() => {});
     } catch {
