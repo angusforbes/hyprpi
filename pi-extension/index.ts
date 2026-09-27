@@ -132,7 +132,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     connecting = true;
     try {
       conn = await connect({ onEvent, onClose: () => { conn = null; schedule(); } });
-      await hello();
+      const me: any = await hello();
+      // The daemon only pushes "self" when it changes, so a reloaded agent learns its room here.
+      if (me && typeof me.room === "string" && !myRoom) myRoom = me.room;
       // Re-state where this agent is (a turn may have started or ended while the daemon was down).
       if (myStatus !== "idle") conn.call("agent.update", { status: myStatus, resync: true }).catch(() => {});
     } catch {
