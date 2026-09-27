@@ -526,7 +526,12 @@ function applyList(r) {
   for (const id of closing.keys()) if (!agents.find((a) => a.id === id)) closing.delete(id);
   for (const a of agents) { // each newly listed agent replaces one placeholder
     const i = pendingNew.findIndex((p) => !p.known.has(a.id));
-    if (i >= 0) { pendingNew.splice(i, 1); for (const p of pendingNew) p.known.add(a.id); }
+    if (i >= 0) {
+      pendingNew.splice(i, 1); for (const p of pendingNew) p.known.add(a.id);
+      // The agent we just opened: jump to its window (it may be on another workspace —
+      // `hyprpi new` avoids a workspace in panel mode).
+      api?.call("agent.focus", { agent: a.id }).then(() => { note = "\u2192 " + a.display; render(); }).catch(() => {});
+    }
   }
   // Focusing an agent's window moves the list cursor to it (and scrolls it into view).
   const f = agents.find((a) => a.focused);
