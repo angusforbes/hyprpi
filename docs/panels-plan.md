@@ -101,7 +101,9 @@ The world's agents, nothing else. Small window.
 - Later: a 🎤 column showing who receives dictation, read from
   `$XDG_RUNTIME_DIR/voice-agent/target` (watch the file, no new daemon work), and
   eventually a key to retarget dictation to the selected agent(s).
-- No message box, no stream.
+- **View + selector only** (decided): no message box, no stream, no prompting. Later it gains
+  commands that act on the selection — route dictation to the selected agents, form a
+  "taskforce" — but not in this round.
 
 ### Panel 2 — room / stream (**SUPER+ALT+R**, agreed), `mockups/room-tui.mjs`
 
@@ -109,6 +111,8 @@ Keeps the name and most of today's code, minus the agent list.
 
 - Stream (messages + activity), `^F` filters, `/history`, scrolling, drag-copy.
 - The message box: posts to the room, or to the selected agents, `@Name` routing.
+- **No search pane** (decided): search lives in panel 3. Instead a command line for a live
+  text filter over the stream (today's `/stream WORDS`) plus the `^F` view toggles.
 - A one-line header instead of the agent pane: room, world colour, who is selected
   ("only ▸ Sankey, Lippy"), counts.
 
@@ -164,9 +168,8 @@ recoverable, plus this document. No file copies needed — the whole thing is in
 ## 4. Open questions for Angus
 
 1. ~~Key for panel 2~~ **SUPER+ALT+R** (agreed 2026-09-27; SUPER+ALT+S is Reprieve stash).
-2. **Should panel 1 be able to send a prompt** to the selected agent (a one-line input), or
-   is it strictly a view + selector, with all typing in panel 2?
-3. **Does panel 2 keep a built-in search pane** (`^/`), or should `^/` there just open panel 3?
+2. ~~Panel 1 prompting~~ **view + selector only** (agreed 2026-09-27).
+3. ~~Panel 2 search pane~~ **no**; panel 2 gets a filter command line instead (agreed).
 4. **One window or many**: should opening panel 1 while it is already open focus it (like now),
    and should panels 1 and 2 open side by side automatically the first time?
 5. **Selection scope**: per room (my assumption), or one global selection?
