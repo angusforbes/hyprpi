@@ -102,6 +102,26 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   voice picker, the bar widget and `voice-agent set/add`; "room" / "me" inside
   a hyprpi agent resolve to its own room / itself.
 
+### Resuming agents after a restart
+
+Agents that were still open when hyprpi went down (reboot, logout, crash) come
+back as **closed** entries in their world's room TUI (SUPER+ALT+A): greyed
+`◌ name · topic · closed` under the live agents. Select one (↑↓ or click) and
+press Enter to reopen its Pi session in a new window, with the same agent id,
+so its name, icon, room and twin link survive (a twin's `twin_of` still points
+at its parent's id). ^W twice forgets it (the session file stays). Windows are
+never reopened automatically.
+
+How the daemon tells "lost to a restart" from "closed on purpose": it writes
+`daemon.beat` every 10 s (and on exit) and records `connected` / `leftAt` per
+agent in `agents.json`. On start, an agent that was still connected, or left
+at most 30 s before the last beat, and whose process is gone becomes
+`resumable`. A window you close while hyprpi keeps running is not. Only the
+newest entry per session file is listed, and none whose session is open.
+Daemon methods: `agent.resume {agent}`, `agent.forget {agent}`; `list` and
+the `agents` UI event carry `dormant: [...]`. `hyprpi new --id ID --twin-of ID
+-- --session FILE` is what a resume runs.
+
 ## CLI
 
 `hyprpi help` — `new`, `room`, `list`, `post`, `send`, `focus`, `name`,

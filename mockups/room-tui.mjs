@@ -185,6 +185,11 @@ let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the 
 // agents that join later start marked. markedIds() = the marked agents here.
 let cursorId = "", unmarked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
 const hereAgents = () => agents.filter((a) => a.room === room);
+// Closed agents from the last session (daemon "dormant"): listed greyed under the live
+// ones; Enter resumes one (same id, name, twins), ^W twice drops it from the list.
+let dormant = [];
+const listHere = () => [...hereAgents(), ...dormant.filter((a) => a.room === room)];
+const isDormant = (id) => !agents.some((a) => a.id === id) && dormant.some((a) => a.id === id);
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The room is a stream: messages plus agent activity (tools, topics, talk between agents,
 // finishes) from the daemon. Ctrl+F cycles what it shows.
@@ -209,7 +214,7 @@ let tabCycle = null; // Tab through several matching commands
 // search and /ask read, and whose rows the stream shows. Esc clears.
 const markedIds = () => new Set(hereAgents().filter((a) => !unmarked.has(a.id)).map((a) => a.id));
 const allMarked = () => hereAgents().every((a) => !unmarked.has(a.id));
-const toggleMark = (id) => { if (!id) return; unmarked.has(id) ? unmarked.delete(id) : unmarked.add(id); };
+const toggleMark = (id) => { if (!id || isDormant(id)) return; unmarked.has(id) ? unmarked.delete(id) : unmarked.add(id); };
 // Search / ask scope: all marked = the whole room (closed agents too); none = only Angus's posts.
 // /history: how far back the stream and /ask go, in interactions (a room message or one
 // agent turn, however many tool calls); "all" = everything. Default 200.
@@ -365,13 +370,13 @@ function draw() {
   dirty = false;
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30;
   const c = worldFg(room);
-  const here = agents.filter((a) => a.room === room);
+  const here = listHere(), live = hereAgents();
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const rows = [];
 
   // Agents pane: scrolls when there are more agents than ~40% of the height.
   if (!here.find((a) => a.id === cursorId)) cursorId = here[0]?.id || "";
-  const marked = markedIds(), everyone = marked.size === here.length;
+  const marked = markedIds(), everyone = marked.size === live.length;
   const cur = Math.max(0, here.findIndex((a) => a.id === cursorId));
   const maxList = Math.max(3, Math.floor((H - 6) * 0.4));
   listRows = Math.min(here.length, maxList);
@@ -379,7 +384,7 @@ function draw() {
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
   listTop = Math.max(0, Math.min(listTop, here.length - listRows));
   const more = here.length - listRows;
-  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (everyone ? "" : ` · ${marked.size}/${here.length} ▸ · Esc all`)));
+  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (everyone ? "" : ` · ${marked.size}/${live.length} ▸ · Esc all`)));
   listRowY = rows.length + 1; // 1-based screen row of the first agent row
   // "special:reprieve" -> "reprieve": only the part after the last ":".
   const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
@@ -409,6 +414,11 @@ function draw() {
     // Topic, model and the dot separators in the normal text colour (same as message text).
     const dot = " · ";
     const rest = (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    if (a.dormant) {
+      const cur = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m` : `${ESC}4m`) : "";
+      rows.push(dim(`  ◌ ${a.icon ? a.icon + " " : ""}${cur}${strip(a.display)}${cur ? ESC + "49m" + ESC + "24m" : ""}${a.topic ? dot + a.topic : ""} · closed${a.id === cursorId ? " · ⏎ resume · ^W^W forget" : ""}`));
+      continue;
+    }
     if (closing.has(a.id)) { rows.push(dim(`${strip(sel)}${mark(a)} ${strip(styled)} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
@@ -425,7 +435,7 @@ function draw() {
   // icons where they exist, names only for agents without one.
   const to = [...marked].map((id) => agents.find((a) => a.id === id)).filter(Boolean).map((a) => a.icon || a.display);
   const prompt = fg(c, bold(view === "search" ? `${search.mode === "ai" ? "✦" : "⌕"} ${room} ❯ ` : view === "ask" ? `? ${room} ❯ `
-    : to.length ? `${room} → ${cut(to.join(" "), Math.max(10, Math.floor(W / 3)))} ❯ ` : !everyone && here.length ? `${room} → nobody ❯ ` : `${room} ❯ `));
+    : to.length ? `${room} → ${cut(to.join(" "), Math.max(10, Math.floor(W / 3)))} ❯ ` : !everyone && live.length ? `${room} → nobody ❯ ` : `${room} ❯ `));
   const promptW = width(prompt);
   ic = Math.max(0, Math.min(ic, graphemes(input).length));
   const IL = inputLayout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
@@ -578,7 +588,8 @@ function draw() {
   // tmux-style status bar
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi ${online ? "" : "· daemon offline "}`;
-  const right = `history ${historyN} · ${here.length} agent${here.length === 1 ? "" : "s"} · ${hhmm(Date.now())} `;
+  const nClosed = here.length - live.length;
+  const right = `history ${historyN} · ${live.length} agent${live.length === 1 ? "" : "s"}${nClosed ? ` · ${nClosed} closed` : ""} · ${hhmm(Date.now())} `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
@@ -668,7 +679,7 @@ let lastFocusedId = "";
 const closing = new Map();
 let pendingNew = [];
 function applyList(r) {
-  agents = r.agents || []; rooms = r.rooms || [];
+  agents = r.agents || []; rooms = r.rooms || []; dormant = r.dormant || [];
   for (const id of closing.keys()) if (!agents.find((a) => a.id === id)) closing.delete(id);
   for (const a of agents) { // each newly listed agent replaces one placeholder
     const i = pendingNew.findIndex((p) => !p.known.has(a.id));
@@ -727,8 +738,18 @@ function newAgent(dir) {
 // agent under the cursor; both ask for a second press within 3 s.
 import * as hypr from "../lib/hypr.mjs";
 function act(kind) {
-  const a = agents.find((x) => x.id === cursorId);
+  const a = agents.find((x) => x.id === cursorId) || dormant.find((x) => x.id === cursorId);
   if (!a) return;
+  if (a.dormant) { // a closed agent: ^W / ^K twice drops it from the list
+    if (!confirm || confirm.id !== a.id || Date.now() > confirm.until) {
+      confirm = { kind, id: a.id, until: Date.now() + 3000, label: `forget ${a.display}? (its session stays) press ^${kind === "close" ? "W" : "K"} again` };
+      setTimeout(() => { if (confirm && Date.now() > confirm.until) { confirm = null; render(); } }, 3100);
+      return render();
+    }
+    confirm = null;
+    if (api) api.call("agent.forget", { agent: a.id }).then(() => { note = "forgot " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+    return render();
+  }
   if (!confirm || confirm.kind !== kind || confirm.id !== a.id || Date.now() > confirm.until) {
     confirm = { kind, id: a.id, until: Date.now() + 3000, label: `${kind === "close" ? "close" : "KILL"} ${a.display}? press ^${kind === "close" ? "W" : "K"} again` };
     setTimeout(() => { if (confirm && Date.now() > confirm.until) { confirm = null; render(); } }, 3100);
@@ -752,7 +773,7 @@ function act(kind) {
 let focusArea = "input";
 function moveCursor(d) {
   focusArea = "list";
-  const here = hereAgents();
+  const here = listHere();
   if (!here.length) return;
   const i = Math.max(0, here.findIndex((a) => a.id === cursorId));
   cursorId = here[Math.max(0, Math.min(here.length - 1, i + d))].id;
@@ -801,6 +822,11 @@ async function send() {
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !api) return render();
   if (!text) { // Enter on an empty line: jump to the cursor agent, only right after using the list
+    if (cursorId && api && focusArea === "list" && isDormant(cursorId)) {
+      const d = dormant.find((a) => a.id === cursorId);
+      api.call("agent.resume", { agent: cursorId }).then(() => { note = "resuming " + d.display + " …"; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+      return render();
+    }
     if (cursorId && api && focusArea === "list") api.call("agent.focus", { agent: cursorId }).catch((e) => { note = "✗ " + e.message; render(); });
     return render();
   }
@@ -974,7 +1000,7 @@ function onKey(d) {
           continue;
         }
         if (inList) {
-          const a = hereAgents()[listTop + y - listRowY];
+          const a = listHere()[listTop + y - listRowY];
           if (!a) continue;
           const now = Date.now();
           if (lastClick.id === a.id && now - lastClick.t < 400) {
@@ -996,7 +1022,7 @@ function onKey(d) {
       }
       if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
         if (inList) focusArea = "list"; else if (view === "search") focusArea = "results";
-        if (inList) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); const here = hereAgents(); const i = here.findIndex((a) => a.id === cursorId); if (i < listTop) cursorId = here[listTop]?.id || cursorId; else if (i >= listTop + listRows) cursorId = here[listTop + listRows - 1]?.id || cursorId; }
+        if (inList) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); const here = listHere(); const i = here.findIndex((a) => a.id === cursorId); if (i < listTop) cursorId = here[listTop]?.id || cursorId; else if (i >= listTop + listRows) cursorId = here[listTop + listRows - 1]?.id || cursorId; }
         else if (view === "search") search.move(b === 64 ? -1 : 1);
         else if (view === "ask") askTop = Math.max(0, askTop + (b === 64 ? -3 : 3));
         else scroll += b === 64 ? 3 : -3;

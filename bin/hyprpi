@@ -11,7 +11,7 @@ import { terminalCommand } from "../lib/terminal.mjs";
 
 const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
 
-  hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [-- PI_ARGS...]
+  hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [-- PI_ARGS...]
                               open a Pi agent in its own terminal window (SUPER+A);
                               starts in the focused terminal's/agent's folder unless --cwd
   hyprpi room [ROOM] [--toggle]  show (or toggle) the room widget; no ROOM = current world, following it
@@ -131,6 +131,9 @@ async function cmdNew() {
   const beside = opt("--beside");
   let workspace = Number(opt("--workspace")) || null;
   const twinOf = opt("--twin-of") || "";
+  // --id: reuse a known agent id (resuming a closed agent keeps its name, room and twins).
+  const wantId = opt("--id") || "";
+  if (wantId && !/^[A-Za-z0-9_.-]{3,64}$/.test(wantId)) die("bad --id");
   const dd = args.indexOf("--");
   const piArgs = dd >= 0 ? args.slice(dd + 1) : [];
   await ensureDaemon();
@@ -152,7 +155,7 @@ async function cmdNew() {
   }
   if (!workspace && active && Number.isInteger(active.id) && active.id > 0) workspace = active.id;
 
-  const id = newId();
+  const id = wantId || newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");
   const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}) });
   let termPrefix;
