@@ -25,12 +25,13 @@ const here = new URL(".", import.meta.url).pathname;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clients = () => hypr.clients().catch(() => []);
 
-// Panel 1's title is "hyprpi agents · room C", panel 2's "hyprpi tui · room C",
-// panel 3's "hyprpi search · room C" — that is how an existing window is recognised.
+// Window titles: "hyprpi-router C" (panel 1), "hyprpi-room C" (2), "hyprpi-search C" (3)
+// — that is how an existing window is recognised. Deliberately no " · <ROOM>" ending: the
+// daemon reads titles ending that way as its own room windows and repositions them.
 const panelsFor = (room) => [
-  { n: "1", cmd: `${here}agents-tui`, title: new RegExp(`^hyprpi agents · room ${room}$`) },
-  { n: "2", cmd: `${here}room-tui`, title: new RegExp(`^hyprpi tui · room ${room}$`) },
-  { n: "3", cmd: `${here}search-tui`, title: new RegExp(`^hyprpi search · room ${room}$`) },
+  { n: "1", cmd: `${here}agents-tui`, title: new RegExp(`^hyprpi-router ${room}$`) },
+  { n: "2", cmd: `${here}room-tui`, title: new RegExp(`^hyprpi-room ${room}$`) },
+  { n: "3", cmd: `${here}search-tui`, title: new RegExp(`^hyprpi-search ${room}$`) },
 ].filter((p) => only.includes(p.n));
 
 async function currentRoom() {
@@ -70,21 +71,31 @@ async function bring(p, ws, room) {
   return null;
 }
 
-// Left-to-right order = panel order. Swap neighbours until it is (three windows at most).
-async function sortColumns(addrs) {
-  for (let pass = 0; pass < addrs.length; pass++) {
-    const cs = await clients();
-    const pos = addrs.map((a) => cs.find((c) => c.address === a)).filter(Boolean);
-    let swapped = false;
-    for (let i = 0; i < pos.length - 1; i++) {
-      if (pos[i].at[0] <= pos[i + 1].at[0]) continue;
-      await hypr.focusWindow(pos[i].address).catch(() => {});
-      await hypr.dispatch('hl.dsp.window.swap({ direction = "l" })').catch(() => {});
-      await sleep(150);
-      swapped = true;
-      break;
+const win = async (addr) => (await clients()).find((c) => c.address === addr);
+// hl.dsp.window.float() toggles, so drive it towards the state we want.
+async function setFloat(addr, want) {
+  for (let i = 0; i < 3; i++) {
+    const c = await win(addr);
+    if (!c || c.floating === want) return;
+    await hypr.focusWindow(addr).catch(() => {});
+    await hypr.dispatch("hl.dsp.window.float()").catch(() => {});
+    await sleep(350);
+  }
+}
+
+// Rebuild the columns deterministically: float everything (which empties the dwindle
+// tree), then tile them back left to right with "preselect r" between, giving the
+// canonical (1 | (2 | 3)) shape. Resizing windows one by one instead skews the tree —
+// a window can end up 16 px wide — because each resize adjusts a different split.
+async function relayout(addrs) {
+  for (const a of addrs) await setFloat(a, true);
+  for (let i = 0; i < addrs.length; i++) {
+    await setFloat(addrs[i], false);
+    await sleep(300);
+    if (i < addrs.length - 1) {
+      await hypr.focusWindow(addrs[i]).catch(() => {});
+      await hypr.dispatch('hl.dsp.layout("preselect r")').catch(() => {});
     }
-    if (!swapped) return;
   }
 }
 
@@ -102,16 +113,17 @@ const main = async () => {
     if (p !== list[list.length - 1]) await hypr.dispatch('hl.dsp.layout("preselect r")').catch(() => {});
   }
   if (opened.length < 2) return;
-  await sortColumns(opened);
-  // Equal columns, full height.
+  await relayout(opened);
+  // Equal columns: one exact resize of the left-most window is enough — the pair to its
+  // right rescales with it. (An exact resize needs a real height, not y = 0.)
   const cs = await clients();
   const mine = opened.map((a) => cs.find((c) => c.address === a)).filter(Boolean);
-  const usable = mine.reduce((w, c) => w + c.size[0], 0);
-  const share = Math.floor(usable / mine.length);
-  for (const c of mine.slice(0, -1)) {
-    await hypr.focusWindow(c.address).catch(() => {});
-    await hypr.dispatch(`hl.dsp.window.resize({ x = ${share}, y = ${c.size[1]}, relative = false })`).catch(() => {});
-    await sleep(120);
+  const total = mine.reduce((w, c) => w + c.size[0], 0);
+  await hypr.focusWindow(opened[0]).catch(() => {});
+  const first = await win(opened[0]);
+  if (first && mine.length > 1) {
+    await hypr.dispatch(`hl.dsp.window.resize({ x = ${Math.floor(total / mine.length)}, y = ${first.size[1]}, relative = false })`).catch(() => {});
+    await sleep(200);
   }
   await hypr.focusWindow(opened[0]).catch(() => {});
 };

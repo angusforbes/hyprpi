@@ -467,7 +467,7 @@ function draw() {
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
-  out(`\x1b]2;hyprpi tui · room ${room}\x07`); // not "hyprpi room …": the daemon treats those titles as room windows
+  out(`\x1b]2;hyprpi-room ${room}\x07`); // not "hyprpi room …": the daemon treats those titles as room windows
   const lines = rows.slice(0, H).map((r) => clip(r, W));
   screen = lines.map(strip);
   // Selection: repaint the selected cells with the theme's selection colour
