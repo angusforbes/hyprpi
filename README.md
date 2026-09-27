@@ -102,7 +102,15 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   voice picker, the bar widget and `voice-agent set/add`; "room" / "me" inside
   a hyprpi agent resolve to its own room / itself.
 
-### Resuming agents after a restart
+### Resuming agents after a restart (and parked / closed agents)
+
+The room TUI's **Ctrl+O** cycles which greyed (`◌`) agents are listed under the live ones:
+`live · restart` (default) → `+ parked` → `+ parked + closed`. The status bar always
+counts them (`1 restart · 1 parked · 2 closed`). Enter on a greyed agent: **restart** /
+**closed** = resume its Pi session (same id); **parked** (Reprieve, SUPER+W: still running,
+out of rooms) = move its window back to the current workspace (daemon `agent.unpark`).
+"Closed" = closed or killed while hyprpi kept running, for the last `closedHours`
+(config, default 24); a parked agent is listed in the room it was parked from.
 
 Agents that were still open when hyprpi went down (reboot, logout, crash) come
 back as **closed** entries in their world's room TUI (SUPER+ALT+A): greyed

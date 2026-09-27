@@ -185,11 +185,18 @@ let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the 
 // agents that join later start marked. markedIds() = the marked agents here.
 let cursorId = "", unmarked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
 const hereAgents = () => agents.filter((a) => a.room === room);
-// Closed agents from the last session (daemon "dormant"): listed greyed under the live
-// ones; Enter resumes one (same id, name, twins), ^W twice drops it from the list.
-let dormant = [];
-const listHere = () => [...hereAgents(), ...dormant.filter((a) => a.room === room)];
+// Greyed agents under the live ones; Ctrl+O cycles how many:
+//   0 live + those lost to a restart (daemon dormant kind "restart")  [default]
+//   1 + parked (Reprieve, SUPER+W; still running, out of rooms)
+//   2 + closed/killed while hyprpi kept running (last closedHours, default 24)
+// Enter: a closed one is resumed (same id, name, twins), a parked one is moved back to
+// this workspace. ^W twice on a closed one drops it from the list (its session stays).
+let dormant = [], showMode = 0;
+const SHOW_LABEL = ["live · restart", "+ parked", "+ parked + closed"];
+const parkedHere = () => showMode >= 1 ? agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)) : [];
+const listHere = () => [...hereAgents(), ...parkedHere(), ...dormant.filter((a) => a.room === room && (a.kind !== "closed" || showMode >= 2))];
 const isDormant = (id) => !agents.some((a) => a.id === id) && dormant.some((a) => a.id === id);
+const isParked = (id) => !!agents.find((a) => a.id === id)?.parked;
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The room is a stream: messages plus agent activity (tools, topics, talk between agents,
 // finishes) from the daemon. Ctrl+F cycles what it shows.
@@ -384,7 +391,7 @@ function draw() {
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
   listTop = Math.max(0, Math.min(listTop, here.length - listRows));
   const more = here.length - listRows;
-  rows.push(rule(`agents · room ${room}` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (everyone ? "" : ` · ${marked.size}/${live.length} ▸ · Esc all`)));
+  rows.push(rule(`agents · room ${room} · ${SHOW_LABEL[showMode]} (^O)` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (everyone ? "" : ` · ${marked.size}/${live.length} ▸ · Esc all`)));
   listRowY = rows.length + 1; // 1-based screen row of the first agent row
   // "special:reprieve" -> "reprieve": only the part after the last ":".
   const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
@@ -414,9 +421,11 @@ function draw() {
     // Topic, model and the dot separators in the normal text colour (same as message text).
     const dot = " · ";
     const rest = (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
-    if (a.dormant) {
+    if (a.dormant || a.parked) {
       const cur = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m` : `${ESC}4m`) : "";
-      rows.push(dim(`  ◌ ${a.icon ? a.icon + " " : ""}${cur}${strip(a.display)}${cur ? ESC + "49m" + ESC + "24m" : ""}${a.topic ? dot + a.topic : ""} · closed${a.id === cursorId ? " · ⏎ resume · ^W^W forget" : ""}`));
+      const what = a.parked ? "parked" : a.kind === "closed" ? "closed" : "closed by restart";
+      const how = a.parked ? " · ⏎ bring back here" : " · ⏎ resume · ^W^W forget";
+      rows.push(dim(`  ◌ ${a.icon ? a.icon + " " : ""}${cur}${strip(a.display)}${cur ? ESC + "49m" + ESC + "24m" : ""}${a.topic ? dot + a.topic : ""} · ${what}${a.id === cursorId ? how : ""}`));
       continue;
     }
     if (closing.has(a.id)) { rows.push(dim(`${strip(sel)}${mark(a)} ${strip(styled)} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
@@ -588,8 +597,12 @@ function draw() {
   // tmux-style status bar
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi ${online ? "" : "· daemon offline "}`;
-  const nClosed = here.length - live.length;
-  const right = `history ${historyN} · ${live.length} agent${live.length === 1 ? "" : "s"}${nClosed ? ` · ${nClosed} closed` : ""} · ${hhmm(Date.now())} `;
+  // Counts of everything the ^O toggle can show (also when hidden), so you know it's there.
+  const nRestart = dormant.filter((a) => a.room === room && a.kind !== "closed").length;
+  const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
+  const nClosed = dormant.filter((a) => a.room === room && a.kind === "closed").length;
+  const extra = [nRestart && `${nRestart} restart`, nParked && `${nParked} parked`, nClosed && `${nClosed} closed`].filter(Boolean).join(" · ");
+  const right = `history ${historyN} · ${live.length} agent${live.length === 1 ? "" : "s"}${extra ? " · " + extra : ""} · ${hhmm(Date.now())} `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
@@ -822,6 +835,11 @@ async function send() {
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !api) return render();
   if (!text) { // Enter on an empty line: jump to the cursor agent, only right after using the list
+    if (cursorId && api && focusArea === "list" && isParked(cursorId)) {
+      const pa = agents.find((a) => a.id === cursorId);
+      api.call("agent.unpark", { agent: cursorId }).then(() => { note = "\u2192 " + pa.display + " is back"; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+      return render();
+    }
     if (cursorId && api && focusArea === "list" && isDormant(cursorId)) {
       const d = dormant.find((a) => a.id === cursorId);
       api.call("agent.resume", { agent: cursorId }).then(() => { note = "resuming " + d.display + " …"; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
@@ -969,6 +987,7 @@ function onKey(d) {
     if (d === "\x15") return edited([], 0); // Ctrl+U
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
+  if (d === "\x0f") { showMode = (showMode + 1) % SHOW_LABEL.length; note = `agents: ${SHOW_LABEL[showMode]}`; return render(); } // Ctrl+O
   if (d === "\x06") { if (view !== "stream") setView("stream"); filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${FILTER_LABEL[filter]}`; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
