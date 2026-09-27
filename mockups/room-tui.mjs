@@ -634,7 +634,7 @@ async function send() {
   if (!targets.length && at) { targets = at[1].split(/[\s,]+/).filter((x) => x.length > 1).map((x) => x.slice(1)); body = at[2]; }
   if (targets.length) {
     const sent = [], failed = [];
-    await Promise.all(targets.map((who) => api.call("agent.prompt", { agent: who, text: body, via: "room-tui" })
+    await Promise.all(targets.map((who) => api.call("agent.prompt", { agent: who, text: body, via: "room-tui", room })
       .then((r) => sent.push(r.name || who)).catch((e) => failed.push(`${who} (${e.message})`))));
     note = (sent.length ? "→ sent to " + sent.join(", ") : "") + (failed.length ? "  ✗ " + failed.join(", ") : "");
     return render();

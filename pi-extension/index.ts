@@ -40,7 +40,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     const n = parseInt(m[1], 16);
     return `\x1b[38;2;${n >> 16};${(n >> 8) & 255};${n & 255}m${t}\x1b[39m`;
   };
+  let myRoom = "";
   function showSelf(d: any) {
+    myRoom = d.parked ? "" : String(d.room || "");
     const ctx = ctxRef;
     if (!ctx?.ui) return;
     let name = "";
@@ -76,7 +78,15 @@ export default function hyprpi(pi: ExtensionAPI) {
     } else if (event === "self") {
       showSelf(d);
     } else if (event === "prompt") {
-      try { idle() ? pi.sendUserMessage(d.text) : pi.sendUserMessage(d.text, { deliverAs: "followUp" }); } catch { /* best effort */ }
+      // A prompt sent from a room panel gets a one-line label so the agent can tell it
+      // apart from typing in its own window. No auto-post: the agent decides whether
+      // the room should see its answer (room_post).
+      let text = String(d.text ?? "");
+      if (d.via === "room-tui") {
+        const room = String(d.room || myRoom || "").replace(/[^A-Za-z0-9 _.-]/g, "").slice(0, 32);
+        text = `[hyprpi · Angus → you, sent from ${room ? `room ${room}'s` : "a room"} panel. Your answer stays in your window; room_post it if the room should see it.]\n${text}`;
+      }
+      try { idle() ? pi.sendUserMessage(text) : pi.sendUserMessage(text, { deliverAs: "followUp" }); } catch { /* best effort */ }
     } else if (event === "talk") {
       const how = d.mode === "demand"
         ? `${d.from.name} is waiting for your answer. Reply once with talk_reply(request_id="${d.request_id}", text=...). A refusal is a valid answer.`
