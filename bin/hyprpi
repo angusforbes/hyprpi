@@ -85,6 +85,21 @@ function childEnv(extra) {
   return { ...env, ...extra };
 }
 
+// "Panel mode" = at least two floating hyprpi-router/-room/-search windows on that
+// workspace. Returns the first workspace of the same world with no windows (or the
+// original one if the world is full).
+async function awayFromPanels(ws, cfg) {
+  let list;
+  try { list = await hypr.clients(); } catch { return ws; }
+  const panels = list.filter((c) => c.workspace?.id === ws && c.floating && /^hyprpi-(router|room|search) /.test(c.title || ""));
+  if (panels.length < 2) return ws;
+  const size = Number(cfg.worldSize) || 10;
+  const first = Math.floor((ws - 1) / size) * size + 1;
+  const used = new Set(list.map((c) => c.workspace?.id));
+  for (let w = first; w < first + size; w++) if (w !== ws && !used.has(w)) return w;
+  return ws;
+}
+
 function newId() { return "hp-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
 
 // Folder of the focused window, for "new agent here": a hyprpi agent's own
@@ -154,6 +169,9 @@ async function cmdNew() {
     }
   }
   if (!workspace && active && Number.isInteger(active.id) && active.id > 0) workspace = active.id;
+  // Panel mode (mockups/panels): that workspace is the three floating panels, so a new
+  // agent would open behind them. Put it on the next free workspace of the same world.
+  if (workspace && !opt("--here")) workspace = await awayFromPanels(workspace, cfg);
 
   const id = wantId || newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");

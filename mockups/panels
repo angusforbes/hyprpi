@@ -20,6 +20,10 @@ import { request } from "./../lib/client.mjs";
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
 const wantWs = Number(opt("--workspace")) || null;
+// Exact columns by default: the panels float and are placed by pixel, so the widths are
+// identical every time. --tile uses dwindle instead (tiled, but only as even as the tree).
+const tiled = args.includes("--tile") && (args.splice(args.indexOf("--tile"), 1), true);
+const gap = Number(opt("--gap")) || 12;
 const only = (opt("--only") || "1,2,3").split(",").map((x) => x.trim());
 const here = new URL(".", import.meta.url).pathname;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -99,10 +103,70 @@ async function relayout(addrs) {
   }
 }
 
+// Exact columns: float each panel and place it by pixel on the active monitor, inside
+// its reserved area (the bar) with `gap` between and around. Deterministic, unlike
+// resizing inside dwindle's tree.
+async function exactColumns(addrs) {
+  const mons = await hypr.hyprJson("monitors").catch(() => []);
+  const mon = mons.find((m) => m.focused) || mons[0];
+  if (!mon) return;
+  const sc = mon.scale || 1;
+  const L = Math.round(mon.x / sc), T = Math.round(mon.y / sc);
+  const W = Math.round(mon.width / sc), H = Math.round(mon.height / sc);
+  const r = mon.reserved || [0, 0, 0, 0]; // [left, top, right, bottom]
+  const x0 = L + r[0] + gap, y0 = T + r[1] + gap;
+  const usable = W - r[0] - r[2] - gap * 2;
+  const height = H - r[1] - r[3] - gap * 2;
+  const colW = Math.floor((usable - gap * (addrs.length - 1)) / addrs.length);
+  for (let i = 0; i < addrs.length; i++) {
+    await setFloat(addrs[i], true);
+    const w = i === addrs.length - 1 ? usable - (colW + gap) * i : colW; // last one takes the rounding
+    await hypr.focusWindow(addrs[i]).catch(() => {});
+    await hypr.dispatch(`hl.dsp.window.resize({ x = ${w}, y = ${height}, relative = false })`).catch(() => {});
+    await sleep(120);
+    await hypr.dispatch(`hl.dsp.window.move({ x = ${x0 + i * (colW + gap)}, y = ${y0}, relative = false })`).catch(() => {});
+    await sleep(120);
+  }
+  await hypr.focusWindow(addrs[0]).catch(() => {});
+}
+
+// Panel mode is "the panels are floating in their exact columns here". Pressing the key
+// again tiles them back, so the workspace behaves normally.
+const PANEL_TITLE = /^hyprpi-(router|room|search) /;
+async function panelModeHere(ws) {
+  const cs = await clients();
+  const here = cs.filter((c) => c.workspace?.id === ws && PANEL_TITLE.test(c.title || ""));
+  return here.filter((c) => c.floating).length >= 2 ? here : null;
+}
+
+// Back to regular mode: tile the panels again (they stay, dwindle takes over).
+async function unpanel(here) {
+  const order = ["router", "room", "search"];
+  const sorted = here.slice().sort((a, b) => order.findIndex((k) => a.title.includes(k)) - order.findIndex((k) => b.title.includes(k)));
+  const addrs = sorted.map((c) => c.address);
+  await relayout(addrs);
+  await evenTiles(addrs);
+  await hypr.focusWindow(addrs[0]).catch(() => {});
+}
+
+// Tiled mode: one exact resize of the left-most window makes thirds (the pair on its
+// right rescales with it). Resizing each window in turn skews dwindle's tree instead.
+async function evenTiles(addrs) {
+  const cs = await clients();
+  const mine = addrs.map((a) => cs.find((c) => c.address === a)).filter(Boolean);
+  if (mine.length < 2) return;
+  const total = mine.reduce((w, c) => w + c.size[0], 0);
+  await hypr.focusWindow(mine[0].address).catch(() => {});
+  await hypr.dispatch(`hl.dsp.window.resize({ x = ${Math.floor(total / mine.length)}, y = ${mine[0].size[1]}, relative = false })`).catch(() => {});
+  await sleep(200);
+}
+
 const main = async () => {
   const room = (args[0] || "").toUpperCase() || await currentRoom();
   const ws = await targetWorkspace();
   if (!ws) { console.error("panels: no normal workspace is active (use --workspace N)"); process.exit(1); }
+  const already = await panelModeHere(ws);   // second press: back to regular mode
+  if (already && !args.includes("--force")) return unpanel(already);
   const opened = [];
   const list = panelsFor(room);
   for (const p of list) {
@@ -113,18 +177,9 @@ const main = async () => {
     if (p !== list[list.length - 1]) await hypr.dispatch('hl.dsp.layout("preselect r")').catch(() => {});
   }
   if (opened.length < 2) return;
+  if (!tiled) return exactColumns(opened);
   await relayout(opened);
-  // Equal columns: one exact resize of the left-most window is enough — the pair to its
-  // right rescales with it. (An exact resize needs a real height, not y = 0.)
-  const cs = await clients();
-  const mine = opened.map((a) => cs.find((c) => c.address === a)).filter(Boolean);
-  const total = mine.reduce((w, c) => w + c.size[0], 0);
-  await hypr.focusWindow(opened[0]).catch(() => {});
-  const first = await win(opened[0]);
-  if (first && mine.length > 1) {
-    await hypr.dispatch(`hl.dsp.window.resize({ x = ${Math.floor(total / mine.length)}, y = ${first.size[1]}, relative = false })`).catch(() => {});
-    await sleep(200);
-  }
-  await hypr.focusWindow(opened[0]).catch(() => {});
+  await evenTiles(opened);
+  return hypr.focusWindow(opened[0]).catch(() => {});
 };
 main();
