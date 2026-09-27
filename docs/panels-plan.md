@@ -177,6 +177,12 @@ recoverable, plus this document. No file copies needed — the whole thing is in
 1. ~~Key for panel 2~~ **SUPER+ALT+R** (agreed 2026-09-27; SUPER+ALT+S is Reprieve stash).
 2. ~~Panel 1 prompting~~ **view + selector only** (agreed 2026-09-27).
 3. ~~Panel 2 search pane~~ **no**; panel 2 gets a filter command line instead (agreed).
+4b. **Three columns**: `mockups/panels [ROOM] [--workspace N] [--only 1,2]` opens the three
+   panels side by side, full height, reusing any already on that workspace. It works by
+   focusing each new window and dispatching `hl.dsp.layout("preselect r")` so dwindle puts
+   the next one to its right, then giving each an exact width (an exact resize needs a
+   non-zero height: `hl.dsp.window.resize({ x = W, y = H, relative = false })`).
+
 4. **One window or many**: should opening panel 1 while it is already open focus it (like now),
    and should panels 1 and 2 open side by side automatically the first time?
 5. ~~Selection scope~~ **per room** (agreed 2026-09-27).

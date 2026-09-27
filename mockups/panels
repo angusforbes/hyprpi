@@ -1,0 +1,84 @@
+#!/usr/bin/env node
+// Open the three hyprpi panels side by side, full height, on one workspace:
+//
+//   agents (panel 1) │ room / stream (panel 2) │ search (panel 3)
+//
+//   ~/Work/hyprpi/mockups/panels [ROOM] [--workspace N] [--only 1,2]
+//
+// How: dwindle's own "preselect" (hl.dsp.layout("preselect r")) makes each new window
+// open to the right of the focused one, so the three land as columns; then each column is
+// resized to a third of the monitor. Existing panel windows on that workspace are reused
+// (focused and resized) instead of opening a second copy.
+import { spawn } from "node:child_process";
+import * as hypr from "./../lib/hypr.mjs";
+
+const args = process.argv.slice(2);
+const opt = (n, d) => { const i = args.indexOf(n); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
+const wantWs = Number(opt("--workspace")) || null;
+const only = (opt("--only") || "1,2,3").split(",").map((x) => x.trim());
+const room = (args[0] || "").toUpperCase();
+const here = new URL(".", import.meta.url).pathname;
+
+const PANELS = [
+  { n: "1", cmd: `${here}agents-tui`, cls: "hyprpi.agents" },
+  { n: "2", cmd: `${here}room-tui`, cls: "hyprpi.mockup", title: /room/ },
+  { n: "3", cmd: `${here}search-tui`, cls: "hyprpi.mockup", title: /search/ },
+].filter((p) => only.includes(p.n));
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clients = () => hypr.clients().catch(() => []);
+
+async function activeWorkspace() {
+  // --workspace N: go there first — new windows always open on the active workspace.
+  if (wantWs) {
+    await hypr.dispatch(`hl.dsp.focus({ workspace = "${wantWs}" })`).catch(() => {});
+    await sleep(250);
+  }
+  const w = await hypr.activeWorkspace().catch(() => null);
+  return w && Number.isInteger(w.id) ? w.id : wantWs || null;
+}
+
+const match = (c, p, ws) => c.workspace?.id === ws && c.class === p.cls && (!p.title || p.title.test(c.title || ""));
+
+async function openPanel(p, ws) {
+  const before = await clients();
+  const existing = before.find((c) => match(c, p, ws));
+  if (existing) return existing.address;
+  const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+  spawn(p.cmd, room ? [room] : [], { detached: true, stdio: "ignore", env }).unref();
+  for (let i = 0; i < 60; i++) { // up to ~6 s for the window to map
+    await sleep(100);
+    const c = (await clients()).find((x) => match(x, p, ws) && !before.some((b) => b.address === x.address));
+    if (c) return c.address;
+  }
+  return null;
+}
+
+const main = async () => {
+  const ws = await activeWorkspace();
+  if (!ws || ws < 1) { console.error("panels: no normal workspace is active (use --workspace N)"); process.exit(1); }
+  const opened = [];
+  for (const p of PANELS) {
+    const addr = await openPanel(p, ws);
+    if (!addr) { console.error(`panels: panel ${p.n} did not open`); continue; }
+    opened.push(addr);
+    await hypr.focusWindow(addr).catch(() => {});
+    // The next window opens to the right of this one (dwindle preselect).
+    if (p !== PANELS[PANELS.length - 1]) await hypr.dispatch('hl.dsp.layout("preselect r")').catch(() => {});
+  }
+  if (opened.length < 2) return;
+  // Equal columns: each window gets a third (or half) of the usable width. An exact
+  // resize needs a real height too (y = 0 is rejected as "Invalid size"), so pass the
+  // window's own height, which leaves it full height.
+  const cs = await clients();
+  const mine = opened.map((a) => cs.find((c) => c.address === a)).filter(Boolean);
+  const usable = mine.reduce((w, c) => w + c.size[0], 0);
+  const share = Math.floor(usable / opened.length);
+  for (const c of mine.slice(0, -1)) {
+    await hypr.focusWindow(c.address).catch(() => {});
+    await hypr.dispatch(`hl.dsp.window.resize({ x = ${share}, y = ${c.size[1]}, relative = false })`).catch(() => {});
+    await sleep(120);
+  }
+  await hypr.focusWindow(opened[0]).catch(() => {});
+};
+main();
