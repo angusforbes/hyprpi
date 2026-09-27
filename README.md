@@ -105,12 +105,14 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 ### Resuming agents after a restart (and parked / closed agents)
 
 The room TUI's **Ctrl+O** cycles which greyed (`◌`) agents are listed under the live ones:
-`live · restart` (default) → `+ parked` → `+ parked + closed`. The status bar always
-counts them (`1 restart · 1 parked · 2 closed`). Enter on a greyed agent: **restart** /
-**closed** = resume its Pi session (same id); **parked** (Reprieve, SUPER+W: still running,
-out of rooms) = move its window back to the current workspace (daemon `agent.unpark`).
-"Closed" = closed or killed while hyprpi kept running, for the last `closedHours`
-(config, default 24); a parked agent is listed in the room it was parked from.
+`live` (default: live + agents lost to a reboot/crash) → `+ parked` (also parked windows and
+agents closed or killed while hyprpi ran, for the last `closedHours`, default 24). The status
+bar counts both kinds either way (`1 parked · 2 closed`). Greyed rows use the stream's grey and
+the same columns as a live row (`◌ name · topic · model`). Enter: a closed agent is resumed
+(same id); a **parked** one (Reprieve, SUPER+W: still running, out of rooms) is moved back to
+the current workspace (daemon `agent.unpark`). A parked agent is listed in the room it was
+parked from. An open room TUI re-execs itself when its own code changes, so panels are never
+stale.
 
 Agents that were still open when hyprpi went down (reboot, logout, crash) come
 back as **closed** entries in their world's room TUI (SUPER+ALT+A): greyed

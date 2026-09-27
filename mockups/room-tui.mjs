@@ -186,15 +186,14 @@ let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the 
 let cursorId = "", unmarked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
 const hereAgents = () => agents.filter((a) => a.room === room);
 // Greyed agents under the live ones; Ctrl+O cycles how many:
-//   0 live + those lost to a restart (daemon dormant kind "restart")  [default]
-//   1 + parked (Reprieve, SUPER+W; still running, out of rooms)
-//   2 + closed/killed while hyprpi kept running (last closedHours, default 24)
+//   0 live + those lost to a restart / reboot   [default]
+//   1 + parked (Reprieve, SUPER+W; still running) and closed/killed while hyprpi ran
 // Enter: a closed one is resumed (same id, name, twins), a parked one is moved back to
 // this workspace. ^W twice on a closed one drops it from the list (its session stays).
 let dormant = [], showMode = 0;
-const SHOW_LABEL = ["live · restart", "+ parked", "+ parked + closed"];
+const SHOW_LABEL = ["live", "+ parked"];
 const parkedHere = () => showMode >= 1 ? agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)) : [];
-const listHere = () => [...hereAgents(), ...parkedHere(), ...dormant.filter((a) => a.room === room && (a.kind !== "closed" || showMode >= 2))];
+const listHere = () => [...hereAgents(), ...parkedHere(), ...dormant.filter((a) => a.room === room && (a.kind !== "closed" || showMode >= 1))];
 const isDormant = (id) => !agents.some((a) => a.id === id) && dormant.some((a) => a.id === id);
 const isParked = (id) => !!agents.find((a) => a.id === id)?.parked;
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
@@ -372,7 +371,8 @@ function copy(text) {
 
 let batching = false, dirty = false;
 const PROF = process.env.HYPRPI_TUI_PROF; // file: one "ms view" line per frame
-function render() { if (batching) { dirty = true; return; } if (!PROF) return draw(); const t = performance.now(); draw(); fs.appendFileSync(PROF, `${(performance.now() - t).toFixed(1)} ${view}\n`); }
+let restarting = false; // re-exec in progress: the child owns the terminal, draw nothing
+function render() { if (restarting) return; if (batching) { dirty = true; return; } if (!PROF) return draw(); const t = performance.now(); draw(); fs.appendFileSync(PROF, `${(performance.now() - t).toFixed(1)} ${view}\n`); }
 function draw() {
   dirty = false;
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30;
@@ -422,10 +422,12 @@ function draw() {
     const dot = " · ";
     const rest = (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) {
-      const cur = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m` : `${ESC}4m`) : "";
-      const what = a.parked ? "parked" : a.kind === "closed" ? "closed" : "closed by restart";
+      // Same columns as a live row (mark, name at column 4, · topic · model), all in the
+      // stream's grey; ◌ instead of the status mark.
+      const cur = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
+      const what = a.parked ? "parked" : "closed";
       const how = a.parked ? " · ⏎ bring back here" : " · ⏎ resume · ^W^W forget";
-      rows.push(dim(`  ◌ ${a.icon ? a.icon + " " : ""}${cur}${strip(a.display)}${cur ? ESC + "49m" + ESC + "24m" : ""}${a.topic ? dot + a.topic : ""} · ${what}${a.id === cursorId ? how : ""}`));
+      rows.push(midFg(` ◌ ${iconPart}${cur}${rest}${dot}${what}${a.id === cursorId ? how : ""}`));
       continue;
     }
     if (closing.has(a.id)) { rows.push(dim(`${strip(sel)}${mark(a)} ${strip(styled)} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
@@ -598,10 +600,9 @@ function draw() {
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi ${online ? "" : "· daemon offline "}`;
   // Counts of everything the ^O toggle can show (also when hidden), so you know it's there.
-  const nRestart = dormant.filter((a) => a.room === room && a.kind !== "closed").length;
   const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
-  const nClosed = dormant.filter((a) => a.room === room && a.kind === "closed").length;
-  const extra = [nRestart && `${nRestart} restart`, nParked && `${nParked} parked`, nClosed && `${nClosed} closed`].filter(Boolean).join(" · ");
+  const nClosed = dormant.filter((a) => a.room === room).length;
+  const extra = [nParked && `${nParked} parked`, nClosed && `${nClosed} closed`].filter(Boolean).join(" · ");
   const right = `history ${historyN} · ${live.length} agent${live.length === 1 ? "" : "s"}${extra ? " · " + extra : ""} · ${hhmm(Date.now())} `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
@@ -708,6 +709,7 @@ function applyList(r) {
 }
 
 async function start() {
+  if (restarting) return;
   try {
     api = await connect({
       onEvent: (ev, data) => {
@@ -1059,6 +1061,22 @@ function onKey(d) {
 }
 function quit() { out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
+
+// Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
+// stale: same room, same window. Not while something is typed or a search is running.
+const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
+  ...["client.mjs", "paths.mjs", "search-view.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
+const codeAtStart = codeStamp();
+setInterval(() => {
+  if (restarting || codeStamp() === codeAtStart || input.trim() || search.busy) return;
+  restarting = true;
+  try { api?.close?.(); } catch { /* fine */ }
+  out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
+  spawn(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env })
+    .on("exit", (code) => process.exit(code ?? 0));
+  process.stdin.setRawMode?.(false); process.stdin.pause();
+}, 3000);
 process.stdout.on("resize", render);
 setInterval(render, 30000); // clock
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
