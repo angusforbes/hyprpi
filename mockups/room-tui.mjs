@@ -1,30 +1,46 @@
 #!/usr/bin/env node
-// MOCKUP: a terminal / tmux-style hyprpi room, for comparison with the
-// Quickshell room window (ui/RoomWindow.qml), which stays the real one.
-// Live data from the daemon. The room pane is a stream: messages plus agent activity
-// (tools, topics, talk between agents, joins/moves/renames); Ctrl+F cycles
-// room · all activity / stream · all activity / room + stream / room + stream · topics.
-// Typing + Enter posts to the room as Angus (same
-// as the room window). Agent list: ↑↓ or click = cursor · Enter on an empty
-// line = jump to it · Shift+Space or Ctrl+Space / second click = mark (Enter then sends only to the
-// marked agents; every agent starts marked, Esc marks all again, Ctrl+A all on/off) · Ctrl+W close · Ctrl+K kill (press
-// twice). Conversation: wheel, Shift+↑↓, PgUp/PgDn, Home/End. Keys: Tab / Shift+Tab switch room · Ctrl+N (or
-// "/new [DIR]") opens a new agent · wheel / ↑↓ / PgUp PgDn / Home End scroll
-// the conversation · drag selects + copies message text, Shift+click/drag whole messages, double-click a word, triple-click a whole message · Ctrl+Q quits (Ctrl+C copies).
-// Slash commands (lib/search-view.mjs, "/" shows them, Tab completes, /help lists):
-// /room · /stream [WORDS] (live word filter) · /search [WORDS] · /ai DESCRIPTION ·
-// /ask QUESTION · /new [DIR] · /help · "//text" posts "/text". Search view: the
-// input is the search box (Enter searches, never posts; Enter again on the same
-// words jumps to the selected result), Shift+↑↓ results (↑↓ always = agent list), Ctrl+/ keyword ⇄ ai, Alt+S or
-// Esc back to the stream (the query and results are kept; Alt+S returns to them).
+// Panel 2 of three (docs/panels-plan.md): the hyprpi ROOM / STREAM panel, SUPER+ALT+R.
+// One world's room: messages plus agent activity (tools, topics, talk between agents,
+// joins/moves/renames), and the box to write in it. The agents themselves live in
+// panel 1 (SUPER+ALT+A) and search in panel 3 (SUPER+ALT+/).
 //
 //   ~/Work/hyprpi/mockups/room-tui [ROOM]   (kitty launcher with the mouse settings)
-// Shift+click/drag reach the TUI there; Ctrl+Shift+drag is kitty's own selection.
-// No ROOM = the current world's room. Several copies can run at once, on the
-// same room or different ones: each is just another subscriber of the daemon.
-import { connect } from "../lib/client.mjs";
-import { createSearch, completions, searchLabel, searchRows, askRows, helpRows } from "../lib/search-view.mjs";
+//
+// Typing + Enter posts to the room as Angus. The header line shows who is marked (▸,
+// set in panel 1): everyone = a room post, some = straight to them, none = written in
+// the room and delivered to nobody; "@Name text" always goes to that agent.
+// Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
+// room + stream / room + stream · topics.
+// Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
+// Tab / Shift+Tab switch world · Ctrl+/ opens the search panel on this room ·
+// Esc drops a selection, else marks every agent again · Ctrl+Q quits (Ctrl+C copies).
+// Commands: /room · /stream [WORDS] (live word filter) · /history N|all · /help ·
+// "//text" posts "/text".
+// Drag selects and copies message text, Shift+click/drag whole messages, double-click a
+// word, triple-click a whole message. No ROOM = the current world's room; several copies
+// can run at once: each is just another subscriber of the daemon.
 
+import { connect } from "../lib/client.mjs";
+// Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
+const COMMANDS = [
+  ["/room", "room messages + agent-to-agent"],
+  ["/stream", "/stream WORDS shows only rows with those words; /stream alone clears the filter"],
+  ["/history", "/history N | all: how far back the stream goes (N interactions; default 200)"],
+  ["/help", "this list"],
+];
+const completions = (prefix) => COMMANDS.map(([c]) => c).filter((c) => c.startsWith(prefix.toLowerCase()));
+const helpRows = () => {
+  const w = Math.max(...COMMANDS.map(([c]) => c.length));
+  return [
+    ...COMMANDS.map(([c, d]) => `   ${bold(c.padEnd(w))}  ${d}`),
+    "",
+    `   ${bold("//text".padEnd(w))}  posts "/text" to the room`,
+    `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
+    `   ${dim("stream: ^↑↓ select a row · PgUp PgDn · ^Home/End · ^F what the stream shows")}`,
+    `   ${dim("message box: ↑↓ lines · ⇧⏎ new line · ⇧←→ select · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
+    `   ${dim("agents: SUPER+ALT+A (panel 1, the marks ▸ live there) · search: SUPER+ALT+/ (panel 3)")}`,
+  ];
+};
 import fs from "node:fs";
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, worldHex, dim, midFg, bold, fg, markupFg,
   unnamed, nameFg, hexFg, graphemes, gw, strip, memo, width, cut, clip, pad, wrap, hardWrap } from "../lib/tui/term.mjs";
@@ -78,19 +94,17 @@ let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the 
 // and where the rows landed on screen (for mouse clicks).
 // Marks: every agent is marked (▸) unless you turned it off; we keep the OFF set so
 // agents that join later start marked. markedIds() = the marked agents here.
-let cursorId = "", unmarked = new Set(), listTop = 0, listRowY = 0, listRows = 0, convoY = 0, confirm = null;
+let convoY = 0, confirm = null;
+// Marks (▸) are the daemon's per-room selection, set in panel 1 (the agent panel).
+let marks = { all: true, agents: [] };
+const listRowY = 0, listRows = 0; // no agent pane here (kept so the copy code reads the same)
 const hereAgents = () => agents.filter((a) => a.room === room);
 // Greyed agents under the live ones; Ctrl+O cycles how many:
 //   0 live + those lost to a restart / reboot   [default]
 //   1 + parked (Reprieve, SUPER+W; still running) and closed/killed while hyprpi ran
 // Enter: a closed one is resumed (same id, name, twins), a parked one is moved back to
 // this workspace. ^W twice on a closed one drops it from the list (its session stays).
-let dormant = [], showMode = 0;
-const SHOW_LABEL = ["live", "+ parked"];
-const parkedHere = () => showMode >= 1 ? agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)) : [];
-const listHere = () => [...hereAgents(), ...parkedHere(), ...dormant.filter((a) => a.room === room && (a.kind !== "closed" || showMode >= 1))];
-const isDormant = (id) => !agents.some((a) => a.id === id) && dormant.some((a) => a.id === id);
-const isParked = (id) => !!agents.find((a) => a.id === id)?.parked;
+let dormant = [];
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The room is a stream: messages plus agent activity (tools, topics, talk between agents,
 // finishes) from the daemon. Ctrl+F cycles what it shows.
@@ -107,21 +121,18 @@ const FILTERS = ["room", "stream", "all", "topics"];
 const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
 const HIDDEN = new Set(["done", "blocked"]);
 let filter = "topics"; // default view
-// What the pane below the agent list shows: "stream" | "search" | "ask" | "help".
+// What the pane shows: "stream" | "help".
 let view = "stream", words = []; // words: /stream WORDS live filter (lower case)
 let resultRowMap = {}; // screen row -> search result index (clicks)
 let tabCycle = null; // Tab through several matching commands
 // Marked agents (▸ in the agent list) filter everything: who messages go to, whose history
 // search and /ask read, and whose rows the stream shows. Esc clears.
-const markedIds = () => new Set(hereAgents().filter((a) => !unmarked.has(a.id)).map((a) => a.id));
-const allMarked = () => hereAgents().every((a) => !unmarked.has(a.id));
-const toggleMark = (id) => { if (!id || isDormant(id)) return; unmarked.has(id) ? unmarked.delete(id) : unmarked.add(id); };
+const markedIds = () => new Set(marks.all ? hereAgents().map((a) => a.id) : marks.agents.filter((id) => hereAgents().some((a) => a.id === id)));
+const allMarked = () => marks.all || markedIds().size === hereAgents().length;
 // Search / ask scope: all marked = the whole room (closed agents too); none = only Angus's posts.
 // /history: how far back the stream and /ask go, in interactions (a room message or one
 // agent turn, however many tool calls); "all" = everything. Default 200.
 let historyN = 200;
-const search = createSearch({ api: () => api, room: () => room, onChange: () => render(), history: () => historyN,
-  only: () => allMarked() ? [] : markedIds().size ? [...markedIds()] : ["-none-"] });
 function onlyLabel() {
   if (allMarked()) return "";
   const ids = markedIds();
@@ -272,65 +283,24 @@ function draw() {
   dirty = false;
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30;
   const c = worldFg(room);
-  const here = listHere(), live = hereAgents();
+  const live = hereAgents();
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const rows = [];
 
-  // Agents pane: scrolls when there are more agents than ~40% of the height.
-  if (!here.find((a) => a.id === cursorId)) cursorId = here[0]?.id || "";
-  const marked = markedIds(), everyone = marked.size === live.length;
-  const cur = Math.max(0, here.findIndex((a) => a.id === cursorId));
-  const maxList = Math.max(3, Math.floor((H - 6) * 0.4));
-  listRows = Math.min(here.length, maxList);
-  if (cur < listTop) listTop = cur;
-  if (cur >= listTop + listRows) listTop = cur - listRows + 1;
-  listTop = Math.max(0, Math.min(listTop, here.length - listRows));
-  const more = here.length - listRows;
-  rows.push(rule(`agents · room ${room} · ${SHOW_LABEL[showMode]} (^O)` + (more > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${here.length - listTop - listRows ? "↓" + (here.length - listTop - listRows) : ""}` : "") + (everyone ? "" : ` · ${marked.size}/${live.length} ▸ · Esc all`)));
-  listRowY = rows.length + 1; // 1-based screen row of the first agent row
-  // "special:reprieve" -> "reprieve": only the part after the last ":".
-  const wsl = (a) => String(a.workspace_label || "").replace(/^.*:/, "");
-  const wsW = Math.min(12, Math.max(2, ...here.map((a) => width(wsl(a)))));
-  // One name column for agents and messages, so message names line up with
-  // the agent names above (column 4, after the mark).
+  // No agent pane here: panel 1 (SUPER+ALT+A) owns the agents. One header line instead —
+  // the room, who is marked (▸, set in panel 1), and what else is in the world.
+  const marked = markedIds(), everyone = allMarked();
+  const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
+  const nClosed = dormant.filter((a) => a.room === room).length;
+  const markedNames = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
+  const who = everyone ? `${live.length} agent${live.length === 1 ? "" : "s"}`
+    : marked.size ? `only ▸ ${cut(markedNames.join(", "), 40)}` : "no agents ▸ (Esc: all)";
+  rows.push(rule(`room ${room} · ${who}${nParked ? ` · ${nParked} parked` : ""}${nClosed ? ` · ${nClosed} closed` : ""}`));
+
   const msgs = messages[room] || [];
   const authorLabel = (au = {}) => au.kind === "human" ? au.name || "Angus" : (au.icon ? au.icon + " " : "") + (au.name || "agent");
-  const nameW = Math.min(20, Math.max(6, ...here.map((a) => width((a.icon ? a.icon + " " : "") + a.display)), ...msgs.slice(-200).map((m) => width(authorLabel(m.author)))));
+  const nameW = Math.min(20, Math.max(6, ...msgs.slice(-200).map((m) => width(authorLabel(m.author)))));
   const nameBg = theme.muted || theme.selection;
-  const modelW = Math.max(4, ...here.map((a) => width((a.model || "").replace(/^claude-/, ""))));
-  if (!here.length) rows.push(dim("  no agents here · SUPER+A opens one"));
-  for (const a of here.slice(listTop, listTop + listRows)) {
-    // mark · name · model · topic (like herdr's sidebar). No status word: the mark says it.
-    const name = cut((a.icon ? a.icon + " " : "") + a.display, nameW);
-    const iconPart = a.icon && name.startsWith(a.icon + " ") ? a.icon + " " : "";
-    const bare = name.slice(iconPart.length);
-    let styled = a.name_markup && !name.endsWith("…") && !unnamed(a.name) ? bold(markupFg(a.name_markup, a.color)) : nameFg(a.name, a.color, bare);
-    // Cursor (follows the focused window): the name alone (not its icon) on light grey.
-    // Focused but the cursor moved elsewhere: the name underlined. Marks never change colour.
-    if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
-    else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
-    styled = iconPart + styled;
-    const sel = marked.has(a.id) ? fg(c, bold("▸")) : " ";
-    const model = (a.model || "").replace(/^claude-/, "");
-    // name · topic · model, separated by dots like herdr's sidebar (no columns).
-    // Topic, model and the dot separators in the normal text colour (same as message text).
-    const dot = " · ";
-    const rest = (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
-    if (a.dormant || a.parked) {
-      // Same columns as a live row (mark, name at column 4, · topic · model), all in the
-      // stream's grey; ◌ instead of the status mark.
-      const cur = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
-      const what = a.parked ? "parked" : "closed";
-      const how = a.parked ? " · ⏎ revive" : " · ⏎ resume · ^W^W forget";
-      rows.push(midFg(` ◌ ${iconPart}${cur}${rest}${dot}${what}${a.id === cursorId ? how : ""}`));
-      continue;
-    }
-    if (closing.has(a.id)) { rows.push(dim(`${strip(sel)}${mark(a)} ${strip(styled)} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
-    rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
-  }
-  // Agents being opened (/new, Ctrl+N): a placeholder until the daemon lists them.
-  pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
-  for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${home(p.cwd)} …`));
 
   // Conversation pane: fill what's left, newest at the bottom.
   convoY = rows.length + 2;
@@ -340,7 +310,7 @@ function draw() {
   // Recipients in the prompt, always shown (all marked = the room post goes to all of them):
   // icons where they exist, names only for agents without one.
   const to = [...marked].map((id) => agents.find((a) => a.id === id)).filter(Boolean).map((a) => a.icon || a.display);
-  const prompt = fg(c, bold(view === "search" ? `${search.mode === "ai" ? "✦" : "⌕"} ${room} ❯ ` : view === "ask" ? `? ${room} ❯ `
+  const prompt = fg(c, bold(false ? "" : false ? ""
     : to.length ? `${room} → ${cut(to.join(" "), Math.max(10, Math.floor(W / 3)))} ❯ ` : !everyone && live.length ? `${room} → nobody ❯ ` : `${room} ❯ `));
   const promptW = width(prompt);
   ic = Math.max(0, Math.min(ic, graphemes(input).length));
@@ -487,18 +457,13 @@ function draw() {
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (note ? dim("  " + note) : "") : view === "search" ? dim(search.mode === "ai" ? "describe it, ⏎ search · ⏎ again jumps · ^↑↓ result · ^S keyword · ^/ next view · Esc back" : "words, ⏎ search · ⏎ again jumps · ^↑↓ result · ^S ai · ^/ next view · Esc back")
-    : view === "ask" ? dim("a question about this room, ⏎ ask · ^↑↓ scroll · ^/ next view · Esc back") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ⇧↑↓ agent · ⇧Space mark · ^↑↓ scroll · ^/ search · ⇧⏎ new line · ⇧←→ select · ^F filter · / commands · Tab room")));
+    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⇧⏎ new line · ⇧←→ select · ^F filter · / commands · Tab room · SUPER+ALT+A agents")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi ${online ? "" : "· daemon offline "}`;
-  // Counts of everything the ^O toggle can show (also when hidden), so you know it's there.
-  const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
-  const nClosed = dormant.filter((a) => a.room === room).length;
-  const extra = [nParked && `${nParked} parked`, nClosed && `${nClosed} closed`].filter(Boolean).join(" · ");
-  const right = `history ${historyN} · ${live.length} agent${live.length === 1 ? "" : "s"}${extra ? " · " + extra : ""} · ${hhmm(Date.now())} `;
+  const right = `history ${historyN} · ${hhmm(Date.now())} `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
@@ -523,51 +488,20 @@ function draw() {
   out(`${ESC}${crow};${ccol}H${ESC}?25h`);
 }
 
-// The pane below the agent list when it isn't the stream: search results, an /ask answer, /help.
+// The pane when it isn't the stream: /help.
 let askTop = 0;
 function drawPane(rows, ruleAt, avail, W, c, rule) {
-  const T = { width, clip, dim, bold, italic, hexFg, rgb, theme, wrap };
-  let pane, label, top = 0;
-  if (view === "search") {
-    pane = searchRows(search, W, c, T); label = searchLabel(search) + onlyLabel();
-    // Keep the selected result in view.
-    const s0 = pane.findIndex((r) => r.i === search.selected), s1 = pane.findLastIndex((r) => r.i === search.selected);
-    if (s0 >= 0) { if (s0 < search.top) search.top = s0; if (s1 >= search.top + avail) search.top = s1 - avail + 1; }
-    search.top = top = Math.max(0, Math.min(search.top, pane.length - avail));
-    const shownIdx = pane.slice(top, top + avail).map((r) => r.i).filter((i) => i != null);
-    const above = shownIdx.length ? shownIdx[0] : 0, below = shownIdx.length ? search.results.length - 1 - shownIdx[shownIdx.length - 1] : 0;
-    if (above || below) label += [above ? ` \u00b7 \u2191 ${above}` : "", below ? ` \u00b7 \u2193 ${below}` : ""].join("");
-  } else if (view === "ask") {
-    pane = askRows(search, W, c, T, wrap).map((line) => ({ line }));
-    label = "ask \u00b7 one-shot, no memory (Esc back)" + onlyLabel();
-    askTop = top = Math.max(0, Math.min(askTop, pane.length - avail));
-    if (pane.length > avail) label += ` \u00b7 PgUp/PgDn`;
-  } else {
-    pane = [{ line: "" }, ...helpRows(T).map((line) => ({ line }))];
-    label = "commands (Esc back)";
-  }
-  rows[ruleAt] = rule(label);
-  const shown = pane.slice(top, top + avail);
+  const pane = ["", ...helpRows()];
+  rows[ruleAt] = rule("commands (Esc back)");
   rowMeta = {}; resultRowMap = {}; lastAvail = avail;
-  shown.forEach((r, k) => { if (r.i != null) resultRowMap[rows.length + 1 + k] = r.i; });
-  rows.push(...shown.map((r) => r.line));
-  for (let k = shown.length; k < avail; k++) rows.push("");
+  rows.push(...pane.slice(0, avail));
+  for (let k = pane.length; k < avail; k++) rows.push("");
 }
 
-// Switch the pane. Entering search puts the last query back in the input (the
-// search box); leaving it empties the input.
 function setView(v) {
   if (v === view) return render();
-  if (view === "search" && input === search.query) { input = ""; ic = 0; }
   view = v; confirm = null; note = "";
-  if (v === "search" && !input) { input = search.query; ic = graphemes(input).length; }
   render();
-}
-function jumpToResult() {
-  const r = search.current();
-  if (!r || !api) return;
-  if (r.kind !== "agent" || !r.live) { note = r.kind === "room" ? "that's the room log" : `${r.name} is closed`; return render(); }
-  api.call("agent.focus", { agent: r.source }).then(() => { note = "\u2192 " + r.name; render(); }).catch((e) => { note = "\u2717 " + e.message; render(); });
 }
 
 async function loadRoom(r) {
@@ -596,10 +530,16 @@ function applyList(r) {
   }
   // Focusing an agent's window moves the list cursor to it (and scrolls it into view).
   const f = agents.find((a) => a.focused);
-  if (f && f.id !== lastFocusedId && f.room === (room || r.active_room)) cursorId = f.id;
   lastFocusedId = f ? f.id : "";
   if (!room) room = r.active_room || rooms[0]?.id || "A";
   if (!rooms.find((x) => x.id === room)) rooms = [...rooms, { id: room }].sort((a, b) => a.id.localeCompare(b.id));
+  render();
+}
+
+// The marks (▸) are the daemon's per-room selection: panel 1 sets them, this panel follows.
+async function loadMarks() {
+  if (!api) return;
+  try { marks = await api.call("selection.get", { room }); } catch { marks = { all: true, agents: [] }; }
   render();
 }
 
@@ -609,6 +549,7 @@ async function start() {
     api = await connect({
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
+        else if (ev === "selection" && data?.room === room) { marks = data; render(); }
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
         else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 50000) t.splice(0, t.length - 40000); if (data.room === room) render(); }
       },
@@ -617,6 +558,7 @@ async function start() {
     online = true;
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadRoom(room);
+    await loadMarks();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
 
@@ -624,7 +566,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; unmarked.clear(); streamSel = null; cursorId = ""; listTop = 0; confirm = null; search.reset(); render(); loadRoom(room);
+  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; render(); loadRoom(room); loadMarks();
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -644,53 +586,8 @@ function newAgent(dir) {
   note = ""; render();
 }
 
-// Close (window close: Pi exits normally) or kill (SIGTERM, then SIGKILL) the
-// agent under the cursor; both ask for a second press within 3 s.
-import * as hypr from "../lib/hypr.mjs";
-function act(kind) {
-  const a = agents.find((x) => x.id === cursorId) || dormant.find((x) => x.id === cursorId);
-  if (!a) return;
-  if (a.dormant) { // a closed agent: ^W / ^K twice drops it from the list
-    if (!confirm || confirm.id !== a.id || Date.now() > confirm.until) {
-      confirm = { kind, id: a.id, until: Date.now() + 3000, label: `forget ${a.display}? (its session stays) press ^${kind === "close" ? "W" : "K"} again` };
-      setTimeout(() => { if (confirm && Date.now() > confirm.until) { confirm = null; render(); } }, 3100);
-      return render();
-    }
-    confirm = null;
-    if (api) api.call("agent.forget", { agent: a.id }).then(() => { note = "forgot " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
-    return render();
-  }
-  if (!confirm || confirm.kind !== kind || confirm.id !== a.id || Date.now() > confirm.until) {
-    confirm = { kind, id: a.id, until: Date.now() + 3000, label: `${kind === "close" ? "close" : "KILL"} ${a.display}? press ^${kind === "close" ? "W" : "K"} again` };
-    setTimeout(() => { if (confirm && Date.now() > confirm.until) { confirm = null; render(); } }, 3100);
-    return render();
-  }
-  confirm = null;
-  closing.set(a.id, kind);
-  setTimeout(() => { if (closing.delete(a.id)) render(); }, 10000); // never stuck on "closing…"
-  if (kind === "close") {
-    if (!a.address) { note = "✗ no window for " + a.display; return render(); }
-    hypr.closeWindow(a.address).then(() => { note = "closed " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
-  } else {
-    try { process.kill(a.pid, "SIGTERM"); note = "killed " + a.display; } catch (e) { note = "✗ " + e.message; }
-    setTimeout(() => { try { process.kill(a.pid, 0); process.kill(a.pid, "SIGKILL"); } catch { /* gone */ } }, 2000);
-  }
-  render();
-}
-// Where the last interaction was: "list" (↑↓ / click / wheel on the agents),
-// "results" (a search result selected) or "input" (typing, clicking elsewhere).
-// An empty Enter jumps only from "list" (to the cursor agent) or "results".
+// Where the last interaction was: "results" (a search result selected) or "input".
 let focusArea = "input";
-function moveCursor(d) {
-  focusArea = "list";
-  const here = listHere();
-  if (!here.length) return;
-  const i = Math.max(0, here.findIndex((a) => a.id === cursorId));
-  cursorId = here[Math.max(0, Math.min(here.length - 1, i + d))].id;
-  confirm = null; render();
-}
-
-// Slash commands; true when the input was one ("//text" is not: it posts "/text").
 function command(text) {
   const m = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text);
   if (!m || text.startsWith("//")) return false;
@@ -700,9 +597,7 @@ function command(text) {
     case "new": newAgent(arg); return true;
     case "room": filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); return true;
     case "stream": words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } return true;
-    case "search": setView("search"); if (search.mode === "ai" && arg) search.mode = "keyword"; if (arg) { input = arg; ic = graphemes(arg).length; search.run(arg, "keyword"); } return true;
-    case "ai": setView("search"); if (arg) { input = arg; ic = graphemes(arg).length; search.run(arg, "ai"); } else if (search.mode !== "ai") search.toggleMode(); return true;
-    case "ask": askTop = 0; setView("ask"); if (arg) search.askQuestion(arg); return true;
+    case "search": case "ai": case "ask": note = `\u2717 /${m[1]} lives in the search panel \u00b7 SUPER+ALT+/`; render(); return true;
     case "history": {
       if (!arg) { note = `history: ${historyN === "all" ? "everything" : "last " + historyN + " interactions"} · /history N or /history all`; render(); return true; }
       const n = /^all$/i.test(arg) ? "all" : Number.parseInt(arg, 10);
@@ -720,31 +615,11 @@ function command(text) {
 async function send() {
   const raw = input.trim();
   if (command(raw)) return;
-  if (view === "search") { // the input is the search box: never posts
-    if (!raw) return focusArea === "results" ? jumpToResult() : undefined;
-    const r = search.ranFor;
-    if (r && r.q === raw && r.mode === search.mode && r.room === room && !search.busy) return jumpToResult();
-    return search.run(raw);
-  }
-  if (view === "ask") { input = ""; ic = 0; askTop = 0; return search.askQuestion(raw); }
   if (view === "help") view = "stream";
   input = ""; ic = 0;
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !api) return render();
-  if (!text) { // Enter on an empty line: jump to the cursor agent, only right after using the list
-    if (cursorId && api && focusArea === "list" && isParked(cursorId)) {
-      const pa = agents.find((a) => a.id === cursorId);
-      api.call("agent.unpark", { agent: cursorId }).then(() => { note = "\u2192 " + pa.display + " is back"; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
-      return render();
-    }
-    if (cursorId && api && focusArea === "list" && isDormant(cursorId)) {
-      const d = dormant.find((a) => a.id === cursorId);
-      api.call("agent.resume", { agent: cursorId }).then(() => { note = "resuming " + d.display + " …"; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
-      return render();
-    }
-    if (cursorId && api && focusArea === "list") api.call("agent.focus", { agent: cursorId }).catch((e) => { note = "✗ " + e.message; render(); });
-    return render();
-  }
+  if (!text) return render(); // Enter on an empty line: nothing to post (the agents live in panel 1)
   if (!api) return render();
   // Everyone marked: a room post (or @Name tokens: just them). Some marked: directly to them.
   // Nobody marked: written in the room, delivered to no agent.
@@ -780,7 +655,7 @@ function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   // Key model: TOP agent list = Shift (⇧↑↓ cursor, ⇧Space mark) · MIDDLE pane = Ctrl (^↑↓, PgUp/PgDn,
   // ^Home/End) · BOTTOM message box = plain keys (multi-line: ↑↓ lines, ⇧⏎ newline, ⇧←→ select).
-  // Ctrl+/ cycles the pane (stream → search → ask), Ctrl+S keyword ⇄ AI in search.
+  // Ctrl+/ opens the search panel (panel 3) — this panel does not search.
   // Bracketed paste (Super+V / Ctrl+Shift+V): inserted as text, line breaks kept.
   if (d === "\x1b[200~") { pasting = true; return; }
   if (d === "\x1b[201~") { pasting = false; return render(); }
@@ -798,7 +673,6 @@ function onKey(d) {
   if (d === "\x16") return pasteClipboard();   // Ctrl+V: paste
   // Shift+Space (the launcher maps it to CSI 32;2u) or Ctrl+Space: toggle the cursor
   // agent's mark in every view, even while typing (plain Space is text then).
-  if (d === "\x1b[32;2u" || d === "\x00") { toggleMark(cursorId); confirm = null; return render(); } // the cursor stays put
   if (d === "\t" && /^\/[^\s/]*$/.test(input)) { // complete a command
     // One match: complete it (plus a space). Several: their common prefix; Tab
     // again steps through the matches (/s \u2192 /stream \u2192 /search \u2192 /stream \u2026).
@@ -816,22 +690,20 @@ function onKey(d) {
   if (d === "\r") { selA = null; return send(); }
   if (d === "\x1b[13;2u") return insertText("\n"); // Shift+Enter: new line in the message
   if (d === "\x1bs" || d === "\x1bS") return setView(view === "search" ? "stream" : "search"); // Alt+S (still works)
-  if (d === "\x1f") { const order = ["stream", "search", "ask"]; return setView(order[(order.indexOf(view) + 1) % order.length]); } // Ctrl+/
-  if (d === "\x13") { if (view === "search") search.toggleMode(); return; } // Ctrl+S: keyword ⇄ AI
+  if (d === "\x1f") { // Ctrl+/: the search panel, on this room
+    const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+    spawn(new URL("./search-tui", import.meta.url).pathname, [room], { detached: true, stdio: "ignore", env }).unref();
+    note = "search panel → room " + room; return render();
+  }
   if (view !== "stream" && d === "\x1b") { // Esc: back to the stream
-    if (view === "search" && input === search.query) { input = ""; ic = 0; selA = null; }
     view = "stream"; note = ""; return render();
   }
   // TOP: the agent list (Shift).
-  if (d === "\x1b[1;2A") return moveCursor(-1);
-  if (d === "\x1b[1;2B") return moveCursor(1);
   // MIDDLE: the pane (Ctrl): Ctrl+↑↓ a line / result, PgUp PgDn a page, Ctrl+Home/End top / bottom.
   {
     const page = Math.max(1, lastAvail - 2);
     const mv = { "\x1b[1;5A": -1, "\x1b[1;5B": 1, "\x1b[5~": -page, "\x1b[6~": page, "\x1b[1;5H": -Infinity, "\x1b[1;5F": Infinity }[d];
     if (mv !== undefined) {
-      if (view === "search") { focusArea = "results"; return search.move(Number.isFinite(mv) ? (Math.abs(mv) > 1 ? Math.sign(mv) * 5 : mv) : Math.sign(mv) * 1e6); }
-      if (view === "ask") { askTop = Number.isFinite(mv) ? Math.max(0, askTop + mv) : mv < 0 ? 0 : 1e9; return render(); }
       if (view === "stream") {
         if (d === "\x1b[5~" || d === "\x1b[6~") { scroll = Math.max(0, scroll - mv); return render(); } // PgUp/PgDn: a page
         const n = streamKeys.length; if (!n) return render();
@@ -884,13 +756,12 @@ function onKey(d) {
     if (d === "\x15") return edited([], 0); // Ctrl+U
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
-  if (d === "\x0f") { showMode = (showMode + 1) % SHOW_LABEL.length; note = `agents: ${SHOW_LABEL[showMode]}`; return render(); } // Ctrl+O
   if (d === "\x06") { if (view !== "stream") setView("stream"); filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${FILTER_LABEL[filter]}`; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
       const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
-      const inList = y >= listRowY && y < listRowY + listRows;
+      const inList = false; // no agent pane in this panel
       // Left button: press starts a possible selection, motion drags it,
       // release copies it (or, without a drag, counts as a click).
       // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
@@ -909,47 +780,15 @@ function onKey(d) {
         if ((sel.dragging || sel.mode === "msg") && selRange()) { copy(selectedText()); continue; } // highlight stays until the next key or click
         if (sel.clicks >= 2 && !inList && !(view === "search" && resultRowMap[y] !== undefined)) { multiClick(sel.clicks, x, y); continue; }
         sel = null;
-        if (view === "search" && resultRowMap[y] !== undefined) { // click a result; click it again (quickly) to jump
-          const i = resultRowMap[y], now = Date.now();
-          if (i === search.selected && now - lastClick.t < 400 && lastClick.id === "result") { lastClick = { id: "", t: 0, toggled: false }; jumpToResult(); continue; }
-          search.selected = i; lastClick = { id: "result", t: now, toggled: false };
-          continue;
-        }
-        if (inList) {
-          const a = listHere()[listTop + y - listRowY];
-          if (!a) continue;
-          const now = Date.now();
-          if (lastClick.id === a.id && now - lastClick.t < 400) {
-            // Double-click: copy the agent's name (and undo the mark the first click toggled).
-            if (lastClick.toggled) toggleMark(a.id);
-            copy(a.display);
-            const nx = 4 + (a.icon ? width(a.icon) + 1 : 0);
-            sel = { x0: nx, y0: y, x1: nx + width(a.display) - 1, y1: y, dragging: true, mode: "plain" }; // show what was copied
-            lastClick = { id: "", t: 0, toggled: false };
-            continue;
-          }
-          // Click: cursor there; click the cursor row again: mark / unmark.
-          const toggled = a.id === cursorId;
-          if (toggled) toggleMark(a.id);
-          cursorId = a.id; confirm = null;
-          lastClick = { id: a.id, t: now, toggled };
-        }
         continue;
       }
       if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
-        if (inList) focusArea = "list"; else if (view === "search") focusArea = "results";
-        if (inList) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); const here = listHere(); const i = here.findIndex((a) => a.id === cursorId); if (i < listTop) cursorId = here[listTop]?.id || cursorId; else if (i >= listTop + listRows) cursorId = here[listTop + listRows - 1]?.id || cursorId; }
-        else if (view === "search") search.move(b === 64 ? -1 : 1);
-        else if (view === "ask") askTop = Math.max(0, askTop + (b === 64 ? -3 : 3));
-        else scroll += b === 64 ? 3 : -3;
+        scroll += b === 64 ? 3 : -3;
       }
     }
     return render();
   }
-  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } if (streamSel != null) { streamSel = null; return render(); } unmarked.clear(); confirm = null; note = ""; return render(); } // Esc: drop the text selection, else mark all again
-  if (d === "\x17") return act("close"); // Ctrl+W
-  if (d === "\x0b") return act("kill");  // Ctrl+K
-  if (d === "\x01") { const here = hereAgents(); if (allMarked()) here.forEach((a) => unmarked.add(a.id)); else unmarked.clear(); return render(); } // Ctrl+A
+  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } if (streamSel != null) { streamSel = null; return render(); } confirm = null; note = ""; if (api) api.call("selection.set", { room, all: true }).then((m) => { marks = m; render(); }).catch(() => {}); return render(); } // Esc: text selection, else mark every agent again
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
   if (!d.replace(/[\x00-\x1f]/g, "")) return;
   insertText(d); // typing replaces the selection
@@ -964,7 +803,7 @@ const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
-  if (restarting || codeStamp() === codeAtStart || input.trim() || search.busy) return;
+  if (restarting || codeStamp() === codeAtStart || input.trim()) return;
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
