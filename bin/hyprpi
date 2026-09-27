@@ -11,7 +11,7 @@ import { terminalCommand } from "../lib/terminal.mjs";
 
 const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
 
-  hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [-- PI_ARGS...]
+  hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [--here] [--no-focus] [-- PI_ARGS...]
                               open a Pi agent in its own terminal window (SUPER+A);
                               starts in the focused terminal's/agent's folder unless --cwd
   hyprpi room [ROOM] [--toggle]  show (or toggle) the room widget; no ROOM = current world, following it
@@ -189,6 +189,19 @@ async function cmdNew() {
   const child = spawn(term[0], term.slice(1), { cwd, env, detached: true, stdio: "ignore" });
   child.unref();
   console.log(id);
+  // Jump to the new agent: its window may be on another workspace (panel mode) or still
+  // being placed by the daemon, so wait for it to be listed with a window. --no-focus skips.
+  if (!flag("--no-focus")) {
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      let a = null;
+      try { a = (await request("list")).agents.find((x) => x.id === id); } catch { /* daemon busy */ }
+      if (!a?.address) continue;
+      if (a.workspace !== workspace && Number.isInteger(workspace)) continue; // let the daemon place it first
+      await hypr.focusWindow(a.address).catch(() => {});
+      break;
+    }
+  }
 }
 
 // Room windows are served by one Quickshell process per Hyprland instance,
