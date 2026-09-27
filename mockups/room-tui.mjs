@@ -36,8 +36,8 @@ const helpRows = () => {
     "",
     `   ${bold("//text".padEnd(w))}  posts "/text" to the room`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
-    `   ${dim("stream: ^↑↓ select a row · PgUp PgDn · ^Home/End · ^F what the stream shows")}`,
-    `   ${dim("message box: ↑↓ lines · ⇧⏎ new line · ⇧←→ select · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
+    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
+    `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A (panel 1, the marks ▸ live there) · search: SUPER+ALT+/ (panel 3)")}`,
   ];
 };
@@ -457,7 +457,7 @@ function draw() {
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⇧⏎ new line · ⇧←→ select · ^F filter · / commands · Tab room · SUPER+ALT+A agents")));
+    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · Tab room")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -698,22 +698,26 @@ function onKey(d) {
   if (view !== "stream" && d === "\x1b") { // Esc: back to the stream
     view = "stream"; note = ""; return render();
   }
-  // TOP: the agent list (Shift).
-  // MIDDLE: the pane (Ctrl): Ctrl+↑↓ a line / result, PgUp PgDn a page, Ctrl+Home/End top / bottom.
+  // The stream (Ctrl): Ctrl+↑↓ scrolls a line, PgUp/PgDn a page, Ctrl+Home/End oldest / newest.
+  // Plain and Shift arrows belong to the message box below; Alt+↑↓ selects a stream row.
   {
     const page = Math.max(1, lastAvail - 2);
-    const mv = { "\x1b[1;5A": -1, "\x1b[1;5B": 1, "\x1b[5~": -page, "\x1b[6~": page, "\x1b[1;5H": -Infinity, "\x1b[1;5F": Infinity }[d];
+    const sc = { "\x1b[1;5A": 1, "\x1b[1;5B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[1;5H": Infinity, "\x1b[1;5F": -Infinity }[d];
+    if (sc !== undefined) {
+      if (view !== "stream") return;
+      scroll = sc === Infinity ? 1e9 : sc === -Infinity ? 0 : Math.max(0, scroll + sc);
+      focusArea = "stream"; return render();
+    }
+    // Alt+↑↓ / Alt+Home End: pick a stream row (the selection the mouse also makes).
+    const mv = { "\x1b[1;3A": -1, "\x1b[1;3B": 1, "\x1b[1;3H": -Infinity, "\x1b[1;3F": Infinity }[d];
     if (mv !== undefined) {
-      if (view === "stream") {
-        if (d === "\x1b[5~" || d === "\x1b[6~") { scroll = Math.max(0, scroll - mv); return render(); } // PgUp/PgDn: a page
-        const n = streamKeys.length; if (!n) return render();
-        let i = streamSel == null ? n : streamKeys.indexOf(streamSel);
-        if (i < 0) i = n;
-        i = mv === -Infinity ? 0 : mv === Infinity ? n : i + mv; // Ctrl+Home: oldest · Ctrl+End: back to following the newest
-        if (i >= n) { streamSel = null; scroll = 0; } else streamSel = streamKeys[Math.max(0, i)];
-        focusArea = "stream"; return render();
-      }
-      return;
+      if (view !== "stream") return;
+      const n = streamKeys.length; if (!n) return render();
+      let i = streamSel == null ? n : streamKeys.indexOf(streamSel);
+      if (i < 0) i = n;
+      i = mv === -Infinity ? 0 : mv === Infinity ? n : i + mv;
+      if (i >= n) { streamSel = null; scroll = 0; } else streamSel = streamKeys[Math.max(0, i)];
+      focusArea = "stream"; return render();
     }
   }
   // Editing the message: ←/→ (Ctrl or Alt+B/F: by word), Home/End or Ctrl+E
@@ -737,6 +741,13 @@ function onKey(d) {
     if (d === "\x1b[1;6C") return moveTo(wordRight(), true);
     if (d === "\x1b[1;2H") return moveTo(lineStart(ic), true);
     if (d === "\x1b[1;2F") return moveTo(lineEnd(ic), true);
+    // Shift+↑↓: extend the selection to the line above / below (for ^C ^X).
+    if (d === "\x1b[1;2A" || d === "\x1b[1;2B") {
+      const s0 = lineStart(ic), col = ic - s0;
+      if (d === "\x1b[1;2A") { if (!s0) return moveTo(0, true); const p0 = lineStart(s0 - 1); return moveTo(Math.min(p0 + col, s0 - 1), true); }
+      const e0 = lineEnd(ic); if (e0 >= gs.length) return moveTo(gs.length, true);
+      const n1 = lineEnd(e0 + 1); return moveTo(Math.min(e0 + 1 + col, n1), true);
+    }
     // ↑↓: the previous / next line of the message (same column), else its start / end.
     if (d === "\x1b[A" || d === "\x1b[B") {
       const s0 = lineStart(ic), col = ic - s0;

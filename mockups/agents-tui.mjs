@@ -8,7 +8,7 @@
 // model. Greyed ◌ rows are agents that are not open: "closed" (lost to a reboot, or
 // closed/killed while hyprpi ran) and "parked" (Reprieve, SUPER+W: still running, out
 // of every room). Ctrl+O cycles: live · + parked.
-//   ↑↓ / click / wheel   move the cursor
+//   Ctrl+↑↓ (or ↑↓) / click / wheel   move the cursor · PgUp PgDn · Home End / Ctrl+Home End
 //   Enter                live: jump to its window · parked: revive it here · closed: resume it
 //   Space / Shift+Space  mark ▸ (the shared per-room selection every panel uses)
 //   Ctrl+A               mark all / none      Esc  mark all again
@@ -103,7 +103,7 @@ function draw() {
   for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
 
   while (rows.length < H - 2) rows.push("");
-  rows.push(dim(clip(confirm ? confirm.label : note || "⏎ open · Space ▸ · ^O views · ^N new · ^W close · Tab world · ^Q quit", W)));
+  rows.push(dim(clip(confirm ? confirm.label : note || "^↑↓ move · ⏎ open · Space ▸ · ^O views · ^N new · ^W close · Tab world · ^Q quit", W)));
 
   // status bar: worlds, counts
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
@@ -250,8 +250,10 @@ function onKey(d) {
   if (d === "\x0e") return newAgent();
   if (d === "\t") return cycleRoom(1);
   if (d === "\x1b[Z") return cycleRoom(-1);
-  if (d === "\x1b[A") return moveCursor(-1);
-  if (d === "\x1b[B") return moveCursor(1);
+  if (d === "\x1b[A" || d === "\x1b[1;5A") return moveCursor(-1);   // ↑ / Ctrl+↑
+  if (d === "\x1b[B" || d === "\x1b[1;5B") return moveCursor(1);    // ↓ / Ctrl+↓
+  if (d === "\x1b[1;5H") return moveCursor(-1e6);
+  if (d === "\x1b[1;5F") return moveCursor(1e6);
   if (d === "\x1b[5~") return moveCursor(-5);
   if (d === "\x1b[6~") return moveCursor(5);
   if (d === "\x1b[H" || d === "\x1b[1~") return moveCursor(-1e6);

@@ -123,6 +123,13 @@ Bring this session's search work back into the standalone window: `/ask`, keywor
 from shared selection. Then room-tui drops its search pane (or keeps it as a shortcut
 that opens panel 3 — open question Q3).
 
+### Arrow keys (decided 2026-09-27)
+
+Same idea in both panels: **Ctrl+↑↓ scrolls the list** (panel 1: the agents; panel 2: the
+stream, with PgUp/PgDn a page and Ctrl+Home/End oldest/newest). In panel 2 the plain
+arrows move inside the message box, and **Shift+arrows select** there, feeding Ctrl+C / X / V.
+Picking a single stream row (what a click does) moved to Alt+↑↓.
+
 ### Shared modules (new `lib/tui/`)
 
 Extracted from room-tui.mjs, imported by all three panels:
