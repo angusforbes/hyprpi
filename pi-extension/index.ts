@@ -292,6 +292,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     label: "Post to room",
     description: "Share a short attributed message in your hyprpi room (the room of the hyprwrld your window is in). Max 8192 bytes. Does not prompt other agents. Never retry an uncertain post; check room_read instead.",
     promptSnippet: "Share a bounded contribution in the current shared room",
+    promptGuidelines: [
+      "A user message starting with [hyprpi · Angus → you] was sent from the hyprpi room panel, and Angus is reading the panel, not your window: answer it as usual, and also room_post your answer (short) unless it is clearly private.",
+    ],
     parameters: Type.Object({ text: Type.String({ minLength: 1, maxLength: 8192 }) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r = await call("room.post", { text: p.text });
