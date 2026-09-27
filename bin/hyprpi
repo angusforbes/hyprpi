@@ -86,18 +86,16 @@ function childEnv(extra) {
 }
 
 // "Panel mode" = at least two floating hyprpi-router/-room/-search windows on that
-// workspace. Returns the first workspace of the same world with no windows (or the
-// original one if the world is full).
+// workspace. A new agent goes to the NEIGHBOUR: the workspace right after it, or the one
+// before when the panels are on the world's last workspace.
 async function awayFromPanels(ws, cfg) {
   let list;
   try { list = await hypr.clients(); } catch { return ws; }
   const panels = list.filter((c) => c.workspace?.id === ws && c.floating && /^hyprpi-(router|room|search) /.test(c.title || ""));
   if (panels.length < 2) return ws;
   const size = Number(cfg.worldSize) || 10;
-  const first = Math.floor((ws - 1) / size) * size + 1;
-  const used = new Set(list.map((c) => c.workspace?.id));
-  for (let w = first; w < first + size; w++) if (w !== ws && !used.has(w)) return w;
-  return ws;
+  const first = Math.floor((ws - 1) / size) * size + 1, last = first + size - 1;
+  return ws < last ? ws + 1 : ws - 1;
 }
 
 function newId() { return "hp-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
@@ -179,6 +177,15 @@ async function cmdNew() {
   let termPrefix;
   try { termPrefix = terminalCommand(cfg, { title: "pi", cwd }); } catch (e) { die(e.message); }
   const term = [...termPrefix, cfg.pi, "-e", ext, ...(cfg.piArgs || []), ...piArgs];
+  // A visible special workspace (Reprieve's parked view) swallows new windows: hide it first.
+  try {
+    const mons = await hypr.hyprJson("monitors");
+    const special = mons.find((m) => m.focused)?.specialWorkspace?.name || "";
+    if (special) {
+      await hypr.dispatch(`hl.dsp.workspace.toggle_special({ name = "${special.replace(/^special:/, "")}" })`).catch(() => {});
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  } catch { /* fine */ }
   const child = spawn(term[0], term.slice(1), { cwd, env, detached: true, stdio: "ignore" });
   child.unref();
   console.log(id);
