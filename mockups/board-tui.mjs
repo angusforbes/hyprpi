@@ -10,7 +10,7 @@
 // modifier. ^↑↓ move the highlight · ^⏎ (or ⏎ with an empty box) opens the highlighted card /
 // goes back to all projects / puts an item's handle in the box · ^Space or ^O fold · ^D drop
 // (on a project: archive) · ^T done · ^Z undo · Alt+1…9 answer the highlighted decision ·
-// Esc: the box's selection, then the highlight, then the open card / help · PgUp PgDn / wheel
+// Esc: the box's selection, then the highlight, then the open card / help · ^B the room panel · PgUp PgDn / wheel
 // scroll · ^Home ^End top / bottom · Tab completes /commands, item handles after "@p " and
 // @projects; Shift+Tab @agents · ^Tab / ^Shift+Tab switch world · ^Q quits.
 // Mouse: click the −/+ on a card header to fold · click a row to highlight it · drag selects and
@@ -241,6 +241,11 @@ function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x11") return quit(); // Ctrl+Q
   if (d.startsWith("\x1b[<")) return mouse(d);
+  if (d === "\x02") { // Ctrl+B: the room panel for this world (opened or focused; its Ctrl+B comes back here)
+    const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+    try { spawn(new URL("./panels", import.meta.url).pathname, [room, "--only", "2"], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); note = `room ${room} → the room panel (SUPER+ALT+R)`; } catch (e) { note = "✗ " + e.message; }
+    return render();
+  }
   if (CTRL_TAB.has(d)) return cycle(1);
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
   const ctx = () => ({ empty: !box.text, api, room, board: boardHere() });
