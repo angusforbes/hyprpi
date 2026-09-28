@@ -719,11 +719,6 @@ async function send() {
   // Everyone marked: a room post (or @Name tokens: just them). Some marked: directly to them.
   // Nobody marked: written in the room, delivered to no agent.
   const m0 = markedIds(), all0 = allMarked();
-  if (!all0 && !m0.size) { // nobody marked: write it in the room, send it to no agent
-    try { await api.call("room.post", { room, text, as_human: true, via: "room-tui", deliver: false }); note = "written to the room · sent to nobody"; }
-    catch (e) { note = "✗ " + e.message; }
-    return render();
-  }
   let targets = all0 ? [] : [...m0], body = text;
   // "@Name text": just to them this once, whoever "to:" is.
   const at = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/);
@@ -739,6 +734,13 @@ async function send() {
     const r = resolveAt(parseAt(at[1]).names, hereAgents());
     if (r.unknown.length) { input = raw; ic = graphemes(raw).length; note = `✗ no agent ${r.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
     if (r.ids.length) { targets = r.ids; body = at[2]; }
+  }
+  // Nobody marked and no @name / @project given: write it in the room, send it to no agent.
+  // (Checked after @names, so "@Name text" / "@project text" still go out: review finding 4.)
+  if (!all0 && !m0.size && !targets.length) {
+    try { await api.call("room.post", { room, text, as_human: true, via: "room-tui", deliver: false }); note = "written to the room · sent to nobody"; }
+    catch (e) { note = "✗ " + e.message; }
+    return render();
   }
   if (targets.length) {
     const sent = [], failed = [];

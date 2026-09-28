@@ -66,7 +66,7 @@ page, not a stream.
 | Where | Typed | Effect |
 |---|---|---|
 | room | `@boards text` | to the project's current members (like a group). They reply however fits. The room message is tagged with the project id. |
-| board | `@boards text` | the same members, framed as "update the board": they coordinate (talk), the writer edits the card, nothing in the room |
+| board | `@boards text` | the same members, framed as "update the board": they coordinate (talk), the writer edits the card and posts a 1-3 line summary in the room (Angus, 2026-09-28) |
 | board | `@boards` alone | **one combined view**: the card expanded, plus who (each member and what it's doing now) and recent changes. Nothing sent |
 | board | `@boards D1 b` | answers a decision (also a single key on the Needs-you strip) |
 | board | `@boards N2 ?` | more detail on that item, written into the card |
@@ -121,6 +121,15 @@ page, not a stream.
 5. Decide with options + ding + answering by key; /todo /note /done /drop.
 6. Membership commands, split/merge, since-you-left, next first step.
 7. Hand spin-out the `board.moveCard` hook (pi·ze03).
+
+## Permissions (after the gpt-6-sol review, 2026-09-28)
+
+- Only Angus (a panel or the CLI, not an agent connection) answers decisions, sends board
+  requests and removes projects.
+- Agents can create and join any project; to edit a card (items, where, next step, assign,
+  move) they must be a member of it.
+- Changes apply only to the card on the board named (no fallback to another world's board).
+- Known limit: an unregistered local socket connection counts as Angus (same as room posts).
 
 ## Open questions
 
