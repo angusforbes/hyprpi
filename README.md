@@ -164,7 +164,7 @@ organise something) gets a proposal written to `~/Obsidian/Tinker/<date> <title>
 lost in the room scroll), only the uncontroversial part built, and a "🔧 plan: … (link)" post.
 Every "🔧 done / plan / decide / stuck" post is **copied to the room the drop-off came from** (as
 "(workshop D #seq) …"), so results and questions reach you where you are working. **decide dings
-you, plan and stuck bonk you** (the daemon does it, not the agent: thud, a toast naming the agent, and
+you, plan and stuck bonk you** (the daemon does it, not the agent: the sound, a toast naming the agent, and
 × on the agent until it works again), so nothing that needs you sits unseen. Answer by talking to
 that agent (or with another /tinker).
 
@@ -178,7 +178,7 @@ Angus's names (2026-09-28), kept clearly distinct:
   from you" 🔔. Daemon hook (for the board's Decide section): `dingFor(agent, text, { itemId })` when
   an item is added, `clearDing(agent, itemId)` when you resolve it. The × clears when the agent's
   last open decision is resolved, unless a plain bonk is also pending. Tinker "🔧 decide:" uses it.
-- **bonk**: you asked to be told, or an agent thinks it's urgent. `bonk TEXT`, a double thud and
+- **bonk**: you asked to be told, or an agent thinks it's urgent. `bonk TEXT`, two knocks and
   "Agent X needs you" 👉. Daemon: `bonkFor(agent, text)`. Tinker "🔧 plan:" / "🔧 stuck:" use it.
 - **chime**: an agent went from working to done. The daemon plays herdr's `assets/sounds/done.mp3`
   itself (`paplay`), whatever panels are open. Every finish chimes, even several at once.
