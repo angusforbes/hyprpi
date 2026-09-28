@@ -61,13 +61,26 @@ function inputSel() { if (selA == null || selA === ic) return null; return selA 
 function inputLayout(n) {
   const gs = graphemes(input), rs = inputSel(), rows = [];
   const on = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, off = theme.selection ? `${ESC}49m` : `${ESC}27m`;
+  // @names in the agent's colour (bold), @all / @nobody bold, unknown names red, as in
+  // the search panel's box.
+  const tint = new Array(gs.length).fill(null);
+  for (let i = 0; i < gs.length; i++) {
+    if (gs[i] !== "@" || (i > 0 && !/\s/.test(gs[i - 1]))) continue;
+    let j = i + 1; while (j < gs.length && !/[\s,@]/.test(gs[j])) j++;
+    if (j === i + 1) continue;
+    const r = resolveAt([gs.slice(i + 1, j).join("")], hereAgents()), a = r.found[0];
+    const paint = a ? (g) => nameFg(a.name, a.color, g) : r.special ? (g) => bold(g) : (g) => `${ESC}31m${g}${ESC}39m`;
+    for (let k = i; k < j; k++) tint[k] = paint;
+    i = j - 1;
+  }
   let line = "", lw = 0, cRow = 0, cCol = 0;
   for (let i = 0; i <= gs.length; i++) {
     if (i < gs.length && gs[i] !== "\n" && lw + gw(gs[i]) > n) { rows.push(line); line = ""; lw = 0; } // soft wrap
     if (i === ic) { cRow = rows.length; cCol = lw; }
     if (i === gs.length) break;
     if (gs[i] === "\n") { rows.push(rs && i >= rs[0] && i < rs[1] ? line + on + " " + off : line); line = ""; lw = 0; continue; }
-    line += rs && i >= rs[0] && i < rs[1] ? on + gs[i] + off : gs[i]; lw += gw(gs[i]);
+    const g = tint[i] ? tint[i](gs[i]) : gs[i];
+    line += rs && i >= rs[0] && i < rs[1] ? on + g + off : g; lw += gw(gs[i]);
   }
   rows.push(line);
   return { rows, cRow, cCol };
