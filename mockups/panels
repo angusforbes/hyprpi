@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Gather the hyprpi panels of one world onto the world's last workspace (C → 30) as a 2 x 2
-// dwindle grid, and go there:
+// Bring the hyprpi panels of one world to the current workspace (opening any that aren't open)
+// and tile them as a 2 x 2 dwindle grid: A, B right of A, C below A, D below B. Other windows
+// there stay; on an empty workspace the grid is clean:
 //
 //   agents (panel 1) │ room / stream (panel 2)
 //   board (panel 4)  │ search (panel 3)
@@ -189,13 +190,8 @@ async function evenTiles(addrs) {
 
 const main = async () => {
   const room = (args[0] || "").toUpperCase() || await currentRoom();
-  // All the panels (SUPER+ALT+P): on the world's own last workspace (C → 30), alone, so
-  // dwindle can make a clean 2 × 2 grid there; you are taken there. (--workspace N wins; the
-  // single-panel keys still bring one panel to where you are.)
-  if (!wantWs && only.length > 1) {
-    const cur = await hypr.activeWorkspace().catch(() => null);
-    if (cur && Number.isInteger(cur.id) && cur.id > 0) wantWs = Math.ceil(cur.id / 10) * 10;
-  }
+  // Always where you are (Angus): other windows there are left alone and dwindle fits the grid
+  // around them; for a clean grid, go to an empty workspace and press SUPER+ALT+P again.
   const ws = await targetWorkspace();
   if (!ws) { console.error("panels: no normal workspace is active (use --workspace N)"); process.exit(1); }
   const list = panelsFor(room);
