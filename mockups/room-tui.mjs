@@ -696,7 +696,7 @@ async function boardSend(raw) {
   input = raw; ic = graphemes(raw).length; note = ""; selA = null;
   try {
     const r = await bv.input(raw, { api, room, board: board.room === room ? board : { projects: [] } });
-    if (r) { sentText = raw; note = r.note; return render(); }
+    if (r) { sentText = r.confirm ? null : raw; note = r.note; return render(); } // a confirm prompt (/spinout, /merge) isn't sent yet: ⏎ again runs it
   } catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; return render(); }
   if (command(raw)) return;
   input = raw; ic = graphemes(raw).length; note = "✗ not a board command · /help"; render();
