@@ -70,7 +70,9 @@ function inputLayout(n) {
   // @names in the agent's colour (bold), @all / @nobody bold, unknown names red, as in
   // the search panel's box.
   const tint = new Array(gs.length).fill(null);
-  for (let i = 0; i < gs.length; i++) {
+  const sent = view === "board" && sentText != null && input === sentText; // sent: the whole text in the world colour
+  if (sent) { const wc = worldFg(room); tint.fill((g) => fg(wc, g)); }
+  for (let i = 0; i < gs.length && !sent; i++) {
     if (gs[i] !== "@" || (i > 0 && !/\s/.test(gs[i - 1]))) continue;
     let j = i + 1; while (j < gs.length && !/[\s,@]/.test(gs[j])) j++;
     if (j === i + 1) continue;
@@ -497,8 +499,9 @@ function draw() {
   // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) && !note.startsWith("✗") ? completions(input) : null; // typing a command: show the matches (an error about it wins)
-  // Board: "thinking…" shimmers while a project's agents work on a request (then the note).
-  const bs = view === "board" ? bv.status(c) : "";
+  // Board: "working…" while a quick command is in flight. "thinking…" (agents working on a
+  // request) shows only on the project's header; what was sent stays in the box (world colour).
+  const bs = view === "board" ? bv.status(c, false) : "";
   const boardHint = bs ? "  " + bs + (note ? dim("  " + note) : "")
     : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
@@ -686,11 +689,14 @@ function command(text) {
 
 // Board mode: what is typed goes to the board (a board command, @project …); anything
 // the board doesn't know (/room, /history, …) falls through to the panel's own commands.
+// What was last sent from the board stays in the box, in the world colour, until edited; Enter
+// sends it again (several requests can run at once). Angus: the prompt shouldn't disappear.
+let sentText = null;
 async function boardSend(raw) {
-  input = ""; ic = 0; note = "";
+  input = raw; ic = graphemes(raw).length; note = ""; selA = null;
   try {
     const r = await bv.input(raw, { api, room, board: board.room === room ? board : { projects: [] } });
-    if (r) { note = r.note; return render(); }
+    if (r) { sentText = raw; note = r.note; return render(); }
   } catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; return render(); }
   if (command(raw)) return;
   input = raw; ic = graphemes(raw).length; note = "✗ not a board command · /help"; render();
