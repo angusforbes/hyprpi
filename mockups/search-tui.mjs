@@ -15,7 +15,9 @@
 // Nothing runs until Enter (Enter again on unchanged words jumps to the selected
 // result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · Ctrl+A marked ⇄ whole room · Tab /
 // Shift+Tab room (or complete a /command) · ↑↓ PgUp PgDn wheel select · click select,
-// double-click jump · Esc / Ctrl+C clear the box · Ctrl+Q quits.
+// double-click jump · Esc stops a running search, else clears the box · Ctrl+C clears ·
+// Ctrl+Q quits. While a search runs, "thinking" shimmers in the world colour next to the
+// query (italic); the previous answer is gone at once; new words + Enter replace it.
 // Box: ←→ Home End, Ctrl/Alt+←→ word, Backspace Delete, Ctrl+W / Alt+Backspace word,
 // Ctrl+U clear. Commands: /search WORDS · /ai QUESTION-OR-DESCRIPTION (/ask = /ai) ·
 // /help · //text searches for "/text". Shift+drag selects text (kitty's own selection).
@@ -136,6 +138,8 @@ function enter() {
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text) return jump();
   const r = S.ranFor;
+  if (S.busy && r && r.q === text && r.mode === S.mode) { note = ""; return render(); } // already searching for exactly that
+  // New words while a search runs: S.run() supersedes it (its reply is ignored).
   if (r && r.q === text && r.mode === S.mode && r.room === room && r.only === onlyIds().join(",") && !S.busy) return jump();
   top = 0; S.run(text, S.mode);
 }
@@ -201,7 +205,8 @@ function helpLines() {
     k("Tab / Shift+Tab", "next / previous room (while typing a /command: complete it)"),
     k("↑↓ PgUp PgDn wheel", "select a result (the list scrolls with it)"),
     k("click / double-click", "select / jump to that agent's window"),
-    k("Esc", "clear the box · closes this help"),
+    k("Esc", "stop a running search · else clear the box · closes this help"),
+    k("Enter while searching", "new words replace the running search (same words: keeps going)"),
     k("Ctrl+C · Ctrl+Q", "clear the box · quit"),
     k("editing", "←→ Home End · Ctrl/Alt+←→ word · Ctrl+W / Alt+Backspace word · Ctrl+U clear"),
     "",
@@ -214,8 +219,23 @@ function helpLines() {
 }
 
 let restarting = false; // re-exec in progress: the child owns the terminal
+
+// "Thinking" shimmer while a search runs: a bright band sweeps across the word in the
+// world's colour, the rest dim, redrawn every ANIM_MS. The timer runs only while busy.
+const ANIM_MS = 90;
+let anim = null;
+function shimmer(text, c) {
+  const cs = [...text], span = cs.length + 8, p = Math.floor((Date.now() - (S.startedAt || 0)) / ANIM_MS) % span - 4;
+  return cs.map((ch, i) => { const d = Math.abs(i - p); return d === 0 ? `${ESC}1;${c}m${ch}` : d <= 2 ? `${ESC}22;${c}m${ch}` : `${ESC}2;${c}m${ch}`; }).join("") + `${ESC}22;39m`;
+}
+function syncAnim() {
+  if (S.busy && !anim) anim = setInterval(render, ANIM_MS);
+  else if (!S.busy && anim) { clearInterval(anim); anim = null; }
+}
+const elapsed = () => `${Math.max(0, Math.floor((Date.now() - (S.startedAt || Date.now())) / 1000))}s`;
 function render() {
   if (restarting) return;
+  syncAnim();
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30, c = worldFg(room);
   const rows = [];
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
@@ -227,7 +247,10 @@ function render() {
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
-  rows.push(` ${S.mode === "ai" ? tag("✦ AI", "keyword") : tag("keyword", "✦ AI")}  ${S.busy ? fg(c, "… ") : ""}${statusStyled}`);
+  const runningQ = S.ranFor?.q || "";
+  rows.push(` ${S.mode === "ai" ? tag("✦ AI", "keyword") : tag("keyword", "✦ AI")}  ` + (S.busy
+    ? `${shimmer(S.mode === "ai" ? "thinking" : "searching", c)} ${dim(elapsed())}  ${fg(c, italic("“" + runningQ + "”"))}  ${dim("Esc stops · new words + Enter replace it")}`
+    : statusStyled));
   const ruleAt = rows.length; rows.push("");
   const avail = Math.max(1, H - rows.length - 1);
   resultRows = {};
@@ -235,6 +258,11 @@ function render() {
   if (showHelp) {
     rows[ruleAt] = rule("help · Esc closes");
     rows.push(...helpLines().slice(0, avail));
+  } else if (S.busy) {
+    // Nothing from the previous search stays on screen while this one runs.
+    rows[ruleAt] = rule(S.mode === "ai" ? "answer" : "results");
+    rows.push("", `   ${shimmer(S.mode === "ai" ? "✦ reading the room and thinking…" : "⌕ searching…", c)}`, "");
+    for (const l of wrap(runningQ, Math.max(10, W - 8)).slice(0, 4)) rows.push(`     ${fg(c, italic(l))}`);
   } else {
     // The pane: in AI mode the answer (not selectable, i = -1), then the results
     // (the evidence). Flattened to lines; the selected result is kept in view.
@@ -318,6 +346,7 @@ function onKey(d) {
   if (d === "\x11") return quit(); // Ctrl+Q
   if (d === "\x1b" || d === "\x1b\x1b") { // Esc: close help, else clear the box
     if (showHelp) { showHelp = false; return render(); }
+    if (S.stop()) return; // a running search: stop it (the box keeps its words)
     if (query) { setBox(""); note = ""; return render(); }
     return;
   }
