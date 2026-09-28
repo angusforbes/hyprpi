@@ -1026,7 +1026,7 @@ setInterval(() => {
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
   // Keep what Angus was looking at: board or stream, the open card, the stream filter.
-  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, filter, words, input, ic, bvTop: bv.st.top, bvAnchor: bv.st.anchor, bvCur: bv.st.cur });
+  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, filter, words, input, ic, sent: sentText != null && input === sentText, bvTop: bv.st.top, bvAnchor: bv.st.anchor, bvCur: bv.st.cur });
   // The launcher (mockups/room-tui) loops on exit code 75: hand it the state in a file and
   // exit, so restarts don't pile up processes. Older windows (no loop): a child, as before.
   if (process.env.HYPRPI_ROOM_TUI_STATEFILE) {
@@ -1051,7 +1051,7 @@ try {
     if (FILTERS.includes(k.filter)) filter = k.filter;
     if (Array.isArray(k.words)) words = k.words;
     if (k.view === "board") { view = "board"; if (k.focus) bv.focus(k.focus); bv.st.top = Number(k.bvTop) || 0; bv.st.anchor = k.bvAnchor || null; bv.st.cur = k.bvCur || null; }
-    if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); }
+    if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); if (k.sent) sentText = input; }
   }
 } catch { /* start in the stream */ }
 render();
