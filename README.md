@@ -181,8 +181,8 @@ Angus's names (2026-09-28), kept clearly distinct:
 - **bonk**: you asked to be told, or an agent thinks it's urgent. `bonk TEXT`, a double thud and
   "Agent X needs you" 👉. Daemon: `bonkFor(agent, text)`. Tinker "🔧 plan:" / "🔧 stuck:" use it.
 - **chime**: an agent went from working to done. The daemon plays herdr's `assets/sounds/done.mp3`
-  itself (`paplay`), whatever panels are open, at most once per `chimeGapSec` (default 4) so agents
-  finishing together chime once. Config: `"chime": false` turns it off.
+  itself (`paplay`), whatever panels are open. Every finish chimes, even several at once.
+  Config: `"chime": false` turns it off; `"chimeGapSec": N` limits it to one per N seconds.
 
 ## CLI
 
