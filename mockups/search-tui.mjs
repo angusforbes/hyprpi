@@ -647,9 +647,18 @@ setInterval(() => {
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(MODES_OFF);
+  // The launcher (mockups/search-tui) loops on exit 75: the state goes in its file and this
+  // process ends, so restarts don't pile up processes (N19). Older windows: a child, as before.
+  const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
+  if (sf) { try { fs.writeFileSync(sf, JSON.stringify({ query, qc, mode: S.mode })); } catch { /* start fresh */ } process.exit(75); }
   spawnChild(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env }).on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
+{ // after a restart onto new code: the same words in the box, the same mode
+  const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
+  try { const k = sf && JSON.parse(fs.readFileSync(sf, "utf8") || "null"); if (sf) fs.writeFileSync(sf, "");
+    if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); if (k.mode && k.mode !== S.mode) S.toggleMode(); } } catch { /* fresh */ }
+}
 render();
 start();

@@ -20,4 +20,4 @@ exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o 'map ctrl+tab send_text all \x1b[9;5u' \
   -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \
   -o 'map shift+insert paste_from_clipboard' \
-  node "$(dirname "$(readlink -f "$0")")/search-tui.mjs" "$@"
+  sh -c 'f=$(mktemp -t hyprpi-search.XXXXXX); trap "rm -f $f" EXIT; while :; do HYPRPI_SEARCH_TUI_STATEFILE=$f node "$0" "$@"; [ $? -eq 75 ] || break; done' "$(dirname "$(readlink -f "$0")")/search-tui.mjs" "$@"
