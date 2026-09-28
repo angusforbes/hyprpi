@@ -977,12 +977,18 @@ const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
-  if (restarting || codeStamp() === codeAtStart || input.trim()) return;
+  if (restarting || codeStamp() === codeAtStart) return; // what is typed comes along (keep.input)
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
   // Keep what Angus was looking at: board or stream, the open card, the stream filter.
-  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, filter, words });
+  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, filter, words, input, ic });
+  // The launcher (mockups/room-tui) loops on exit code 75: hand it the state in a file and
+  // exit, so restarts don't pile up processes. Older windows (no loop): a child, as before.
+  if (process.env.HYPRPI_ROOM_TUI_STATEFILE) {
+    try { fs.writeFileSync(process.env.HYPRPI_ROOM_TUI_STATEFILE, keep); } catch { /* start fresh */ }
+    process.exit(75);
+  }
   spawn(process.execPath, [CODE[0], room], { stdio: "inherit", env: { ...process.env, HYPRPI_ROOM_TUI_STATE: keep } })
     .on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
@@ -992,12 +998,16 @@ setInterval(render, 30000); // clock
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
 // After a restart onto new code: back to the same view (the board stays the board).
 try {
-  const k = JSON.parse(process.env.HYPRPI_ROOM_TUI_STATE || "null");
+  let raw = process.env.HYPRPI_ROOM_TUI_STATE || "";
+  const sf = process.env.HYPRPI_ROOM_TUI_STATEFILE;
+  if (!raw && sf) { try { raw = fs.readFileSync(sf, "utf8"); fs.writeFileSync(sf, ""); } catch { /* none */ } }
+  const k = raw ? JSON.parse(raw) : null;
   delete process.env.HYPRPI_ROOM_TUI_STATE;
   if (k) {
     if (FILTERS.includes(k.filter)) filter = k.filter;
     if (Array.isArray(k.words)) words = k.words;
     if (k.view === "board") { view = "board"; if (k.focus) bv.focus(k.focus); }
+    if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); }
   }
 } catch { /* start in the stream */ }
 render();
