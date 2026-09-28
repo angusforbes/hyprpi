@@ -14,7 +14,7 @@
 //
 //   ~/Work/hyprpi/mockups/search-tui [ROOM]   (kitty launcher)
 //
-// Nothing runs until Enter (Enter again on unchanged words jumps to the selected
+// Nothing runs until Enter (Ctrl+Enter jumps to the selected
 // result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · @Name scope (Tab completes @names and
 // /commands) · Ctrl+Tab / Ctrl+Shift+Tab world · ↑↓ PgUp PgDn wheel select · click select,
 // double-click jump · Esc stops a running search, else clears the box · Ctrl+C clears ·
@@ -155,7 +155,7 @@ function enter() {
   const raw = query.trim();
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
   const box = raw.startsWith("//") ? raw.slice(1) : raw;
-  if (!box) return jump();
+  if (!box) { note = "type words, then ⏎ · ^⏎ jumps to the selected result"; return render(); }
   // @names scope the search; the rest are the words.
   const sc = scopeOf(box);
   if (sc.unknown.length) { note = `✗ no agent ${sc.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
@@ -164,7 +164,11 @@ function enter() {
   const r = S.ranFor;
   if (S.busy && r && r.q === text && r.mode === S.mode) { note = ""; return render(); } // already searching for exactly that
   // New words while a search runs: S.run() supersedes it (its reply is ignored).
-  if (r && r.q === text && r.mode === S.mode && r.room === room && r.only === sc.ids.join(",") && !S.busy) return jump();
+  // Same words again: ask first (a second ⏎ within 4 s runs it again). ^⏎ jumps to the result.
+  if (r && r.q === text && r.mode === S.mode && r.room === room && r.only === sc.ids.join(",") && !S.busy) {
+    if (Date.now() - (enter.asked || 0) > 4000) { enter.asked = Date.now(); note = "already searched · ⏎ again runs it again · ^⏎ jumps to the selected result"; return render(); }
+    enter.asked = 0;
+  }
   top = 0; S.run(text, S.mode); if (S.ranFor) S.ranFor.box = box;
 }
 function setBox(text) { query = text; qc = graphemes(text).length; }
@@ -223,13 +227,13 @@ function resultLines(r, i, W) {
 function helpLines() {
   const k = (keys, what) => `   ${bold(keys.padEnd(22))} ${what}`;
   return [
-    k("Enter", "search · Enter again on the same words jumps to the selected result"),
     k("Ctrl+/ or Ctrl+T", "keyword ⇄ AI (AI: an answer to your question + the evidence it used)"),
     k("@Name words", "search only those agents' history (@Lippy @Sankey kafka); Tab completes @names; none = everyone"),
     k("Tab / Shift+Tab", "complete an @name (again: next / previous match) or a /command"),
     k("Ctrl+Tab / Ctrl+⇧Tab", "next / previous world"),
     k("↑↓ PgUp PgDn wheel", "select a result (the list scrolls with it)"),
-    k("click · Enter", "select a result · jump to that agent's window"),
+    k("⏎ · ^⏎", "search · jump to the selected result's agent window (⏎ on the same words asks, then re-runs)"),
+    k("↑↓ / ^↑↓ · click", "select a result · ^click on an agent's name jumps to its window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
     k("box", "Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select · Ctrl+C copy (none: clear) · Ctrl+X cut · Ctrl+V paste"),
     k("Esc", "stop a running search · else clear the box · closes this help"),
@@ -472,6 +476,22 @@ function render() {
   out(`${ESC}${cursorRow};${width(prompt) + width(graphemes(query).slice(0, qc).join("")) + 1}H${ESC}?25h`);
 }
 
+function ctrlClick(x, y) {
+  const line = screen[y - 1] || "", cells = [];
+  { let col = 1; for (const g of graphemes(line)) { cells.push([col, g]); col += gw(g); } }
+  const i = cells.findIndex(([c, g], k) => c <= x && (cells[k + 1]?.[0] ?? c + gw(g)) > x);
+  if (i < 0 || /\s/.test(cells[i][1])) return;
+  let a = i, b = i;
+  while (a > 0 && !/\s/.test(cells[a - 1][1])) a--;
+  while (b < cells.length - 1 && !/\s/.test(cells[b + 1][1])) b++;
+  const word = cells.slice(a, b + 1).map(([, g]) => g).join("");
+  const url = /(?:https?|file):\/\/\S+/.exec(word)?.[0];
+  if (url) { try { spawnChild("gio", ["open", url.replace(/[)\].,;:!?'"]+$/, "")], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); } catch { /* none */ } return; }
+  const name = word.replace(/^[^\p{L}\p{N}@]+/u, "").replace(/^@/, "").replace(/[^\p{L}\p{N}·_-]+$/u, "");
+  const hit = known.find((ag) => ag.live && [ag.display, ag.name].some((n) => n && n.toLowerCase() === name.toLowerCase()));
+  if (!hit || !api) { if (name) { note = `no live agent @${name}`; render(); } return; }
+  api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+}
 function jump() {
   const r = S.current();
   if (!r || !api) return;
@@ -539,8 +559,11 @@ function onKey(d) {
     if (completeName(d === "\t" ? 1 : -1)) return;
     note = "Tab completes @names and /commands · Ctrl+Tab switches world"; return render();
   }
-  if (d === "\x1b[A") return move(-1);
-  if (d === "\x1b[B") return move(1);
+  // Same scheme as the board: plain keys type (⏎ searches); ↑↓ / ^↑↓ move the highlight;
+  // ^⏎ acts on it (jumps to that agent's window); ^click on a name jumps too.
+  if (d === "\x1b[A" || d === "\x1b[1;5A") return move(-1);
+  if (d === "\x1b[B" || d === "\x1b[1;5B") return move(1);
+  if (d === "\x1b[13;5u") { showHelp = false; return jump(); } // Ctrl+Enter (the launcher maps it)
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
   if (d === "\r") { showHelp = false; selA = null; return enter(); }
@@ -580,6 +603,8 @@ function onKey(d) {
     // Left button (+4 = Shift): press starts a possible selection, motion drags it,
     // release copies it; without a drag it is a click (select a result) or a
     // double / triple click (word / whole item).
+    if (b === 16 && m[4] === "M") return ctrlClick(x, y); // Ctrl+click: an agent's name → its window
+    if (b === 16) return;
     if ((b === 0 || b === 4) && m[4] === "M") {
       const now = Date.now();
       clicks = b === 0 && now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
