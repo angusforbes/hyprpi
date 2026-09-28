@@ -164,3 +164,11 @@ Then use `kitty @ --to unix:/tmp/kt-test send-text|send-key|get-text --extent sc
 - Restarting the daemon after lib changes: `hyprpi ensure` (not every command checks code mtime).
 - Not done: drag-select on activity rows; activity in the QML room window; a per-agent "now doing"
   line in the agent list.
+
+## Resumed sessions keep their identity (💋 Lippy, 2026-09-28)
+
+- **Bug:** an agent whose Pi session was reopened under a *new* hyprpi id (e.g. resumed outside hyprpi's own dormant-resume) got a fresh registry record: the name came back from Pi's session name, but **topic, icon and colour were blank**. Its topic also stayed blank until the next working→done transition, and a follow-up typed mid-turn delays that.
+- **Fix:** `lib/daemon.mjs`, `agent.hello`: for a brand-new id with a session file (not a twin), copy `name, nameMarkup, icon, color, topic, topicKey` (only if still empty) from the most recently updated registry record with the same session. If a *live* agent still holds that name, copy only the topic (names/colours stay unique).
+- **Commit:** landed inside `9551e12` (another agent's commit, "Room panel: explain // …"), so the message doesn't describe it. `git show 9551e12 -- lib/daemon.mjs` shows the 14 lines.
+- **Verified:** throwaway daemon (`HYPRPI_STATE`/`HYPRPI_SOCKET` in a temp dir) with a registry holding an old Lippy record: `agent.hello` with a new id + same session returned name Lippy, 💋, #9b5cff; a second new id on the same session while the first was live got no name. The first version of the test copied icon/colour anyway; that was tightened afterwards and only re-checked with `node --check`, not re-run. The live daemon restarted at 14:07 on 2026-09-28, so the fix is running; it has not yet been observed on a real resume.
+- **Where topics come from** (for anyone confused like Angus was): the daemon, not the agent. `refreshTopic` runs 500 ms after an agent's status goes working→done, summarising the last 3 user messages with claude-haiku-4-5 (`lib/topics.mjs`).
