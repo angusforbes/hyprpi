@@ -20,7 +20,10 @@
 // previous answer is gone at once; new words + Enter replace it.
 // Box: ←→ Home End, Ctrl/Alt+←→ word, Backspace Delete, Ctrl+W / Alt+Backspace word,
 // Ctrl+U clear. Commands: /search WORDS · /ai QUESTION-OR-DESCRIPTION (/ask = /ai) ·
-// /help · //text searches for "/text". Shift+drag selects text (kitty's own selection).
+// /help · //text searches for "/text". Select & copy as in the room panel: drag = text,
+// Shift+drag / Shift+click = whole items, double-click = word, triple-click = item (each
+// copies); in the box Shift+←→ selects, Ctrl+C copies (none: clears), Ctrl+X cuts, Ctrl+V
+// pastes. Kitty's own selection: Ctrl+Shift+drag (the launcher maps it).
 // Search state lives in lib/search-view.mjs.
 import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
@@ -204,7 +207,9 @@ function helpLines() {
     k("Ctrl+A", "only the marked agents (▸, set in the agent panel) ⇄ the whole room"),
     k("Tab / Shift+Tab", "next / previous room (while typing a /command: complete it)"),
     k("↑↓ PgUp PgDn wheel", "select a result (the list scrolls with it)"),
-    k("click / double-click", "select / jump to that agent's window"),
+    k("click · Enter", "select a result · jump to that agent's window"),
+    k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
+    k("box", "Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select · Ctrl+C copy (none: clear) · Ctrl+X cut · Ctrl+V paste"),
     k("Esc", "stop a running search · else clear the box · closes this help"),
     k("Enter while searching", "new words replace the running search (same words: keeps going)"),
     k("Ctrl+C · Ctrl+Q", "clear the box · quit"),
@@ -228,6 +233,139 @@ function shimmer(text, c) {
   const cs = [...text], span = cs.length + 8, p = Math.floor((Date.now() - (S.startedAt || 0)) / ANIM_MS) % span - 4;
   return cs.map((ch, i) => { const d = Math.abs(i - p); return d === 0 ? `${ESC}1;${c}m${ch}` : d <= 2 ? `${ESC}22;${c}m${ch}` : `${ESC}2;${c}m${ch}`; }).join("") + `${ESC}22;39m`;
 }
+// ---- select & copy, like the room panel (mockups/room-tui.mjs) ---------------------
+// Search box: Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select; typing replaces the
+// selection; Ctrl+C copies it (no selection: clears the box); Ctrl+X cuts; Ctrl+V /
+// Shift+Insert / bracketed paste paste; SUPER+C (Ctrl+Insert) copies.
+// Pane: drag selects text (answer / snippet text only) and copies on release;
+// Shift+click / Shift+drag = whole items (the answer, or a result with name, time and
+// text); double-click = a word; triple-click = the whole item. The highlight stays
+// until the next key or click. Click selects a result; Enter jumps to it.
+let selA = null;        // box selection anchor (grapheme index), or null
+let pasting = false;    // inside a bracketed paste
+function boxSel() { if (selA == null || selA === qc) return null; return selA < qc ? [selA, qc] : [qc, selA]; }
+function insertText(t) {
+  let gs = graphemes(query); const rs = boxSel();
+  if (rs) { gs = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])]; qc = rs[0]; }
+  selA = null;
+  const ins = graphemes(String(t).replace(/[\r\n\t]+/g, " ").replace(/[\x00-\x1f]/g, "")); // one-line box
+  qc = Math.max(0, Math.min(qc, gs.length));
+  query = [...gs.slice(0, qc), ...ins, ...gs.slice(qc)].join(""); qc += ins.length; note = ""; render();
+}
+function copyBoxSel(cut) {
+  const rs = boxSel(); if (!rs) return false;
+  const gs = graphemes(query);
+  copy(gs.slice(rs[0], rs[1]).join(""));
+  if (cut) { query = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])].join(""); qc = rs[0]; }
+  selA = null; render(); return true;
+}
+function pasteClipboard() {
+  try {
+    const p = spawnChild("wl-paste", ["--no-newline", "--type", "text/plain"], { stdio: ["ignore", "pipe", "ignore"] });
+    let buf = ""; p.stdout.on("data", (b) => { buf += b; }); p.on("error", () => {}); p.on("close", () => { if (buf) insertText(buf); });
+  } catch { /* no wl-paste */ }
+}
+function copy(text) {
+  if (!text) return;
+  // OSC 52 (kitty puts it on the clipboard) and wl-copy as a fallback.
+  out(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+  try { const p = spawnChild("wl-copy", ["--type", "text/plain;charset=utf-8"], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.end(text); } catch { /* OSC 52 only */ }
+  note = `copied ${text.length} character${text.length === 1 ? "" : "s"}`;
+}
+// Pane selection. screen = the plain text of every row; rowMeta[y] = { item, textX, header }
+// for pane rows that belong to an item; items[k].copy = what a whole-item copy gives.
+let screen = [], rowMeta = {}, items = [], sel = null; // sel: { x0, y0, x1, y1, dragging, clicks, mode } (1-based cells)
+let clicks = 0, lastPress = { x: 0, y: 0, t: 0 };
+function selRange() {
+  if (!sel || (sel.mode !== "item" && sel.x0 === sel.x1 && sel.y0 === sel.y1)) return null;
+  const fwd = sel.y0 < sel.y1 || (sel.y0 === sel.y1 && sel.x0 <= sel.x1);
+  return fwd ? { y0: sel.y0, x0: sel.x0, y1: sel.y1, x1: sel.x1 } : { y0: sel.y1, x0: sel.x1, y1: sel.y0, x1: sel.x0 };
+}
+function selItems(sr) {
+  const near = (y, d) => { for (let k = 0; k < 400; k++, y += d) { const r = rowMeta[y]; if (r) return r.item; if (y < 1 || y > screen.length) break; } return null; };
+  const a = near(sr.y0, 1), b = near(sr.y1, -1);
+  if (a == null || b == null) return [null, null];
+  return a <= b ? [a, b] : [b, a];
+}
+function selSpans(W) {
+  const sr = selRange(), outSp = {};
+  if (!sr) return outSp;
+  if (sel.mode === "item") {
+    const [a, b] = selItems(sr); if (a == null) return outSp;
+    for (const [y, r] of Object.entries(rowMeta)) if (r.item >= a && r.item <= b) outSp[y] = [1, W];
+    return outSp;
+  }
+  for (let y = sr.y0; y <= sr.y1; y++) {
+    let a = y === sr.y0 ? sr.x0 : 1, b = y === sr.y1 ? sr.x1 : W;
+    if (sel.mode === "text") {
+      const r = rowMeta[y];
+      if (!r || r.header) continue;
+      a = Math.max(a, r.textX);
+      b = Math.min(b, width((screen[y - 1] || "").trimEnd()));
+    }
+    if (a <= b) outSp[y] = [a, b];
+  }
+  return outSp;
+}
+function overlay(line, a, b, on, off) { // paint cells a..b with a background, keeping other styles
+  let col = 1, r = "", inside = false;
+  for (const part of line.split(/(\x1b\[[0-9;?]*[A-Za-z])/)) {
+    if (part.startsWith("\x1b")) { r += part; if (inside && /\x1b\[(?:0|49|27)?m$/.test(part)) r += on; continue; }
+    for (const g of graphemes(part)) {
+      if (!inside && col >= a && col <= b) { r += on; inside = true; }
+      if (inside && col > b) { r += off; inside = false; }
+      r += g; col += gw(g);
+    }
+  }
+  if (inside && col <= b + 1) r += " ".repeat(Math.max(0, b + 1 - col));
+  else if (!inside && col <= a) { r += " ".repeat(a - col) + on + " ".repeat(b - a + 1); inside = true; }
+  if (inside) r += off;
+  return r;
+}
+function sliceCols(tx, a, b) {
+  let col = 1, r = "";
+  for (const g of graphemes(tx)) { const w = gw(g); if (col >= a && col + w - 1 <= b) r += g; col += w; if (col > b) break; }
+  return r;
+}
+function selectedText() {
+  const sr = selRange(); if (!sr) return "";
+  const W = process.stdout.columns || 100;
+  if (sel.mode === "item") { const [a, b] = selItems(sr); return a == null ? "" : items.slice(a, b + 1).map((x) => x.copy).join("\n\n"); }
+  const spans = selSpans(W), ys = Object.keys(spans).map(Number).sort((p, q) => p - q);
+  if (sel.mode === "text") { // unwrap: rows of one item join with a space
+    let tx = "", prev = null;
+    for (const y of ys) {
+      const r = rowMeta[y], piece = sliceCols(screen[y - 1], spans[y][0], spans[y][1]).trim();
+      if (prev) tx += prev.item !== r.item ? "\n" : " ";
+      tx += piece; prev = r;
+    }
+    return tx;
+  }
+  return ys.map((y) => sliceCols(screen[y - 1], spans[y][0], spans[y][1]).trimEnd()).join("\n");
+}
+function multiClick(n, x, y) { // 2 = the word under the pointer, 3 = the whole item (or the line)
+  const line = screen[y - 1] || "", cells = [];
+  { let col = 1; for (const g of graphemes(line)) { cells.push([col, g]); col += gw(g); } }
+  if (n === 2) {
+    const i = cells.findIndex(([cc, g], k) => cc <= x && (cells[k + 1]?.[0] ?? cc + gw(g)) > x);
+    if (i < 0 || /\s/.test(cells[i][1])) { sel = null; return render(); }
+    let a = i, b = i;
+    while (a > 0 && !/\s/.test(cells[a - 1][1])) a--;
+    while (b < cells.length - 1 && !/\s/.test(cells[b + 1][1])) b++;
+    const P = /^[\p{P}\p{S}]$/u;
+    while (a < b && P.test(cells[a][1]) && !/[@#~/$]/.test(cells[a][1])) a++;
+    while (b > a && P.test(cells[b][1])) b--;
+    sel = { x0: cells[a][0], y0: y, x1: cells[b][0] + gw(cells[b][1]) - 1, y1: y, dragging: true, mode: "plain" };
+  } else if (rowMeta[y]) sel = { x0: x, y0: y, x1: x, y1: y, dragging: true, mode: "item" };
+  else {
+    const first = cells.find(([, g]) => !/\s/.test(g));
+    if (!first) { sel = null; return render(); }
+    sel = { x0: first[0], y0: y, x1: width(line.trimEnd()), y1: y, dragging: true, mode: "plain" };
+  }
+  copy(selectedText());
+  render();
+}
+
 function syncAnim() {
   if (S.busy && !anim) anim = setInterval(render, ANIM_MS);
   else if (!S.busy && anim) { clearInterval(anim); anim = null; }
@@ -242,7 +380,9 @@ function render() {
   rows.push(rule(`search · room ${room} · ${scopeLabel()}`));
   const prompt = fg(c, bold(S.mode === "ai" ? "✦ " : "⌕ "));
   const hint = query ? "" : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
-  rows.push(`${prompt}${query}${hint}`);
+  const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
+  const brs = boxSel(), qgs = graphemes(query);
+  rows.push(`${prompt}${brs ? qgs.slice(0, brs[0]).join("") + selOn + qgs.slice(brs[0], brs[1]).join("") + selOff + qgs.slice(brs[1]).join("") : query}${hint}`);
   const cursorRow = rows.length;
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
@@ -252,7 +392,7 @@ function render() {
     : statusStyled));
   const ruleAt = rows.length; rows.push("");
   const avail = Math.max(1, H - rows.length - 1);
-  resultRows = {};
+  resultRows = {}; rowMeta = {}; items = [];
 
   if (showHelp) {
     rows[ruleAt] = rule("help · Esc closes");
@@ -265,11 +405,16 @@ function render() {
     // (the evidence). Flattened to lines; the selected result is kept in view.
     const flat = [], starts = [];
     if (S.answer) {
-      for (const l of wrap(S.answer, Math.max(10, W - 4))) flat.push({ l: `   ${l}`, i: -1 });
+      items.push({ copy: S.answer });
+      for (const l of wrap(S.answer, Math.max(10, W - 4))) flat.push({ l: `   ${l}`, i: -1, meta: { item: 0, textX: 4 } });
       flat.push({ l: "", i: -1 });
       if (S.results.length) flat.push({ l: fg(c, dim(`   evidence · ${S.results.length} entr${S.results.length === 1 ? "y" : "ies"}`)), i: -1 }, { l: "", i: -1 });
     }
-    S.results.forEach((r, i) => { starts.push(flat.length); for (const l of resultLines(r, i, W)) flat.push({ l, i }); });
+    S.results.forEach((r, i) => {
+      starts.push(flat.length);
+      const k = items.push({ copy: `${r.name} · ${ROLE[r.role] || r.role} · ${when(r.ts)}\n${String((r.pre || "") + (r.match || "") + (r.post || "")).replace(/\s+/g, " ").trim()}${r.why ? "\n↳ " + r.why : ""}` }) - 1;
+      resultLines(r, i, W).forEach((l, n) => flat.push({ l, i, meta: l === "" ? null : { item: k, textX: 5, header: n === 0 } }));
+    });
     if (S.selected >= 0 && starts.length) {
       // Selecting the first result scrolls back to the top so the answer shows again.
       const s = S.selected === 0 ? 0 : starts[S.selected], e = (starts[S.selected + 1] ?? flat.length) - 1;
@@ -283,7 +428,7 @@ function render() {
     starts.forEach((st, i) => { const en = (starts[i + 1] ?? flat.length) - 1; if (st < top) above++; if (en >= top + avail && st >= top + avail) below++; });
     const label = S.answer ? "answer" : S.results.length ? "results" : "";
     rows[ruleAt] = rule(label ? [label, above ? `↑ ${above} above` : "", below ? `↓ ${below} below` : ""].filter(Boolean).join(" · ") : "");
-    shown.forEach((x, k) => { if (x.i >= 0) resultRows[rows.length + 1 + k] = x.i; });
+    shown.forEach((x, k) => { if (x.i >= 0) resultRows[rows.length + 1 + k] = x.i; if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; });
     if (S.ranFor && !S.busy && !S.results.length && !S.answer && !S.status.startsWith("✗")) shown.push({ l: dim(S.mode === "ai" ? "  Nothing matched that idea." : "  No exact matches.") });
     rows.push(...shown.map((x) => x.l));
   }
@@ -298,7 +443,10 @@ function render() {
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-search ${room}\x07`); // panel identity: mockups/panels finds it by this exact title
-  out(`${ESC}?25l${ESC}H` + rows.slice(0, H).map((r) => clip(r, W) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
+  const clipped = rows.slice(0, H).map((r) => clip(r, W));
+  screen = clipped.map(strip);
+  const spans = selSpans(W);
+  out(`${ESC}?25l${ESC}H` + clipped.map((r, i) => (spans[i + 1] ? overlay(r, spans[i + 1][0], spans[i + 1][1], selOn, selOff) : r) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
   out(`${ESC}${cursorRow};${width(prompt) + width(graphemes(query).slice(0, qc).join("")) + 1}H${ESC}?25h`);
 }
 
@@ -340,14 +488,24 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); });
 function move(d) { if (!showHelp) S.move(d); }
 function onKey(d) {
+  if (sel && !d.startsWith("\x1b[<")) sel = null; // a pane selection lasts until the next key
+  // Bracketed paste (SUPER+V / Ctrl+Shift+V): inserted as text (line breaks become spaces).
+  if (d === "\x1b[200~") { pasting = true; return; }
+  if (d === "\x1b[201~") { pasting = false; return render(); }
+  if (pasting) return insertText(d);
   if (d === "\x11") return quit(); // Ctrl+Q
-  if (d === "\x1b" || d === "\x1b\x1b") { // Esc: close help, else clear the box
+  if (d === "\x1b" || d === "\x1b\x1b") { // Esc: drop a box selection, close help, stop a search, else clear the box
+    if (boxSel()) { selA = null; return render(); }
     if (showHelp) { showHelp = false; return render(); }
     if (S.stop()) return; // a running search: stop it (the box keeps its words)
     if (query) { setBox(""); note = ""; return render(); }
     return;
   }
-  if (d === "\x03") { setBox(""); note = ""; return render(); } // Ctrl+C: clear
+  // Ctrl+C: copy the box's selection, else clear the box (never quits; Ctrl+Q does).
+  if (d === "\x03") { if (copyBoxSel(false)) return; setBox(""); selA = null; note = ""; return render(); }
+  if (d === "\x1b[2;5~") { copyBoxSel(false); return; } // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
+  if (d === "\x18") { copyBoxSel(true); return; } // Ctrl+X: cut
+  if (d === "\x16" || d === "\x1b[2;2~") return pasteClipboard(); // Ctrl+V / Shift+Insert: paste
   if (d === "\x1f" || d === "\x14") return toggleMode(); // Ctrl+/ or Ctrl+T: keyword ⇄ AI
   if (d === "\x01" && !query) return toggleMarks(); // Ctrl+A (empty box; else: Home)
   if (d === "\t") return /^\/\S*$/.test(query) ? complete() : cycle(1);
@@ -356,34 +514,58 @@ function onKey(d) {
   if (d === "\x1b[B") return move(1);
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
-  if (d === "\r") { showHelp = false; return enter(); }
+  if (d === "\r") { showHelp = false; selA = null; return enter(); }
   // Editing the box: ←/→ (Ctrl/Alt: by word), Home/End or Ctrl+A/E,
   // Backspace / Delete at the cursor, Ctrl+W / Alt+Backspace delete word, Ctrl+U clear.
   const gs = graphemes(query);
   qc = Math.max(0, Math.min(qc, gs.length));
-  const edited = (next, c) => { query = next.join(""); qc = c; note = ""; return render(); };
-  const at = (c) => { qc = c; return render(); };
+  const edited = (next, c) => { query = next.join(""); qc = c; selA = null; note = ""; return render(); };
+  const at = (c, extend) => { if (extend) { if (selA == null) selA = qc; } else selA = null; qc = Math.max(0, Math.min(gs.length, c)); return render(); };
+  const rs = boxSel();
+  const delSel = () => edited([...gs.slice(0, rs[0]), ...gs.slice(rs[1])], rs[0]);
   const wordLeft = () => { let i = qc; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
   const wordRight = () => { let i = qc; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
-  if (d === "\x1b[D") return at(Math.max(0, qc - 1));
-  if (d === "\x1b[C") return at(Math.min(gs.length, qc + 1));
+  // Shift+←→ / Ctrl+Shift+←→ / Shift+Home End: select.
+  if (d === "\x1b[1;2D") return at(qc - 1, true);
+  if (d === "\x1b[1;2C") return at(qc + 1, true);
+  if (d === "\x1b[1;6D") return at(wordLeft(), true);
+  if (d === "\x1b[1;6C") return at(wordRight(), true);
+  if (d === "\x1b[1;2H") return at(0, true);
+  if (d === "\x1b[1;2F") return at(gs.length, true);
+  if (d === "\x1b[D") return at(rs ? rs[0] : qc - 1);
+  if (d === "\x1b[C") return at(rs ? rs[1] : qc + 1);
   if (d === "\x1b[1;5D" || d === "\x1b[1;3D" || d === "\x1bb") return at(wordLeft());
   if (d === "\x1b[1;5C" || d === "\x1b[1;3C" || d === "\x1bf") return at(wordRight());
   if (d === "\x1b[H" || d === "\x1b[1~" || d === "\x01") return at(0);
   if (d === "\x1b[F" || d === "\x1b[4~" || d === "\x05") return at(gs.length);
   if (d === "\x15") return edited([], 0);
+  if (rs && (d === "\x7f" || d === "\b" || d === "\x1b[3~")) return delSel();
   if (d === "\x17" || d === "\x1b\x7f" || d === "\x1b\b") { const i = wordLeft(); return edited([...gs.slice(0, i), ...gs.slice(qc)], i); }
   if (d === "\x7f" || d === "\b") { if (!qc) return; return edited([...gs.slice(0, qc - 1), ...gs.slice(qc)], qc - 1); }
   if (d === "\x1b[3~") { if (qc >= gs.length) return; return edited([...gs.slice(0, qc), ...gs.slice(qc + 1)], qc); }
   if (d.startsWith("\x1b[<")) {
     const m = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(d); if (!m) return;
-    const b = Number(m[1]), y = Number(m[3]);
+    const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
     if (b === 64) return move(-1);
     if (b === 65) return move(1);
-    if (b === 0 && m[4] === "M" && !showHelp && resultRows[y] !== undefined) {
-      const i = resultRows[y];
-      if (i === S.selected && Date.now() - (onKey.lastClick || 0) < 400) jump();
-      S.selected = i; onKey.lastClick = Date.now(); return render();
+    // Left button (+4 = Shift): press starts a possible selection, motion drags it,
+    // release copies it; without a drag it is a click (select a result) or a
+    // double / triple click (word / whole item).
+    if ((b === 0 || b === 4) && m[4] === "M") {
+      const now = Date.now();
+      clicks = b === 0 && now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
+      lastPress = { x, y, t: now };
+      sel = { x0: x, y0: y, x1: x, y1: y, dragging: false, clicks, mode: b === 4 && rowMeta[y] ? "item" : rowMeta[y] ? "text" : "plain" };
+      return render();
+    }
+    if ((b === 32 || b === 36) && sel) { sel.x1 = x; sel.y1 = y; sel.dragging = true; return render(); }
+    if ((b === 0 || b === 4) && m[4] === "m" && sel) {
+      sel.x1 = x; sel.y1 = y;
+      if ((sel.dragging || sel.mode === "item") && selRange()) { copy(selectedText()); return render(); } // highlight stays until the next key or click
+      if (sel.clicks >= 2) return multiClick(Math.min(3, sel.clicks), x, y);
+      sel = null;
+      if (!showHelp && resultRows[y] !== undefined) S.selected = resultRows[y];
+      return render();
     }
     return;
   }
@@ -392,7 +574,8 @@ function onKey(d) {
   if (!ins.length) return;
   edited([...gs.slice(0, qc), ...ins, ...gs.slice(qc)], qc + ins.length);
 }
-function quit() { out(`${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
+const MODES_OFF = `${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`;
+function quit() { out(MODES_OFF); process.exit(0); }
 process.on("SIGTERM", quit);
 process.stdout.on("resize", render);
 
@@ -406,10 +589,10 @@ setInterval(() => {
   if (restarting || codeStamp() === codeAtStart || S.busy) return;
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
-  out(`${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
+  out(MODES_OFF);
   spawnChild(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env }).on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
-out(`${ESC}?1049h${ESC}?1000h${ESC}?1006h`); // alt screen + mouse (wheel, click; Shift+drag = kitty selection)
+out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
 render();
 start();

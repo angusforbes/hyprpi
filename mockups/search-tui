@@ -1,3 +1,18 @@
 #!/bin/sh
-# Open the terminal search mockup in its own kitty window.  search-tui [ROOM]
-exec kitty --class hyprpi.mockup -o copy_on_select=clipboard node "$(dirname "$(readlink -f "$0")")/search-tui.mjs" "$@"
+# Open the terminal search panel in its own kitty window.  search-tui [ROOM]
+# Same mouse/key setup as room-tui: kitty keeps Shift+click/drag/double/triple-click for
+# its own selection even when a program has the mouse; unmap those (only while grabbed)
+# so they reach the TUI (Shift = whole items), and give kitty's own selection to
+# Ctrl+Shift. SUPER+C (Ctrl+Insert) copies kitty's selection, else reaches the TUI (copies
+# the search box's selection); SUPER+V (Shift+Insert) pastes.
+exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
+  -o "mouse_map=shift+left click grabbed" \
+  -o "mouse_map=shift+left press grabbed" \
+  -o "mouse_map=shift+left doublepress grabbed" \
+  -o "mouse_map=shift+left triplepress grabbed" \
+  -o "mouse_map=ctrl+shift+left press grabbed mouse_selection normal" \
+  -o "mouse_map=ctrl+shift+left doublepress grabbed mouse_selection word" \
+  -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" \
+  -o 'map ctrl+insert copy_or_noop' \
+  -o 'map shift+insert paste_from_clipboard' \
+  node "$(dirname "$(readlink -f "$0")")/search-tui.mjs" "$@"
