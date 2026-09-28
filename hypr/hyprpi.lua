@@ -7,19 +7,21 @@ local HYPRPI_BIN = (os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/
 
 -- Keys.
 --   SUPER + A          new Pi agent in its own window on the current workspace (joins that world's room)
+--   SUPER + ALT + A / R / /: one panel for the current world, brought HERE (moved from
+--                      another workspace if open there, opened here if not), then focused
 --   SUPER + ALT + A    agent panel (kitty) for the current world
 --   SUPER + ALT + R    room / stream panel (kitty) for the current world
 --   SUPER + ALT + P    all three panels here, side by side (moves them if open elsewhere)
 --   SUPER + ALT + /    search TUI (kitty) for the current world's room
 o.bind("SUPER + A", "Pi agent (hyprpi)", HYPRPI_BIN .. " new")
-o.bind("SUPER + ALT + A", "hyprpi agent panel (current world)", "/home/agf/Work/hyprpi/mockups/agents-tui")
-o.bind("SUPER + ALT + R", "hyprpi room / stream panel (current world)", "/home/agf/Work/hyprpi/mockups/room-tui")
+o.bind("SUPER + ALT + A", "hyprpi agent panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 1")
+o.bind("SUPER + ALT + R", "hyprpi room / stream panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 2")
 o.bind("SUPER + ALT + P", "hyprpi panels here (agents | room | search)", "/home/agf/Work/hyprpi/mockups/panels")
 -- Omarchy binds SUPER + ALT + / to "Monitor scaling down"; both fired on one press. Take the key
 -- for search and move scaling down to SUPER + SHIFT + / (scaling up stays on SUPER + /).
 hl.unbind("SUPER + ALT + SLASH")
 o.bind("SUPER + SHIFT + SLASH", "Monitor scaling down", "omarchy-hyprland-monitor-scaling down")
-o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", "/home/agf/Work/hyprpi/mockups/search-tui")
+o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 3")
 
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send
 -- Ctrl+Insert/Shift+Insert instead of Ctrl+C (which Pi treats as clear/interrupt).

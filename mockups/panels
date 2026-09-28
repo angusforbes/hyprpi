@@ -5,6 +5,9 @@
 //
 //   ~/Work/hyprpi/mockups/panels [ROOM] [--workspace N] [--only 1,2]
 //
+// With a single panel (--only 2) it just brings that one here and focuses it (the
+// SUPER+ALT+A / R / slash keys), leaving the layout alone.
+//
 // For each panel: if its window exists anywhere (another workspace, or parked in
 // Reprieve) it is MOVED here; otherwise it is opened here. Then they are put in order
 // (1 · 2 · 3, left to right) and given equal widths.
@@ -166,10 +169,16 @@ const main = async () => {
   const room = (args[0] || "").toUpperCase() || await currentRoom();
   const ws = await targetWorkspace();
   if (!ws) { console.error("panels: no normal workspace is active (use --workspace N)"); process.exit(1); }
+  const list = panelsFor(room);
+  // One panel (the single-panel keys: --only 1 / 2 / 3): bring it here and focus it, no layout.
+  if (list.length === 1) {
+    const addr = await bring(list[0], ws, room);
+    if (!addr) { console.error(`panels: panel ${list[0].n} did not open`); process.exit(1); }
+    return hypr.focusWindow(addr).catch(() => {});
+  }
   const already = await panelModeHere(ws);   // second press: back to regular mode
   if (already && !args.includes("--force")) return unpanel(already);
   const opened = [];
-  const list = panelsFor(room);
   for (const p of list) {
     const addr = await bring(p, ws, room);
     if (!addr) { console.error(`panels: panel ${p.n} did not open`); continue; }
