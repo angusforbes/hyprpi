@@ -16,8 +16,8 @@
 // result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · Ctrl+A marked ⇄ whole room · Tab /
 // Shift+Tab room (or complete a /command) · ↑↓ PgUp PgDn wheel select · click select,
 // double-click jump · Esc stops a running search, else clears the box · Ctrl+C clears ·
-// Ctrl+Q quits. While a search runs, "thinking" shimmers in the world colour next to the
-// query (italic); the previous answer is gone at once; new words + Enter replace it.
+// Ctrl+Q quits. While a search runs, only "thinking…" shimmers in the world colour; the
+// previous answer is gone at once; new words + Enter replace it.
 // Box: ←→ Home End, Ctrl/Alt+←→ word, Backspace Delete, Ctrl+W / Alt+Backspace word,
 // Ctrl+U clear. Commands: /search WORDS · /ai QUESTION-OR-DESCRIPTION (/ask = /ai) ·
 // /help · //text searches for "/text". Shift+drag selects text (kitty's own selection).
@@ -232,7 +232,7 @@ function syncAnim() {
   if (S.busy && !anim) anim = setInterval(render, ANIM_MS);
   else if (!S.busy && anim) { clearInterval(anim); anim = null; }
 }
-const elapsed = () => `${Math.max(0, Math.floor((Date.now() - (S.startedAt || Date.now())) / 1000))}s`;
+
 function render() {
   if (restarting) return;
   syncAnim();
@@ -247,9 +247,8 @@ function render() {
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
-  const runningQ = S.ranFor?.q || "";
   rows.push(` ${S.mode === "ai" ? tag("✦ AI", "keyword") : tag("keyword", "✦ AI")}  ` + (S.busy
-    ? `${shimmer(S.mode === "ai" ? "thinking" : "searching", c)} ${dim(elapsed())}  ${fg(c, italic("“" + runningQ + "”"))}  ${dim("Esc stops · new words + Enter replace it")}`
+    ? shimmer(S.mode === "ai" ? "thinking…" : "searching…", c)
     : statusStyled));
   const ruleAt = rows.length; rows.push("");
   const avail = Math.max(1, H - rows.length - 1);
@@ -261,8 +260,6 @@ function render() {
   } else if (S.busy) {
     // Nothing from the previous search stays on screen while this one runs.
     rows[ruleAt] = rule(S.mode === "ai" ? "answer" : "results");
-    rows.push("", `   ${shimmer(S.mode === "ai" ? "✦ reading the room and thinking…" : "⌕ searching…", c)}`, "");
-    for (const l of wrap(runningQ, Math.max(10, W - 8)).slice(0, 4)) rows.push(`     ${fg(c, italic(l))}`);
   } else {
     // The pane: in AI mode the answer (not selectable, i = -1), then the results
     // (the evidence). Flattened to lines; the selected result is kept in view.
