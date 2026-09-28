@@ -14,7 +14,7 @@
 // Ctrl+B toggles the project board (lib/tui/board-view.mjs): Needs-you strip + one card per
 // project; in board mode the box takes @project … and board commands (/help there lists them).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
-// Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab completes @names, /commands) · Ctrl+/ opens the search panel on this room ·
+// Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · Ctrl+/ opens the search panel on this room ·
 // Esc drops a selection, else marks every agent again · Ctrl+Q quits (Ctrl+C copies).
 // Commands: /room · /stream [WORDS] (live word filter) · /history N|all · /help ·
 // "//text" is only for saying something that starts with a slash (it would otherwise be
@@ -47,7 +47,7 @@ const helpRows = () => {
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
     `   ${bold("@Name @Name".padEnd(w))}  ${dim("on its own + ⏎: who messages go to from now on (the \"C → @…\" before the box; same as the marks ▸) · @all · @nobody")}`,
-    `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab completes @names · copy @names into the search box to search their history")}`,
+    `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
     `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
@@ -816,20 +816,28 @@ function onKey(d) {
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
   if (d === "\t" || d === "\x1b[Z") {
     const gs = graphemes(input), before = gs.slice(0, ic).join(""), after = gs.slice(ic).join("");
-    const h = view === "board" && bv.complete(before + after, before.length, board.room === room ? board : null, d === "\t" ? 1 : -1);
+    const h = view === "board" && d === "\t" && bv.complete(before + after, before.length, board.room === room ? board : null, 1);
     if (h) { // an item handle after "@project "
       if (!h.options.length) { note = "no open item by that handle"; return render(); }
       input = h.text; ic = graphemes(h.text.slice(0, h.cursor)).length; selA = null;
       note = h.hint || ""; // the handles (with their @project when it isn't obvious), or the item's text
       return render();
     }
-    const r = completeAt(before + after, before.length, atPool(), atCycle, d === "\t" ? 1 : -1);
-    if (!r) { note = "Tab completes @names and /commands · Ctrl+Tab switches world"; return render(); }
-    if (!r.options.length) { note = "no agent here by that name"; return render(); }
+    // Tab: @projects · Shift+Tab: @agents (Angus). Each key cycles its own list; at a blank
+    // spot (empty box, after a space) it starts a new @name. Ctrl+Tab switches world.
+    const kind = d === "\t" ? "project" : "agent";
+    const pool = kind === "project" ? hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name })) : hereAgents();
+    let text = before + after, at = before.length;
+    if (!/(^|\s)@[^\s,@]*$/.test(before)) {
+      if (before && !/\s$/.test(before)) { note = "Tab: @projects · Shift+Tab: @agents (at the start or after a space) · Ctrl+Tab switches world"; return render(); }
+      text = before + "@" + after; at = before.length + 1; atCycle = null;
+    }
+    if (!pool.length) { note = kind === "project" ? "no projects on this board yet (Shift+Tab: @agents)" : "no agents in this room"; return render(); }
+    const r = completeAt(text, at, pool, atCycle?.kind === kind ? atCycle : null, 1, { specials: kind === "agent" });
+    if (!r || !r.options.length) { note = kind === "project" ? "no project by that name here (Shift+Tab: @agents)" : "no agent here by that name (Tab: @projects)"; return render(); }
     input = r.text; ic = graphemes(r.text.slice(0, r.cursor)).length; selA = null;
-    atCycle = r.state;
-    const isProj = (o) => hereProjects().some((p) => p.name === o);
-    note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸" : "") + (isProj(o) ? "📋@" : "@") + o).join("  ") : "";
+    atCycle = r.state ? { ...r.state, kind } : null;
+    note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸" : "") + (kind === "project" ? "📋@" : "@") + o).join("  ") : "";
     return render();
   }
   if (d === "\r") { selA = null; return send(); }
