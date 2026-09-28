@@ -500,7 +500,7 @@ function draw() {
   // Board: "thinking…" shimmers while a project's agents work on a request (then the note).
   const bs = view === "board" ? bv.status(c) : "";
   const boardHint = bs ? "  " + bs + (note ? dim("  " + note) : "")
-    : dim(note || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · @p D1 b answers · /help · ^B stream"));
+    : dim(note || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : input ? (bs ? "  " + bs : "") + (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
     : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
@@ -811,7 +811,7 @@ function onKey(d) {
     if (h) { // an item handle after "@project "
       if (!h.options.length) { note = "no open item by that handle"; return render(); }
       input = h.text; ic = graphemes(h.text.slice(0, h.cursor)).length; selA = null;
-      note = h.options.length > 1 ? h.options.map((o) => (o === h.pick ? "▸" : "") + o).join("  ") + "  · " + cut(bv.itemText(board, h.pick), 60) : bv.itemText(board, h.pick);
+      note = h.hint || ""; // the handles (with their @project when it isn't obvious), or the item's text
       return render();
     }
     const r = completeAt(before + after, before.length, atPool(), atCycle, d === "\t" ? 1 : -1);
