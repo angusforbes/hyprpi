@@ -28,6 +28,7 @@
 
 import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
+import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
 const COMMANDS = [
   ["/room", "room messages + agent-to-agent"],
@@ -63,55 +64,27 @@ onThemeChange(() => render());
 let selA = null;      // selection anchor (grapheme index into input), or null
 let pasting = false;  // inside a bracketed paste (\x1b[200~ … \x1b[201~)
 function inputSel() { if (selA == null || selA === ic) return null; return selA < ic ? [selA, ic] : [ic, selA]; }
+// The editing itself is the shared message box (lib/tui/input-box.mjs, like the board panel):
+// this panel keeps its own variables (input, ic, selA, sentText, sentTouched) and loads them
+// into the box before each edit, then reads them back.
+const box = createInputBox({
+  onChange: () => {}, copy: (t) => copy(t), multiline: true,
+  sentStyle: (g) => fg(worldFg(room), g), // sent text (board view only) in the world colour
+  tint: atTint((name) => { const r = resolveAt([name], atPool()), a = r.found[0]; return a?.project ? { project: true } : a ? { agent: a } : r.special ? { special: true } : null; },
+    { worldFg: (x) => fg(worldFg(room), x), bold, nameFg }),
+});
+const boxIn = () => box.load({ text: input, cursor: ic, anchor: selA, sent: view === "board" ? sentText : null, touched: sentTouched });
+function boxOut() {
+  const st = box.state();
+  input = st.text; ic = st.cursor; selA = st.anchor; sentTouched = st.touched;
+  if (view === "board" && sentText != null && st.sent == null) sentText = null; // typed over: no longer the sent text
+}
 // Rows of the input (styled, selection highlighted) and the cursor's row / column.
-function inputLayout(n) {
-  const gs = graphemes(input), rs = inputSel(), rows = [];
-  const on = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, off = theme.selection ? `${ESC}49m` : `${ESC}27m`;
-  // @names in the agent's colour (bold), @all / @nobody bold, unknown names red, as in
-  // the search panel's box.
-  const tint = new Array(gs.length).fill(null);
-  const sent = view === "board" && sentText != null && input === sentText; // sent: the whole text in the world colour
-  if (sent) { const wc = worldFg(room); tint.fill((g) => fg(wc, g)); }
-  for (let i = 0; i < gs.length && !sent; i++) {
-    if (gs[i] !== "@" || (i > 0 && !/\s/.test(gs[i - 1]))) continue;
-    let j = i + 1; while (j < gs.length && !/[\s,@]/.test(gs[j])) j++;
-    if (j === i + 1) continue;
-    const r = resolveAt([gs.slice(i + 1, j).join("")], atPool()), a = r.found[0];
-    const paint = a?.project ? (g) => fg(worldFg(room), bold(g)) : a ? (g) => nameFg(a.name, a.color, g) : r.special ? (g) => bold(g) : (g) => `${ESC}31m${g}${ESC}39m`;
-    for (let k = i; k < j; k++) tint[k] = paint;
-    i = j - 1;
-  }
-  let line = "", lw = 0, cRow = 0, cCol = 0;
-  for (let i = 0; i <= gs.length; i++) {
-    if (i < gs.length && gs[i] !== "\n" && lw + gw(gs[i]) > n) { rows.push(line); line = ""; lw = 0; } // soft wrap
-    if (i === ic) { cRow = rows.length; cCol = lw; }
-    if (i === gs.length) break;
-    if (gs[i] === "\n") { rows.push(rs && i >= rs[0] && i < rs[1] ? line + on + " " + off : line); line = ""; lw = 0; continue; }
-    const g = tint[i] ? tint[i](gs[i]) : gs[i];
-    line += rs && i >= rs[0] && i < rs[1] ? on + g + off : g; lw += gw(gs[i]);
-  }
-  rows.push(line);
-  return { rows, cRow, cCol };
-}
-// Insert text at the cursor, replacing the selection (paste keeps its line breaks).
-function insertText(t) {
-  // Board: the text left in the box after a send is replaced by what you type or paste (so a
-  // leftover can't be resent by accident); ←→ / Backspace still edit it in place.
-  if (view === "board" && sentText != null && input === sentText && !sentTouched) { input = ""; ic = 0; selA = null; sentText = null; }
-  let gs = graphemes(input); const rs = inputSel();
-  if (rs) { gs = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])]; ic = rs[0]; }
-  selA = null;
-  const ins = graphemes(String(t).replace(/\r\n?/g, "\n").replace(/[\x00-\x09\x0b-\x1f]/g, ""));
-  ic = Math.max(0, Math.min(ic, gs.length));
-  input = [...gs.slice(0, ic), ...ins, ...gs.slice(ic)].join(""); ic += ins.length; note = ""; focusArea = "input"; render();
-}
-function copyInputSel(cut) {
-  const rs = inputSel(); if (!rs) return;
-  const gs = graphemes(input);
-  copy(gs.slice(rs[0], rs[1]).join(""));
-  if (cut) { input = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])].join(""); ic = rs[0]; }
-  selA = null; render();
-}
+function inputLayout(n) { boxIn(); return box.layout(n); }
+// Insert text at the cursor, replacing the selection (paste keeps its line breaks). In the board
+// view the sent text is replaced by what you type or paste; ←→ / Backspace first edit it.
+function insertText(t) { boxIn(); box.insert(t); boxOut(); note = ""; focusArea = "input"; render(); }
+function copyInputSel(cut) { boxIn(); box.copySel(cut); boxOut(); render(); }
 function pasteClipboard() {
   try {
     const p = spawn("wl-paste", ["--no-newline", "--type", "text/plain"], { stdio: ["ignore", "pipe", "ignore"] });
@@ -920,51 +893,12 @@ function onKey(d) {
       focusArea = "stream"; return render();
     }
   }
-  // Editing the message: ←/→ (Ctrl or Alt+B/F: by word), Home/End or Ctrl+E
-  // while typing, Backspace / Delete at the cursor, Alt+Backspace word, Ctrl+U clear.
-  {
-    const gs = graphemes(input);
-    ic = Math.max(0, Math.min(ic, gs.length));
-    const edited = (next, c) => { input = next.join(""); ic = c; selA = null; note = ""; focusArea = "input"; return render(); };
-    const wordLeft = () => { let i = ic; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
-    const wordRight = () => { let i = ic; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
-    const rs = inputSel();
-    const delSel = () => edited([...gs.slice(0, rs[0]), ...gs.slice(rs[1])], rs[0]);
-    // Logical lines (split at \n): start / end of the line the cursor is on.
-    const lineStart = (i) => { while (i > 0 && gs[i - 1] !== "\n") i--; return i; };
-    const lineEnd = (i) => { while (i < gs.length && gs[i] !== "\n") i++; return i; };
-    const moveTo = (i, extend) => { if (view === "board" && sentText != null && input === sentText) sentTouched = true; if (extend) { if (selA == null) selA = ic; } else selA = null; ic = Math.max(0, Math.min(gs.length, i)); focusArea = "input"; return render(); };
-    // Shift+←→ / Ctrl+Shift+←→ / Shift+Home End: select.
-    if (d === "\x1b[1;2D") return moveTo(ic - 1, true);
-    if (d === "\x1b[1;2C") return moveTo(ic + 1, true);
-    if (d === "\x1b[1;6D") return moveTo(wordLeft(), true);
-    if (d === "\x1b[1;6C") return moveTo(wordRight(), true);
-    if (d === "\x1b[1;2H") return moveTo(lineStart(ic), true);
-    if (d === "\x1b[1;2F") return moveTo(lineEnd(ic), true);
-    // Shift+↑↓: extend the selection to the line above / below (for ^C ^X).
-    if (d === "\x1b[1;2A" || d === "\x1b[1;2B") {
-      const s0 = lineStart(ic), col = ic - s0;
-      if (d === "\x1b[1;2A") { if (!s0) return moveTo(0, true); const p0 = lineStart(s0 - 1); return moveTo(Math.min(p0 + col, s0 - 1), true); }
-      const e0 = lineEnd(ic); if (e0 >= gs.length) return moveTo(gs.length, true);
-      const n1 = lineEnd(e0 + 1); return moveTo(Math.min(e0 + 1 + col, n1), true);
-    }
-    // ↑↓: the previous / next line of the message (same column), else its start / end.
-    if (d === "\x1b[A" || d === "\x1b[B") {
-      const s0 = lineStart(ic), col = ic - s0;
-      if (d === "\x1b[A") { if (!s0) return moveTo(0); const p0 = lineStart(s0 - 1); return moveTo(Math.min(p0 + col, s0 - 1)); }
-      const e0 = lineEnd(ic); if (e0 >= gs.length) return moveTo(gs.length);
-      const n1 = lineEnd(e0 + 1); return moveTo(Math.min(e0 + 1 + col, n1));
-    }
-    if (d === "\x1b[D") return moveTo(rs ? rs[0] : ic - 1);
-    if (d === "\x1b[C") return moveTo(rs ? rs[1] : ic + 1);
-    if (d === "\x1b[1;5D" || d === "\x1bb") return moveTo(wordLeft());
-    if (d === "\x1b[1;5C" || d === "\x1bf") return moveTo(wordRight());
-    if (d === "\x1b[H" || d === "\x1b[1~") return moveTo(lineStart(ic));
-    if (d === "\x05" || d === "\x1b[F" || d === "\x1b[4~") return moveTo(lineEnd(ic));
-    if (d === "\x7f" || d === "\b") { if (rs) return delSel(); if (!ic) return; return edited([...gs.slice(0, ic - 1), ...gs.slice(ic)], ic - 1); }
-    if (d === "\x1b[3~") { if (rs) return delSel(); if (ic >= gs.length) return; return edited([...gs.slice(0, ic), ...gs.slice(ic + 1)], ic); }
-    if (d === "\x1b\x7f") { const i = wordLeft(); return edited([...gs.slice(0, i), ...gs.slice(ic)], i); }
-    if (d === "\x15") return edited([], 0); // Ctrl+U
+  // Editing the message (the shared box): ←→, Ctrl/Alt+←→ by word, Home/End / Ctrl+E, ↑↓ lines,
+  // Shift+arrows / Shift+Home End select, Backspace / Delete / Alt+Backspace / Ctrl+W, Ctrl+U clear.
+  // (Typing, paste, Shift+Enter and Ctrl+C/X/V are handled above and below, through insertText.)
+  if (d.startsWith("\x1b") || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x05" || d === "\x17") {
+    boxIn();
+    if (box.key(d)) { boxOut(); note = ""; focusArea = "input"; return render(); }
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
   if (d === "\x06") { if (view !== "stream") setView("stream"); filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${FILTER_LABEL[filter]}`; return render(); } // Ctrl+F
@@ -1034,7 +968,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/shimmer.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/shimmer.mjs", "tui/input-box.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
