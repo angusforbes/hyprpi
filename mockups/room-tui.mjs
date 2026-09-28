@@ -691,7 +691,7 @@ function command(text) {
 // the board doesn't know (/room, /history, …) falls through to the panel's own commands.
 // What was last sent from the board stays in the box, in the world colour, until edited; Enter
 // sends it again (several requests can run at once). Angus: the prompt shouldn't disappear.
-let sentText = null;
+let sentText = null, resendAsk = 0;
 async function boardSend(raw) {
   input = raw; ic = graphemes(raw).length; note = ""; selA = null;
   try {
@@ -708,6 +708,12 @@ function toggleBoard() {
 
 async function send() {
   const raw = input.trim();
+  // Unchanged sent text + Enter: don't resend by accident (Angus got 3 copies). The first
+  // Enter asks; a second Enter within 4 s sends it again.
+  if (view === "board" && raw && sentText != null && input === sentText) {
+    if (Date.now() - (resendAsk || 0) > 4000) { resendAsk = Date.now(); note = "already sent · ⏎ again to send it again · type to change it"; return render(); }
+    resendAsk = 0;
+  }
   if (view === "board" && raw) return boardSend(raw);
   if (command(raw)) return;
   if (view === "help") view = "stream";
