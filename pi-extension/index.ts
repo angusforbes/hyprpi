@@ -278,7 +278,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   const AGREEMENT = [
     "The hyprpi board (board_read / board_update / project) is how Angus keeps track of projects in your world without hunting for agents. Keep the cards of the projects you are on current: when you finish something notable, add it to done WITH how you verified it; keep 'where' to one line of where things stand; leave a next_step before you stop.",
     "Board working agreement: don't ask Angus what you can find out or decide reversibly: pick the default and note it on the card. Ask him only about irreversible things, taste, direction, money or sending things out, as a decide item with options, your recommendation and a default (adding it dings him at once). Ask project peers (talk) before asking Angus. Bonk only for urgent things. Narrate while you work.",
-    "Heard: everything Angus says to you that bears on a project goes on that project's card as a heard item (his words, distilled, with a priority), even if he didn't ask for it; turn heard items into next/decide items as they become work, and drop them when dealt with. If it fits no project, post it in the Agent Message Board for later; if it could fit several, pick one.",
+    "Heard: everything Angus says to you that bears on a project goes on that project's card as a heard item (his words, distilled, with a priority), even if he didn't ask for it; turn heard items into next/decide items as they become work, and drop them when dealt with. If it fits no project, post it in the Agent Message Board for later; if it could fit several, pick one. Project names are short (hyprpi, boards); use longer ones only when a project splits.",
   ];
   pi.registerTool({
     name: "board_read",
@@ -323,7 +323,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.registerTool({
     name: "project",
     label: "Project",
-    description: "Manage projects on your world's board. action: create (name = @slug like hyprpi-boards, title; you become a member and the writer), join, leave (note REQUIRED: a hand-off for the remaining members, what you did and what's left; it is sent to them), rename (name), status (new|active|paused|archived), writer (hand the writer role to a member: agent name), assign (members: '+@A -@B').",
+    description: "Manage projects on your world's board. action: create (name = a SHORT @slug, one word like hyprpi or boards; longer names only when a project splits; title; you become a member and the writer), join, leave (note REQUIRED: a hand-off for the remaining members, what you did and what's left; it is sent to them), rename (name), status (new|active|paused|archived), writer (hand the writer role to a member: agent name), assign (members: '+@A -@B').",
     promptSnippet: "Create, join, leave or reshape a project on the board",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("create"), Type.Literal("join"), Type.Literal("leave"), Type.Literal("rename"), Type.Literal("status"), Type.Literal("writer"), Type.Literal("assign")]),

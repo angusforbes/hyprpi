@@ -15,7 +15,7 @@ page, not a stream.
 ## Shape
 
 - **One board per world** (room C has board C). A board holds **several projects**, one card each.
-- A project has a **stable id** (`p-7k2m`) and a renameable **slug** used as `@hyprpi-boards`.
+- A project has a **stable id** (`p-7k2m`) and a renameable **slug** used as `@boards`.
   Projects and agents share one `@` namespace: names are unique across both. Completion marks
   projects 📋.
 - A card belongs to exactly one world at a time; **spinning out** moves it (with its agents and a
@@ -26,7 +26,7 @@ page, not a stream.
 ### A card
 
 ```
-━ 📋 hyprpi-boards ─────────── writer @Blink · members @Blink @Lippy · updated 14:32
+━ 📋 boards ─────────── writer @Blink · members @Blink @Lippy · updated 14:32
   Where   @Names done in both panels; board design in progress
   Decide  D1 ▸ … A (recommended) · B · going with A unless you say otherwise
   Next    N1 ▸ board storage + tools   N2 ▸ Ctrl+B view
@@ -65,11 +65,11 @@ page, not a stream.
 
 | Where | Typed | Effect |
 |---|---|---|
-| room | `@hyprpi-boards text` | to the project's current members (like a group). They reply however fits. The room message is tagged with the project id. |
-| board | `@hyprpi-boards text` | the same members, framed as "update the board": they coordinate (talk), the writer edits the card, nothing in the room |
-| board | `@hyprpi-boards` alone | **one combined view**: the card expanded, plus who (each member and what it's doing now) and recent changes. Nothing sent |
-| board | `@hyprpi-boards D1 b` | answers a decision (also a single key on the Needs-you strip) |
-| board | `@hyprpi-boards N2 ?` | more detail on that item, written into the card |
+| room | `@boards text` | to the project's current members (like a group). They reply however fits. The room message is tagged with the project id. |
+| board | `@boards text` | the same members, framed as "update the board": they coordinate (talk), the writer edits the card, nothing in the room |
+| board | `@boards` alone | **one combined view**: the card expanded, plus who (each member and what it's doing now) and recent changes. Nothing sent |
+| board | `@boards D1 b` | answers a decision (also a single key on the Needs-you strip) |
+| board | `@boards N2 ?` | more detail on that item, written into the card |
 
 ## Board commands
 
