@@ -11,7 +11,7 @@
 // the room and delivered to nobody; "@Name text" always goes to that agent.
 // Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
 // room + stream / room + stream · topics.
-// Ctrl+B toggles the project board (lib/tui/board-view.mjs): Needs-you strip + one card per
+// The project board has its own panel (SUPER+ALT+B, mockups/board-tui.mjs). Ctrl+B used to show it in here (lib/tui/board-view.mjs): Needs-you strip + one card per
 // project; in board mode the box takes @project … and board commands (/help there lists them).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
 // Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · Ctrl+/ opens the search panel on this room ·
@@ -52,7 +52,7 @@ const helpRows = () => {
     `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A (panel 1, the marks ▸ live there) · search: SUPER+ALT+/ (panel 3)")}`,
-    `   ${dim("^B: the project board (Needs you, cards; @project alone opens one; /help there lists the board commands)")}`,
+    `   ${dim("the project board has its own panel: SUPER+ALT+B")}`,
   ];
 };
 import fs from "node:fs";
@@ -828,7 +828,8 @@ function onKey(d) {
   }
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world (too
   // easy to hit): it completes an @name (again: the next match; Shift+Tab: back).
-  if (d === "\x02") return toggleBoard(); // Ctrl+B: board ⇄ stream
+  // (No Ctrl+B: the board has its own panel, SUPER+ALT+B. Angus: removed, it pulled the board panel over.)
+  if (d === "\x02" && view === "board") return toggleBoard(); // only to leave an old in-panel board view
   // Board mode: ↑↓ always move the board's cursor; Shift+↑↓ move within the message box
   // (what plain ↑↓ do there in the stream), like search's box vs results.
   // Board mode, one rule for both panels (Angus): plain keys are the box's (↑↓ move in it,
