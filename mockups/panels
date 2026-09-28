@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Gather the three hyprpi panels of one world onto one workspace, side by side, full height:
 //
-//   agents (panel 1) │ room / stream (panel 2) │ search (panel 3)
+//   agents (panel 1) │ room / stream (panel 2) │ board (panel 4) │ search (panel 3)
 //
 //   ~/Work/hyprpi/mockups/panels [ROOM] [--workspace N] [--only 1,2]
 //
@@ -17,6 +17,7 @@
 // them, so the order is fixed afterwards with swaps. An exact resize needs a non-zero
 // height (hl.dsp.window.resize({ x = W, y = H, relative = false })).
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import * as hypr from "./../lib/hypr.mjs";
 import { request } from "./../lib/client.mjs";
 
@@ -27,7 +28,7 @@ const wantWs = Number(opt("--workspace")) || null;
 // identical every time. --tile uses dwindle instead (tiled, but only as even as the tree).
 const tiled = args.includes("--tile") && (args.splice(args.indexOf("--tile"), 1), true);
 const gap = Number(opt("--gap")) || 12;
-const only = (opt("--only") || "1,2,3").split(",").map((x) => x.trim());
+const only = (opt("--only") || "1,2,4,3").split(",").map((x) => x.trim());
 const here = new URL(".", import.meta.url).pathname;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clients = () => hypr.clients().catch(() => []);
@@ -38,8 +39,9 @@ const clients = () => hypr.clients().catch(() => []);
 const panelsFor = (room) => [
   { n: "1", cmd: `${here}agents-tui`, title: new RegExp(`^hyprpi-router ${room}$`) },
   { n: "2", cmd: `${here}room-tui`, title: new RegExp(`^hyprpi-room ${room}$`) },
+  { n: "4", cmd: `${here}board-tui`, title: new RegExp(`^hyprpi-board ${room}$`) },
   { n: "3", cmd: `${here}search-tui`, title: new RegExp(`^hyprpi-search ${room}$`) },
-].filter((p) => only.includes(p.n));
+].filter((p) => only.includes(p.n) && (p.n !== "4" || fs.existsSync(`${here}board-tui.mjs`))); // the board panel (4) once it exists
 
 async function currentRoom() {
   try { const r = await request("room.current", {}); return r.room || ""; } catch { return ""; }
@@ -135,7 +137,7 @@ async function exactColumns(addrs) {
 
 // Panel mode is "the panels are floating in their exact columns here". Pressing the key
 // again tiles them back, so the workspace behaves normally.
-const PANEL_TITLE = /^hyprpi-(router|room|search) /;
+const PANEL_TITLE = /^hyprpi-(router|room|board|search) /;
 async function panelModeHere(ws) {
   const cs = await clients();
   const here = cs.filter((c) => c.workspace?.id === ws && PANEL_TITLE.test(c.title || ""));
@@ -146,7 +148,7 @@ async function panelModeHere(ws) {
 // (50 / 25 / 25) — deliberately NOT even thirds, so one glance tells you which mode you
 // are in: three identical columns = panel mode, a wide left column = normal.
 async function unpanel(here) {
-  const order = ["router", "room", "search"];
+  const order = ["router", "room", "board", "search"];
   const sorted = here.slice().sort((a, b) => order.findIndex((k) => a.title.includes(k)) - order.findIndex((k) => b.title.includes(k)));
   const addrs = sorted.map((c) => c.address);
   await relayout(addrs);
@@ -170,6 +172,7 @@ const main = async () => {
   const ws = await targetWorkspace();
   if (!ws) { console.error("panels: no normal workspace is active (use --workspace N)"); process.exit(1); }
   const list = panelsFor(room);
+  if (!list.length) { spawn("notify-send", ["hyprpi", "The board panel (SUPER+ALT+B) isn't built yet: use Ctrl+B in the room panel"], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); return; }
   // One panel (the single-panel keys: --only 1 / 2 / 3): bring it here and focus it, no layout.
   if (list.length === 1) {
     const addr = await bring(list[0], ws, room);

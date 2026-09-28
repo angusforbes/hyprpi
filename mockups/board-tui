@@ -1,0 +1,22 @@
+#!/bin/sh
+# Panel 4: the hyprpi project board in its own kitty window.  board-tui [ROOM]   (SUPER+ALT+B)
+# Same kitty setup as room-tui: Shift+mouse and Ctrl+click reach the TUI (kitty's own selection
+# is Ctrl+Shift), Shift+Enter / Ctrl+Enter / Ctrl+Tab are sent as distinct keys, SUPER+C / V copy
+# and paste. The loop: the panel exits with 75 to restart onto new code (its state in $f).
+exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
+  -o "mouse_map=shift+left click grabbed" \
+  -o "mouse_map=shift+left press grabbed" \
+  -o "mouse_map=shift+left doublepress grabbed" \
+  -o "mouse_map=shift+left triplepress grabbed" \
+  -o "mouse_map=ctrl+left press grabbed" \
+  -o "mouse_map=ctrl+left release grabbed" \
+  -o "mouse_map=ctrl+shift+left press grabbed mouse_selection normal" \
+  -o "mouse_map=ctrl+shift+left doublepress grabbed mouse_selection word" \
+  -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" \
+  -o 'map shift+enter send_text all \x1b[13;2u' \
+  -o 'map ctrl+enter send_text all \x1b[13;5u' \
+  -o 'map ctrl+tab send_text all \x1b[9;5u' \
+  -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \
+  -o 'map ctrl+insert copy_or_noop' \
+  -o 'map shift+insert paste_from_clipboard' \
+  sh -c 'f=$(mktemp -t hyprpi-board.XXXXXX); trap "rm -f $f" EXIT; while :; do HYPRPI_BOARD_TUI_STATEFILE=$f node "$0" "$@"; [ $? -eq 75 ] || break; done' "$(dirname "$(readlink -f "$0")")/board-tui.mjs" "$@"

@@ -706,6 +706,15 @@ async function boardSend(raw) {
 }
 function toggleBoard() {
   if (view === "board") { view = "stream"; note = ""; return render(); }
+  // The board has its own panel (panel 4, SUPER+ALT+B) once mockups/board-tui.mjs exists:
+  // Ctrl+B opens / focuses it for this room. Until then the board shows in here.
+  const boardTui = new URL("./board-tui.mjs", import.meta.url).pathname;
+  if (fs.existsSync(boardTui)) {
+    const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+    try { spawn(new URL("./panels", import.meta.url).pathname, [room, "--only", "4"], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); note = `board ${room} → its own panel (SUPER+ALT+B)`; }
+    catch (e) { note = "✗ " + e.message; }
+    return render();
+  }
   view = "board"; confirm = null; note = ""; loadBoard(); render();
 }
 

@@ -21,6 +21,7 @@ o.bind("SUPER + ALT + P", "hyprpi panels here (agents | room | search)", "/home/
 -- for search and move scaling down to SUPER + SHIFT + / (scaling up stays on SUPER + /).
 hl.unbind("SUPER + ALT + SLASH")
 o.bind("SUPER + SHIFT + SLASH", "Monitor scaling down", "omarchy-hyprland-monitor-scaling down")
+o.bind("SUPER + ALT + B", "hyprpi board panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 4")
 o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 3")
 
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send
