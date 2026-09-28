@@ -152,7 +152,17 @@ it waits in a queue (`~/.local/state/hyprpi/tinker-queue.json`) and a new agent 
 on the workshop world's first workspace without taking focus; the queue drains as
 agents there become free. The agent is told where it came from (agent, room, folder),
 to fix and verify it without asking you, and to `room_post` "🔧 done: …" (or
-"🔧 stuck: …") in the workshop room. Each hand-off is logged there as "🔧 → Name: …".
+"🔧 decide: …" / "🔧 stuck: …") in the workshop room. Each hand-off is logged there as "🔧 → Name: …".
+
+Decisions: the agent makes small, reversible ones itself and lists them in its result under
+"Decided for you:" with how to undo each. Ones that are hard to undo or are yours (publishing or
+pushing anywhere public, sending to other people, deleting or rewriting your data, changing how you
+work, choosing between designs you'd see) it does not make: it does everything else and posts
+"🔧 decide: question, options, recommendation", then stops. A thought rather than a fix (how to
+organise something) gets a short proposal, with only the uncontroversial part built.
+Every "🔧 done / decide / stuck" post is **copied to the room the drop-off came from** (as
+"(workshop D #seq) …"), so results and questions reach you where you are working. Answer a decide
+by talking to that agent (or with another /tinker).
 
 ## CLI
 
