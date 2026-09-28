@@ -776,7 +776,7 @@ async function send() {
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 // Input arrives in chunks (held keys, pastes): split into single keys first.
-const KEY = /\x1b[bfsS\x7f]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bfsS\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) render(); } });
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
