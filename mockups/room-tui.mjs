@@ -95,6 +95,9 @@ function inputLayout(n) {
 }
 // Insert text at the cursor, replacing the selection (paste keeps its line breaks).
 function insertText(t) {
+  // Board: the text left in the box after a send is replaced by what you type or paste (so a
+  // leftover can't be resent by accident); ←→ / Backspace still edit it in place.
+  if (view === "board" && sentText != null && input === sentText && !sentTouched) { input = ""; ic = 0; selA = null; sentText = null; }
   let gs = graphemes(input); const rs = inputSel();
   if (rs) { gs = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])]; ic = rs[0]; }
   selA = null;
@@ -691,12 +694,12 @@ function command(text) {
 // the board doesn't know (/room, /history, …) falls through to the panel's own commands.
 // What was last sent from the board stays in the box, in the world colour, until edited; Enter
 // sends it again (several requests can run at once). Angus: the prompt shouldn't disappear.
-let sentText = null, resendAsk = 0;
+let sentText = null, resendAsk = 0, sentTouched = false; // sentTouched: the cursor was moved into the sent text (typing then edits it)
 async function boardSend(raw) {
   input = raw; ic = graphemes(raw).length; note = ""; selA = null;
   try {
     const r = await bv.input(raw, { api, room, board: board.room === room ? board : { projects: [] } });
-    if (r) { sentText = r.confirm ? null : raw; note = r.note; return render(); } // a confirm prompt (/spinout, /merge) isn't sent yet: ⏎ again runs it
+    if (r) { sentText = r.confirm ? null : raw; sentTouched = false; note = r.note; return render(); } // a confirm prompt (/spinout, /merge) isn't sent yet: ⏎ again runs it
   } catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; return render(); }
   if (command(raw)) return;
   input = raw; ic = graphemes(raw).length; note = "✗ not a board command · /help"; render();
@@ -827,6 +830,7 @@ function onKey(d) {
     if (r) { Promise.resolve(r).then((x) => { if (x?.input != null) { input = x.input; ic = graphemes(input).length; selA = null; sentText = null; } if (x?.note != null) note = x.note; render(); }).catch((e) => { note = "✗ " + e.message; render(); }); return render(); }
     note = "^⏎: highlight a card or item first (^↑↓)"; return render();
   } }
+  if (view === "board" && d === "\x1b" && inputSel()) { selA = null; return render(); } // Esc on the board: the box's selection first, then the highlight, then the open card / help
   if (view === "board" && (d === "\x1b[A" || d === "\x1b[B")) { /* the box's: handled below */ }
   else if (view === "board") { // the board's cursor: ↑↓ / ^↑↓, Space, ⏎, ^D drop, ^T done, ^Z undo, Esc
     const r = bv.key(d, { empty: !input, api, room, board: board.room === room ? board : null });
@@ -877,6 +881,7 @@ function onKey(d) {
     if (bv.st.help) bv.st.help = false; else bv.focus(null);
     note = ""; return render();
   }
+  if (view === "board" && d === "\x1b") { confirm = null; note = ""; return render(); } // Esc never leaves the board (^B does)
   if (view !== "stream" && d === "\x1b") { // Esc: back to the stream
     view = "stream"; note = ""; return render();
   }
@@ -916,7 +921,7 @@ function onKey(d) {
     // Logical lines (split at \n): start / end of the line the cursor is on.
     const lineStart = (i) => { while (i > 0 && gs[i - 1] !== "\n") i--; return i; };
     const lineEnd = (i) => { while (i < gs.length && gs[i] !== "\n") i++; return i; };
-    const moveTo = (i, extend) => { if (extend) { if (selA == null) selA = ic; } else selA = null; ic = Math.max(0, Math.min(gs.length, i)); focusArea = "input"; return render(); };
+    const moveTo = (i, extend) => { if (view === "board" && sentText != null && input === sentText) sentTouched = true; if (extend) { if (selA == null) selA = ic; } else selA = null; ic = Math.max(0, Math.min(gs.length, i)); focusArea = "input"; return render(); };
     // Shift+←→ / Ctrl+Shift+←→ / Shift+Home End: select.
     if (d === "\x1b[1;2D") return moveTo(ic - 1, true);
     if (d === "\x1b[1;2C") return moveTo(ic + 1, true);
