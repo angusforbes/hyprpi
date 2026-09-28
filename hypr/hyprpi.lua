@@ -11,12 +11,12 @@ local HYPRPI_BIN = (os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/
 --                      another workspace if open there, opened here if not), then focused
 --   SUPER + ALT + A    agent panel (kitty) for the current world
 --   SUPER + ALT + R    room / stream panel (kitty) for the current world
---   SUPER + ALT + P    all three panels here, side by side (moves them if open elsewhere)
+--   SUPER + ALT + P    all four panels as a 2x2 grid on the world's last workspace (C → 30), and go there
 --   SUPER + ALT + /    search TUI (kitty) for the current world's room
 o.bind("SUPER + A", "Pi agent (hyprpi)", HYPRPI_BIN .. " new")
 o.bind("SUPER + ALT + A", "hyprpi agent panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 1")
 o.bind("SUPER + ALT + R", "hyprpi room / stream panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 2")
-o.bind("SUPER + ALT + P", "hyprpi panels here (agents | room | search)", "/home/agf/Work/hyprpi/mockups/panels")
+o.bind("SUPER + ALT + P", "hyprpi panels: 2x2 grid on the world's last workspace", "/home/agf/Work/hyprpi/mockups/panels")
 -- Omarchy binds SUPER + ALT + / to "Monitor scaling down"; both fired on one press. Take the key
 -- for search and move scaling down to SUPER + SHIFT + / (scaling up stays on SUPER + /).
 hl.unbind("SUPER + ALT + SLASH")
