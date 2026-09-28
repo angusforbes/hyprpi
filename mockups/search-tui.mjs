@@ -31,6 +31,7 @@ import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
+import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
 
 const ESC = "\x1b[";
 const out = (s) => process.stdout.write(s);
@@ -267,21 +268,17 @@ const shimmer = (text, c) => shimmerAt(text, c, S.startedAt);
 let selA = null;        // box selection anchor (grapheme index), or null
 let pasting = false;    // inside a bracketed paste
 function boxSel() { if (selA == null || selA === qc) return null; return selA < qc ? [selA, qc] : [qc, selA]; }
-function insertText(t) {
-  let gs = graphemes(query); const rs = boxSel();
-  if (rs) { gs = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])]; qc = rs[0]; }
-  selA = null;
-  const ins = graphemes(String(t).replace(/[\r\n\t]+/g, " ").replace(/[\x00-\x1f]/g, "")); // one-line box
-  qc = Math.max(0, Math.min(qc, gs.length));
-  query = [...gs.slice(0, qc), ...ins, ...gs.slice(qc)].join(""); qc += ins.length; note = ""; render();
-}
-function copyBoxSel(cut) {
-  const rs = boxSel(); if (!rs) return false;
-  const gs = graphemes(query);
-  copy(gs.slice(rs[0], rs[1]).join(""));
-  if (cut) { query = [...gs.slice(0, rs[0]), ...gs.slice(rs[1])].join(""); qc = rs[0]; }
-  selA = null; render(); return true;
-}
+// The editing itself is the shared message box (lib/tui/input-box.mjs), one line here: the panel
+// keeps query / qc / selA and loads them into the box before each edit, then reads them back.
+const box = createInputBox({
+  onChange: () => {}, copy: (t) => copy(t), multiline: false,
+  tint: atTint((name) => { const r = resolveAt([name], hereKnown()), a = r.found[0]; return a ? { agent: a } : r.special ? { special: true } : null; },
+    { worldFg: (x) => x, bold, nameFg: (_n, color, g) => hexFg(color || "", bold(g)) }),
+});
+const boxIn = () => box.load({ text: query, cursor: qc, anchor: selA });
+const boxOut = () => { const st = box.state(); query = st.text; qc = st.cursor; selA = st.anchor; };
+function insertText(t) { boxIn(); box.insert(t); boxOut(); note = ""; render(); }
+function copyBoxSel(cut) { boxIn(); const ok = box.copySel(cut); boxOut(); render(); return ok; }
 function pasteClipboard() {
   try {
     const p = spawnChild("wl-paste", ["--no-newline", "--type", "text/plain"], { stdio: ["ignore", "pipe", "ignore"] });
@@ -403,12 +400,8 @@ function render() {
   const prompt = fg(c, bold(S.mode === "ai" ? "✦ " : "⌕ "));
   const hint = query ? "" : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
-  const brs = boxSel(), qgs = graphemes(query);
-  const styledQuery = () => query.replace(/(^|\s)(@[^\s,@]+)/g, (_m, pre, at) => {
-    const r = resolveAt([at.slice(1)], hereKnown());
-    return pre + (r.found[0] ? hexFg(r.found[0].color || "", bold(at)) : r.special ? bold(at) : `${ESC}31m${at}${ESC}39m`);
-  });
-  rows.push(`${prompt}${brs ? qgs.slice(0, brs[0]).join("") + selOn + qgs.slice(brs[0], brs[1]).join("") + selOff + qgs.slice(brs[1]).join("") : styledQuery()}${hint}`);
+  boxIn();
+  rows.push(`${prompt}${box.layout(1e6).rows[0]}${hint}`); // the shared box: @names coloured, selection highlighted
   const cursorRow = rows.length;
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
@@ -570,34 +563,13 @@ function onKey(d) {
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
   if (d === "\r") { showHelp = false; selA = null; return enter(); }
-  // Editing the box: ←/→ (Ctrl/Alt: by word), Home/End or Ctrl+A/E,
-  // Backspace / Delete at the cursor, Ctrl+W / Alt+Backspace delete word, Ctrl+U clear.
-  const gs = graphemes(query);
-  qc = Math.max(0, Math.min(qc, gs.length));
-  const edited = (next, c) => { query = next.join(""); qc = c; selA = null; note = ""; return render(); };
-  const at = (c, extend) => { if (extend) { if (selA == null) selA = qc; } else selA = null; qc = Math.max(0, Math.min(gs.length, c)); return render(); };
-  const rs = boxSel();
-  const delSel = () => edited([...gs.slice(0, rs[0]), ...gs.slice(rs[1])], rs[0]);
-  const wordLeft = () => { let i = qc; while (i > 0 && /\s/.test(gs[i - 1])) i--; while (i > 0 && !/\s/.test(gs[i - 1])) i--; return i; };
-  const wordRight = () => { let i = qc; while (i < gs.length && /\s/.test(gs[i])) i++; while (i < gs.length && !/\s/.test(gs[i])) i++; return i; };
-  // Shift+←→ / Ctrl+Shift+←→ / Shift+Home End: select.
-  if (d === "\x1b[1;2D") return at(qc - 1, true);
-  if (d === "\x1b[1;2C") return at(qc + 1, true);
-  if (d === "\x1b[1;6D") return at(wordLeft(), true);
-  if (d === "\x1b[1;6C") return at(wordRight(), true);
-  if (d === "\x1b[1;2H") return at(0, true);
-  if (d === "\x1b[1;2F") return at(gs.length, true);
-  if (d === "\x1b[D") return at(rs ? rs[0] : qc - 1);
-  if (d === "\x1b[C") return at(rs ? rs[1] : qc + 1);
-  if (d === "\x1b[1;5D" || d === "\x1b[1;3D" || d === "\x1bb") return at(wordLeft());
-  if (d === "\x1b[1;5C" || d === "\x1b[1;3C" || d === "\x1bf") return at(wordRight());
-  if (d === "\x1b[H" || d === "\x1b[1~" || d === "\x01") return at(0);
-  if (d === "\x1b[F" || d === "\x1b[4~" || d === "\x05") return at(gs.length);
-  if (d === "\x15") return edited([], 0);
-  if (rs && (d === "\x7f" || d === "\b" || d === "\x1b[3~")) return delSel();
-  if (d === "\x17" || d === "\x1b\x7f" || d === "\x1b\b") { const i = wordLeft(); return edited([...gs.slice(0, i), ...gs.slice(qc)], i); }
-  if (d === "\x7f" || d === "\b") { if (!qc) return; return edited([...gs.slice(0, qc - 1), ...gs.slice(qc)], qc - 1); }
-  if (d === "\x1b[3~") { if (qc >= gs.length) return; return edited([...gs.slice(0, qc), ...gs.slice(qc + 1)], qc); }
+  // Editing the box (the shared box): ←→, Ctrl/Alt+←→ by word, Home/End, Shift-select,
+  // Backspace / Delete / Alt+Backspace / Ctrl+W, Ctrl+U clear. Ctrl+A = Home here.
+  if (d === "\x01") { qc = 0; selA = null; return render(); }
+  if (d.startsWith("\x1b") || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x05" || d === "\x17") {
+    boxIn();
+    if (box.key(d)) { boxOut(); note = ""; return render(); }
+  }
   if (d.startsWith("\x1b[<")) {
     const m = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(d); if (!m) return;
     const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
@@ -627,9 +599,8 @@ function onKey(d) {
     return;
   }
   if (d.startsWith("\x1b")) return; // any other Alt+key / unknown sequence: ignored, never quits
-  const ins = graphemes(d.replace(/[\x00-\x1f]/g, ""));
-  if (!ins.length) return;
-  edited([...gs.slice(0, qc), ...ins, ...gs.slice(qc)], qc + ins.length);
+  if (!d.replace(/[\x00-\x1f]/g, "")) return;
+  return insertText(d);
 }
 const MODES_OFF = `${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`;
 function quit() { out(MODES_OFF); process.exit(0); }
@@ -639,7 +610,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
