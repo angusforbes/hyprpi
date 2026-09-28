@@ -233,7 +233,7 @@ function helpLines() {
     k("Ctrl+Tab / Ctrl+⇧Tab", "next / previous world"),
     k("↑↓ PgUp PgDn wheel", "select a result (the list scrolls with it)"),
     k("⏎ · ^⏎", "search · jump to the selected result's agent window (⏎ on the same words asks, then re-runs)"),
-    k("↑↓ / ^↑↓ · click", "select a result · ^click on an agent's name jumps to its window"),
+    k("^↑↓ · click", "select a result (plain ↑↓ are the box's) · ^click on an agent's name jumps to its window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
     k("box", "Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select · Ctrl+C copy (none: clear) · Ctrl+X cut · Ctrl+V paste"),
     k("Esc", "stop a running search · else clear the box · closes this help"),
@@ -561,8 +561,11 @@ function onKey(d) {
   }
   // Same scheme as the board: plain keys type (⏎ searches); ↑↓ / ^↑↓ move the highlight;
   // ^⏎ acts on it (jumps to that agent's window); ^click on a name jumps too.
-  if (d === "\x1b[A" || d === "\x1b[1;5A") return move(-1);
-  if (d === "\x1b[B" || d === "\x1b[1;5B") return move(1);
+  // Plain keys are the box's (↑ start, ↓ end of the one-line box); Ctrl is the pane's.
+  if (d === "\x1b[1;5A") return move(-1);
+  if (d === "\x1b[1;5B") return move(1);
+  if (d === "\x1b[A") { qc = 0; selA = null; return render(); }
+  if (d === "\x1b[B") { qc = graphemes(query).length; selA = null; return render(); }
   if (d === "\x1b[13;5u") { showHelp = false; return jump(); } // Ctrl+Enter (the launcher maps it)
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);

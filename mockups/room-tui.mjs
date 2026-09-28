@@ -817,7 +817,9 @@ function onKey(d) {
   if (d === "\x02") return toggleBoard(); // Ctrl+B: board ⇄ stream
   // Board mode: ↑↓ always move the board's cursor; Shift+↑↓ move within the message box
   // (what plain ↑↓ do there in the stream), like search's box vs results.
-  if (view === "board" && (d === "\x1b[1;2A" || d === "\x1b[1;2B")) d = d === "\x1b[1;2A" ? "\x1b[A" : "\x1b[B";
+  // Board mode, one rule for both panels (Angus): plain keys are the box's (↑↓ move in it,
+  // Shift+↑↓ select), Ctrl is the pane's (^↑↓ move the board highlight).
+  if (view === "board" && (d === "\x1b[A" || d === "\x1b[B")) { /* the box's: handled below */ }
   else if (view === "board") { // the board's cursor: ↑↓ / ^↑↓, Space, ⏎, ^D drop, ^T done, ^Z undo, Esc
     const r = bv.key(d, { empty: !input, api, room, board: board.room === room ? board : null });
     if (r === true) { note = ""; return render(); }
