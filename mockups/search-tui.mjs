@@ -472,8 +472,8 @@ function render() {
   const clipped = rows.slice(0, H).map((r) => clip(r, W));
   screen = clipped.map(strip);
   const spans = selSpans(W);
-  out(`${ESC}?25l${ESC}H` + clipped.map((r, i) => (spans[i + 1] ? overlay(r, spans[i + 1][0], spans[i + 1][1], selOn, selOff) : r) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
-  out(`${ESC}${cursorRow};${width(prompt) + width(graphemes(query).slice(0, qc).join("")) + 1}H${ESC}?25h`);
+  out(`${ESC}?2026h${ESC}H` + clipped.map((r, i) => (spans[i + 1] ? overlay(r, spans[i + 1][0], spans[i + 1][1], selOn, selOff) : r) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
+  out(`${ESC}${cursorRow};${width(prompt) + width(graphemes(query).slice(0, qc).join("")) + 1}H${ESC}?25h${ESC}?2026l`); // one synchronized frame, cursor never hidden (no flicker while "thinking…" animates)
 }
 
 function ctrlClick(x, y) {

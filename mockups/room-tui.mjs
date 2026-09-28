@@ -534,10 +534,12 @@ function draw() {
   // Each row at its absolute position: if a row still renders wider than we
   // measured, the next row simply paints over the spill instead of shifting the
   // whole frame up one line. (The last row is never wider than W, so no scroll.)
-  out(`${ESC}?25l` + shown2.map((l, i) => `${ESC}${i + 1};1H` + l + `${ESC}0m${ESC}K`).join("") + (shown2.length < H ? `${ESC}${shown2.length + 1};1H${ESC}J` : ""));
+  // One synchronized frame (DEC 2026: kitty shows it all at once) and the cursor is never hidden,
+  // so the "thinking…" animation's redraws don't make the text cursor flicker (Angus).
+  out(`${ESC}?2026h` + shown2.map((l, i) => `${ESC}${i + 1};1H` + l + `${ESC}0m${ESC}K`).join("") + (shown2.length < H ? `${ESC}${shown2.length + 1};1H${ESC}J` : ""));
   // Cursor at ic inside the (possibly multi-line, wrapped) message.
   const crow = H - inputLines.length + (IL.cRow - inTop), ccol = Math.min(W, promptW + IL.cCol + 1);
-  out(`${ESC}${crow};${ccol}H${ESC}?25h`);
+  out(`${ESC}${crow};${ccol}H${ESC}?25h${ESC}?2026l`);
 }
 
 // The pane when it isn't the stream: /help.
