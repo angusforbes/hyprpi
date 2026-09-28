@@ -978,12 +978,24 @@ setInterval(() => {
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
-  spawn(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env })
+  // Keep what Angus was looking at: board or stream, the open card, the stream filter.
+  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, filter, words });
+  spawn(process.execPath, [CODE[0], room], { stdio: "inherit", env: { ...process.env, HYPRPI_ROOM_TUI_STATE: keep } })
     .on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
 process.stdout.on("resize", render);
 setInterval(render, 30000); // clock
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
+// After a restart onto new code: back to the same view (the board stays the board).
+try {
+  const k = JSON.parse(process.env.HYPRPI_ROOM_TUI_STATE || "null");
+  delete process.env.HYPRPI_ROOM_TUI_STATE;
+  if (k) {
+    if (FILTERS.includes(k.filter)) filter = k.filter;
+    if (Array.isArray(k.words)) words = k.words;
+    if (k.view === "board") { view = "board"; if (k.focus) bv.focus(k.focus); }
+  }
+} catch { /* start in the stream */ }
 render();
 start();
