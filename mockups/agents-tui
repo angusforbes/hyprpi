@@ -1,6 +1,7 @@
 #!/bin/sh
 # Panel 1: the hyprpi agent panel, in its own kitty window.  agents-tui [ROOM]
+# The loop: the panel exits with 75 to restart onto new code, in place (no stacked processes).
 exec kitty --class hyprpi.agents -o confirm_os_window_close=0 \
   -o 'map ctrl+tab send_text all \x1b[9;5u' \
   -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \
-  node "$(dirname "$(readlink -f "$0")")/agents-tui.mjs" "$@"
+  sh -c 'while :; do HYPRPI_AGENTS_TUI_LOOP=1 node "$0" "$@"; [ $? -eq 75 ] || break; done' "$(dirname "$(readlink -f "$0")")/agents-tui.mjs" "$@"

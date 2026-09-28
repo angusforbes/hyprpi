@@ -298,6 +298,9 @@ setInterval(() => {
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
+  // The launcher (mockups/agents-tui) loops on exit 75: restart in place instead of stacking a
+  // child each time (N19). Older windows (no loop): a child, as before.
+  if (process.env.HYPRPI_AGENTS_TUI_LOOP) process.exit(75);
   spawn(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env }).on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
