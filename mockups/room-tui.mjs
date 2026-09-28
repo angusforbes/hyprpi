@@ -15,7 +15,8 @@
 // Tab / Shift+Tab switch world · Ctrl+/ opens the search panel on this room ·
 // Esc drops a selection, else marks every agent again · Ctrl+Q quits (Ctrl+C copies).
 // Commands: /room · /stream [WORDS] (live word filter) · /history N|all · /help ·
-// "//text" posts "/text".
+// "//text" is only for saying something that starts with a slash (it would otherwise be
+// read as a command): "//stream is down" posts "/stream is down". Ordinary messages need nothing.
 // Drag selects and copies message text, Shift+click/drag whole messages, double-click a
 // word, triple-click a whole message. No ROOM = the current world's room; several copies
 // can run at once: each is just another subscriber of the daemon.
@@ -34,7 +35,7 @@ const helpRows = () => {
   return [
     ...COMMANDS.map(([c, d]) => `   ${bold(c.padEnd(w))}  ${d}`),
     "",
-    `   ${bold("//text".padEnd(w))}  posts "/text" to the room`,
+    `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
     `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
@@ -613,7 +614,7 @@ function command(text) {
     }
     case "help": setView("help"); return true;
   }
-  input = text; ic = graphemes(text).length; note = `\u2717 unknown command /${m[1]} \u00b7 /help lists them \u00b7 //text posts "/text"`; render();
+  input = text; ic = graphemes(text).length; note = `\u2717 unknown command /${m[1]} \u00b7 /help lists them \u00b7 to say it instead, start with //`; render();
   return true;
 }
 
