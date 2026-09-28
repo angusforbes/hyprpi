@@ -233,7 +233,9 @@ tools and no memory: about 3 s. The room TUI's `/ask` uses it. For real question
   "terminalHelpers": true,
   "pi": "pi",
   "piArgs": [],
-  "searchModel": "claude-haiku-4-5"
+  "searchModel": "claude-haiku-4-5",
+  "aiSearchChars": 110000,
+  "aiSearchActivityShare": 0.2
 }
 
 - `offLimitsWorkspaces` (default `["special:reprieve"]`): an agent whose window is
@@ -259,6 +261,20 @@ tools and no memory: about 3 s. The room TUI's `/ask` uses it. For real question
   placeholders; the pi command is appended. E.g.
   `["wezterm", "start", "--class", "{class}", "--cwd", "{cwd}", "--"]`.
 - `piArgs`: extra `pi` flags for new agents (e.g. `["--model", "…"]`).
+- **AI search** (search panel, AI mode: a short answer + the evidence it used). One
+  `searchModel` call reads a slice of the room's history: conversations (what was
+  *said*) and the activity stream (what was *done*: tool calls, topics, joins/moves).
+  Both keys are read on every search, so changes apply without a restart.
+  - `aiSearchChars` (default 110000, ~28k tokens): how much text the model reads per
+    search. More = wider coverage, slower and costlier.
+  - `aiSearchActivityShare` (default 0.2): the **cap** on the activity stream's part of
+    that budget, 0..1. Activity lines are many and short (every `ls`, read and edit), so
+    uncapped they would crowd out the conversations, where reasons and decisions are;
+    but without them "who changed bindings.lua?" can't be answered. 0.2 = 22000
+    characters, about 150 activity lines (each trimmed to ~140), roughly a busy hour of
+    tool calls in a room, leaving 80% for conversation. Lines sharing words with the
+    query go in first, then the newest. A cap, not a reservation: unused activity budget
+    goes to conversations. `0` leaves activity out; `1` removes the cap.
 
 ## Testing without touching the desktop
 
