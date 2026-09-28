@@ -21,6 +21,7 @@ exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" \
   -o 'map shift+space send_text all \x1b[32;2u' \
   -o 'map shift+enter send_text all \x1b[13;2u' \
+  -o 'map ctrl+enter send_text all \x1b[13;5u' \
   -o 'map ctrl+insert copy_or_noop' \
   -o 'map ctrl+tab send_text all \x1b[9;5u' \
   -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \

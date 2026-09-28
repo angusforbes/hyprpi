@@ -819,6 +819,14 @@ function onKey(d) {
   // (what plain ↑↓ do there in the stream), like search's box vs results.
   // Board mode, one rule for both panels (Angus): plain keys are the box's (↑↓ move in it,
   // Shift+↑↓ select), Ctrl is the pane's (^↑↓ move the board highlight).
+  // Ctrl+Enter: the board's Enter (open / leave the highlighted card, or put an item's handle
+  // in the box), whatever is typed. In the stream it sends, like Enter.
+  if (d === "\x1b[13;5u") { if (view !== "board") d = "\r"; else {
+    const r = bv.key("\r", { empty: true, api, room, board: board.room === room ? board : null });
+    if (r === true) { note = ""; return render(); }
+    if (r) { Promise.resolve(r).then((x) => { if (x?.input != null) { input = x.input; ic = graphemes(input).length; selA = null; sentText = null; } if (x?.note != null) note = x.note; render(); }).catch((e) => { note = "✗ " + e.message; render(); }); return render(); }
+    note = "^⏎: highlight a card or item first (^↑↓)"; return render();
+  } }
   if (view === "board" && (d === "\x1b[A" || d === "\x1b[B")) { /* the box's: handled below */ }
   else if (view === "board") { // the board's cursor: ↑↓ / ^↑↓, Space, ⏎, ^D drop, ^T done, ^Z undo, Esc
     const r = bv.key(d, { empty: !input, api, room, board: board.room === room ? board : null });
