@@ -12,7 +12,7 @@
 // Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
 // room + stream / room + stream · topics.
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
-// Tab / Shift+Tab switch world · Ctrl+/ opens the search panel on this room ·
+// Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab completes @names, /commands) · Ctrl+/ opens the search panel on this room ·
 // Esc drops a selection, else marks every agent again · Ctrl+Q quits (Ctrl+C copies).
 // Commands: /room · /stream [WORDS] (live word filter) · /history N|all · /help ·
 // "//text" is only for saying something that starts with a slash (it would otherwise be
@@ -133,7 +133,9 @@ let filter = "topics"; // default view
 let view = "stream", words = []; // words: /stream WORDS live filter (lower case)
 let resultRowMap = {}; // screen row -> search result index (clicks)
 let tabCycle = null; // Tab through several matching commands
-let atCycle = null;  // Tab through several matching @names
+let atCycle = null;  // Tab through several matching @names (completeAt's state)
+const CTRL_TAB = new Set(["\x1b[9;5u", "\x1b[27;5;9~"]), CTRL_SHIFT_TAB = new Set(["\x1b[9;6u", "\x1b[27;6;9~", "\x1b[1;5Z"]); // Ctrl(+Shift)+Tab: world (the launcher maps them; kitty would switch its own tabs)
+
 // Marked agents (▸ in the agent list) filter everything: who messages go to, whose history
 // search and /ask read, and whose rows the stream shows. Esc clears.
 const markedIds = () => new Set(marks.all ? hereAgents().map((a) => a.id) : marks.agents.filter((id) => hereAgents().some((a) => a.id === id)));
@@ -469,7 +471,7 @@ function draw() {
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · Tab room")));
+    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -724,19 +726,20 @@ function onKey(d) {
     ic = graphemes(input).length;
     return render();
   }
-  if (d === "\t") { // an @word at the cursor: complete it from this room's agents (again: next match)
+  // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world (too
+  // easy to hit): it completes an @name (again: the next match; Shift+Tab: back).
+  if (CTRL_TAB.has(d)) return cycle(1);
+  if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
+  if (d === "\t" || d === "\x1b[Z") {
     const gs = graphemes(input), before = gs.slice(0, ic).join(""), after = gs.slice(ic).join("");
-    const r = completeAt(before + after, before.length, hereAgents(), atCycle && atCycle.q === input ? atCycle.pick : null);
-    if (r) {
-      if (!r.options.length) { note = "no agent here by that name"; return render(); }
-      input = r.text; ic = graphemes(r.text.slice(0, r.cursor)).length; selA = null;
-      atCycle = r.options.length > 1 ? { q: input, pick: r.pick } : null;
-      note = r.options.length > 1 ? r.options.map((o) => "@" + o).join("  ") : "";
-      return render();
-    }
-    return cycle(1);
+    const r = completeAt(before + after, before.length, hereAgents(), atCycle, d === "\t" ? 1 : -1);
+    if (!r) { note = "Tab completes @names and /commands · Ctrl+Tab switches world"; return render(); }
+    if (!r.options.length) { note = "no agent here by that name"; return render(); }
+    input = r.text; ic = graphemes(r.text.slice(0, r.cursor)).length; selA = null;
+    atCycle = r.state;
+    note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸@" + o : "@" + o)).join("  ") : "";
+    return render();
   }
-  if (d === "\x1b[Z") return cycle(-1);
   if (d === "\r") { selA = null; return send(); }
   if (d === "\x1b[13;2u") return insertText("\n"); // Shift+Enter: new line in the message
   if (d === "\x1bs" || d === "\x1bS") return setView(view === "search" ? "stream" : "search"); // Alt+S (still works)

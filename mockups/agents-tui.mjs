@@ -13,7 +13,7 @@
 //   Space / Shift+Space  mark ▸ (the shared per-room selection every panel uses)
 //   Ctrl+A               mark all / none      Esc  mark all again
 //   Ctrl+W / Ctrl+K      close / kill (twice); on a closed agent: forget it
-//   Ctrl+N               new agent here       Tab / Shift+Tab  switch world
+//   Ctrl+N               new agent here       ^Tab / ^⇧Tab  switch world
 //   Ctrl+Q               quit
 // Later: a 🎤 column for dictation targets, and commands that act on the selection.
 import fs from "node:fs";
@@ -106,7 +106,7 @@ function draw() {
   for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
 
   while (rows.length < H - 2) rows.push("");
-  rows.push(dim(clip(confirm ? confirm.label : note || "^↑↓ move · ⏎ open · Space ▸ · ^O views · ^N new · ^W close · Tab world · ^Q quit", W)));
+  rows.push(dim(clip(confirm ? confirm.label : note || "^↑↓ move · ⏎ open · Space ▸ · ^O views · ^N new · ^W close · ^Tab world · ^Q quit", W)));
 
   // status bar: worlds, counts
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
@@ -258,8 +258,11 @@ function onKey(d) {
   if (d === "\x17") return act("close");
   if (d === "\x0b") return act("kill");
   if (d === "\x0e") return newAgent();
-  if (d === "\t") return cycleRoom(1);
-  if (d === "\x1b[Z") return cycleRoom(-1);
+  // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world (plain Tab no longer does: too easy to
+  // hit; the launcher maps Ctrl+Tab, which kitty would otherwise use for its own tabs).
+  if (d === "\x1b[9;5u" || d === "\x1b[27;5;9~") return cycleRoom(1);
+  if (d === "\x1b[9;6u" || d === "\x1b[27;6;9~" || d === "\x1b[1;5Z") return cycleRoom(-1);
+  if (d === "\t" || d === "\x1b[Z") { note = "Ctrl+Tab switches world"; return render(); }
   if (d === "\x1b[A" || d === "\x1b[1;5A") return moveCursor(-1);   // ↑ / Ctrl+↑
   if (d === "\x1b[B" || d === "\x1b[1;5B") return moveCursor(1);    // ↓ / Ctrl+↓
   if (d === "\x1b[1;5H") return moveCursor(-1e6);

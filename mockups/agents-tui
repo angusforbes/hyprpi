@@ -1,4 +1,6 @@
 #!/bin/sh
 # Panel 1: the hyprpi agent panel, in its own kitty window.  agents-tui [ROOM]
 exec kitty --class hyprpi.agents -o confirm_os_window_close=0 \
+  -o 'map ctrl+tab send_text all \x1b[9;5u' \
+  -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \
   node "$(dirname "$(readlink -f "$0")")/agents-tui.mjs" "$@"

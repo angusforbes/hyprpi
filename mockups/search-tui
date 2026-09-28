@@ -14,5 +14,7 @@ exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=ctrl+shift+left doublepress grabbed mouse_selection word" \
   -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" \
   -o 'map ctrl+insert copy_or_noop' \
+  -o 'map ctrl+tab send_text all \x1b[9;5u' \
+  -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \
   -o 'map shift+insert paste_from_clipboard' \
   node "$(dirname "$(readlink -f "$0")")/search-tui.mjs" "$@"

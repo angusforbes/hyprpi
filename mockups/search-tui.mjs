@@ -15,8 +15,8 @@
 //   ~/Work/hyprpi/mockups/search-tui [ROOM]   (kitty launcher)
 //
 // Nothing runs until Enter (Enter again on unchanged words jumps to the selected
-// result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · @Name scope (Tab completes) · Tab /
-// Shift+Tab room (or complete a /command) · ↑↓ PgUp PgDn wheel select · click select,
+// result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · @Name scope (Tab completes @names and
+// /commands) · Ctrl+Tab / Ctrl+Shift+Tab world · ↑↓ PgUp PgDn wheel select · click select,
 // double-click jump · Esc stops a running search, else clears the box · Ctrl+C clears ·
 // Ctrl+Q quits. While a search runs, only "thinking…" shimmers in the world colour; the
 // previous answer is gone at once; new words + Enter replace it.
@@ -137,15 +137,16 @@ function cycle(d) {
   S.reset(); loadMarks(); render();
 }
 // Tab on an @word: complete it from this room's agents (again: the next match).
-let atCycle = null;
-function completeName() {
+let atCycle = null; // completeAt's state: Tab again steps through the same matches
+const CTRL_TAB = new Set(["\x1b[9;5u", "\x1b[27;5;9~"]), CTRL_SHIFT_TAB = new Set(["\x1b[9;6u", "\x1b[27;6;9~", "\x1b[1;5Z"]); // Ctrl(+Shift)+Tab: world (the launcher maps them; kitty would switch its own tabs)
+function completeName(dir = 1) {
   const gs = graphemes(query), before = gs.slice(0, qc).join(""), after = gs.slice(qc).join("");
-  const r = completeAt(before + after, before.length, hereKnown(), atCycle && atCycle.q === query ? atCycle.pick : null);
+  const r = completeAt(before + after, before.length, hereKnown(), atCycle, dir);
   if (!r) return false;
   if (!r.options.length) { note = "no agent here by that name"; render(); return true; }
   query = r.text; qc = graphemes(r.text.slice(0, r.cursor)).length;
-  atCycle = r.options.length > 1 ? { q: query, pick: r.pick } : null;
-  note = r.options.length > 1 ? r.options.map((o) => "@" + o).join("  ") : "";
+  atCycle = r.state;
+  note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸@" + o : "@" + o)).join("  ") : "";
   render(); return true;
 }
 function toggleMode() { note = ""; top = 0; S.toggleMode(); }
@@ -225,7 +226,8 @@ function helpLines() {
     k("Enter", "search · Enter again on the same words jumps to the selected result"),
     k("Ctrl+/ or Ctrl+T", "keyword ⇄ AI (AI: an answer to your question + the evidence it used)"),
     k("@Name words", "search only those agents' history (@Lippy @Sankey kafka); Tab completes @names; none = everyone"),
-    k("Tab / Shift+Tab", "next / previous room (while typing a /command: complete it)"),
+    k("Tab / Shift+Tab", "complete an @name (again: next / previous match) or a /command"),
+    k("Ctrl+Tab / Ctrl+⇧Tab", "next / previous world"),
     k("↑↓ PgUp PgDn wheel", "select a result (the list scrolls with it)"),
     k("click · Enter", "select a result · jump to that agent's window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
@@ -477,7 +479,7 @@ function render() {
 function jump() {
   const r = S.current();
   if (!r || !api) return;
-  if (r.kind !== "agent" || !r.live) { note = r.kind === "room" ? "that's the room log (open the room with Tab in the room TUI)" : `${r.name} is closed`; return render(); }
+  if (r.kind !== "agent" || !r.live) { note = r.kind === "room" ? "that's the room log (open the room with Ctrl+Tab in the room panel)" : `${r.name} is closed`; return render(); }
   note = "";
   api.call("agent.focus", { agent: r.source }).then(() => { note = "→ " + r.name; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
@@ -532,8 +534,15 @@ function onKey(d) {
   if (d === "\x18") { copyBoxSel(true); return; } // Ctrl+X: cut
   if (d === "\x16" || d === "\x1b[2;2~") return pasteClipboard(); // Ctrl+V / Shift+Insert: paste
   if (d === "\x1f" || d === "\x14") return toggleMode(); // Ctrl+/ or Ctrl+T: keyword ⇄ AI
-  if (d === "\t") { if (/^\/\S*$/.test(query)) return complete(); if (completeName()) return; return cycle(1); }
-  if (d === "\x1b[Z") return cycle(-1);
+  // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world:
+  // it completes a /command or an @name (again: next match; Shift+Tab: back).
+  if (CTRL_TAB.has(d)) return cycle(1);
+  if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
+  if (d === "\t" || d === "\x1b[Z") {
+    if (d === "\t" && /^\/\S*$/.test(query)) return complete();
+    if (completeName(d === "\t" ? 1 : -1)) return;
+    note = "Tab completes @names and /commands · Ctrl+Tab switches world"; return render();
+  }
   if (d === "\x1b[A") return move(-1);
   if (d === "\x1b[B") return move(1);
   if (d === "\x1b[5~") return move(-5);
