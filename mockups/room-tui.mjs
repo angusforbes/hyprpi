@@ -803,7 +803,10 @@ function onKey(d) {
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world (too
   // easy to hit): it completes an @name (again: the next match; Shift+Tab: back).
   if (d === "\x02") return toggleBoard(); // Ctrl+B: board ⇄ stream
-  if (view === "board") { // the board's cursor: ↑↓ (empty box) / ^↑↓, Space, ⏎, ^D drop, ^T done, ^Z undo, Esc
+  // Board mode: ↑↓ always move the board's cursor; Shift+↑↓ move within the message box
+  // (what plain ↑↓ do there in the stream), like search's box vs results.
+  if (view === "board" && (d === "\x1b[1;2A" || d === "\x1b[1;2B")) d = d === "\x1b[1;2A" ? "\x1b[A" : "\x1b[B";
+  else if (view === "board") { // the board's cursor: ↑↓ / ^↑↓, Space, ⏎, ^D drop, ^T done, ^Z undo, Esc
     const r = bv.key(d, { empty: !input, api, room, board: board.room === room ? board : null });
     if (r === true) { note = ""; return render(); }
     if (r) {
