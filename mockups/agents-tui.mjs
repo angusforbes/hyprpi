@@ -27,7 +27,7 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold
 // ---- state -----------------------------------------------------------------
 let agents = [], dormant = [], rooms = [], room = (process.argv[2] || "").toUpperCase();
 let marks = { all: true, agents: [] };      // the daemon's per-room selection
-let cursorId = "", listTop = 0, listRows = 0, listRowY = 0;
+let cursorId = "", listTop = 0, listRows = 0, listRowY = 0, lastCursorIdx = 0;
 let note = "", online = false, confirm = null, api = null, restarting = false;
 let showMode = 0;                            // 0 = live (+ lost to a restart), 1 = + parked/closed
 const SHOW_LABEL = ["live", "+ parked"];
@@ -61,8 +61,11 @@ function draw() {
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const rows = [];
 
-  if (!here.find((a) => a.id === cursorId)) cursorId = here[0]?.id || "";
+  // The agent under the cursor went away (closed, killed, moved out of the room): stay in
+  // place — the one that took its row, or the last row if it was the bottom one.
+  if (!here.find((a) => a.id === cursorId)) cursorId = here[Math.min(lastCursorIdx, here.length - 1)]?.id || "";
   const cur = Math.max(0, here.findIndex((a) => a.id === cursorId));
+  if (here.length) lastCursorIdx = cur;
   listRows = Math.max(1, Math.min(here.length, H - 4));
   if (cur < listTop) listTop = cur;
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
