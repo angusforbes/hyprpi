@@ -159,10 +159,13 @@ Decisions: the agent makes small, reversible ones itself and lists them in its r
 pushing anywhere public, sending to other people, deleting or rewriting your data, changing how you
 work, choosing between designs you'd see) it does not make: it does everything else and posts
 "🔧 decide: question, options, recommendation", then stops. A thought rather than a fix (how to
-organise something) gets a short proposal, with only the uncontroversial part built.
-Every "🔧 done / decide / stuck" post is **copied to the room the drop-off came from** (as
-"(workshop D #seq) …"), so results and questions reach you where you are working. Answer a decide
-by talking to that agent (or with another /tinker).
+organise something) gets a proposal written to `~/Obsidian/Tinker/<date> <title>.md` (so it isn't
+lost in the room scroll), only the uncontroversial part built, and a "🔧 plan: … (link)" post.
+Every "🔧 done / plan / decide / stuck" post is **copied to the room the drop-off came from** (as
+"(workshop D #seq) …"), so results and questions reach you where you are working. **plan, decide
+and stuck also bonk you** (the daemon does it, not the agent: thud, a toast naming the agent, and
+× on the agent until it works again), so nothing that needs you sits unseen. Answer by talking to
+that agent (or with another /tinker).
 
 ## CLI
 
