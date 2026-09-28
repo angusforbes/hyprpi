@@ -247,14 +247,11 @@ function helpLines() {
 
 let restarting = false; // re-exec in progress: the child owns the terminal
 
-// "Thinking" shimmer while a search runs: a bright band sweeps across the word in the
-// world's colour, the rest dim, redrawn every ANIM_MS. The timer runs only while busy.
-const ANIM_MS = 90;
-let anim = null;
-function shimmer(text, c) {
-  const cs = [...text], span = cs.length + 8, p = Math.floor((Date.now() - (S.startedAt || 0)) / ANIM_MS) % span - 4;
-  return cs.map((ch, i) => { const d = Math.abs(i - p); return d === 0 ? `${ESC}1;${c}m${ch}` : d <= 2 ? `${ESC}22;${c}m${ch}` : `${ESC}2;${c}m${ch}`; }).join("") + `${ESC}22;39m`;
-}
+// "Thinking" shimmer while a search runs (lib/tui/shimmer.mjs, shared with the board view).
+// The timer runs only while busy.
+import { shimmer as shimmerAt, createAnim } from "../lib/tui/shimmer.mjs";
+const anim = createAnim(() => render());
+const shimmer = (text, c) => shimmerAt(text, c, S.startedAt);
 // ---- select & copy, like the room panel (mockups/room-tui.mjs) ---------------------
 // Search box: Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select; typing replaces the
 // selection; Ctrl+C copies it (no selection: clears the box); Ctrl+X cuts; Ctrl+V /
@@ -389,8 +386,7 @@ function multiClick(n, x, y) { // 2 = the word under the pointer, 3 = the whole 
 }
 
 function syncAnim() {
-  if (S.busy && !anim) anim = setInterval(render, ANIM_MS);
-  else if (!S.busy && anim) { clearInterval(anim); anim = null; }
+  anim.sync(!!S.busy);
 }
 
 function render() {
@@ -615,7 +611,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

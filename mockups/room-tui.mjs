@@ -39,7 +39,7 @@ const COMMANDS = [
 const completions = (prefix) => view === "board" ? boardCompletions(prefix) : COMMANDS.map(([c]) => c).filter((c) => c.startsWith(prefix.toLowerCase()));
 // Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
-const bv = createBoardView();
+const bv = createBoardView({ render: () => render() });
 const helpRows = () => {
   const w = Math.max(...COMMANDS.map(([c]) => c.length));
   return [
@@ -354,6 +354,7 @@ function draw() {
   const inputLines = IL.rows.slice(inTop, inTop + MAXI);
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
+  if (view !== "board") bv.hide(); // the board's shimmer timer runs only while it is shown
   if (view === "board") {
     const b = bv.frame({ board: board.room === room ? board : null, room, W, avail, c, agents });
     rows[ruleAt] = rule(b.label); lastAvail = avail; rowMeta = {}; convoMsgs = b.items;
@@ -496,9 +497,13 @@ function draw() {
   // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
+  // Board: "thinking…" shimmers while a project's agents work on a request (then the note).
+  const bs = view === "board" ? bv.status(c) : "";
+  const boardHint = bs ? "  " + bs + (note ? dim("  " + note) : "")
+    : dim(note || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · @p D1 b answers · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
-    : view === "board" ? dim(note || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · @p D1 b answers · /help · ^B stream")) : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
+    : input ? (bs ? "  " + bs : "") + (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
+    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -588,7 +593,7 @@ let board = { room: "", projects: [], names: {}, live: {} };
 async function loadBoard() {
   if (!api) return;
   const r = room;
-  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; await bv.refresh(api, r); render(); } } catch { /* older daemon */ }
+  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; await bv.refresh(api, r, b); render(); } } catch { /* older daemon */ }
 }
 const hereProjects = () => (board.room === room ? board.projects : []).filter((p) => p.status !== "archived");
 // Agents and projects, for @completion (projects marked 📋 in the list shown).
@@ -946,7 +951,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/shimmer.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
