@@ -24,6 +24,8 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
                               there gets it, or a new one opens. "D: TEXT" also makes world D
                               the workshop from now on (remembered)
   hyprpi focus AGENT          jump to an agent's window
+  hyprpi move AGENT... --to WS|WORLD   move agents' windows (focus stays); a world letter keeps
+                              each one's slot (C4 -> F4). --room C moves every live agent in C
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
   hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
@@ -334,6 +336,13 @@ const commands = {
     if (!text.trim()) die("usage: hyprpi tinker TEXT");
     const r = await request("tinker", { text, via: "cli" });
     console.log("🔧 " + (r.set ? `workshop is world ${r.set.workshop} now${r.set.previous ? " (was " + r.set.previous + ")" : ""} · ` : "") + (r.nothing ? "nothing to fix given" : r.queued ? `queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `dropped off in the workshop (room ${r.room})`));
+  },
+  move: async () => {
+    const to = opt("--to"), room = opt("--room");
+    if (!to || (!room && !args.length)) die("usage: hyprpi move AGENT... --to WS|WORLD   or   hyprpi move --room C --to F");
+    const r = await request("agent.move", room ? { room, to } : { agents: args, to });
+    for (const m of r.moved) console.log(`${m.agent}: ${m.from ?? "?"} -> ${m.to}`);
+    for (const k of r.skipped) console.log(`${k.agent}: not moved (${k.why})`);
   },
   focus: async () => { const r = await request("agent.focus", { agent: args[0] }); console.log(r.address); },
   name: cmdName,
