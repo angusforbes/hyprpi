@@ -294,6 +294,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     promptSnippet: "Share a bounded contribution in the current shared room",
     promptGuidelines: [
       "A user message starting with [hyprpi · Angus → you] was sent from the hyprpi room panel, and Angus reads the panel, not your window: put your answer in the room with room_post (unless it is clearly private), and do NOT repeat it in your window; end your turn with just a one-line pointer like \"Posted in room C (#123).\"",
+      "Anything else Angus types in your own window (no [hyprpi · Angus → you] label) is answered IN YOUR WINDOW, in full: that is where he asked and where he reads. This includes text he typed after a delivered room message ([hyprpi room …] block): answer the room question in the room (room_reply), and answer his typed text in your window. Never answer something asked in your window only in the room; if the room should also see it, post it there as well.",
     ],
     parameters: Type.Object({ text: Type.String({ minLength: 1, maxLength: 8192 }) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
