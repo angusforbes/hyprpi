@@ -292,7 +292,7 @@ function copy(text) {
   if (!text) return;
   // OSC 52 (kitty puts it on the clipboard) and wl-copy as a fallback.
   out(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
-  try { const p = spawnChild("wl-copy", ["--type", "text/plain;charset=utf-8"], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.end(text); } catch { /* OSC 52 only */ }
+  try { const p = spawnChild("wl-copy", ["--type", "text/plain;charset=utf-8"], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.on("error", () => {}); p.stdin.end(text); } catch { /* OSC 52 only */ }
   note = `copied ${text.length} character${text.length === 1 ? "" : "s"}`;
 }
 // Pane selection. screen = the plain text of every row; rowMeta[y] = { item, textX, header }
