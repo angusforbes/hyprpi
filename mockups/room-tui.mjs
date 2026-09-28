@@ -496,7 +496,7 @@ function draw() {
 
   // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
-  const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
+  const slash = /^\/[^\s/]*$/.test(input) && !note.startsWith("✗") ? completions(input) : null; // typing a command: show the matches (an error about it wins)
   // Board: "thinking…" shimmers while a project's agents work on a request (then the note).
   const bs = view === "board" ? bv.status(c) : "";
   const boardHint = bs ? "  " + bs + (note ? dim("  " + note) : "")
@@ -917,6 +917,7 @@ function onKey(d) {
       // Left button: press starts a possible selection, motion drags it,
       // release copies it (or, without a drag, counts as a click).
       // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
+      if (b === 0 && m[4] === "M" && view === "board" && bv.click(rowMeta[y], x)) { sel = null; continue; } // a card's −/+ marker: fold / unfold
       if ((b === 0 || b === 4) && m[4] === "M") {
         focusArea = inList ? "list" : view === "search" && resultRowMap[y] !== undefined ? "results" : "input";
         const inConvo = !!rowMeta[y], now = Date.now();
