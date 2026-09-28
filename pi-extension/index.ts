@@ -323,7 +323,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.registerTool({
     name: "project",
     label: "Project",
-    description: "Manage projects on your world's board. action: create (name = a SHORT @slug, one word like hyprpi or boards; longer names only when a project splits; title; you become a member and the writer), join, leave (note REQUIRED: a hand-off for the remaining members, what you did and what's left; it is sent to them), rename (name), status (new|active|paused|archived), writer (hand the writer role to a member: agent name), assign (members: '+@A -@B').",
+    description: "Manage projects on your world's board. Creating or joining a project that was closed (archived) reopens it with its history. action: create (name = a SHORT @slug, one word like hyprpi or boards; longer names only when a project splits; title; you become a member and the writer), join, leave (note REQUIRED: a hand-off for the remaining members, what you did and what's left; it is sent to them), rename (name), status (new|active|paused|archived), writer (hand the writer role to a member: agent name), assign (members: '+@A -@B').",
     promptSnippet: "Create, join, leave or reshape a project on the board",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("create"), Type.Literal("join"), Type.Literal("leave"), Type.Literal("rename"), Type.Literal("status"), Type.Literal("writer"), Type.Literal("assign")]),
@@ -340,7 +340,7 @@ export default function hyprpi(pi: ExtensionAPI) {
       else if (a === "assign") r = await call("board.project", { action: "assign", project: p.project, members: p.members });
       else if (a === "writer") { const ids = await call("board.get", {}); const w = Object.entries(ids.names || {}).find(([, n]) => String(n).toLowerCase() === String(p.writer || "").replace(/^@/, "").toLowerCase()); if (!w) throw new Error("the writer must be a member (by name)"); r = await call("board.project", { action: "update", project: p.project, writer: w[0] }); }
       else r = await call("board.project", { action: "update", project: p.project, ...(a === "rename" ? { name: p.name } : { status: p.status }) });
-      return text(`@${r.name} (${r.id}): ${a} done.${r.told?.length ? " Told " + r.told.join(", ") + "." : ""}`, r);
+      return text(`@${r.name} (${r.id}): ${a} done.${r.reopened ? " It was a closed (archived) project: reopened with its history; read it (board_read) before adding to it." : ""}${r.told?.length ? " Told " + r.told.join(", ") + "." : ""}`, r);
     },
   });
 
