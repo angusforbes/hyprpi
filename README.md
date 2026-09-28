@@ -164,7 +164,7 @@ organise something) gets a proposal written to `~/Obsidian/Tinker/<date> <title>
 lost in the room scroll), only the uncontroversial part built, and a "🔧 plan: … (link)" post.
 Every "🔧 done / plan / decide / stuck" post is **copied to the room the drop-off came from** (as
 "(workshop D #seq) …"), so results and questions reach you where you are working. **plan, decide
-and stuck also bonk you** (the daemon does it, not the agent: thud, a toast naming the agent, and
+and stuck also bonk you** (decide with its own "decision needed" sound, `bonk --decide`) (the daemon does it, not the agent: thud, a toast naming the agent, and
 × on the agent until it works again), so nothing that needs you sits unseen. Answer by talking to
 that agent (or with another /tinker).
 
