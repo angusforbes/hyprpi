@@ -158,9 +158,11 @@ function draw() {
   const sp = selSpans(W);
   const on = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, off = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   const shown = lines.map((l, i) => sp[i + 1] ? overlay(l, sp[i + 1][0], sp[i + 1][1], on, off) : l);
-  out(`${ESC}?25l` + shown.map((l, i) => `${ESC}${i + 1};1H` + l + `${ESC}0m${ESC}K`).join("") + (shown.length < H ? `${ESC}${shown.length + 1};1H${ESC}J` : ""));
+  // One synchronized frame (DEC 2026: kitty shows it all at once) and the cursor is never hidden,
+  // so the "thinking…" shimmer (a frame every 90 ms) doesn't make the text cursor flicker (Angus).
   const crow = H - 1 - inRows.length + (L.cRow - inTop) + 1, ccol = Math.min(W, pw + L.cCol + 1);
-  out(`${ESC}${crow};${ccol}H${ESC}?25h`);
+  out(`${ESC}?2026h` + shown.map((l, i) => `${ESC}${i + 1};1H` + l + `${ESC}0m${ESC}K`).join("") + (shown.length < H ? `${ESC}${shown.length + 1};1H${ESC}J` : "")
+    + `${ESC}${crow};${ccol}H${ESC}?25h${ESC}?2026l`);
 }
 onThemeChange(() => render());
 
