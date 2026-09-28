@@ -180,9 +180,9 @@ Angus's names (2026-09-28), kept clearly distinct:
   last open decision is resolved, unless a plain bonk is also pending. Tinker "🔧 decide:" uses it.
 - **bonk**: you asked to be told, or an agent thinks it's urgent. `bonk TEXT`, a double thud and
   "Agent X needs you" 👉. Daemon: `bonkFor(agent, text)`. Tinker "🔧 plan:" / "🔧 stuck:" use it.
-- **chime**: an agent went from working to done. The daemon sends a `sound` event ("done") and the
-  Quickshell room UI (`ui/shell.qml`) plays herdr's `assets/sounds/done.mp3`, so you hear it only
-  while that UI is running.
+- **chime**: an agent went from working to done. The daemon plays herdr's `assets/sounds/done.mp3`
+  itself (`paplay`), whatever panels are open, at most once per `chimeGapSec` (default 4) so agents
+  finishing together chime once. Config: `"chime": false` turns it off.
 
 ## CLI
 

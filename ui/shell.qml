@@ -171,7 +171,8 @@ ShellRoot {
   // Herdr's notification sounds (assets/sounds, copied from herdr), via paplay
   // like herdr on Linux. Detached so overlapping dings don't cancel each other.
   function playSound(name) {
-    if (name !== "done" && name !== "request") return
+    // "done" (the chime) is played by the daemon itself (lib/daemon.mjs chime()), whatever is open.
+    if (name !== "request") return
     Quickshell.execDetached(["paplay", Quickshell.shellDir + "/../assets/sounds/" + name + ".mp3"])
   }
 
