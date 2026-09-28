@@ -274,6 +274,76 @@ export default function hyprpi(pi: ExtensionAPI) {
 
   const text = (t: string, details?: any) => ({ content: [{ type: "text" as const, text: t }], details });
 
+  // ---- the project board (docs/board-plan.md): one per world, several projects (cards) ----
+  const AGREEMENT = [
+    "The hyprpi board (board_read / board_update / project) is how Angus keeps track of projects in your world without hunting for agents. Keep the cards of the projects you are on current: when you finish something notable, add it to done WITH how you verified it; keep 'where' to one line of where things stand; leave a next_step before you stop.",
+    "Board working agreement: don't ask Angus what you can find out or decide reversibly: pick the default and note it on the card. Ask him only about irreversible things, taste, direction, money or sending things out, as a decide item with options, your recommendation and a default (adding it dings him at once). Ask project peers (talk) before asking Angus. Bonk only for urgent things. Narrate while you work.",
+    "Heard: everything Angus says to you that bears on a project goes on that project's card as a heard item (his words, distilled, with a priority), even if he didn't ask for it; turn heard items into next/decide items as they become work, and drop them when dealt with. If it fits no project, post it in the Agent Message Board for later; if it could fit several, pick one.",
+  ];
+  pi.registerTool({
+    name: "board_read",
+    label: "Read board",
+    description: "Read your world's project board (all projects, or one): each card's members, writer, where things stand, decide / next / heard / done items with their handles (D1, N2, H3), and optionally its recent changes.",
+    promptSnippet: "Read the project board of your world",
+    promptGuidelines: AGREEMENT,
+    parameters: Type.Object({ project: Type.Optional(Type.String({ description: "@name or id; omit for the whole board" })), changes: Type.Optional(Type.Boolean({ description: "also list recent changes" })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r = await call("board.text", { project: p.project });
+      let t = r.text;
+      if (p.changes) { const c = await call("board.changes", { project: p.project, limit: 20 }); t += "\n\nRecent changes:\n" + c.changes.map((x: any) => `  ${new Date(x.ts).toLocaleTimeString()} ${x.by} ${x.op}${x.h ? " " + x.h : ""}: ${x.text || ""}`).join("\n"); }
+      return text(t, r);
+    },
+  });
+  pi.registerTool({
+    name: "board_update",
+    label: "Update board",
+    description: "Change one project card on the board. action: add (section decide|next|heard|done; decide takes options, recommend, default and dings Angus at once; heard takes priority; done takes verified), edit (handle + new text etc.), done (handle, verified = how you checked), drop (handle), where (text: one line of where things stand), next_step (text: the concrete step to resume with).",
+    promptSnippet: "Update a project card on the board (items, where things stand, next step)",
+    parameters: Type.Object({
+      project: Type.String({ description: "@name or id" }),
+      action: Type.Union([Type.Literal("add"), Type.Literal("edit"), Type.Literal("done"), Type.Literal("drop"), Type.Literal("where"), Type.Literal("next_step")]),
+      section: Type.Optional(Type.Union([Type.Literal("decide"), Type.Literal("next"), Type.Literal("heard"), Type.Literal("done")])),
+      handle: Type.Optional(Type.String({ description: "item handle, e.g. N2 (edit / done / drop)" })),
+      text: Type.Optional(Type.String()),
+      options: Type.Optional(Type.Array(Type.String(), { description: "decide: the choices (become a, b, c…)" })),
+      recommend: Type.Optional(Type.String({ description: "decide: the option key you recommend" })),
+      default: Type.Optional(Type.String({ description: "decide: the option you go with if Angus doesn't answer" })),
+      priority: Type.Optional(Type.Number({ description: "heard: higher = more important" })),
+      verified: Type.Optional(Type.String({ description: "done: how you checked it works" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      if (p.action === "where" || p.action === "next_step") {
+        const r = await call("board.project", { action: "update", project: p.project, [p.action]: p.text ?? "" });
+        return text(`@${r.name}: ${p.action} updated.`, r);
+      }
+      const r = await call("board.item", { action: p.action, project: p.project, h: p.handle, section: p.section, text: p.text, options: p.options, recommend: p.recommend, default: p.default, prio: p.priority, verified: p.verified });
+      return text(`@${r.project.name} ${r.item.h}: ${p.action} done.${r.item.sec === "decide" && p.action === "add" ? " Angus has been dinged." : ""}`, { h: r.item.h });
+    },
+  });
+  pi.registerTool({
+    name: "project",
+    label: "Project",
+    description: "Manage projects on your world's board. action: create (name = @slug like hyprpi-boards, title; you become a member and the writer), join, leave (note REQUIRED: a hand-off for the remaining members, what you did and what's left; it is sent to them), rename (name), status (new|active|paused|archived), writer (hand the writer role to a member: agent name), assign (members: '+@A -@B').",
+    promptSnippet: "Create, join, leave or reshape a project on the board",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("create"), Type.Literal("join"), Type.Literal("leave"), Type.Literal("rename"), Type.Literal("status"), Type.Literal("writer"), Type.Literal("assign")]),
+      project: Type.Optional(Type.String({ description: "@name or id (all but create)" })),
+      name: Type.Optional(Type.String()), title: Type.Optional(Type.String()),
+      note: Type.Optional(Type.String()), status: Type.Optional(Type.String()),
+      writer: Type.Optional(Type.String()), members: Type.Optional(Type.String()),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const a = p.action;
+      let r: any;
+      if (a === "create") r = await call("board.project", { action: "create", name: p.name, title: p.title });
+      else if (a === "join" || a === "leave") r = await call("board.project", { action: a, project: p.project, note: p.note });
+      else if (a === "assign") r = await call("board.project", { action: "assign", project: p.project, members: p.members });
+      else if (a === "writer") { const ids = await call("board.get", {}); const w = Object.entries(ids.names || {}).find(([, n]) => String(n).toLowerCase() === String(p.writer || "").replace(/^@/, "").toLowerCase()); if (!w) throw new Error("the writer must be a member (by name)"); r = await call("board.project", { action: "update", project: p.project, writer: w[0] }); }
+      else r = await call("board.project", { action: "update", project: p.project, ...(a === "rename" ? { name: p.name } : { status: p.status }) });
+      return text(`@${r.name} (${r.id}): ${a} done.${r.told?.length ? " Told " + r.told.join(", ") + "." : ""}`, r);
+    },
+  });
+
   // /tinker TEXT: drop a friction fix off in the workshop world and carry on here.
   pi.registerCommand("tinker", {
     description: "Drop a friction fix off in the workshop world: one free agent there does it. /tinker D: text also makes world D the workshop (remembered)",

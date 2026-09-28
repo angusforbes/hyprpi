@@ -68,8 +68,8 @@ function inputLayout(n) {
     if (gs[i] !== "@" || (i > 0 && !/\s/.test(gs[i - 1]))) continue;
     let j = i + 1; while (j < gs.length && !/[\s,@]/.test(gs[j])) j++;
     if (j === i + 1) continue;
-    const r = resolveAt([gs.slice(i + 1, j).join("")], hereAgents()), a = r.found[0];
-    const paint = a ? (g) => nameFg(a.name, a.color, g) : r.special ? (g) => bold(g) : (g) => `${ESC}31m${g}${ESC}39m`;
+    const r = resolveAt([gs.slice(i + 1, j).join("")], atPool()), a = r.found[0];
+    const paint = a?.project ? (g) => fg(worldFg(room), bold(g)) : a ? (g) => nameFg(a.name, a.color, g) : r.special ? (g) => bold(g) : (g) => `${ESC}31m${g}${ESC}39m`;
     for (let k = i; k < j; k++) tint[k] = paint;
     i = j - 1;
   }
@@ -568,6 +568,18 @@ function applyList(r) {
   render();
 }
 
+// This world's project board (lib/board.mjs via the daemon's board.get): projects are
+// addressable as @name like agents ("@hyprpi-boards text" goes to its members).
+let board = { room: "", projects: [], names: {}, live: {} };
+async function loadBoard() {
+  if (!api) return;
+  const r = room;
+  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; render(); } } catch { /* older daemon */ }
+}
+const hereProjects = () => (board.room === room ? board.projects : []).filter((p) => p.status !== "archived");
+// Agents and projects, for @completion (projects marked 📋 in the list shown).
+const atPool = () => [...hereAgents(), ...hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name, project: true }))];
+
 // The marks (▸) are the daemon's per-room selection: panel 1 sets them, this panel follows.
 async function loadMarks() {
   if (!api) return;
@@ -582,6 +594,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "selection" && data?.room === room) { marks = data; render(); }
+        else if (ev === "board" && data?.room === room) loadBoard();
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
         else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 50000) t.splice(0, t.length - 40000); if (data.room === room) render(); }
       },
@@ -591,6 +604,7 @@ async function start() {
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadRoom(room);
     await loadMarks();
+    loadBoard();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
 
@@ -598,7 +612,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; render(); loadRoom(room); loadMarks();
+  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; render(); loadRoom(room); loadMarks(); loadBoard();
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -663,6 +677,7 @@ async function send() {
   // "@Lippy @Sankey" on its own: that is who messages go to from now on ("to:", the same
   // selection as the agent panel's marks). @all / @everyone = everyone, @nobody = nobody.
   if (onlyAt(text)) {
+    if (resolveAt(parseAt(text).names, hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name }))).found.length) { input = raw + " "; ic = graphemes(input).length; note = "a project takes a message: @project what you want to say"; return render(); }
     const r = resolveAt(parseAt(text).names, hereAgents());
     if (r.unknown.length) { input = raw; ic = graphemes(raw).length; note = `✗ no agent ${r.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
     const p = r.special === "all" && !r.ids.length ? { room, all: true } : { room, agents: r.ids };
@@ -682,6 +697,14 @@ async function send() {
   // "@Name text": just to them this once, whoever "to:" is.
   const at = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/);
   if (at) {
+    // "@project text": to that project's members (a room message tagged with the project).
+    const pr = resolveAt(parseAt(at[1]).names, hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name })));
+    if (pr.found.length) {
+      if (pr.found.length > 1 || parseAt(at[1]).names.length > 1) { input = raw; ic = graphemes(raw).length; note = "✗ one @project at a time, without agent names"; return render(); }
+      try { const r = await api.call("board.request", { room, project: pr.ids[0], text: at[2], where: "room", via: "room-tui" }); note = `→ @${r.name}: ${r.told.join(", ")}`; }
+      catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; }
+      return render();
+    }
     const r = resolveAt(parseAt(at[1]).names, hereAgents());
     if (r.unknown.length) { input = raw; ic = graphemes(raw).length; note = `✗ no agent ${r.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
     if (r.ids.length) { targets = r.ids; body = at[2]; }
@@ -745,12 +768,13 @@ function onKey(d) {
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
   if (d === "\t" || d === "\x1b[Z") {
     const gs = graphemes(input), before = gs.slice(0, ic).join(""), after = gs.slice(ic).join("");
-    const r = completeAt(before + after, before.length, hereAgents(), atCycle, d === "\t" ? 1 : -1);
+    const r = completeAt(before + after, before.length, atPool(), atCycle, d === "\t" ? 1 : -1);
     if (!r) { note = "Tab completes @names and /commands · Ctrl+Tab switches world"; return render(); }
     if (!r.options.length) { note = "no agent here by that name"; return render(); }
     input = r.text; ic = graphemes(r.text.slice(0, r.cursor)).length; selA = null;
     atCycle = r.state;
-    note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸@" + o : "@" + o)).join("  ") : "";
+    const isProj = (o) => hereProjects().some((p) => p.name === o);
+    note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸" : "") + (isProj(o) ? "📋@" : "@") + o).join("  ") : "";
     return render();
   }
   if (d === "\r") { selA = null; return send(); }
