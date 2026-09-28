@@ -122,6 +122,14 @@ page, not a stream.
 6. Membership commands, split/merge, since-you-left, next first step.
 7. Hand spin-out the `board.moveCard` hook (pi·ze03).
 
+## One voice per project (Angus, 2026-09-28)
+
+When Angus writes to a project (`@project text`, in the room or on the board), its **owner** (the
+card's writer) coordinates and writes back: it asks the other members what they know (talk), does
+or hands out the work, answers in the room and updates the card. The other members do not post
+and do not start on it; they send what they know to the owner and wait to be asked. The daemon
+says this in every project message, and the agents' board-tool guidelines repeat it.
+
 ## Permissions (after the gpt-6-sol review, 2026-09-28)
 
 - Only Angus (a panel or the CLI, not an agent connection) answers decisions, sends board
