@@ -20,8 +20,9 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi list [--json]        live agents and rooms
   hyprpi post [--room R] TEXT post to a room as Angus (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
-  hyprpi tinker TEXT          drop a friction fix off in the workshop world (config "workshop"):
-                              one free agent there gets it, or a new one opens
+  hyprpi tinker [W:] TEXT     drop a friction fix off in the workshop world: one free agent
+                              there gets it, or a new one opens. "D: TEXT" also makes world D
+                              the workshop from now on (remembered)
   hyprpi focus AGENT          jump to an agent's window
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
@@ -332,7 +333,7 @@ const commands = {
     const text = args.join(" ");
     if (!text.trim()) die("usage: hyprpi tinker TEXT");
     const r = await request("tinker", { text, via: "cli" });
-    console.log(r.queued ? `🔧 queued for the workshop (room ${r.room}, #${r.position} in line${r.spawning ? ", opening an agent" : ""})` : `🔧 handed to an agent in the workshop (room ${r.room})`);
+    console.log("🔧 " + (r.set ? `workshop is world ${r.set.workshop} now${r.set.previous ? " (was " + r.set.previous + ")" : ""} · ` : "") + (r.nothing ? "nothing to fix given" : r.queued ? `queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `dropped off in the workshop (room ${r.room})`));
   },
   focus: async () => { const r = await request("agent.focus", { agent: args[0] }); console.log(r.address); },
   name: cmdName,

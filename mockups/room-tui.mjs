@@ -26,7 +26,7 @@ import { connect } from "../lib/client.mjs";
 const COMMANDS = [
   ["/room", "room messages + agent-to-agent"],
   ["/stream", "/stream WORDS shows only rows with those words; /stream alone clears the filter"],
-  ["/tinker", "/tinker TEXT: drop a friction fix off in the workshop world (one free agent there does it)"],
+  ["/tinker", "/tinker [D:] TEXT: drop a friction fix off in the workshop world (one free agent there does it); D: sets the workshop to world D"],
   ["/history", "/history N | all: how far back the stream goes (N interactions; default 200)"],
   ["/help", "this list"],
 ];
@@ -618,7 +618,7 @@ function command(text) {
       if (!arg) { input = "/tinker "; ic = graphemes(input).length; note = "/tinker what to fix: it goes to a free agent in the workshop world"; render(); return true; }
       if (!api) { input = text; ic = graphemes(text).length; note = "✗ daemon offline"; render(); return true; }
       api.call("tinker", { text: arg, via: "room-tui" })
-        .then((r) => { note = r.queued ? `🔧 queued for the workshop (room ${r.room})` : `🔧 dropped off in the workshop (room ${r.room})`; render(); })
+        .then((r) => { note = "🔧 " + (r.set ? `workshop is world ${r.set.workshop} now${r.set.previous ? " (was " + r.set.previous + ")" : ""} · ` : "") + (r.nothing ? "nothing to fix given" : r.queued ? `queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `dropped off in the workshop (room ${r.room})`); render(); })
         .catch((e) => { input = text; ic = graphemes(text).length; note = "✗ " + e.message; render(); });
       render(); return true;
   }

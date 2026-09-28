@@ -276,13 +276,13 @@ export default function hyprpi(pi: ExtensionAPI) {
 
   // /tinker TEXT: drop a friction fix off in the workshop world and carry on here.
   pi.registerCommand("tinker", {
-    description: "Drop a friction fix off in the workshop world: one free agent there does it (a new one opens if none is free)",
+    description: "Drop a friction fix off in the workshop world: one free agent there does it. /tinker D: text also makes world D the workshop (remembered)",
     handler: async (args: any, ctx: any) => {
       const t = String(args ?? "").trim();
-      if (!t) { ctx.ui.notify("Usage: /tinker what to fix (it goes to a free agent in the workshop world)", "warning"); return; }
+      if (!t) { ctx.ui.notify("Usage: /tinker what to fix · /tinker D: what to fix (also makes world D the workshop)", "warning"); return; }
       try {
         const r = await call("tinker", { text: t, via: "agent" });
-        ctx.ui.notify(r.queued ? `🔧 queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `🔧 dropped off in the workshop (room ${r.room})`, "info");
+        ctx.ui.notify("🔧 " + (r.set ? `workshop is world ${r.set.workshop} now${r.set.previous ? " (was " + r.set.previous + ")" : ""} · ` : "") + (r.nothing ? "nothing to fix given" : r.queued ? `queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `dropped off in the workshop (room ${r.room})`), "info");
       } catch (e: any) { ctx.ui.notify(`/tinker: ${e?.message || e}`, "error"); }
     },
   });

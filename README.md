@@ -135,8 +135,11 @@ the `agents` UI event carry `dormant: [...]`. `hyprpi new --id ID --twin-of ID
 ## Tinker (the workshop world)
 
 Worlds are projects. Friction work (a panel, a key, the bar: anything that slows your
-thinking) has its own world, the **workshop**, set in the config (`"workshop": "D"`, a
-world letter or a group name). When something bugs you mid-project, drop it off and
+thinking) has its own world, the **workshop**. Say which world once, in the drop-off
+itself: `/tinker D: what to fix`. The daemon remembers it (`~/.local/state/hyprpi/workshop.json`,
+which wins over an optional `"workshop"` config key) and announces "the workshop is world D
+now" in your room and in D's room. After that plain `/tinker what to fix` goes there; another
+letter (`/tinker B: …`) moves it. When something bugs you mid-project, drop it off and
 keep going:
 
 - `/tinker what to fix` in any agent window (a Pi command from the hyprpi extension)
