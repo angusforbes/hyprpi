@@ -951,6 +951,11 @@ function onKey(d) {
       // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
       if (b === 0 && m[4] === "M" && view === "board" && bv.click(rowMeta[y], x)) { sel = null; continue; } // a card's −/+ marker: fold / unfold
       if (b === 0 && m[4] === "M" && view === "board") bv.pick(rowMeta[y], convoMsgs); // a click puts the board's cursor there
+      // Ctrl+click (16): an agent's name under the pointer (@Name, or a name as shown) jumps to
+      // its window, wherever it is; a link / file URI opens (kitty's own Ctrl+click is passed on
+      // to the panel by the launcher, so the panel opens links itself).
+      if (b === 16 && m[4] === "M") { ctrlClick(x, y); continue; }
+      if (b === 16) continue;
       if ((b === 0 || b === 4) && m[4] === "M") {
         focusArea = inList ? "list" : view === "search" && resultRowMap[y] !== undefined ? "results" : "input";
         const inConvo = !!rowMeta[y], now = Date.now();
@@ -978,6 +983,23 @@ function onKey(d) {
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
   if (!d.replace(/[\x00-\x1f]/g, "")) return;
   insertText(d); // typing replaces the selection
+}
+function ctrlClick(x, y) {
+  const line = screen[y - 1] || "", cells = [];
+  { let col = 1; for (const g of graphemes(line)) { cells.push([col, g]); col += gw(g); } }
+  const i = cells.findIndex(([c, g], k) => c <= x && (cells[k + 1]?.[0] ?? c + gw(g)) > x);
+  if (i < 0 || /\s/.test(cells[i][1])) return;
+  let a = i, b = i;
+  while (a > 0 && !/\s/.test(cells[a - 1][1])) a--;
+  while (b < cells.length - 1 && !/\s/.test(cells[b + 1][1])) b++;
+  const word = cells.slice(a, b + 1).map(([, g]) => g).join("");
+  const url = /(?:https?|file):\/\/\S+/.exec(word)?.[0];
+  if (url) { try { spawn("gio", ["open", url.replace(/[)\].,;:!?'"]+$/, "")], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
+  const name = word.replace(/^[^\p{L}\p{N}@]+/u, "").replace(/^@/, "").replace(/[^\p{L}\p{N}·_-]+$/u, "");
+  if (!name || !api) return;
+  const hit = agents.find((ag) => [ag.display, ag.name].some((n) => n && n.toLowerCase() === name.toLowerCase()));
+  if (!hit) { note = `no live agent @${name}`; return render(); }
+  api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function quit() { out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
