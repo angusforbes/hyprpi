@@ -49,7 +49,8 @@ conversation in the room — live agents and ones that have closed — plus the
 room log. **Keyword**: exact phrase, case-insensitive, live as you type.
 **✦ AI** (Ctrl+/ here; Ctrl+S in the room TUI): describe what you mean and press Enter; a small model
 (`searchModel`, default claude-haiku-4-5) reads the recent entries and returns
-the ones that match, each with a short reason. Also from the terminal:
+the ones that match, each with a short reason. `@Names` in the box limit it to those agents'
+history (`@Lippy kafka`; Tab completes; independent of the marks). Also from the terminal:
 `hyprpi find [--ai] QUERY`. What choosing a result does is still open.
 
 ### Room TUI keys: three parts, one modifier each
@@ -197,12 +198,20 @@ Every agent in the list starts **marked** (▸), including ones that join later.
 the cursor row, turns one off and on; Ctrl+A turns all off / all on; Esc marks all again.
 The marks filter the whole TUI:
 
-- **who you talk to:** all marked = a room post (as always); some = straight to them (the prompt
-  shows `C → Name ❯`); none = written in the room but sent to no agent (`C → nobody ❯`; daemon `room.post` with `deliver: false`);
+- **who you talk to:** all marked = a room post (the prompt shows `C → everyone ❯`); some =
+  straight to them (`C → @Lippy @Sankey ❯`); none = written in the room but sent to no agent
+  (`C → nobody ❯`; daemon `room.post` with `deliver: false`). The same selection can be set
+  from the room panel's box: `@Lippy @Sankey` on its own + Enter (`@all`, `@nobody`); Tab
+  completes @names; `@Name text` goes just to them, once;
 - **the stream:** only the marked agents' posts and activity and messages to them, plus all of
   Angus's room posts (none marked = just Angus's posts);
-- **search and `/ask`:** the marked agents' conversations, room posts and activity, plus Angus's
-  room posts (daemon `search` / `ask` take `agents: [ids]`).
+- **`/ask`:** the marked agents' conversations, room posts and activity, plus Angus's
+  room posts (daemon `ask` takes `agents: [ids]`).
+
+The **search panel does not follow the marks**: its scope is `@Names` typed in its own box
+(`@Lippy @Sankey kafka`; none = everyone; closed agents too). The two sets are independent,
+but written the same way (`lib/at-names.mjs`), so `@Lippy @Sankey` can be copied from one
+panel and pasted into the other.
 
 Headings show `2/3 ▸` and `only ▸ Name, …`. In the stream, agents with an icon appear as just
 their icon (the list above has the names).

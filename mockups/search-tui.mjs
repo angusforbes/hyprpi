@@ -7,13 +7,15 @@
 //             (when you typed a question) plus the entries it used as EVIDENCE, each with
 //             a "why". Budget and activity cap: aiSearchChars / aiSearchActivityShare
 //             in ~/.config/hyprpi/config.json (explained in lib/paths.mjs).
-// Follows the agent panel's marks (▸, the daemon's per-room selection): with only some
-// agents marked it covers just those; Ctrl+A switches to the whole room and back.
+// Whose history: @Names in the box ("@Lippy @Sankey kafka") search only those agents
+// (live or closed, in this room); none = everyone. Tab completes an @name. Independent of
+// the room panel's "to:" and the agent panel's marks; the same @Names text can be copied
+// between the panels (lib/at-names.mjs).
 //
 //   ~/Work/hyprpi/mockups/search-tui [ROOM]   (kitty launcher)
 //
 // Nothing runs until Enter (Enter again on unchanged words jumps to the selected
-// result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · Ctrl+A marked ⇄ whole room · Tab /
+// result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · @Name scope (Tab completes) · Tab /
 // Shift+Tab room (or complete a /command) · ↑↓ PgUp PgDn wheel select · click select,
 // double-click jump · Esc stops a running search, else clears the box · Ctrl+C clears ·
 // Ctrl+Q quits. While a search runs, only "thinking…" shimmers in the world colour; the
@@ -28,6 +30,7 @@
 import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
+import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 
 const ESC = "\x1b[";
 const out = (s) => process.stdout.write(s);
@@ -100,18 +103,25 @@ let api = null, online = false, rooms = [], room = (process.argv[2] || "").toUpp
 let showHelp = false, note = "";
 let query = "", qc = 0; // the search box and its cursor (in graphemes)
 let top = 0, resultRows = {}; // resultRows: screen row -> result index
-let marks = { all: true, agents: [] }, useMarks = true;
-const onlyIds = () => (useMarks && !marks.all ? marks.agents : []);
+let marks = { all: true, agents: [] }; // still fetched (unused for scope since @names)
+let known = []; // agents of every room, live and closed: [{ id, name, display, icon, color, room, live }]
+const hereKnown = () => known.filter((a) => a.room === room);
+// The box's @names -> agent ids (this room). Unknown names are reported, not ignored.
+function scopeOf(text = query) {
+  const { names, rest } = parseAt(text);
+  const r = resolveAt(names, hereKnown());
+  return { ...r, names, rest };
+}
+const onlyIds = () => scopeOf().ids;
 const S = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: onlyIds, closed: true, roomLog: true, order: "auto" });
 
 const COMMANDS = ["/search", "/ai", "/ask", "/help"]; // /ask = /ai
 const matchCommands = (name) => COMMANDS.filter((c) => c.startsWith(name.toLowerCase()));
 
 function scopeLabel() {
-  const ids = onlyIds();
-  if (ids.length) return `only ${ids.length} marked agent${ids.length === 1 ? "" : "s"} (^A whole room)`;
-  if (!marks.all && !useMarks) return "whole room, marks ignored (^A marked only)";
-  return S.mode === "ai" ? "conversations + room log + activity" : "every agent's conversation + the room log";
+  const sc = scopeOf(S.busy || !S.ranFor ? query : S.ranFor.box ?? query);
+  if (sc.found.length) return "only " + sc.found.map((a) => "@" + a.display).join(" ");
+  return S.mode === "ai" ? "everyone · conversations + room log + activity" : "everyone · every agent's conversation + the room log";
 }
 
 function loadMarks() {
@@ -126,25 +136,35 @@ function cycle(d) {
   marks = { all: true, agents: [] }; top = 0; note = "";
   S.reset(); loadMarks(); render();
 }
-function toggleMarks() {
-  if (marks.all) { note = "every agent is marked (mark some in the agent panel, SUPER+ALT+A)"; return render(); }
-  useMarks = !useMarks; top = 0;
-  S.reset();
-  note = onlyIds().length ? `only the ${onlyIds().length} marked` : "whole room";
-  render();
+// Tab on an @word: complete it from this room's agents (again: the next match).
+let atCycle = null;
+function completeName() {
+  const gs = graphemes(query), before = gs.slice(0, qc).join(""), after = gs.slice(qc).join("");
+  const r = completeAt(before + after, before.length, hereKnown(), atCycle && atCycle.q === query ? atCycle.pick : null);
+  if (!r) return false;
+  if (!r.options.length) { note = "no agent here by that name"; render(); return true; }
+  query = r.text; qc = graphemes(r.text.slice(0, r.cursor)).length;
+  atCycle = r.options.length > 1 ? { q: query, pick: r.pick } : null;
+  note = r.options.length > 1 ? r.options.map((o) => "@" + o).join("  ") : "";
+  render(); return true;
 }
 function toggleMode() { note = ""; top = 0; S.toggleMode(); }
 
 function enter() {
   const raw = query.trim();
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
-  const text = raw.startsWith("//") ? raw.slice(1) : raw;
-  if (!text) return jump();
+  const box = raw.startsWith("//") ? raw.slice(1) : raw;
+  if (!box) return jump();
+  // @names scope the search; the rest are the words.
+  const sc = scopeOf(box);
+  if (sc.unknown.length) { note = `✗ no agent ${sc.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
+  const text = sc.rest;
+  if (!text) { note = `now add words: whose history is ${sc.found.map((a) => "@" + a.display).join(" ") || "everyone's"}`; return render(); }
   const r = S.ranFor;
   if (S.busy && r && r.q === text && r.mode === S.mode) { note = ""; return render(); } // already searching for exactly that
   // New words while a search runs: S.run() supersedes it (its reply is ignored).
-  if (r && r.q === text && r.mode === S.mode && r.room === room && r.only === onlyIds().join(",") && !S.busy) return jump();
-  top = 0; S.run(text, S.mode);
+  if (r && r.q === text && r.mode === S.mode && r.room === room && r.only === sc.ids.join(",") && !S.busy) return jump();
+  top = 0; S.run(text, S.mode); if (S.ranFor) S.ranFor.box = box;
 }
 function setBox(text) { query = text; qc = graphemes(text).length; }
 function command(raw) {
@@ -155,7 +175,7 @@ function command(raw) {
   if (cmd === "/help") { setBox(""); showHelp = true; return render(); }
   const mode = cmd === "/search" ? "keyword" : "ai"; // /ai and /ask
   setBox(arg);
-  if (arg) { top = 0; S.run(arg, mode); }
+  if (arg) { if (S.mode !== mode) S.toggleMode(); return enter(); }
   else { if (S.mode !== mode) S.toggleMode(); render(); }
 }
 function complete() {
@@ -204,7 +224,7 @@ function helpLines() {
   return [
     k("Enter", "search · Enter again on the same words jumps to the selected result"),
     k("Ctrl+/ or Ctrl+T", "keyword ⇄ AI (AI: an answer to your question + the evidence it used)"),
-    k("Ctrl+A", "only the marked agents (▸, set in the agent panel) ⇄ the whole room"),
+    k("@Name words", "search only those agents' history (@Lippy @Sankey kafka); Tab completes @names; none = everyone"),
     k("Tab / Shift+Tab", "next / previous room (while typing a /command: complete it)"),
     k("↑↓ PgUp PgDn wheel", "select a result (the list scrolls with it)"),
     k("click · Enter", "select a result · jump to that agent's window"),
@@ -382,7 +402,11 @@ function render() {
   const hint = query ? "" : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   const brs = boxSel(), qgs = graphemes(query);
-  rows.push(`${prompt}${brs ? qgs.slice(0, brs[0]).join("") + selOn + qgs.slice(brs[0], brs[1]).join("") + selOff + qgs.slice(brs[1]).join("") : query}${hint}`);
+  const styledQuery = () => query.replace(/(^|\s)(@[^\s,@]+)/g, (_m, pre, at) => {
+    const r = resolveAt([at.slice(1)], hereKnown());
+    return pre + (r.found[0] ? hexFg(r.found[0].color || "", bold(at)) : r.special ? bold(at) : `${ESC}31m${at}${ESC}39m`);
+  });
+  rows.push(`${prompt}${brs ? qgs.slice(0, brs[0]).join("") + selOn + qgs.slice(brs[0], brs[1]).join("") + selOff + qgs.slice(brs[1]).join("") : styledQuery()}${hint}`);
   const cursorRow = rows.length;
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
@@ -438,7 +462,7 @@ function render() {
   const tabs = rooms.map((r) => r === room ? `${ESC}${worldBg(r)};30m ${r} ${ESC}49;39m` : ` ${fg(worldFg(r), r)} `).join("");
   const left = ` hyprpi search ${online ? "" : "· daemon offline "}`;
   const pos = S.results.length ? (S.selected + 1) + "/" + S.results.length + " · " : "";
-  const right = `${pos}^/ mode · ^A scope · /help · ^Q quit `;
+  const right = `${pos}^/ mode · @name scope · /help · ^Q quit `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
@@ -473,6 +497,7 @@ async function start() {
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
 function applyRooms(r) {
+  known = [...(r.agents || []).map((a) => ({ ...a, live: true })), ...(r.dormant || []).map((a) => ({ ...a, live: false }))];
   rooms = (r.rooms || []).map((x) => x.id).sort();
   if (!room) room = r.active_room || rooms[0] || "A";
   if (!rooms.includes(room)) rooms = [...rooms, room].sort();
@@ -507,8 +532,7 @@ function onKey(d) {
   if (d === "\x18") { copyBoxSel(true); return; } // Ctrl+X: cut
   if (d === "\x16" || d === "\x1b[2;2~") return pasteClipboard(); // Ctrl+V / Shift+Insert: paste
   if (d === "\x1f" || d === "\x14") return toggleMode(); // Ctrl+/ or Ctrl+T: keyword ⇄ AI
-  if (d === "\x01" && !query) return toggleMarks(); // Ctrl+A (empty box; else: Home)
-  if (d === "\t") return /^\/\S*$/.test(query) ? complete() : cycle(1);
+  if (d === "\t") { if (/^\/\S*$/.test(query)) return complete(); if (completeName()) return; return cycle(1); }
   if (d === "\x1b[Z") return cycle(-1);
   if (d === "\x1b[A") return move(-1);
   if (d === "\x1b[B") return move(1);
@@ -582,7 +606,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
