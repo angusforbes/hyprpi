@@ -11,6 +11,8 @@
 // the room and delivered to nobody; "@Name text" always goes to that agent.
 // Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
 // room + stream / room + stream · topics.
+// Ctrl+B toggles the project board (lib/tui/board-view.mjs): Needs-you strip + one card per
+// project; in board mode the box takes @project … and board commands (/help there lists them).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
 // Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab completes @names, /commands) · Ctrl+/ opens the search panel on this room ·
 // Esc drops a selection, else marks every agent again · Ctrl+Q quits (Ctrl+C copies).
@@ -34,7 +36,10 @@ const COMMANDS = [
   ["/history", "/history N | all: how far back the stream goes (N interactions; default 200)"],
   ["/help", "this list"],
 ];
-const completions = (prefix) => COMMANDS.map(([c]) => c).filter((c) => c.startsWith(prefix.toLowerCase()));
+const completions = (prefix) => view === "board" ? boardCompletions(prefix) : COMMANDS.map(([c]) => c).filter((c) => c.startsWith(prefix.toLowerCase()));
+// Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
+import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
+const bv = createBoardView();
 const helpRows = () => {
   const w = Math.max(...COMMANDS.map(([c]) => c.length));
   return [
@@ -47,6 +52,7 @@ const helpRows = () => {
     `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A (panel 1, the marks ▸ live there) · search: SUPER+ALT+/ (panel 3)")}`,
+    `   ${dim("^B: the project board (Needs you, cards; @project alone opens one; /help there lists the board commands)")}`,
   ];
 };
 import fs from "node:fs";
@@ -336,7 +342,9 @@ function draw() {
   // Shown as @Names (plain text, so it can be copied into the search panel's box).
   const toAgents = [...marked].map((id) => agents.find((a) => a.id === id)).filter(Boolean);
   const toText = cut(toAgents.map((a) => "@" + a.display).join(" "), Math.max(10, Math.floor(W / 3)));
-  const prompt = everyone || !live.length ? fg(c, bold(`${room} → everyone ❯ `))
+  const bvOpen = view === "board" && hereProjects().find((p) => p.id === bv.focused);
+  const prompt = view === "board" ? fg(c, bold(`${room} board${bvOpen ? " @" + bvOpen.name : ""} ❯ `))
+    : everyone || !live.length ? fg(c, bold(`${room} → everyone ❯ `))
     : toAgents.length ? fg(c, bold(`${room} → `)) + toText.replace(/@[^\s…]+/g, (at) => { const a = toAgents.find((x) => "@" + x.display === at); return a ? nameFg(a.name, a.color, bold(at)) : bold(at); }) + fg(c, bold(" ❯ "))
     : fg(c, bold(`${room} → nobody ❯ `));
   const promptW = width(prompt);
@@ -346,7 +354,12 @@ function draw() {
   const inputLines = IL.rows.slice(inTop, inTop + MAXI);
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
-  if (view !== "stream") drawPane(rows, ruleAt, avail, W, c, rule);
+  if (view === "board") {
+    const b = bv.frame({ board: board.room === room ? board : null, room, W, avail, c, agents });
+    rows[ruleAt] = rule(b.label); lastAvail = avail; rowMeta = {}; convoMsgs = b.items;
+    b.rows.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
+    rows.push(...b.rows.map((r) => r.line));
+  } else if (view !== "stream") drawPane(rows, ruleAt, avail, W, c, rule);
   else {
   // Every message: the author on its own line, the text on the next (no name column).
   const narrow = true, textX = 4, textW = Math.max(10, W - textX + 1 - 1);
@@ -484,7 +497,8 @@ function draw() {
   rows.push(fg(c, "─".repeat(W)));
   const slash = /^\/[^\s/]*$/.test(input) ? completions(input) : null; // typing a command: show the matches
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back") : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
+    : input ? (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
+    : view === "board" ? dim(note || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · @p D1 b answers · /help · ^B stream")) : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -574,7 +588,7 @@ let board = { room: "", projects: [], names: {}, live: {} };
 async function loadBoard() {
   if (!api) return;
   const r = room;
-  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; render(); } } catch { /* older daemon */ }
+  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; await bv.refresh(api, r); render(); } } catch { /* older daemon */ }
 }
 const hereProjects = () => (board.room === room ? board.projects : []).filter((p) => p.status !== "archived");
 // Agents and projects, for @completion (projects marked 📋 in the list shown).
@@ -612,7 +626,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; render(); loadRoom(room); loadMarks(); loadBoard();
+  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; bv.focus(null); render(); loadRoom(room); loadMarks(); loadBoard();
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -665,8 +679,25 @@ function command(text) {
   return true;
 }
 
+// Board mode: what is typed goes to the board (a board command, @project …); anything
+// the board doesn't know (/room, /history, …) falls through to the panel's own commands.
+async function boardSend(raw) {
+  input = ""; ic = 0; note = "";
+  try {
+    const r = await bv.input(raw, { api, room, board: board.room === room ? board : { projects: [] } });
+    if (r) { note = r.note; return render(); }
+  } catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; return render(); }
+  if (command(raw)) return;
+  input = raw; ic = graphemes(raw).length; note = "✗ not a board command · /help"; render();
+}
+function toggleBoard() {
+  if (view === "board") { view = "stream"; note = ""; return render(); }
+  view = "board"; confirm = null; note = ""; loadBoard(); render();
+}
+
 async function send() {
   const raw = input.trim();
+  if (view === "board" && raw) return boardSend(raw);
   if (command(raw)) return;
   if (view === "help") view = "stream";
   input = ""; ic = 0;
@@ -764,10 +795,18 @@ function onKey(d) {
   }
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world (too
   // easy to hit): it completes an @name (again: the next match; Shift+Tab: back).
+  if (d === "\x02") return toggleBoard(); // Ctrl+B: board ⇄ stream
   if (CTRL_TAB.has(d)) return cycle(1);
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
   if (d === "\t" || d === "\x1b[Z") {
     const gs = graphemes(input), before = gs.slice(0, ic).join(""), after = gs.slice(ic).join("");
+    const h = view === "board" && bv.complete(before + after, before.length, board.room === room ? board : null, d === "\t" ? 1 : -1);
+    if (h) { // an item handle after "@project "
+      if (!h.options.length) { note = "no open item by that handle"; return render(); }
+      input = h.text; ic = graphemes(h.text.slice(0, h.cursor)).length; selA = null;
+      note = h.options.length > 1 ? h.options.map((o) => (o === h.pick ? "▸" : "") + o).join("  ") + "  · " + cut(bv.itemText(board, h.pick), 60) : bv.itemText(board, h.pick);
+      return render();
+    }
     const r = completeAt(before + after, before.length, atPool(), atCycle, d === "\t" ? 1 : -1);
     if (!r) { note = "Tab completes @names and /commands · Ctrl+Tab switches world"; return render(); }
     if (!r.options.length) { note = "no agent here by that name"; return render(); }
@@ -785,6 +824,10 @@ function onKey(d) {
     spawn(new URL("./search-tui", import.meta.url).pathname, [room], { detached: true, stdio: "ignore", env }).unref();
     note = "search panel → room " + room; return render();
   }
+  if (view === "board" && d === "\x1b" && !inputSel() && (bv.focused || bv.st.help)) { // Esc: the whole board again
+    if (bv.st.help) bv.st.help = false; else bv.focus(null);
+    note = ""; return render();
+  }
   if (view !== "stream" && d === "\x1b") { // Esc: back to the stream
     view = "stream"; note = ""; return render();
   }
@@ -794,6 +837,7 @@ function onKey(d) {
     const page = Math.max(1, lastAvail - 2);
     const sc = { "\x1b[1;5A": 1, "\x1b[1;5B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[1;5H": Infinity, "\x1b[1;5F": -Infinity }[d];
     if (sc !== undefined) {
+      if (view === "board") { bv.scroll(Math.abs(sc) === page ? Math.sign(sc) * bv.page() : sc); return render(); }
       if (view !== "stream") return;
       scroll = sc === Infinity ? 1e9 : sc === -Infinity ? 0 : Math.max(0, scroll + sc);
       focusArea = "stream"; return render();
@@ -884,7 +928,7 @@ function onKey(d) {
         continue;
       }
       if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
-        scroll += b === 64 ? 3 : -3;
+        if (view === "board") bv.scroll(b === 64 ? 3 : -3); else scroll += b === 64 ? 3 : -3;
       }
     }
     return render();
@@ -900,7 +944,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
