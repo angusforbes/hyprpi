@@ -500,7 +500,7 @@ function draw() {
   // Board: "thinking…" shimmers while a project's agents work on a request (then the note).
   const bs = view === "board" ? bv.status(c) : "";
   const boardHint = bs ? "  " + bs + (note ? dim("  " + note) : "")
-    : dim(note || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · /help · ^B stream"));
+    : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : input ? (bs ? "  " + bs : "") + (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
     : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
@@ -803,6 +803,15 @@ function onKey(d) {
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world (too
   // easy to hit): it completes an @name (again: the next match; Shift+Tab: back).
   if (d === "\x02") return toggleBoard(); // Ctrl+B: board ⇄ stream
+  if (view === "board") { // the board's cursor: ↑↓ (empty box) / ^↑↓, Space, ⏎, ^D drop, ^T done, ^Z undo, Esc
+    const r = bv.key(d, { empty: !input, api, room, board: board.room === room ? board : null });
+    if (r === true) { note = ""; return render(); }
+    if (r) {
+      Promise.resolve(r).then((x) => { if (x?.input != null) { input = x.input; ic = graphemes(input).length; selA = null; } if (x?.note != null) note = x.note; render(); })
+        .catch((e) => { note = "✗ " + e.message; render(); });
+      return render();
+    }
+  }
   if (CTRL_TAB.has(d)) return cycle(1);
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
   if (d === "\t" || d === "\x1b[Z") {
@@ -918,6 +927,7 @@ function onKey(d) {
       // release copies it (or, without a drag, counts as a click).
       // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
       if (b === 0 && m[4] === "M" && view === "board" && bv.click(rowMeta[y], x)) { sel = null; continue; } // a card's −/+ marker: fold / unfold
+      if (b === 0 && m[4] === "M" && view === "board") bv.pick(rowMeta[y], convoMsgs); // a click puts the board's cursor there
       if ((b === 0 || b === 4) && m[4] === "M") {
         focusArea = inList ? "list" : view === "search" && resultRowMap[y] !== undefined ? "results" : "input";
         const inConvo = !!rowMeta[y], now = Date.now();
