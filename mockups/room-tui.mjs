@@ -26,6 +26,7 @@ import { connect } from "../lib/client.mjs";
 const COMMANDS = [
   ["/room", "room messages + agent-to-agent"],
   ["/stream", "/stream WORDS shows only rows with those words; /stream alone clears the filter"],
+  ["/tinker", "/tinker TEXT: drop a friction fix off in the workshop world (one free agent there does it)"],
   ["/history", "/history N | all: how far back the stream goes (N interactions; default 200)"],
   ["/help", "this list"],
 ];
@@ -613,6 +614,13 @@ function command(text) {
       setView("stream"); loadRoom(room); return true;
     }
     case "help": setView("help"); return true;
+    case "tinker":
+      if (!arg) { input = "/tinker "; ic = graphemes(input).length; note = "/tinker what to fix: it goes to a free agent in the workshop world"; render(); return true; }
+      if (!api) { input = text; ic = graphemes(text).length; note = "✗ daemon offline"; render(); return true; }
+      api.call("tinker", { text: arg, via: "room-tui" })
+        .then((r) => { note = r.queued ? `🔧 queued for the workshop (room ${r.room})` : `🔧 dropped off in the workshop (room ${r.room})`; render(); })
+        .catch((e) => { input = text; ic = graphemes(text).length; note = "✗ " + e.message; render(); });
+      render(); return true;
   }
   input = text; ic = graphemes(text).length; note = `\u2717 unknown command /${m[1]} \u00b7 /help lists them \u00b7 to say it instead, start with //`; render();
   return true;

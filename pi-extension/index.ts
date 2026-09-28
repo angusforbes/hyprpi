@@ -274,6 +274,19 @@ export default function hyprpi(pi: ExtensionAPI) {
 
   const text = (t: string, details?: any) => ({ content: [{ type: "text" as const, text: t }], details });
 
+  // /tinker TEXT: drop a friction fix off in the workshop world and carry on here.
+  pi.registerCommand("tinker", {
+    description: "Drop a friction fix off in the workshop world: one free agent there does it (a new one opens if none is free)",
+    handler: async (args: any, ctx: any) => {
+      const t = String(args ?? "").trim();
+      if (!t) { ctx.ui.notify("Usage: /tinker what to fix (it goes to a free agent in the workshop world)", "warning"); return; }
+      try {
+        const r = await call("tinker", { text: t, via: "agent" });
+        ctx.ui.notify(r.queued ? `🔧 queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `🔧 dropped off in the workshop (room ${r.room})`, "info");
+      } catch (e: any) { ctx.ui.notify(`/tinker: ${e?.message || e}`, "error"); }
+    },
+  });
+
   pi.registerTool({
     name: "room_read",
     label: "Read room",

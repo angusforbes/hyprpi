@@ -132,6 +132,25 @@ Daemon methods: `agent.resume {agent}`, `agent.forget {agent}`; `list` and
 the `agents` UI event carry `dormant: [...]`. `hyprpi new --id ID --twin-of ID
 -- --session FILE` is what a resume runs.
 
+## Tinker (the workshop world)
+
+Worlds are projects. Friction work (a panel, a key, the bar: anything that slows your
+thinking) has its own world, the **workshop**, set in the config (`"workshop": "D"`, a
+world letter or a group name). When something bugs you mid-project, drop it off and
+keep going:
+
+- `/tinker what to fix` in any agent window (a Pi command from the hyprpi extension)
+- `/tinker what to fix` in the room panel
+- `hyprpi tinker what to fix` in a terminal
+
+The daemon gives each drop-off to **one** free (idle or done) agent in the workshop's
+room, never the whole room, so two agents don't fix the same thing. If none is free,
+it waits in a queue (`~/.local/state/hyprpi/tinker-queue.json`) and a new agent opens
+on the workshop world's first workspace without taking focus; the queue drains as
+agents there become free. The agent is told where it came from (agent, room, folder),
+to fix and verify it without asking you, and to `room_post` "🔧 done: …" (or
+"🔧 stuck: …") in the workshop room. Each hand-off is logged there as "🔧 → Name: …".
+
 ## CLI
 
 `hyprpi help` — `new`, `room`, `list`, `post`, `send`, `focus`, `name`,
