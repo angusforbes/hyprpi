@@ -125,7 +125,7 @@ function draw() {
     rule: (h) => fg(c, "─ ") + h + " " + fg(c, "─".repeat(Math.max(0, W - 3 - width(h)))) });
   // The projects section takes at most about half the height (header rule + one row each).
   const projShow = projs.length ? Math.min(projs.length, Math.max(1, Math.floor((H - 4 - IR.rows.length) / 2))) : 0;
-  const projRows = projShow ? projShow + 1 : 0;
+  const projRows = projShow ? projShow + 2 : 0; // a blank row, the rule, the projects
   listRows = Math.max(1, Math.min(here.length, H - 3 - IR.rows.length - projRows));
   if (cur < listTop) listTop = cur;
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
@@ -177,9 +177,13 @@ function draw() {
   pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
   if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
   projRowY = {};
-  if (projShow && rows.length < H - 2 - IR.rows.length - 1) {
+  if (projShow && rows.length < H - 2 - IR.rows.length - 2) {
     const more = projs.length - projShow;
-    rows.push(rule(`projects · room ${room}${more > 0 ? ` · +${more} more (SUPER+ALT+P)` : ""}`));
+    // What ^O does here too (Angus): the "+ parked" view also shows archived projects.
+    const nArch = showMode >= 1 ? 0 : (board.projects || []).filter((p) => p.status === "archived").length;
+    const view = showMode >= 1 ? "+ archived (^O)" : nArch ? `open · ^O +${nArch} archived` : "open (^O)";
+    rows.push(""); // a line of space between the agents and the projects (Angus)
+    rows.push(rule(`projects · room ${room} · ${view}${more > 0 ? ` · +${more} more (SUPER+ALT+P)` : ""}`));
     const dot = " · ";
     for (const p of projs.slice(0, projShow)) {
       const cur = cursorId === "p:" + p.id;
