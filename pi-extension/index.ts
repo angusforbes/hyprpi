@@ -327,19 +327,21 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.registerTool({
     name: "project",
     label: "Project",
-    description: "Manage projects on your world's board. Creating or joining a project that was closed (archived) reopens it with its history. action: create (name = a SHORT @slug, one word like hyprpi or boards; longer names only when a project splits; title; you become a member and the writer), join, leave (note REQUIRED: a hand-off for the remaining members, what you did and what's left; it is sent to them), rename (name), status (new|active|paused|archived), writer (hand the writer role to a member: agent name), assign (members: '+@A -@B').",
+    description: "Manage projects on your world's board. Creating or joining a project that was closed (archived) reopens it with its history. action: create (name = a SHORT @slug, one word like hyprpi or boards; longer names only when a project splits; title; you become a member and the writer), join, leave (note REQUIRED: a hand-off for the remaining members, what you did and what's left; it is sent to them), rename (name), status (new|active|paused|archived), writer (hand the writer role to a member: agent name), assign (members: '+@A -@B'), icon (icon: one emoji for the project's card, e.g. 🎨; '-' clears it). When you create a project, give it a fitting icon (the panels show 📋 until one is set).",
     promptSnippet: "Create, join, leave or reshape a project on the board",
     parameters: Type.Object({
-      action: Type.Union([Type.Literal("create"), Type.Literal("join"), Type.Literal("leave"), Type.Literal("rename"), Type.Literal("status"), Type.Literal("writer"), Type.Literal("assign")]),
+      action: Type.Union([Type.Literal("create"), Type.Literal("join"), Type.Literal("leave"), Type.Literal("rename"), Type.Literal("status"), Type.Literal("writer"), Type.Literal("assign"), Type.Literal("icon")]),
       project: Type.Optional(Type.String({ description: "@name or id (all but create)" })),
       name: Type.Optional(Type.String()), title: Type.Optional(Type.String()),
       note: Type.Optional(Type.String()), status: Type.Optional(Type.String()),
       writer: Type.Optional(Type.String()), members: Type.Optional(Type.String()),
+      icon: Type.Optional(Type.String({ description: "create / icon: one emoji for the project (e.g. 🎨); '-' clears it" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const a = p.action;
       let r: any;
-      if (a === "create") r = await call("board.project", { action: "create", name: p.name, title: p.title });
+      if (a === "create") r = await call("board.project", { action: "create", name: p.name, title: p.title, ...(p.icon ? { icon: p.icon } : {}) });
+      else if (a === "icon") r = await call("board.project", { action: "update", project: p.project, icon: p.icon ?? "" });
       else if (a === "join" || a === "leave") r = await call("board.project", { action: a, project: p.project, note: p.note });
       else if (a === "assign") r = await call("board.project", { action: "assign", project: p.project, members: p.members });
       else if (a === "writer") { const ids = await call("board.get", {}); const w = Object.entries(ids.names || {}).find(([, n]) => String(n).toLowerCase() === String(p.writer || "").replace(/^@/, "").toLowerCase()); if (!w) throw new Error("the writer must be a member (by name)"); r = await call("board.project", { action: "update", project: p.project, writer: w[0] }); }

@@ -193,8 +193,7 @@ function draw() {
   if (projShow && rows.length < H - 2 - IR.rows.length - 2) {
     const more = projs.length - projShow;
     // What ^O does here too (Angus): the "+ parked" view also shows archived projects.
-    const nArch = showMode >= 1 ? 0 : (board.projects || []).filter((p) => p.status === "archived").length;
-    const view = showMode >= 1 ? "+ archived (^O)" : nArch ? `open · ^O +${nArch} archived` : "open (^O)";
+    const view = showMode >= 1 ? "+ archived (^O)" : "open (^O)"; // no archived count (Angus)
     rows.push(""); // a line of space between the agents and the projects (Angus)
     rows.push(rule(`projects · room ${room} · ${view}${more > 0 ? ` · +${more} more (SUPER+ALT+P)` : ""}`));
     const dot = " · ";
@@ -224,7 +223,8 @@ function draw() {
       const text = `${nm}${members.length ? dot + members.join(" ") : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
       projRowY[rows.length + 1] = p.id; projMemberX[rows.length + 1] = spans;
       const pm = projMark(p), pmark = pm === "◌" ? midFg(pm) : fg(c, bold(pm));
-      const skip = " ".repeat(ICON_W); // the agents' icon column, so @name lines up with their names
+      // The project's icon in the agents' icon column (📋 until one is set), so @name lines up.
+      const pic = p.icon || "📋", skip = pic + " ".repeat(Math.max(1, ICON_W - width(pic)));
       rows.push(p.status === "paused" || p.status === "archived" ? midFg(`${badge}${pm} ${skip}${text}${dot}${p.status}`) : `${badge}${pmark} ${skip}${text}`);
     }
   }
