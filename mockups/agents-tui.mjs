@@ -77,6 +77,15 @@ const isMarked = (id) => marks.all || marks.agents.includes(id);
 // (cursorId "p:<id>"): ⏎ opens the card in the projects panel, Space marks its members.
 let board = { room: "", projects: [], names: {} };
 let projRowY = {};                           // screen row -> project id (clicks)
+let projMemberX = {};                        // screen row -> [{ x0, x1, id }] where each @member is (clicks)
+// A project's mark, from its live members, most urgent first (Angus): × one needs you · ● one is
+// working · ✓ one finished (unseen) · ○ idle · ◌ nobody live.
+function projMark(p) {
+  const live = (p.members || []).map((id) => agents.find((a) => a.id === id)).filter(Boolean);
+  if (!live.length) return "◌";
+  const ms = live.map(mark);
+  return ["×", "●", "✓"].find((k) => ms.includes(k)) || "○";
+}
 const openDecides = (p) => (p.items || []).filter((it) => it.sec === "decide").length;
 function hereProjects() {
   if (board.room !== room) return [];
@@ -137,7 +146,11 @@ function draw() {
     + (nMarked === live.length ? "" : ` · ${nMarked}/${live.length} ▸ · Esc all`)));
   listRowY = rows.length + 1;
 
-  const nameW = Math.min(24, Math.max(6, ...here.map((a) => width((a.icon ? a.icon + " " : "") + a.display))));
+  const nameW = Math.min(24, Math.max(6, ...here.map((a) => width(a.display))));
+  // A fixed icon column (Angus: the names in the agent list and the project list line up): the
+  // icon padded to 2 cells + a space, or 3 spaces for an agent without one; projects skip it too.
+  const ICON_W = 3;
+  const iconCol = (a) => a.icon ? a.icon + " ".repeat(Math.max(1, ICON_W - width(a.icon))) : " ".repeat(ICON_W);
   const nameBg = theme.muted || theme.selection;
   if (showHelp) {
     for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ ↑↓ · click", "move the cursor · wheel scrolls"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
@@ -149,9 +162,9 @@ function draw() {
   }
   if (!showHelp && !here.length) rows.push(dim("  no agents here · ^N opens one"));
   for (const a of showHelp ? [] : here.slice(listTop, listTop + listRows)) {
-    const name = cut((a.icon ? a.icon + " " : "") + a.display, nameW);
-    const iconPart = a.icon && name.startsWith(a.icon + " ") ? a.icon + " " : "";
-    const bare = name.slice(iconPart.length);
+    const name = cut(a.display, nameW);
+    const iconPart = iconCol(a);
+    const bare = name;
     const model = (a.model || "").replace(/^claude-/, "");
     const dot = " · ";
     // Where it is, as hyprpi list says it (Angus): "pi·k3vg · C2 · topic · opus-5-5". Parked rows say "parked" instead.
@@ -171,12 +184,12 @@ function draw() {
     else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
     styled = iconPart + styled;
     const sel = isMarked(a.id) ? fg(c, bold("▸")) : " ";
-    if (closing.has(a.id)) { rows.push(dim(`  ${mark(a)} ${name} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
+    if (closing.has(a.id)) { rows.push(dim(`  ${mark(a)} ${iconPart}${name} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
   pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
-  if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
-  projRowY = {};
+  if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ ${" ".repeat(ICON_W)}starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
+  projRowY = {}; projMemberX = {};
   if (projShow && rows.length < H - 2 - IR.rows.length - 2) {
     const more = projs.length - projShow;
     // What ^O does here too (Angus): the "+ parked" view also shows archived projects.
@@ -190,19 +203,29 @@ function draw() {
       let nm = bold("@" + p.name);
       if (cur) nm = nameBg ? `${ESC}48;2;${rgb(nameBg)}m${nm}${ESC}49m` : `${ESC}4m${nm}${ESC}24m`;
       // Members as the projects panel writes them (lib/tui/board-view.mjs who()): "@Name" in the
-      // agent's colour, no icon; bold when it isn't live; space-separated (Angus).
-      const members = (p.members || []).map((id) => {
-        const a = agents.find((x) => x.id === id);
-        const n = "@" + (board.names?.[id] || a?.display || "pi·" + id.slice(-4));
-        return a ? nameFg(a.name, a.color, n) : bold(n);
-      });
+      // agent's colour, no icon; bold when it isn't live; space-separated; the writer first (Angus).
+      const ids = [...(p.writer && (p.members || []).includes(p.writer) ? [p.writer] : []), ...(p.members || []).filter((id) => id !== p.writer)];
       const w0 = String(p.where?.text || "").trim(); // until the daemon's summary is ready: its start
       const short = p.short || (w0.length > 40 ? w0.slice(0, 39).replace(/\s+\S*$/, "") + "…" : w0);
       const d = openDecides(p);
       const badge = d ? fg(c, bold("D")) : " ";
+      // Columns as an agent row (▸ · mark · space · name), so the names line up: D badge · the
+      // project's mark · space · @name. Each @member's columns are kept for clicks.
+      let x = 4 + ICON_W + width("@" + p.name);
+      const spans = [];
+      const members = ids.map((id, k) => {
+        const a = agents.find((q) => q.id === id);
+        const n = "@" + (board.names?.[id] || a?.display || "pi·" + id.slice(-4));
+        x += k === 0 ? width(dot) : 1;
+        spans.push({ x0: x, x1: x + width(n) - 1, id });
+        x += width(n);
+        return a ? nameFg(a.name, a.color, n) : bold(n);
+      });
       const text = `${nm}${members.length ? dot + members.join(" ") : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
-      projRowY[rows.length + 1] = p.id;
-      rows.push(p.status === "paused" || p.status === "archived" ? midFg(`  ${badge} ${text}${dot}${p.status}`) : `  ${badge} ${text}`);
+      projRowY[rows.length + 1] = p.id; projMemberX[rows.length + 1] = spans;
+      const pm = projMark(p), pmark = pm === "◌" ? midFg(pm) : fg(c, bold(pm));
+      const skip = " ".repeat(ICON_W); // the agents' icon column, so @name lines up with their names
+      rows.push(p.status === "paused" || p.status === "archived" ? midFg(`${badge}${pm} ${skip}${text}${dot}${p.status}`) : `${badge}${pmark} ${skip}${text}`);
     }
   }
 
@@ -433,6 +456,15 @@ function onKey(d) {
     if (pid && press && (b === 0 || b === 16)) {
       const pj = hereProjects().find((p) => p.id === pid);
       if (!pj) return;
+      // On an @member: that agent's window (click or Ctrl+click; Angus). Elsewhere on the row: the project.
+      const x = Number(m[2]), hit = (projMemberX[y] || []).find((sp) => x >= sp.x0 && x <= sp.x1);
+      if (hit) {
+        const a = agents.find((q) => q.id === hit.id);
+        if (!a) { note = `@${board.names?.[hit.id] || hit.id} isn't live`; return render(); }
+        cursorId = a.id; confirm = null;
+        api?.call("agent.focus", { agent: a.id }).then(() => { note = "→ " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+        return render();
+      }
       if (b === 16) { cursorId = "p:" + pid; return openProject(pj); }
       if (cursorId === "p:" + pid) return markProject(pj);            // second click marks its members
       cursorId = "p:" + pid; confirm = null; return render();
