@@ -1,0 +1,9 @@
+# Plain pi-sandbox image (per pi docs/containerization.md), pinned to the host's Pi version.
+FROM node:24-bookworm-slim
+ARG PI_VERSION=0.87.1
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep procps curl wget python3 jq file unzip \
+  && rm -rf /var/lib/apt/lists/*
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${PI_VERSION}
+WORKDIR /workspace
+ENTRYPOINT ["pi"]

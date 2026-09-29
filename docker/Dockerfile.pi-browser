@@ -1,0 +1,12 @@
+# pi-sandbox + headless Chromium via Playwright (BROWSER=1 in run-hyprpi-agent.sh).
+FROM pi-sandbox
+ARG PW_VERSION=latest
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g playwright@${PW_VERSION} \
+  && playwright install --with-deps chromium \
+  && chmod -R a+rX /ms-playwright \
+  && rm -rf /var/lib/apt/lists/* /root/.npm
+# /node_modules -> the global modules, so `import { chromium } from "playwright"` works from any
+# folder without a local npm install (ESM ignores NODE_PATH).
+RUN ln -s /usr/local/lib/node_modules /node_modules
