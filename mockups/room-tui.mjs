@@ -40,6 +40,7 @@ const COMMANDS = [
 const completions = (prefix) => view === "board" ? boardCompletions(prefix) : COMMANDS.map(([c]) => c).filter((c) => c.startsWith(prefix.toLowerCase()));
 // Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
+import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 const bv = createBoardView({ render: () => render() });
 const helpRows = () => {
   const w = Math.max(...COMMANDS.map(([c]) => c.length));
@@ -378,7 +379,7 @@ function draw() {
   // index in sItems, and sItems[i].copy is what a Shift-selection copies.
   const sItems = [];
   items.forEach(({ m, e }) => {
-    const mi = sItems.push({ copy: "", key: m ? `m${m.seq}` : `e${e.ts}|${e.agent?.id || ""}|${e.kind}` }) - 1;
+    const mi = sItems.push({ copy: "", key: m ? `m${m.seq}` : `e${e.ts}|${e.agent?.id || ""}|${e.kind}`, m, e }) - 1; // m / e: Ctrl+click finds the row's agent
     if (e) {
       const au = e.agent || {};
       // In the stream: icon + full name (only the prompt line uses icons alone).
@@ -945,21 +946,22 @@ function onKey(d) {
   if (!d.replace(/[\x00-\x1f]/g, "")) return;
   insertText(d); // typing replaces the selection
 }
+// Ctrl+click: a link opens; an agent's name under the pointer (@Name, or as shown, "Sankey[e]"
+// too) jumps to its window, wherever it is; elsewhere on a stream row, that row's agent (the
+// message's author, or the agent an activity line is about). Matching: lib/tui/agent-click.mjs.
 function ctrlClick(x, y) {
-  const line = screen[y - 1] || "", cells = [];
-  { let col = 1; for (const g of graphemes(line)) { cells.push([col, g]); col += gw(g); } }
-  const i = cells.findIndex(([c, g], k) => c <= x && (cells[k + 1]?.[0] ?? c + gw(g)) > x);
-  if (i < 0 || /\s/.test(cells[i][1])) return;
-  let a = i, b = i;
-  while (a > 0 && !/\s/.test(cells[a - 1][1])) a--;
-  while (b < cells.length - 1 && !/\s/.test(cells[b + 1][1])) b++;
-  const word = cells.slice(a, b + 1).map(([, g]) => g).join("");
-  const url = /(?:https?|file):\/\/\S+/.exec(word)?.[0];
-  if (url) { try { spawn("gio", ["open", url.replace(/[)\].,;:!?'"]+$/, "")], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
-  const name = word.replace(/^[^\p{L}\p{N}@]+/u, "").replace(/^@/, "").replace(/[^\p{L}\p{N}·_-]+$/u, "");
-  if (!name || !api) return;
-  const hit = agents.find((ag) => [ag.display, ag.name].some((n) => n && n.toLowerCase() === name.toLowerCase()));
-  if (!hit) { note = `no live agent @${name}`; return render(); }
+  const word = wordAt(screen[y - 1] || "", x, gw);
+  const url = urlIn(word);
+  if (url) { try { spawn("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
+  if (!api) return;
+  let hit = word ? agentIn(word, agents) : null;
+  if (!hit && view !== "board") {
+    const it = convoMsgs[rowMeta[y]?.msg];
+    const id = it?.m?.author?.kind === "agent" ? it.m.author.id : it?.e?.agent?.id;
+    hit = id ? agents.find((ag) => ag.id === id) : null;
+    if (!hit && id) { note = "that agent has closed"; return render(); }
+  }
+  if (!hit) { const n = bareName(word); if (n) { note = `no live agent @${n}`; render(); } return; }
   api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function quit() { out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }

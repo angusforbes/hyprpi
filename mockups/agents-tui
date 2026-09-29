@@ -1,7 +1,11 @@
 #!/bin/sh
 # Panel 1: the hyprpi agent panel, in its own kitty window.  agents-tui [ROOM]
 # The loop: the panel exits with 75 to restart onto new code, in place (no stacked processes).
+# Ctrl+click reaches the panel (it jumps to that agent): kitty's own Ctrl+click (links.conf opens
+# links, and discards the press even when a program has the mouse) is unmapped while grabbed.
 exec kitty --class hyprpi.agents -o confirm_os_window_close=0 \
+  -o "mouse_map=ctrl+left press grabbed" \
+  -o "mouse_map=ctrl+left release grabbed" \
   -o 'map ctrl+tab send_text all \x1b[9;5u' \
   -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \
   sh -c 'while :; do HYPRPI_AGENTS_TUI_LOOP=1 node "$0" "$@"; [ $? -eq 75 ] || break; done' "$(dirname "$(readlink -f "$0")")/agents-tui.mjs" "$@"

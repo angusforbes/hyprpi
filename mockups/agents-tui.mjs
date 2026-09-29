@@ -9,7 +9,7 @@
 // closed/killed while hyprpi ran) and "parked" (Reprieve, SUPER+W: still running, out
 // of every room). Ctrl+O cycles: live · + parked.
 //   Ctrl+↑↓ (or ↑↓) / click / wheel   move the cursor · PgUp PgDn · Home End / Ctrl+Home End
-//   Enter                live: jump to its window · parked: revive it here · closed: resume it
+//   Enter / Ctrl+click   live: jump to its window · parked: revive it here · closed: resume it
 //   Space / Shift+Space  mark ▸ (the shared per-room selection every panel uses)
 //   Ctrl+A               mark all / none      Esc  mark all again
 //   Ctrl+W / Ctrl+K      close / kill (twice); on a closed agent: forget it
@@ -246,7 +246,13 @@ function cycleRoom(d) {
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (d) => { batching = true; try { onKey(d); } finally { batching = false; if (dirty) draw(); } });
+// Several mouse reports can arrive in one read (press + release, or a wheel burst): one onKey each.
+const MOUSE = /\x1b\[<\d+;\d+;\d+[Mm]/g;
+process.stdin.on("data", (d) => {
+  batching = true;
+  try { const ms = d.startsWith("\x1b[<") && d.match(MOUSE); if (ms && ms.join("") === d) ms.forEach(onKey); else onKey(d); }
+  finally { batching = false; if (dirty) draw(); }
+});
 
 function onKey(d) {
   if (d === "\x03" || d === "\x11") return quit();            // Ctrl+C / Ctrl+Q
@@ -275,6 +281,11 @@ function onKey(d) {
   if (m) {
     const b = Number(m[1]), y = Number(m[3]), press = m[4] === "M";
     if (b === 64 || b === 65) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); return render(); }
+    if (b === 16) { // Ctrl+click: that agent, as Enter would (live: jump to it · parked: revive · closed: resume)
+      const a = press && listHere()[listTop + y - listRowY];
+      if (a) { cursorId = a.id; confirm = null; enter(); render(); }
+      return;
+    }
     if (!press || b !== 0) return;
     const a = listHere()[listTop + y - listRowY];
     if (!a) return;

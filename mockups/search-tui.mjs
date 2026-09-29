@@ -32,6 +32,7 @@ import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
+import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 
 const ESC = "\x1b[";
 const out = (s) => process.stdout.write(s);
@@ -469,20 +470,23 @@ function render() {
   out(`${ESC}${cursorRow};${width(prompt) + width(graphemes(query).slice(0, qc).join("")) + 1}H${ESC}?25h${ESC}?2026l`); // one synchronized frame, cursor never hidden (no flicker while "thinking…" animates)
 }
 
+// Ctrl+click: a link opens; an agent's name under the pointer (@Name, or as shown, "Sankey[e]"
+// too) jumps to its window; elsewhere on a result, that result's agent (if still open).
+// Matching: lib/tui/agent-click.mjs.
 function ctrlClick(x, y) {
-  const line = screen[y - 1] || "", cells = [];
-  { let col = 1; for (const g of graphemes(line)) { cells.push([col, g]); col += gw(g); } }
-  const i = cells.findIndex(([c, g], k) => c <= x && (cells[k + 1]?.[0] ?? c + gw(g)) > x);
-  if (i < 0 || /\s/.test(cells[i][1])) return;
-  let a = i, b = i;
-  while (a > 0 && !/\s/.test(cells[a - 1][1])) a--;
-  while (b < cells.length - 1 && !/\s/.test(cells[b + 1][1])) b++;
-  const word = cells.slice(a, b + 1).map(([, g]) => g).join("");
-  const url = /(?:https?|file):\/\/\S+/.exec(word)?.[0];
-  if (url) { try { spawnChild("gio", ["open", url.replace(/[)\].,;:!?'"]+$/, "")], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); } catch { /* none */ } return; }
-  const name = word.replace(/^[^\p{L}\p{N}@]+/u, "").replace(/^@/, "").replace(/[^\p{L}\p{N}·_-]+$/u, "");
-  const hit = known.find((ag) => ag.live && [ag.display, ag.name].some((n) => n && n.toLowerCase() === name.toLowerCase()));
-  if (!hit || !api) { if (name) { note = `no live agent @${name}`; render(); } return; }
+  const word = wordAt(screen[y - 1] || "", x, gw);
+  const url = urlIn(word);
+  if (url) { try { spawnChild("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); } catch { /* none */ } return; }
+  if (!api) return;
+  let hit = word ? agentIn(word, known.filter((ag) => ag.live)) : null;
+  if (!hit && resultRows[y] !== undefined) {
+    const r = S.results[resultRows[y]];
+    if (r?.kind === "agent") {
+      hit = known.find((ag) => ag.live && ag.id === r.source) || null;
+      if (!hit) { note = `${r.name} is closed`; return render(); }
+    }
+  }
+  if (!hit) { const n = bareName(word); if (n) { note = `no live agent @${n}`; render(); } return; }
   api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function jump() {

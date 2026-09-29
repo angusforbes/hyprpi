@@ -24,6 +24,7 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { connect } from "../lib/client.mjs";
 import { completeAt } from "../lib/at-names.mjs";
+import { urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
@@ -104,14 +105,13 @@ function wordAt(x, y) {
   while (b < cs.length - 1 && !/\s/.test(cs[b + 1][1])) b++;
   return { a: cs[a][0], b: cs[b][0] + gw(cs[b][1]) - 1, word: cs.slice(a, b + 1).map(([, g]) => g).join("") };
 }
-function ctrlClick(x, y) {
+function ctrlClick(x, y) { // a link opens; an agent's name ("Sankey[e]" too) → its window (lib/tui/agent-click.mjs)
   const w = wordAt(x, y); if (!w) return;
-  const url = /(?:https?|file):\/\/\S+/.exec(w.word)?.[0];
-  if (url) { try { spawn("gio", ["open", url.replace(/[)\].,;:!?'"]+$/, "")], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
-  const name = w.word.replace(/^[^\p{L}\p{N}@]+/u, "").replace(/^@/, "").replace(/[^\p{L}\p{N}·_-]+$/u, "");
-  if (!name || !api) return;
-  const hit = agents.find((ag) => [ag.display, ag.name].some((n) => n && n.toLowerCase() === name.toLowerCase()));
-  if (!hit) { note = `no live agent @${name}`; return render(); }
+  const url = urlIn(w.word);
+  if (url) { try { spawn("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
+  if (!api) return;
+  const hit = agentIn(w.word, agents);
+  if (!hit) { const n = bareName(w.word); if (n) { note = `no live agent @${n}`; render(); } return; }
   api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 
