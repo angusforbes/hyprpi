@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Agents and projects finder (Angus, 2026-09-29; SUPER+SHIFT+SPACE): the Omarchy menu, as the apps
 // menu (SUPER+ALT+SPACE) shows it, listing every world's live and parked agents and its open
-// projects, A–Z in one list. The search box reads "Agents…" (the prompt, Angus). Type to filter (the subtext counts too: "C3", "working"), ↑↓, Enter, Esc.
+// projects: agents A–Z first, then projects A–Z. The search box reads "Agents…" (the prompt, Angus). Type to filter (the subtext counts too: "C3", "working"), ↑↓, Enter, Esc.
 //   Enter on an agent    jump to its window (parked: brought back here)
 //   Enter on a project   its card in that world's projects panel (the panel comes here)
 // Plan: ~/Obsidian/Tinker/2026-09-29 Agents and projects finder.md
@@ -45,10 +45,11 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: clean(p.name) + " (Project)", sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: clean(p.name), sub: sub.slice(0, 160) });
     }
   }
-  out.sort((x, y) => x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }) || x.kind.localeCompare(y.kind));
+  // Agents A–Z, then projects A–Z (Angus: a "(Project)" tag made every project match "p").
+  out.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "agent" ? -1 : 1) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
   const seen = new Set();
