@@ -137,7 +137,9 @@ export default function hyprpi(pi: ExtensionAPI) {
   let lastEnsure = 0;
   function schedule() {
     if (stopped || retry) return;
-    if (Date.now() - lastEnsure > 10000) {
+    // HYPRPI_NO_ENSURE=1 (agents in a container): never start a daemon from here; it would
+    // take the shared socket without access to Hyprland. Just keep retrying the host daemon.
+    if (process.env.HYPRPI_NO_ENSURE !== "1" && Date.now() - lastEnsure > 10000) {
       lastEnsure = Date.now();
       try { execFile(`${ROOT}/bin/hyprpi`, ["ensure"], { timeout: 10000 }, () => {}); } catch { /* retry later */ }
     }
