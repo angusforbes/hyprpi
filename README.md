@@ -7,7 +7,8 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | Key | Does |
 |---|---|
 | SUPER+A | New Pi agent in its own terminal window (Omarchy's default terminal) on the current workspace; it joins that world's room |
-| SUPER+ALT+A | Room window for the current world (same as clicking the current world in the bar) |
+| SUPER+ALT+A | Agents panel for the current world, brought here (`mockups/panels --only 1`) |
+| click the current world in the bar | Agents panel for the current world: jump to it wherever it is, or open it here in the top-left slot (`hyprpi room --toggle` → `mockups/agents-here`) |
 | SUPER+ALT+/ | Toggle the search window for the current world's room |
 | SUPER+SHIFT+A | Claude (moved here from SUPER+A; a personal binding in `~/.config/hypr/bindings.lua`, not part of hyprpi) |
 
@@ -20,7 +21,11 @@ handler are in `hypr/hyprpi.lua`. Install it once:
 then add `require("hypr.hyprpi")` to `~/.config/hypr/hyprland.lua` after
 `require("hypr.bindings")`. It finds `bin/hyprpi` under `~/Work/hyprpi` (or `$HYPRPI_HOME`).
 
-## Room window
+## Room window (retired)
+
+**Retired 2026-09-28 (Angus): kept in `ui/`, no longer developed.** The bar click that used to
+toggle it now opens the agents panel (see the table above). It can still be opened explicitly
+with `hyprpi room ROOM`. What follows describes it as it was.
 
 A normal window — tile it, float it, move it anywhere; at most one per
 workspace. Clicking the current world in the bar (or SUPER+ALT+A):

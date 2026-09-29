@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // hyprpi — Pi agents in their own windows, grouped into rooms per hyprwrld.
 // Run `hyprpi help` for commands.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { request, connect } from "../lib/client.mjs";
@@ -257,6 +257,13 @@ async function uiRequest(method, params) {
 
 async function cmdRoom() {
   const toggle = flag("--toggle");
+  // The top bar (hyprwrlds: a click on the selected world) sends `room --toggle`: that now means
+  // the current world's agents panel, jump to it or open it here (mockups/agents-here). The old
+  // Quickshell room window (ui/, `hyprpi room ROOM`) is retired: kept, not developed (Angus).
+  if (toggle && !args[0]) {
+    const r = spawnSync(process.execPath, [path.join(ROOT, "mockups", "agents-here")], { stdio: "inherit" });
+    process.exit(r.status ?? 1);
+  }
   console.log((await uiRequest("ui.open", { room: args[0] || "", toggle })).room);
 }
 
