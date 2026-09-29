@@ -57,6 +57,7 @@ let resendAsk = 0;   // ⏎ on unchanged sent text asks first (a second ⏎ with
 // the board doesn't know a command (/help is the board's own: it shows the board's list).
 const cmds = createCommands({
   ctx: {
+    panel: "board", world: () => room, worlds: () => rooms.map((r) => r.id), cycle: (d) => cycle(d), agents: () => agents,
     api: () => api, via: "board-tui", render: () => render(),
     note: (t) => { note = t; render(); },
     showHelp: () => { bv.st.help = true; render(); },

@@ -138,6 +138,24 @@ Daemon methods: `agent.resume {agent}`, `agent.forget {agent}`; `list` and
 the `agents` UI event carry `dormant: [...]`. `hyprpi new --id ID --twin-of ID
 -- --session FILE` is what a resume runs.
 
+## Panel commands (all four panels)
+
+The agents, room, search and board panels share one command line (`lib/tui/command-line.mjs`):
+the same parsing (a unique prefix runs a command; `//text` is not a command), Tab completion, the
+hint while typing and `/help`. Every panel has:
+
+| Command | Does |
+|---|---|
+| `/agents` `/room` `/search` `/board` | go to that panel for this world: jump to it wherever it is, or open it here (`mockups/panel-here`) |
+| `/search WORDS` · `/ai QUESTION` (`/ask`) | the search panel runs it (from any panel; the search panel's own run it in place) |
+| `/world X` | switch this panel to world X (^Tab steps through them) |
+| `/go @Name` | jump to that agent's window (Tab completes the name; the same as Ctrl+click) |
+| `/new [DIR]` | a new agent (on the board, a new project is `/project @name`) |
+| `/tinker [W:] TEXT` · `/help` · `/quit` | drop a fix off in the workshop · this panel's commands and keys · close the panel |
+
+Panel-specific: room `/messages` (was `/room`) `/stream` `/history`; search `/search /ai /ask`
+(in place); board `/project /todo /note /done /drop /assign …` (see `/help` in each).
+
 ## Tinker (the workshop world)
 
 Worlds are projects. Friction work (a panel, a key, the bar: anything that slows your

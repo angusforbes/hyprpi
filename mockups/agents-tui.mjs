@@ -18,8 +18,8 @@
 // Command line (lib/tui/command-line.mjs + lib/tui/input-box.mjs, shared with the room, search and
 // board panels): type /command + ⏎ (Tab completes). While the box has text, typing, Space, ⏎,
 // Esc (clears it) and ^W (a word) are the box's; empty, every key above works as before.
-//   /new             a new agent here (^N)       /help  commands and keys
-//   /tinker [W:] X   drop a fix off in the workshop    /quit  close the panel
+//   the commands every panel has (lib/tui/command-line.mjs): /help · /agents /room /search /board
+//   (go to that panel) · /search WORDS · /ai Q · /world X · /go @Name · /new · /tinker · /quit
 // Later: a 🎤 column for dictation targets, and commands that act on the selection.
 import fs from "node:fs";
 import { spawn } from "node:child_process";
@@ -50,10 +50,10 @@ function copy(text) {
 }
 const box = createInputBox({ onChange: () => { if (!note.startsWith("✗")) note = ""; render(); }, copy, multiline: false });
 const cmds = createCommands({
-  commands: [
-    { name: "/new", help: "a new agent here (same as ^N)", run: () => newAgent() },
-  ],
+  commands: [],
   ctx: {
+    panel: "agents", world: () => room, worlds: () => rooms.map((r) => r.id), cycle: (d) => cycleRoom(d), agents: () => agents,
+    newAgent: () => newAgent(),
     api: () => api, via: "agents-tui", render: () => render(),
     note: (t) => { note = t; render(); },
     showHelp: () => { showHelp = true; note = ""; render(); },

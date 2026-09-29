@@ -1,0 +1,87 @@
+#!/usr/bin/env node
+// One of the four panels for a world: jump to it, or open it here.
+//
+//   ~/Work/hyprpi/mockups/panel-here KIND [ROOM] [--mode keyword|ai] [--query TEXT]
+//   KIND: agents | room | search | board        ROOM: world letter (default: the current world)
+//
+// The rule (Angus, 2026-09-28; the bar click and the /agents /room /search /board commands):
+//   - the panel is open somewhere (any workspace): jump there and focus it;
+//   - parked in Reprieve (a special workspace): bring it back here (focusing it would only
+//     peek at the parked view);
+//   - not open: open it on the current workspace. The agents panel goes in the TOP-LEFT slot
+//     (dwindle's "preselect l" on the top-left tiled window); the others where dwindle puts them.
+// --query (search only): the search panel runs it (--mode: keyword or ai). An open panel gets it
+// through the daemon (ui.searchRun); a new one as its launch arguments.
+import { spawn } from "node:child_process";
+import * as hypr from "./../lib/hypr.mjs";
+import { request } from "./../lib/client.mjs";
+
+const KINDS = {
+  agents: { title: "hyprpi-router", launcher: "agents-tui", topLeft: true },
+  room: { title: "hyprpi-room", launcher: "room-tui" },
+  search: { title: "hyprpi-search", launcher: "search-tui" },
+  board: { title: "hyprpi-board", launcher: "board-tui" },
+};
+const here = new URL(".", import.meta.url).pathname;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clients = () => hypr.clients().catch(() => []);
+const args = process.argv.slice(2);
+const opt = (n) => { const i = args.indexOf(n); if (i < 0) return null; const v = args[i + 1]; args.splice(i, 2); return v ?? ""; };
+
+async function currentRoom() {
+  try { const r = await request("room.current", {}); return r.room || ""; } catch { return ""; }
+}
+
+const main = async () => {
+  const mode = opt("--mode"), query = opt("--query");
+  const kind = String(args[0] || "").toLowerCase(), k = KINDS[kind];
+  if (!k) { console.error(`panel-here: KIND is one of ${Object.keys(KINDS).join(" ")}`); process.exit(2); }
+  const room = String(args[1] || "").toUpperCase() || await currentRoom();
+  if (!room) { console.error("panel-here: no current world (is the hyprpi daemon running?)"); process.exit(1); }
+  const name = `${kind} panel ${room}`;
+  const title = new RegExp(`^${k.title} ${room}$`);
+  const aw = await hypr.activeWorkspace().catch(() => null);
+  const ws = aw && Number.isInteger(aw.id) && aw.id > 0 ? aw.id : null;
+  const cs = await clients();
+  // Several copies can exist: one here first, then any on a normal workspace, then a parked one.
+  const rank = (c) => c.workspace?.id === ws ? 0 : c.workspace?.id > 0 ? 1 : 2;
+  const found = cs.filter((c) => title.test(c.title || "")).sort((x, y) => rank(x) - rank(y))[0];
+  const sendQuery = async () => {
+    if (kind === "search" && (query || mode)) await request("ui.searchRun", { room, query: query || "", mode: mode || "" }).catch((e) => console.error("panel-here: " + e.message));
+  };
+  if (found && found.workspace?.id > 0) {                  // open on a normal workspace: go there
+    await hypr.focusWindow(found.address);
+    await sendQuery();
+    return console.log(`${name}: jumped to workspace ${found.workspace.id}`);
+  }
+  if (!ws) { console.error("panel-here: no normal workspace is active"); process.exit(1); }
+  if (found) {                                             // parked: bring it back here
+    await hypr.moveWindow(found.address, String(ws));
+    await sleep(150);
+    await hypr.focusWindow(found.address);
+    await sendQuery();
+    return console.log(`${name}: brought back from ${found.workspace?.name}`);
+  }
+  // Not open. The agents panel: the top-left slot (focus the top-left tiled window here and
+  // preselect "left", so the new window splits it and takes its left part).
+  if (k.topLeft) {
+    const tiled = cs.filter((c) => c.workspace?.id === ws && !c.floating && c.mapped !== false && !c.hidden);
+    const tl = tiled.sort((a, b) => (a.at[1] - b.at[1]) || (a.at[0] - b.at[0]))[0];
+    if (tl) {
+      await hypr.focusWindow(tl.address).catch(() => {});
+      await hypr.dispatch('hl.dsp.layout("preselect l")').catch(() => {});
+    }
+  }
+  const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+  const extra = kind === "search" && (query || mode) ? [...(mode ? ["--mode", mode] : []), ...(query ? ["--query", query] : [])] : [];
+  const before = new Set(cs.map((c) => c.address));
+  spawn(`${here}${k.launcher}`, [room, ...extra], { detached: true, stdio: "ignore", env }).unref();
+  for (let i = 0; i < 80; i++) { // up to ~8 s for the window to map and set its title
+    await sleep(100);
+    const c = (await clients()).find((x) => title.test(x.title || "") && !before.has(x.address));
+    if (c) { await hypr.focusWindow(c.address).catch(() => {}); return console.log(`${name}: opened on workspace ${ws}`); }
+  }
+  console.error(`panel-here: the ${name} did not appear`);
+  process.exit(1);
+};
+main();

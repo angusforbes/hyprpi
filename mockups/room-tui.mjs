@@ -16,7 +16,7 @@
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
 // Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · Ctrl+/ opens the search panel on this room ·
 // Esc drops a selection, else marks every agent again · Ctrl+Q quits (Ctrl+C copies).
-// Commands: /room · /stream [WORDS] (live word filter) · /history N|all · /help ·
+// Commands: /messages · /stream [WORDS] (live word filter) · /history N|all · /help ·
 // "//text" is only for saying something that starts with a slash (it would otherwise be
 // read as a command): "//stream is down" posts "/stream is down". Ordinary messages need nothing.
 // "@Lippy @Sankey" alone + Enter sets who messages go to (shown as "C → @Lippy @Sankey ❯",
@@ -634,7 +634,7 @@ let focusArea = "input";
 // The room's commands; /help, /tinker and /quit come from lib/tui/command-line.mjs.
 const cmds = createCommands({
   commands: [
-    { name: "/room", help: "room messages + agent-to-agent", run: () => { filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); } },
+    { name: "/messages", help: "show room messages + agent-to-agent (was /room; /room now goes to this panel)", run: () => { filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); } },
     { name: "/stream", usage: "/stream [WORDS]", help: "only rows with those words; /stream alone clears the filter",
       run: (arg) => { words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } } },
     { name: "/history", usage: "/history N | all", help: "how far back the stream goes (N interactions; default 200)",
@@ -646,10 +646,10 @@ const cmds = createCommands({
         note = `history: ${n === "all" ? "everything" : "last " + n + " interactions"} (stream and /ask)`;
         setView("stream"); loadRoom(room);
       } },
-    { name: "/new", usage: "/new [DIR]", help: "a new agent (^N)", run: (arg) => newAgent(arg) },
-    ...["/search", "/ai", "/ask"].map((name) => ({ name, help: "lives in the search panel · SUPER+ALT+/", run: () => { note = `✗ ${name} lives in the search panel · SUPER+ALT+/`; render(); } })),
   ],
   ctx: {
+    panel: "room", world: () => room, worlds: () => rooms.map((r) => r.id), cycle: (d) => cycle(d), agents: () => agents,
+    newAgent: (dir) => newAgent(dir),
     api: () => api, via: "room-tui", render: () => render(),
     note: (t) => { note = t; render(); },
     showHelp: () => setView("help"),
@@ -664,7 +664,7 @@ function command(text) {
 }
 
 // Board mode: what is typed goes to the board (a board command, @project …); anything
-// the board doesn't know (/room, /history, …) falls through to the panel's own commands.
+// the board doesn't know (/messages, /history, …) falls through to the panel's own commands.
 // What was last sent from the board stays in the box, in the world colour, until edited; Enter
 // sends it again (several requests can run at once). Angus: the prompt shouldn't disappear.
 let sentText = null, resendAsk = 0, sentTouched = false; // sentTouched: the cursor was moved into the sent text (typing then edits it)

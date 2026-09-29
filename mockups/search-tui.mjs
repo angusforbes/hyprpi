@@ -128,6 +128,7 @@ const cmds = createCommands({
     { name: "/ask", usage: "/ask QUESTION", help: "same as /ai", run: searchCmd("ai") },
   ],
   ctx: {
+    panel: "search", world: () => room, worlds: () => rooms, cycle: (d) => cycle(d), agents: () => known.filter((a) => a.live),
     api: () => api, via: "search-tui", render: () => render(),
     note: (t) => { note = t; render(); },
     showHelp: () => { setBox(""); showHelp = true; render(); },
@@ -190,6 +191,16 @@ function enter() {
   top = 0; S.run(text, S.mode); if (S.ranFor) S.ranFor.box = box;
 }
 function setBox(text) { query = text; qc = graphemes(text).length; }
+// A search sent from another panel (/search WORDS, /ai Q: mockups/panel-here → the daemon's
+// ui.searchRun, or --mode / --query when that opened this panel): switch mode and run it.
+function runFrom(mode, query) {
+  showHelp = false; note = "";
+  if ((mode === "ai" || mode === "keyword") && S.mode !== (mode === "ai" ? "ai" : "keyword")) S.toggleMode();
+  if (query) { setBox(query); return enter(); }
+  render();
+}
+const startArgs = (() => { const a = process.argv.slice(3), o = {}; for (let i = 0; i < a.length; i += 2) if (a[i] === "--mode" || a[i] === "--query") o[a[i].slice(2)] = a[i + 1] ?? ""; return o; })();
+let startRan = !(startArgs.mode || startArgs.query);
 function command(raw) { note = ""; showHelp = false; setBox(""); cmds.run(raw); render(); }
 function complete() { // Tab on "/partial": the shared completion (lib/tui/command-line.mjs)
   cmds.tab({ get text() { return query; }, set: (t) => setBox(t) });
@@ -503,11 +514,13 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "selection" && data?.room === room) { marks = data; render(); }
+        else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
     online = true;
     applyRooms(await api.call("ui.subscribe", { windows: false }));
+    if (!startRan) { startRan = true; runFrom(startArgs.mode, startArgs.query); } // opened by /search or /ai elsewhere
     loadMarks(); render();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
