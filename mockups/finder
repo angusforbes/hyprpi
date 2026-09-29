@@ -40,6 +40,10 @@ async function rows() {
     out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: clean(a.display) + (loc ? " · " + loc : ""), sub, parked: !!a.parked, world: a.room || "" });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
+  const byId = Object.fromEntries((l.agents || []).map((a) => [a.id, a]));
+  // A project's place: its writer's workspace (Angus: "wherever the main writer agent is"), else
+  // its world (no writer, or the writer is closed, parked or has no window).
+  const projLoc = (p, room) => { const w = byId[p.writer]; return w && !w.parked && Number.isInteger(w.workspace) && w.workspace > 0 ? wsLabel(w.workspace, WORLD_SIZE) : room; };
   for (const room of WORLD_LETTERS) {
     let b; try { b = await request("board.get", { room }); } catch { continue; }
     if (b?.room !== room) continue;
@@ -47,7 +51,7 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: "@" + clean(p.name) + " · " + room, sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: "@" + clean(p.name) + " · " + projLoc(p, room), sub: sub.slice(0, 160) });
     }
   }
   // Agents A–Z, then projects A–Z (Angus: a "(Project)" tag made every project match "p").
