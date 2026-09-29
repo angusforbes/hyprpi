@@ -10,7 +10,7 @@
 // set in panel 1): everyone = a room post, some = straight to them, none = written in
 // the room and delivered to nobody; "@Name text" always goes to that agent.
 // Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
-// room + stream / room + stream · topics.
+// room + stream / room + stream · topics / stream · topics only (just topic changes).
 // The project board has its own panel (SUPER+ALT+B, mockups/board-tui.mjs). Ctrl+B used to show it in here (lib/tui/board-view.mjs): Needs-you strip + one card per
 // project; in board mode the box takes @project … and board commands (/help there lists them).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
@@ -118,8 +118,9 @@ const MODES = {
   stream: { label: "stream · all activity", msgs: false, act: () => true },                      // activity, no room messages
   all:    { label: "room + stream", msgs: true, act: () => true },                               // everything
   topics: { label: "room + stream · topics only", msgs: true, act: (e) => e.kind === "topic" || DIRECT.has(e.kind) },  // room messages + agent-to-agent + topic changes (no tool lines)
+  topiclines: { label: "stream · topics only", msgs: false, act: (e) => e.kind === "topic" },  // just the agents' topic changes (Angus): no messages, no tools
 };
-const FILTERS = ["room", "stream", "all", "topics"];
+const FILTERS = ["room", "stream", "all", "topics", "topiclines"];
 const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
 const HIDDEN = new Set(["done", "blocked"]);
 let filter = "topics"; // default view
