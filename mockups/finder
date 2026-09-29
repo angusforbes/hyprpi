@@ -35,7 +35,9 @@ async function rows() {
     const where = a.parked ? `parked${a.parked_from ? " (from " + a.parked_from + ")" : ""}`
       : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
     const sub = [where, a.parked ? "" : STATUS[a.status] || a.status, a.topic].map(clean).filter(Boolean).join(" · ");
-    out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: clean(a.display), sub, parked: !!a.parked, world: a.room || "" });
+    // Where it is, in the name (Angus): agents their workspace ("Sankey · C3"), parked ones "parked".
+    const loc = a.parked ? "parked" : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
+    out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: clean(a.display) + (loc ? " · " + loc : ""), sub, parked: !!a.parked, world: a.room || "" });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
   for (const room of WORLD_LETTERS) {
@@ -45,7 +47,7 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: "@" + clean(p.name), sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: "@" + clean(p.name) + " · " + room, sub: sub.slice(0, 160) });
     }
   }
   // Agents A–Z, then projects A–Z (Angus: a "(Project)" tag made every project match "p").
@@ -53,11 +55,6 @@ async function rows() {
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
   const seen = new Set();
-  // A separator row between the agents and the projects (Angus). The menu has no real divider for
-  // these rows, so it is a row made only of line characters: typing never matches it (the menu
-  // filters on label and detail, which have no letters here), and Enter on it does nothing.
-  const firstProject = out.findIndex((r) => r.kind === "project");
-  if (firstProject > 0) out.splice(firstProject, 0, { kind: "separator", glyph: "", label: "─".repeat(28), sub: "", sort: "" });
   for (const r of out) {
     if (!DETAIL) { r.sub = ""; if (seen.has(r.label)) r.label += ` (${r.room || r.world || "?"})`; while (seen.has(r.label)) r.label += "·"; r.key = r.label; }
     else { let k = `${r.label}\t${r.sub}`; while (seen.has(k)) { r.sub += " "; k = `${r.label}\t${r.sub}`; } r.key = k; }
@@ -67,7 +64,6 @@ async function rows() {
 }
 
 async function act(r) {
-  if (r.kind === "separator") return;
   if (r.kind === "agent") {
     if (r.parked) return request("agent.unpark", { agent: r.id });
     return request("agent.focus", { agent: r.id });
