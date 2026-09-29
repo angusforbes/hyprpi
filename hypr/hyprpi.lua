@@ -3,7 +3,20 @@
 -- Install: ln -s ~/Work/hyprpi/hypr/hyprpi.lua ~/.config/hypr/hyprpi.lua (see README).
 -- The hyprpi checkout defaults to ~/Work/hyprpi; set HYPRPI_HOME in Hyprland's environment
 -- to use another path.
-local HYPRPI_BIN = (os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/Work/hyprpi")) .. "/bin/hyprpi"
+local HYPRPI_ROOT = os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/Work/hyprpi")
+local HYPRPI_BIN = HYPRPI_ROOT .. "/bin/hyprpi"
+-- hyprpi add-on switches from ~/.config/hyprpi/config.json (a JSON "key": true/false; a missing
+-- file or key = the default). Only these flags are read here, by pattern, so no JSON parser needed.
+local function hyprpi_flag(key, default)
+  local dir = os.getenv("XDG_CONFIG_HOME") or ((os.getenv("HOME") or "") .. "/.config")
+  local f = io.open(dir .. "/hyprpi/config.json", "r")
+  if not f then return default end
+  local s = f:read("*a"); f:close()
+  local v = s:match('"' .. key .. '"%s*:%s*(%a+)')
+  if v == "true" then return true elseif v == "false" then return false end
+  return default
+end
+
 
 -- Keys.
 --   SUPER + A          new Pi agent in its own window on the current workspace (joins that world's room)
@@ -12,7 +25,7 @@ local HYPRPI_BIN = (os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/
 --   SUPER + ALT + A    agent panel (kitty) for the current world
 --   SUPER + ALT + R    room / stream panel (kitty) for the current world
 --   SUPER + ALT + P    projects panel (the project board) for the current world
---   SUPER + SHIFT + SPACE  find an agent or project (mockups/finder, the Omarchy menu)
+--   SUPER + SHIFT + SPACE  find an agent or project (the finder add-on; the bar toggle then moves to SUPER + ALT + B)
 --   SUPER + CTRL + ALT + P  all four panels here (opened if needed), tiled as a 2x2 grid
 --   SUPER + ALT + /    search TUI (kitty) for the current world's room
 o.bind("SUPER + A", "Pi agent (hyprpi)", HYPRPI_BIN .. " new")
@@ -26,11 +39,16 @@ o.bind("SUPER + SHIFT + SLASH", "Monitor scaling down", "omarchy-hyprland-monito
 -- The board panel is the projects panel on SUPER + ALT + P (Angus, 2026-09-29); SUPER + ALT + B is free.
 o.bind("SUPER + ALT + P", "hyprpi projects panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 4")
 o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 3")
--- Find an agent or a project (Angus, 2026-09-29): the Omarchy menu, like the apps menu on SUPER+ALT+SPACE,
--- listing every world's agents and projects A–Z; Enter jumps to the agent / opens the project card.
--- Takes Omarchy's "Toggle top bar" key; the bar toggle moved to SUPER+ALT+B in ~/.config/hypr/bindings.lua.
-hl.unbind("SUPER + SHIFT + SPACE")
-o.bind("SUPER + SHIFT + SPACE", "hyprpi: find an agent or project", "/home/agf/Work/hyprpi/mockups/finder")
+-- Add-on: the finder (on by default; "finder": false in ~/.config/hyprpi/config.json turns it off
+-- and leaves Omarchy's keys as they were). SUPER+SHIFT+SPACE opens the Omarchy menu, like the apps
+-- menu on SUPER+ALT+SPACE, listing every world's agents and projects; Enter jumps to the agent or
+-- opens the project card (`hyprpi finder`, mockups/finder). It takes Omarchy's "Toggle top bar"
+-- key, so the bar toggle moves to SUPER+ALT+B (B for bar). Angus, 2026-09-29.
+if hyprpi_flag("finder", true) then
+  hl.unbind("SUPER + SHIFT + SPACE")
+  o.bind("SUPER + SHIFT + SPACE", "hyprpi: find an agent or project", HYPRPI_ROOT .. "/mockups/finder")
+  o.bind_toggle("SUPER + ALT + B", "Toggle top bar", "bar")
+end
 
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send
 -- Ctrl+Insert/Shift+Insert instead of Ctrl+C (which Pi treats as clear/interrupt).

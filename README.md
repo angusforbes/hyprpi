@@ -156,6 +156,26 @@ hint while typing and `/help`. Every panel has:
 Panel-specific: room `/messages` (was `/room`) `/stream` `/history`; search `/search /ai /ask`
 (in place); board `/project /todo /note /done /drop /assign …` (see `/help` in each).
 
+## Add-ons
+
+Optional parts, each switched in `~/.config/hyprpi/config.json`. Hyprland picks up a change at its
+next reload (`hyprctl reload`).
+
+### Finder (on by default)
+
+**SUPER+SHIFT+SPACE** opens the Omarchy menu (the same one as the apps menu on SUPER+ALT+SPACE)
+listing every world's live and parked agents, then its open projects, each with where it is:
+`Sankey · C3`, `@hyprpi · C1` (a project sits where its writer is, else where its world's projects
+panel is). Type to filter, ↑↓, Enter, Esc. Enter on an agent jumps to its window (a parked one is
+brought back here); on a project it opens its card in the projects panel. The key again closes it.
+Also `hyprpi finder` (or `mockups/finder --list` to print the rows).
+
+It takes Omarchy's "Toggle top bar" key, so the bar toggle moves to **SUPER+ALT+B**.
+
+- `"finder": false`: off; SUPER+SHIFT+SPACE toggles the top bar again, as in stock Omarchy.
+- `"finderDetail": true`: a grey line under each row (status and topic; members and where it
+  stands), at the cost of fewer rows on screen (the menu caps itself at 70% of the screen).
+
 ## Tinker (the workshop world)
 
 Worlds are projects. Friction work (a panel, a key, the bar: anything that slows your
