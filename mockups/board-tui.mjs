@@ -25,6 +25,8 @@ import { spawn } from "node:child_process";
 import { connect } from "../lib/client.mjs";
 import { completeAt } from "../lib/at-names.mjs";
 import { urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
+import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+let worldBar = null;
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
@@ -168,6 +170,7 @@ function draw() {
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi projects ${online ? "" : "· daemon offline "}`, d = new Date();
   const right = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} `;
+  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, W - width(left) - width(strip(tabs)) - width(right)))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-board ${room}\x07`);
@@ -315,6 +318,8 @@ function tab(fwd) {
 function mouse(d) {
   for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
     const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]), press = m[4] === "M";
+    const tab = b === 0 && press ? worldTabAt(worldBar, x, y, rooms.map((r) => r.id)) : null;
+    if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycle(s); continue; } // a world tab: like Ctrl+Tab
     if (b === 64 || b === 65) { bv.scroll(b === 64 ? 3 : -3); continue; } // wheel
     if (b === 16) { if (press) ctrlClick(x, y); continue; }            // Ctrl+click: @agent / link
     if (b === 4 && press) { const r = rowMeta[y]; if (r?.msg != null && items[r.msg]) copy(items[r.msg].copy); continue; } // Shift+click: the whole item

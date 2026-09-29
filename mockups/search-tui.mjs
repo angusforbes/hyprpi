@@ -34,6 +34,8 @@ import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
+import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+let worldBar = null;
 
 const ESC = "\x1b[";
 const out = (s) => process.stdout.write(s);
@@ -471,6 +473,7 @@ function render() {
   const pos = S.results.length ? (S.selected + 1) + "/" + S.results.length + " · " : "";
   const right = `${pos}^/ mode · @name scope · /help · ^Q quit `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
+  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-search ${room}\x07`); // panel identity: mockups/panels finds it by this exact title
@@ -590,6 +593,8 @@ function onKey(d) {
   if (d.startsWith("\x1b[<")) {
     const m = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(d); if (!m) return;
     const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
+    const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, rooms) : null;
+    if (tab) { const s = stepTo(rooms, room, tab); if (s) cycle(s); return; } // a world tab: like Ctrl+Tab
     if (b === 64) return move(-1);
     if (b === 65) return move(1);
     // Left button (+4 = Shift): press starts a possible selection, motion drags it,

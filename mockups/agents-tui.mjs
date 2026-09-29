@@ -31,6 +31,8 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold
   markupFg, unnamed, nameFg, width, cut, clip } from "../lib/tui/term.mjs";
 import { createInputBox } from "../lib/tui/input-box.mjs";
 import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
+import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+let worldBar = null;
 
 // ---- state -----------------------------------------------------------------
 let agents = [], dormant = [], rooms = [], room = (process.argv[2] || "").toUpperCase();
@@ -242,6 +244,7 @@ function draw() {
   const left = ` agents ${online ? "" : "· daemon offline "}`;
   const right = `${live.length} live${extra ? " · " + extra : ""} `;
   const mid = W - width(left) - width(tabs.replace(/\x1b\[[0-9;]*m/g, "")) - width(right);
+  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-router ${room}\x07`); // how `mockups/panels` finds this window
@@ -451,6 +454,8 @@ function onKey(d) {
   const m = d.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/);       // SGR mouse
   if (m) {
     const b = Number(m[1]), y = Number(m[3]), press = m[4] === "M";
+    const tab = b === 0 && press ? worldTabAt(worldBar, Number(m[2]), y, rooms.map((r) => r.id)) : null;
+    if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycleRoom(s); return; } // a world tab: like Ctrl+Tab
     if (b === 64 || b === 65) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); return render(); }
     const pid = projRowY[y];
     if (pid && press && (b === 0 || b === 16)) {

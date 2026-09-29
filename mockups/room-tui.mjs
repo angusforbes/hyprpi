@@ -37,6 +37,8 @@ const completions = (prefix) => view === "board" ? [...new Set([...boardCompleti
 // Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
+import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+let worldBar = null;
 const bv = createBoardView({ render: () => render() });
 const helpRows = () => {
   const list = cmds.help(), w = Math.max(12, ...list.map(([c]) => c.length));
@@ -488,6 +490,7 @@ function draw() {
   const left = ` hyprpi ${online ? "" : "· daemon offline "}`;
   const right = `history ${historyN} · ${hhmm(Date.now())} `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
+  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-room ${room}\x07`); // not "hyprpi room …": the daemon treats those titles as room windows
@@ -905,6 +908,8 @@ function onKey(d) {
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
       const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
+      const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, rooms.map((r) => r.id)) : null;
+      if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycle(s); continue; } // a world tab: like Ctrl+Tab
       const inList = false; // no agent pane in this panel
       // Left button: press starts a possible selection, motion drags it,
       // release copies it (or, without a drag, counts as a click).
