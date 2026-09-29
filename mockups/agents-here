@@ -5,10 +5,10 @@
 //
 // What a click on the selected world in the top bar does (hyprwrlds runs `hyprpi room --toggle`,
 // which hands over to this; it used to toggle the old Quickshell room window, now retired but
-// kept in ui/). Angus, 2026-09-28:
-//   - the panel is open somewhere (any workspace): jump there and focus it;
-//   - parked in Reprieve (a special workspace): bring it back here (focusing it would only
-//     peek at the parked view);
+// kept in ui/). Angus, 2026-09-28 (a toggle that always acts HERE):
+//   - the panel is open on the current workspace: close it;
+//   - open on another workspace, or parked in Reprieve (a special workspace): bring it here,
+//     out of fullscreen, and focus it (like the SUPER+ALT panel keys);
 //   - not open: open it on the current workspace in the TOP-LEFT slot: dwindle's
 //     "preselect l" on the top-left tiled window makes the new window open to its left.
 import { spawn } from "node:child_process";
@@ -33,16 +33,19 @@ const main = async () => {
   // Several copies can exist: one here first, then any on a normal workspace, then a parked one.
   const rank = (c) => c.workspace?.id === ws ? 0 : c.workspace?.id > 0 ? 1 : 2;
   const found = cs.filter((c) => title.test(c.title || "")).sort((x, y) => rank(x) - rank(y))[0];
-  if (found && found.workspace?.id > 0) {                  // open on a normal workspace: go there
-    await hypr.focusWindow(found.address);
-    return console.log(`agents panel ${room}: jumped to workspace ${found.workspace.id}`);
-  }
   if (!ws) { console.error("agents-here: no normal workspace is active"); process.exit(1); }
-  if (found) {                                             // parked: bring it back here
+  if (found && found.workspace?.id === ws) {               // open here: close it
+    await hypr.closeWindow(found.address);
+    return console.log(`agents panel ${room}: closed on workspace ${ws}`);
+  }
+  if (found) {                                             // elsewhere (or parked): bring it here
+    const from = found.workspace?.name || found.workspace?.id;
+    if (found.fullscreen || found.fullscreenClient) await hypr.unfullscreen(found.address).catch(() => {});
     await hypr.moveWindow(found.address, String(ws));
     await sleep(150);
+    await hypr.clearFullscreen(ws, [found.address]); // you want to see it: nothing fullscreen over it
     await hypr.focusWindow(found.address);
-    return console.log(`agents panel ${room}: brought back from ${found.workspace?.name}`);
+    return console.log(`agents panel ${room}: brought here from ${from}`);
   }
   // Not open: the top-left slot. Focus the top-left tiled window here and preselect "left", so the
   // new window splits it and takes its left part (an empty workspace just gets the window).
