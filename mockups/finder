@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+// Agents and projects finder (Angus, 2026-09-29; SUPER+SHIFT+SPACE): the Omarchy menu, as the apps
+// menu (SUPER+ALT+SPACE) shows it, listing every world's live and parked agents and its open
+// projects, A–Z in one list. Type to filter (the subtext counts too: "C3", "working"), ↑↓, Enter, Esc.
+//   Enter on an agent    jump to its window (parked: brought back here)
+//   Enter on a project   its card in that world's projects panel (the panel comes here)
+// Plan: ~/Obsidian/Tinker/2026-09-29 Agents and projects finder.md
+//
+//   ~/Work/hyprpi/mockups/finder            open the menu
+//   ~/Work/hyprpi/mockups/finder --list     print the rows instead (tests, a quick look)
+//
+// Pressing the key again while the menu is open closes it (like the apps menu toggle).
+// omarchy-menu-select waits for the menu to write a "done" file; if the menu goes away without
+// writing it (seen once: a picker polled for 35 h), we give up after TIMEOUT_S and kill it.
+import fs from "node:fs";
+import path from "node:path";
+import { spawn, execFile } from "node:child_process";
+import { request } from "../lib/client.mjs";
+import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS } from "../lib/paths.mjs";
+
+const TIMEOUT_S = Number(process.env.HYPRPI_FINDER_TIMEOUT) || 600; // env only for tests
+const here = new URL(".", import.meta.url).pathname;
+const WORLD_SIZE = loadConfig().worldSize || 10;
+const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
+const clean = (s) => String(s ?? "").replace(/[\t\n\r\x00-\x1f\x7f]+/g, " ").trim();
+
+async function rows() {
+  const l = await request("list");
+  const out = [];
+  for (const a of l.agents || []) {
+    const where = a.parked ? `parked${a.parked_from ? " (from " + a.parked_from + ")" : ""}`
+      : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
+    const sub = [where, a.parked ? "" : STATUS[a.status] || a.status, a.topic].map(clean).filter(Boolean).join(" · ");
+    out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: clean(a.display), sub, parked: !!a.parked });
+  }
+  const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
+  for (const room of WORLD_LETTERS) {
+    let b; try { b = await request("board.get", { room }); } catch { continue; }
+    if (b?.room !== room) continue;
+    for (const p of b.projects || []) {
+      if (p.status === "archived") continue;
+      const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
+      const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: "@" + clean(p.name), sub: sub.slice(0, 160) });
+    }
+  }
+  out.sort((x, y) => x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }) || x.kind.localeCompare(y.kind));
+  // The menu returns "label<TAB>subtext"; make every one unique so a pick maps back to one row.
+  const seen = new Set();
+  for (const r of out) { let k = `${r.label}\t${r.sub}`; while (seen.has(k)) { r.sub += " "; k = `${r.label}\t${r.sub}`; } seen.add(k); r.key = k; }
+  return out;
+}
+
+async function act(r) {
+  if (r.kind === "agent") {
+    if (r.parked) return request("agent.unpark", { agent: r.id });
+    return request("agent.focus", { agent: r.id });
+  }
+  await request("board.open", { room: r.room, project: r.id }).catch(() => {});
+  const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+  spawn(here + "panel-here", ["board", r.room], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref();
+}
+
+// One finder at a time: a second press closes the open one.
+const LOCK = path.join(runtimeDir(), "finder.pid");
+function toggleOff() {
+  try {
+    const pid = Number(fs.readFileSync(LOCK, "utf8"));
+    if (pid && pid !== process.pid) { process.kill(pid, 0); execFile("omarchy-menu", ["close"], () => {}); process.kill(pid, "SIGTERM"); return true; }
+  } catch { /* none running */ }
+  return false;
+}
+
+const main = async () => {
+  const list = process.argv.includes("--list");
+  let rs;
+  try { rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
+  if (list) { for (const r of rs) console.log(`${r.glyph}\t${r.label}\t${r.sub}`); return; }
+  if (toggleOff()) return;
+  fs.mkdirSync(path.dirname(LOCK), { recursive: true });
+  fs.writeFileSync(LOCK, String(process.pid));
+  const unlock = () => { try { if (Number(fs.readFileSync(LOCK, "utf8")) === process.pid) fs.unlinkSync(LOCK); } catch { /* gone */ } };
+  if (!rs.length) { unlock(); return; }
+  const child = spawn("omarchy-menu-select", ["hyprpi", ...rs.map((r) => `${r.glyph}\t${r.label}\t${r.sub}`), "--", "--width", "900"], { stdio: ["ignore", "pipe", "ignore"] });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  const t = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_S * 1000);
+  process.on("SIGTERM", () => { child.kill("SIGTERM"); unlock(); process.exit(0); });
+  child.on("close", async (code) => {
+    clearTimeout(t); unlock();
+    const pick = out.replace(/\n$/, "");
+    if (code !== 0 || !pick) return;
+    const r = rs.find((x) => x.key === pick) || rs.find((x) => x.label === pick) || rs.find((x) => pick.startsWith(x.label + "\t") && x.key.trimEnd() === pick.trimEnd());
+    if (!r) { console.error("finder: no row for " + JSON.stringify(pick)); return; }
+    try { await act(r); } catch (e) { console.error("finder: " + e.message); }
+  });
+};
+main();
