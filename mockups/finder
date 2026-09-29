@@ -45,7 +45,7 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: clean(p.name), sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: "@" + clean(p.name), sub: sub.slice(0, 160) });
     }
   }
   // Agents A–Z, then projects A–Z (Angus: a "(Project)" tag made every project match "p").
