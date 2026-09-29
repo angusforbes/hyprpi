@@ -4,7 +4,7 @@
 //
 //   ~/Work/hyprpi/mockups/agents-tui [ROOM]     (kitty launcher)
 //
-// Rows: ● working · ✓ finished (unseen) · × blocked · ○ idle, then the name, topic and
+// Rows: ● working · ✓ finished (unseen) · × blocked · ○ idle, then the name, workspace (C2), topic and
 // model. Greyed ◌ rows are agents that are not open: "closed" (lost to a reboot, or
 // closed/killed while hyprpi ran) and "parked" (Reprieve, SUPER+W: still running, out
 // of every room). Ctrl+O cycles: live · + parked.
@@ -19,7 +19,8 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { connect } from "../lib/client.mjs";
-import { loadConfig } from "../lib/paths.mjs";
+import { loadConfig, wsLabel } from "../lib/paths.mjs";
+const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C2" labels)
 import * as hypr from "../lib/hypr.mjs";
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold, fg,
   markupFg, unnamed, nameFg, width, cut, clip } from "../lib/tui/term.mjs";
@@ -86,7 +87,9 @@ function draw() {
     const bare = name.slice(iconPart.length);
     const model = (a.model || "").replace(/^claude-/, "");
     const dot = " · ";
-    const rest = (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    // Where it is, as hyprpi list says it (Angus): "pi·k3vg · C2 · topic · opus-5-5". Parked rows say "parked" instead.
+    const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
+    const rest = ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
       const what = a.parked ? "parked" : "closed";
