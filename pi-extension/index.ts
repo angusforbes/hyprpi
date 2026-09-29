@@ -117,6 +117,7 @@ export default function hyprpi(pi: ExtensionAPI) {
       model: ctx?.model?.id || "", thinking: safe(() => pi.getThinkingLevel()) || "",
       name: safe(() => pi.getSessionName()) || "",
       want_workspace: Number.isInteger(ws) && ws > 0 ? ws : undefined,
+      container: process.env.HYPRPI_CONTAINER || undefined,
       twin_of: process.env.HYPRPI_TWIN_OF || undefined,
     });
   }

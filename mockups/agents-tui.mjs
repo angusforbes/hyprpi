@@ -130,7 +130,9 @@ function draw() {
     const dot = " · ";
     // Where it is, as hyprpi list says it (Angus): "pi·k3vg · C2 · topic · opus-5-5". Parked rows say "parked" instead.
     const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
-    const rest = ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    // Runs in a container (Angus): "🐳 docker" right after the name.
+    const box = a.container ? dot + "🐳 " + String(a.container).split(":")[0] : "";
+    const rest = box + ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
       const what = a.parked ? "parked" : "closed";
@@ -257,7 +259,7 @@ function act(kind) { // ^W close / ^K kill; on a closed agent both mean "forget"
     if (!a.address) { note = "✗ no window for " + a.display; return render(); }
     hypr.closeWindow(a.address).then(() => { note = "closed " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
   } else {
-    try { process.kill(a.pid, "SIGTERM"); note = "killed " + a.display; } catch (e) { note = "✗ " + e.message; }
+    try { process.kill(a.host_pid || a.pid, "SIGTERM"); note = "killed " + a.display; } catch (e) { note = "✗ " + e.message; }
     setTimeout(() => { try { process.kill(a.pid, 0); process.kill(a.pid, "SIGKILL"); } catch { /* gone */ } }, 2000);
   }
   render();
