@@ -135,7 +135,7 @@ function draw() {
   rowMeta = {}; items = b.items;
   b.rows.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
   rows.push(...b.rows.map((r) => r.line));
-  rows.push(fg(c, "─".repeat(W)));
+  const inputRule = rows.push(fg(c, "─".repeat(W))) - 1;
   // The hint after the box: typing a /command → its matches; else the note, the highlight's
   // keys, or what the box takes.
   const text = box.text;
@@ -145,7 +145,12 @@ function draw() {
     : (busy ? "  " + busy : "") + (note ? dim("  " + note) : text ? "" : dim(bv.cursorHint() || (open
       ? `text → @${open.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · ⏎ or Esc: all projects`
       : "@project text · @project alone opens it · D1 b answers · N2 ? asks · ^↑↓ highlight · /help")));
-  inRows.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 ? hint : "")));
+  // A hint that doesn't fit after the text (a narrow panel, e.g. in the 2x2 grid) goes on the
+  // rule above the box instead of off the edge (Angus: "/assign … doesn't work": it had, but the
+  // confirmation was past the right edge).
+  const fits = !hint || pw + width(inRows[0] || "") + width(hint) <= W;
+  if (!fits) { const h = clip(hint.replace(/^(\s|\x1b\[[0-9;]*m)+/, (m) => m.replace(/ /g, "")), W - 3); rows[inputRule] = fg(c, "─ ") + h + " " + fg(c, "─".repeat(Math.max(0, W - 3 - width(h)))); }
+  inRows.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && fits ? hint : "")));
   // Status bar: the worlds, this one highlighted.
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi board ${online ? "" : "· daemon offline "}`, d = new Date();
