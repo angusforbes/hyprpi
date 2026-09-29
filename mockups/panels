@@ -70,6 +70,8 @@ async function bring(p, ws, room) {
   const found = before.filter((c) => p.title.test(c.title || "")).sort((x, y) => rank(x) - rank(y))[0];
   if (found) {
     if (found.workspace?.id !== ws) {
+      // A fullscreen panel arrives as a normal window in the layout, not fullscreen there.
+      if (found.fullscreen || found.fullscreenClient) await hypr.unfullscreen(found.address).catch(() => {});
       await hypr.moveWindow(found.address, String(ws)).catch(() => {});
       await sleep(200);
     }
@@ -200,6 +202,7 @@ const main = async () => {
   if (list.length === 1) {
     const addr = await bring(list[0], ws, room);
     if (!addr) { console.error(`panels: panel ${list[0].n} did not open`); process.exit(1); }
+    await hypr.clearFullscreen(ws, [addr]); // you called it to see it: nothing fullscreen over it
     return hypr.focusWindow(addr).catch(() => {});
   }
   const already = await panelModeHere(ws);   // second press: back to regular mode
@@ -212,6 +215,7 @@ const main = async () => {
     await hypr.focusWindow(addr).catch(() => {});
     if (p !== list[list.length - 1]) await hypr.dispatch('hl.dsp.layout("preselect r")').catch(() => {});
   }
+  await hypr.clearFullscreen(ws, opened);
   if (opened.length < 2) return;
   if (args.includes("--columns")) return exactColumns(opened);
   if (!tiled) { await grid(opened); return hypr.focusWindow(opened[1] || opened[0]).catch(() => {}); }
