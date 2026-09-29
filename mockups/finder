@@ -19,6 +19,10 @@ import { request } from "../lib/client.mjs";
 import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS } from "../lib/paths.mjs";
 
 const TIMEOUT_S = Number(process.env.HYPRPI_FINDER_TIMEOUT) || 600; // env only for tests
+// Rows show only icon + name (Angus, 2026-09-29: one line each, so far more fit in the menu, which
+// caps itself at 70% of the screen). "finderDetail": true in ~/.config/hyprpi/config.json brings
+// back the grey line under each name (workspace · status · topic / world · members · where).
+const DETAIL = loadConfig().finderDetail === true;
 const here = new URL(".", import.meta.url).pathname;
 const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
@@ -31,7 +35,7 @@ async function rows() {
     const where = a.parked ? `parked${a.parked_from ? " (from " + a.parked_from + ")" : ""}`
       : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
     const sub = [where, a.parked ? "" : STATUS[a.status] || a.status, a.topic].map(clean).filter(Boolean).join(" · ");
-    out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: clean(a.display), sub, parked: !!a.parked });
+    out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: clean(a.display), sub, parked: !!a.parked, world: a.room || "" });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
   for (const room of WORLD_LETTERS) {
@@ -45,9 +49,14 @@ async function rows() {
     }
   }
   out.sort((x, y) => x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }) || x.kind.localeCompare(y.kind));
-  // The menu returns "label<TAB>subtext"; make every one unique so a pick maps back to one row.
+  // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
+  // unique so a pick maps back to one row.
   const seen = new Set();
-  for (const r of out) { let k = `${r.label}\t${r.sub}`; while (seen.has(k)) { r.sub += " "; k = `${r.label}\t${r.sub}`; } seen.add(k); r.key = k; }
+  for (const r of out) {
+    if (!DETAIL) { r.sub = ""; if (seen.has(r.label)) r.label += ` (${r.room || r.world || "?"})`; while (seen.has(r.label)) r.label += "·"; r.key = r.label; }
+    else { let k = `${r.label}\t${r.sub}`; while (seen.has(k)) { r.sub += " "; k = `${r.label}\t${r.sub}`; } r.key = k; }
+    seen.add(r.key);
+  }
   return out;
 }
 
@@ -75,13 +84,14 @@ const main = async () => {
   const list = process.argv.includes("--list");
   let rs;
   try { rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
-  if (list) { for (const r of rs) console.log(`${r.glyph}\t${r.label}\t${r.sub}`); return; }
+  const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`;
+  if (list) { for (const r of rs) console.log(row(r)); return; }
   if (toggleOff()) return;
   fs.mkdirSync(path.dirname(LOCK), { recursive: true });
   fs.writeFileSync(LOCK, String(process.pid));
   const unlock = () => { try { if (Number(fs.readFileSync(LOCK, "utf8")) === process.pid) fs.unlinkSync(LOCK); } catch { /* gone */ } };
   if (!rs.length) { unlock(); return; }
-  const child = spawn("omarchy-menu-select", ["hyprpi", ...rs.map((r) => `${r.glyph}\t${r.label}\t${r.sub}`), "--", "--width", "900"], { stdio: ["ignore", "pipe", "ignore"] });
+  const child = spawn("omarchy-menu-select", ["hyprpi", ...rs.map(row), "--", "--width", DETAIL ? "900" : "520"], { stdio: ["ignore", "pipe", "ignore"] });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
   const t = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_S * 1000);
