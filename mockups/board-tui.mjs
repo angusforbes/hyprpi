@@ -29,6 +29,7 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, n
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
 import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
+import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 
 let room = (process.argv[2] || "").toUpperCase(), rooms = [], agents = [], online = false, api = null, note = "";
 let board = { room: "", projects: [], names: {}, live: {} };
@@ -52,6 +53,17 @@ const box = createInputBox({
   sentStyle: (g) => fg(worldFg(room), g),
 });
 let resendAsk = 0;   // ⏎ on unchanged sent text asks first (a second ⏎ within 4 s resends)
+// The board's commands are lib/tui/board-view.mjs's; these are the ones every panel has, run when
+// the board doesn't know a command (/help is the board's own: it shows the board's list).
+const cmds = createCommands({
+  ctx: {
+    api: () => api, via: "board-tui", render: () => render(),
+    note: (t) => { note = t; render(); },
+    showHelp: () => { bv.st.help = true; render(); },
+    quit: () => quit(),
+    setBox: (t) => box.set(t),
+  },
+});
 let hcycle = null;   // Tab state for @names
 
 // ---- selection & copy (the TUI owns the mouse) ------------------------------------------
@@ -217,7 +229,10 @@ async function send() {
   }
   try {
     const r = await bv.input(raw, { api, room, board: boardHere() || { projects: [] } });
-    if (!r) { note = "✗ not a board command · /help"; return render(); }
+    if (!r) { // not the board's: the commands every panel has (/tinker, /quit; lib/tui/command-line.mjs)
+      if (parseCommand(raw)) { box.clear(); cmds.run(raw); return render(); }
+      note = "✗ not a board command · /help"; return render();
+    }
     if (r.confirm) note = r.note; // a confirm prompt (/spinout, /merge): not sent yet, ⏎ again runs it
     else { box.markSent(); note = r.note; }
   } catch (e) { note = "✗ " + e.message; }
@@ -316,7 +331,7 @@ process.on("SIGTERM", quit);
 
 // ---- restart onto new code (the launcher loops on exit 75; the state rides along) ------
 const CODE = [new URL("./board-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

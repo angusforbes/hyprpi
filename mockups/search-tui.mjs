@@ -32,6 +32,7 @@ import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
+import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 
 const ESC = "\x1b[";
@@ -117,8 +118,23 @@ function scopeOf(text = query) {
 const onlyIds = () => scopeOf().ids;
 const S = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: onlyIds, closed: true, roomLog: true, order: "auto" });
 
-const COMMANDS = ["/search", "/ai", "/ask", "/help"]; // /ask = /ai
-const matchCommands = (name) => COMMANDS.filter((c) => c.startsWith(name.toLowerCase()));
+// Commands: the search panel's own (/search, /ai, /ask) plus the ones every panel has (/help,
+// /tinker, /quit), all through lib/tui/command-line.mjs.
+const searchCmd = (mode) => (arg) => { setBox(arg); if (S.mode !== mode) S.toggleMode(); if (arg) return enter(); render(); };
+const cmds = createCommands({
+  commands: [
+    { name: "/search", usage: "/search WORDS", help: "keyword search (no words: keyword mode)", run: searchCmd("keyword") },
+    { name: "/ai", usage: "/ai QUESTION", help: "AI: a short answer + the evidence (or a description: just the matches)", run: searchCmd("ai") },
+    { name: "/ask", usage: "/ask QUESTION", help: "same as /ai", run: searchCmd("ai") },
+  ],
+  ctx: {
+    api: () => api, via: "search-tui", render: () => render(),
+    note: (t) => { note = t; render(); },
+    showHelp: () => { setBox(""); showHelp = true; render(); },
+    quit: () => quit(),
+    setBox: (t) => setBox(t),
+  },
+});
 
 function scopeLabel() {
   const sc = scopeOf(S.busy || !S.ranFor ? query : S.ranFor.box ?? query);
@@ -174,24 +190,10 @@ function enter() {
   top = 0; S.run(text, S.mode); if (S.ranFor) S.ranFor.box = box;
 }
 function setBox(text) { query = text; qc = graphemes(text).length; }
-function command(raw) {
-  const m = raw.match(/^(\/\S*)\s*([\s\S]*)$/), name = m[1], arg = m[2].trim();
-  const hits = COMMANDS.includes(name.toLowerCase()) ? [name.toLowerCase()] : matchCommands(name);
-  if (hits.length !== 1) { note = hits.length ? "which one? " + hits.join(" ") : `unknown command ${name} (try /help)`; return render(); }
-  const cmd = hits[0]; note = ""; showHelp = false;
-  if (cmd === "/help") { setBox(""); showHelp = true; return render(); }
-  const mode = cmd === "/search" ? "keyword" : "ai"; // /ai and /ask
-  setBox(arg);
-  if (arg) { if (S.mode !== mode) S.toggleMode(); return enter(); }
-  else { if (S.mode !== mode) S.toggleMode(); render(); }
-}
-function complete() {
-  const hits = matchCommands(query);
-  if (!hits.length) { note = "no such command (try /help)"; return render(); }
-  if (hits.length === 1) { setBox(hits[0] + " "); note = ""; return render(); }
-  let pre = hits[0];
-  for (const h of hits) while (!h.startsWith(pre)) pre = pre.slice(0, -1);
-  setBox(pre); note = hits.join("  "); render();
+function command(raw) { note = ""; showHelp = false; setBox(""); cmds.run(raw); render(); }
+function complete() { // Tab on "/partial": the shared completion (lib/tui/command-line.mjs)
+  cmds.tab({ get text() { return query; }, set: (t) => setBox(t) });
+  render();
 }
 
 // One result as screen lines.
@@ -243,10 +245,7 @@ function helpLines() {
     k("Ctrl+C · Ctrl+Q", "clear the box · quit"),
     k("editing", "←→ Home End · Ctrl/Alt+←→ word · Ctrl+W / Alt+Backspace word · Ctrl+U clear"),
     "",
-    k("/search WORDS", "keyword search (no words: keyword mode)"),
-    k("/ai QUESTION", "AI: a short answer + the evidence (or a description: just the matches)"),
-    k("/ask QUESTION", "same as /ai"),
-    k("/help", "this list"),
+    ...cmds.help().map(([c, d]) => k(c, d)),
     k("//text", "search for \"/text\""),
   ];
 }
@@ -399,7 +398,8 @@ function render() {
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   rows.push(rule(`search · room ${room} · ${scopeLabel()}`));
   const prompt = fg(c, bold(S.mode === "ai" ? "✦ " : "⌕ "));
-  const hint = query ? "" : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
+  const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
+  const hint = slash ? dim("  " + slash) : query ? "" : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   boxIn();
   rows.push(`${prompt}${box.layout(1e6).rows[0]}${hint}`); // the shared box: @names coloured, selection highlighted
@@ -614,7 +614,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

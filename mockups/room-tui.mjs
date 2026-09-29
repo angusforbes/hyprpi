@@ -29,23 +29,19 @@
 import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
+import { createCommands } from "../lib/tui/command-line.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
-const COMMANDS = [
-  ["/room", "room messages + agent-to-agent"],
-  ["/stream", "/stream WORDS shows only rows with those words; /stream alone clears the filter"],
-  ["/tinker", "/tinker [D:] TEXT: drop a friction fix off in the workshop world (one free agent there does it); D: sets the workshop to world D"],
-  ["/history", "/history N | all: how far back the stream goes (N interactions; default 200)"],
-  ["/help", "this list"],
-];
-const completions = (prefix) => view === "board" ? boardCompletions(prefix) : COMMANDS.map(([c]) => c).filter((c) => c.startsWith(prefix.toLowerCase()));
+// Commands: the room's own (below, in `command`) plus the ones every panel has (/help, /tinker,
+// /quit), all through lib/tui/command-line.mjs. In board view the board's commands come first.
+const completions = (prefix) => view === "board" ? [...new Set([...boardCompletions(prefix), ...cmds.complete(prefix)])] : cmds.complete(prefix);
 // Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 const bv = createBoardView({ render: () => render() });
 const helpRows = () => {
-  const w = Math.max(...COMMANDS.map(([c]) => c.length));
+  const list = cmds.help(), w = Math.max(12, ...list.map(([c]) => c.length));
   return [
-    ...COMMANDS.map(([c, d]) => `   ${bold(c.padEnd(w))}  ${d}`),
+    ...list.map(([c, d]) => `   ${bold(c.padEnd(w))}  ${d}`),
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
     `   ${bold("@Name @Name".padEnd(w))}  ${dim("on its own + ⏎: who messages go to from now on (the \"C → @…\" before the box; same as the marks ▸) · @all · @nobody")}`,
@@ -635,35 +631,36 @@ function newAgent(dir) {
 
 // Where the last interaction was: "results" (a search result selected) or "input".
 let focusArea = "input";
+// The room's commands; /help, /tinker and /quit come from lib/tui/command-line.mjs.
+const cmds = createCommands({
+  commands: [
+    { name: "/room", help: "room messages + agent-to-agent", run: () => { filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); } },
+    { name: "/stream", usage: "/stream [WORDS]", help: "only rows with those words; /stream alone clears the filter",
+      run: (arg) => { words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } } },
+    { name: "/history", usage: "/history N | all", help: "how far back the stream goes (N interactions; default 200)",
+      run: (arg) => {
+        if (!arg) { note = `history: ${historyN === "all" ? "everything" : "last " + historyN + " interactions"} · /history N or /history all`; render(); return; }
+        const n = /^all$/i.test(arg) ? "all" : Number.parseInt(arg, 10);
+        if (n !== "all" && !(n > 0)) { note = "✗ /history takes a number or all"; render(); return; }
+        historyN = n; scroll = 0; lastConvoLen = 0;
+        note = `history: ${n === "all" ? "everything" : "last " + n + " interactions"} (stream and /ask)`;
+        setView("stream"); loadRoom(room);
+      } },
+    { name: "/new", usage: "/new [DIR]", help: "a new agent (^N)", run: (arg) => newAgent(arg) },
+    ...["/search", "/ai", "/ask"].map((name) => ({ name, help: "lives in the search panel · SUPER+ALT+/", run: () => { note = `✗ ${name} lives in the search panel · SUPER+ALT+/`; render(); } })),
+  ],
+  ctx: {
+    api: () => api, via: "room-tui", render: () => render(),
+    note: (t) => { note = t; render(); },
+    showHelp: () => setView("help"),
+    quit: () => quit(),
+    setBox: (t) => { input = t; ic = graphemes(t).length; },
+  },
+});
 function command(text) {
-  const m = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text);
-  if (!m || text.startsWith("//")) return false;
-  const arg = (m[2] || "").trim();
+  if (!text.startsWith("/") || text.startsWith("//")) return false;
   input = ""; ic = 0; note = "";
-  switch (m[1].toLowerCase()) {
-    case "new": newAgent(arg); return true;
-    case "room": filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); return true;
-    case "stream": words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } return true;
-    case "search": case "ai": case "ask": note = `\u2717 /${m[1]} lives in the search panel \u00b7 SUPER+ALT+/`; render(); return true;
-    case "history": {
-      if (!arg) { note = `history: ${historyN === "all" ? "everything" : "last " + historyN + " interactions"} · /history N or /history all`; render(); return true; }
-      const n = /^all$/i.test(arg) ? "all" : Number.parseInt(arg, 10);
-      if (n !== "all" && !(n > 0)) { note = "✗ /history takes a number or all"; render(); return true; }
-      historyN = n; scroll = 0; lastConvoLen = 0;
-      note = `history: ${n === "all" ? "everything" : "last " + n + " interactions"} (stream and /ask)`;
-      setView("stream"); loadRoom(room); return true;
-    }
-    case "help": setView("help"); return true;
-    case "tinker":
-      if (!arg) { input = "/tinker "; ic = graphemes(input).length; note = "/tinker what to fix: it goes to a free agent in the workshop world"; render(); return true; }
-      if (!api) { input = text; ic = graphemes(text).length; note = "✗ daemon offline"; render(); return true; }
-      api.call("tinker", { text: arg, via: "room-tui" })
-        .then((r) => { note = "🔧 " + (r.set ? `workshop is world ${r.set.workshop} now${r.set.previous ? " (was " + r.set.previous + ")" : ""} · ` : "") + (r.nothing ? "nothing to fix given" : r.queued ? `queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `dropped off in the workshop (room ${r.room})`); render(); })
-        .catch((e) => { input = text; ic = graphemes(text).length; note = "✗ " + e.message; render(); });
-      render(); return true;
-  }
-  input = text; ic = graphemes(text).length; note = `\u2717 unknown command /${m[1]} \u00b7 /help lists them \u00b7 to say it instead, start with //`; render();
-  return true;
+  return cmds.run(text);
 }
 
 // Board mode: what is typed goes to the board (a board command, @project …); anything
@@ -970,7 +967,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/shimmer.mjs", "tui/input-box.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

@@ -15,6 +15,11 @@
 //   Ctrl+W / Ctrl+K      close / kill (twice); on a closed agent: forget it
 //   Ctrl+N               new agent here       ^Tab / ^⇧Tab  switch world
 //   Ctrl+Q               quit
+// Command line (lib/tui/command-line.mjs + lib/tui/input-box.mjs, shared with the room, search and
+// board panels): type /command + ⏎ (Tab completes). While the box has text, typing, Space, ⏎,
+// Esc (clears it) and ^W (a word) are the box's; empty, every key above works as before.
+//   /new             a new agent here (^N)       /help  commands and keys
+//   /tinker [W:] X   drop a fix off in the workshop    /quit  close the panel
 // Later: a 🎤 column for dictation targets, and commands that act on the selection.
 import fs from "node:fs";
 import { spawn } from "node:child_process";
@@ -24,6 +29,8 @@ const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C
 import * as hypr from "../lib/hypr.mjs";
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold, fg,
   markupFg, unnamed, nameFg, width, cut, clip } from "../lib/tui/term.mjs";
+import { createInputBox } from "../lib/tui/input-box.mjs";
+import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
 
 // ---- state -----------------------------------------------------------------
 let agents = [], dormant = [], rooms = [], room = (process.argv[2] || "").toUpperCase();
@@ -34,6 +41,26 @@ let showMode = 0;                            // 0 = live (+ lost to a restart), 
 const SHOW_LABEL = ["live", "+ parked"];
 const closing = new Map();                   // id -> "close" | "kill" while we wait for the daemon
 let pendingNew = [];
+let showHelp = false;                        // /help: the commands and keys instead of the list
+
+// The command line: the shared box (single line) and the shared commands.
+function copy(text) {
+  if (!text) return;
+  try { const p = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.on("error", () => {}); p.stdin.end(text); note = "copied"; } catch { /* no wl-copy */ }
+}
+const box = createInputBox({ onChange: () => { if (!note.startsWith("✗")) note = ""; render(); }, copy, multiline: false });
+const cmds = createCommands({
+  commands: [
+    { name: "/new", help: "a new agent here (same as ^N)", run: () => newAgent() },
+  ],
+  ctx: {
+    api: () => api, via: "agents-tui", render: () => render(),
+    note: (t) => { note = t; render(); },
+    showHelp: () => { showHelp = true; note = ""; render(); },
+    quit: () => quit(),
+    setBox: (t) => box.set(t),
+  },
+});
 
 const hereLive = () => agents.filter((a) => a.room === room);
 const hereParked = () => showMode >= 1 ? agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)) : [];
@@ -67,7 +94,14 @@ function draw() {
   if (!here.find((a) => a.id === cursorId)) cursorId = here[Math.min(lastCursorIdx, here.length - 1)]?.id || "";
   const cur = Math.max(0, here.findIndex((a) => a.id === cursorId));
   if (here.length) lastCursorIdx = cur;
-  listRows = Math.max(1, Math.min(here.length, H - 4));
+  // The command line first: its height decides the list's.
+  const prompt = fg(c, bold(`${room} ❯ `)), promptW = width(prompt);
+  const text = box.text;
+  const hintText = (note.startsWith("✗") ? null : cmds.hint(text)) ?? (confirm ? confirm.label : note || (text ? "" : showHelp ? "Esc back"
+    : "/help · ^↑↓ move · ⏎ open · Space ▸ · ^O views · ^N new · ^W close · ^Tab world · ^Q quit"));
+  const IR = inputRows(box, { W, H, prompt, promptW, hint: hintText ? dim("  " + hintText) : "", width, clip,
+    rule: (h) => fg(c, "─ ") + h + " " + fg(c, "─".repeat(Math.max(0, W - 3 - width(h)))) });
+  listRows = Math.max(1, Math.min(here.length, H - 3 - IR.rows.length));
   if (cur < listTop) listTop = cur;
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
   listTop = Math.max(0, Math.min(listTop, Math.max(0, here.length - listRows)));
@@ -80,8 +114,15 @@ function draw() {
 
   const nameW = Math.min(24, Math.max(6, ...here.map((a) => width((a.icon ? a.icon + " " : "") + a.display))));
   const nameBg = theme.muted || theme.selection;
-  if (!here.length) rows.push(dim("  no agents here · ^N opens one"));
-  for (const a of here.slice(listTop, listTop + listRows)) {
+  if (showHelp) {
+    for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ ↑↓ · click", "move the cursor · wheel scrolls"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
+      ["Space · ^A · Esc", "mark ▸ (the shared per-room selection) · all / none · all again"], ["^O", "views: live · + parked / closed"],
+      ["^W ^W · ^K ^K", "close / kill (on a closed agent: forget it)"], ["^N · ^Tab ^⇧Tab · ^Q", "new agent here · switch world · quit"],
+      ["box", "Tab completes a /command · //text is not a command · Esc clears the box"]])
+      rows.push(k ? `   ${bold(k.padEnd(22))} ${dim(d)}` : "");
+  }
+  if (!showHelp && !here.length) rows.push(dim("  no agents here · ^N opens one"));
+  for (const a of showHelp ? [] : here.slice(listTop, listTop + listRows)) {
     const name = cut((a.icon ? a.icon + " " : "") + a.display, nameW);
     const iconPart = a.icon && name.startsWith(a.icon + " ") ? a.icon + " " : "";
     const bare = name.slice(iconPart.length);
@@ -106,10 +147,12 @@ function draw() {
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
   pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
-  for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
+  if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
 
-  while (rows.length < H - 2) rows.push("");
-  rows.push(dim(clip(confirm ? confirm.label : note || "^↑↓ move · ⏎ open · Space ▸ · ^O views · ^N new · ^W close · ^Tab world · ^Q quit", W)));
+  while (rows.length < H - 2 - IR.rows.length) rows.push("");
+  rows.length = Math.min(rows.length, H - 2 - IR.rows.length);
+  rows.push(IR.ruleOverride || fg(c, "─".repeat(W)));
+  rows.push(...IR.rows);
 
   // status bar: worlds, counts
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
@@ -122,7 +165,10 @@ function draw() {
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-router ${room}\x07`); // how `mockups/panels` finds this window
-  out(`${ESC}H${ESC}2J` + rows.slice(0, H).map((r) => clip(r, W) + `${ESC}0m${ESC}K`).join("\r\n"));
+  // One synchronized frame, then the text cursor in the command line.
+  const crow = H - IR.rows.length + IR.cursorRow;
+  out(`${ESC}?2026h${ESC}H${ESC}2J` + rows.slice(0, H).map((r) => clip(r, W) + `${ESC}0m${ESC}K`).join("\r\n")
+    + `${ESC}${crow};${IR.cursorCol}H${ESC}?25h${ESC}?2026l`);
 }
 
 // ---- daemon ----------------------------------------------------------------
@@ -249,20 +295,39 @@ function cycleRoom(d) {
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
 process.stdin.setEncoding("utf8");
-// Several mouse reports can arrive in one read (press + release, or a wheel burst): one onKey each.
-const MOUSE = /\x1b\[<\d+;\d+;\d+[Mm]/g;
-process.stdin.on("data", (d) => {
+// Input arrives in chunks (held keys, pastes, press + release): split into single keys first
+// (the same splitter as the room panel).
+const KEY = /\x1b[bfsS\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+process.stdin.on("data", (chunk) => {
   batching = true;
-  try { const ms = d.startsWith("\x1b[<") && d.match(MOUSE); if (ms && ms.join("") === d) ms.forEach(onKey); else onKey(d); }
+  try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); }
   finally { batching = false; if (dirty) draw(); }
 });
+let pasting = false; // inside a bracketed paste: everything is the box's (a pasted ⏎ must not open an agent)
 
 function onKey(d) {
-  if (d === "\x03" || d === "\x11") return quit();            // Ctrl+C / Ctrl+Q
-  if (d === "\r") return enter();
+  if (d === "\x1b[200~") { pasting = true; showHelp = false; box.key(d); return; }
+  if (d === "\x1b[201~") { pasting = false; box.key(d); return; }
+  if (pasting) { box.key(d); return; }
+  const typing = box.text.length > 0;
+  if (d === "\x11") return quit();                            // Ctrl+Q
+  if (d === "\x03") { if (box.key(d)) return; return quit(); } // Ctrl+C: the box's copy / clear, else quit
+  if (d === "\r") {                                           // ⏎: run the command, else open the agent
+    if (!typing) { if (showHelp) { showHelp = false; return render(); } return enter(); }
+    const t = box.text.trim(); box.clear();
+    if (cmds.run(t)) return render();
+    box.set(t); note = "✗ commands start with / (Tab completes · /help)"; return render();
+  }
+  if (d === "\t") { if (cmds.tab(box)) return render(); note = typing ? "Tab completes a /command" : "Ctrl+Tab switches world"; return render(); }
+  if (typing && d === "\x1b") { if (!box.dropSelection()) box.clear(); return; } // Esc: the box's selection, else clear it
+  if (!typing && (d === "/" )) { showHelp = false; box.insert(d); return; }      // a command starts
+  if (typing && (d === " " || d === "\x17" || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x18" || d === "\x16"
+    || /^\x1b\[(1;[2356])?[CDHF]$/.test(d) || d === "\x1b[3~" || d === "\x1b\x7f" || d === "\x1b[200~" || d === "\x1b[201~"
+    || !/[\x00-\x1f]/.test(d))) { if (box.key(d)) return; }                        // editing keys while typing
+  if (!typing && d.length && !/[\x00-\x1f\x7f]/.test(d) && d !== " ") { showHelp = false; box.insert(d); return; } // typing starts
   if (d === " " || d === "\x1b[32;2u" || d === "\x00") return toggleMark();
   if (d === "\x01") return markAll(!(marks.all));             // Ctrl+A
-  if (d === "\x1b") { confirm = null; note = ""; return markAll(true); }
+  if (d === "\x1b") { if (showHelp) { showHelp = false; return render(); } confirm = null; note = ""; return markAll(true); }
   if (d === "\x0f") { showMode = (showMode + 1) % SHOW_LABEL.length; note = `agents: ${SHOW_LABEL[showMode]}`; return render(); }
   if (d === "\x17") return act("close");
   if (d === "\x0b") return act("kill");
@@ -271,7 +336,7 @@ function onKey(d) {
   // hit; the launcher maps Ctrl+Tab, which kitty would otherwise use for its own tabs).
   if (d === "\x1b[9;5u" || d === "\x1b[27;5;9~") return cycleRoom(1);
   if (d === "\x1b[9;6u" || d === "\x1b[27;6;9~" || d === "\x1b[1;5Z") return cycleRoom(-1);
-  if (d === "\t" || d === "\x1b[Z") { note = "Ctrl+Tab switches world"; return render(); }
+  if (d === "\x1b[Z") { note = "Ctrl+Tab switches world"; return render(); }
   if (d === "\x1b[A" || d === "\x1b[1;5A") return moveCursor(-1);   // ↑ / Ctrl+↑
   if (d === "\x1b[B" || d === "\x1b[1;5B") return moveCursor(1);    // ↓ / Ctrl+↓
   if (d === "\x1b[1;5H") return moveCursor(-1e6);
@@ -297,21 +362,21 @@ function onKey(d) {
   }
 }
 
-function quit() { out(`${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
+function quit() { out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
 process.stdout.on("resize", render);
 setInterval(render, 30000);
 
 // Restart when the panel's own code changes (a hyprpi update), so it is never stale.
 const CODE = [new URL("./agents-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "tui/term.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "tui/term.mjs", "tui/input-box.mjs", "tui/command-line.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
   if (restarting || codeStamp() === codeAtStart) return;
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
-  out(`${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
+  out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
   // The launcher (mockups/agents-tui) loops on exit 75: restart in place instead of stacking a
   // child each time (N19). Older windows (no loop): a child, as before.
   if (process.env.HYPRPI_AGENTS_TUI_LOOP) process.exit(75);
@@ -319,6 +384,6 @@ setInterval(() => {
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
 
-out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?25l`); // alt screen + mouse, no cursor
+out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse + bracketed paste
 render();
 start();
