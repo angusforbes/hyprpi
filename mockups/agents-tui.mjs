@@ -189,16 +189,18 @@ function draw() {
       const cur = cursorId === "p:" + p.id;
       let nm = bold("@" + p.name);
       if (cur) nm = nameBg ? `${ESC}48;2;${rgb(nameBg)}m${nm}${ESC}49m` : `${ESC}4m${nm}${ESC}24m`;
+      // Members as the projects panel writes them (lib/tui/board-view.mjs who()): "@Name" in the
+      // agent's colour, no icon; bold when it isn't live; space-separated (Angus).
       const members = (p.members || []).map((id) => {
         const a = agents.find((x) => x.id === id);
-        if (a) return (a.icon ? a.icon + " " : "") + (a.name_markup && !unnamed(a.name) ? bold(markupFg(a.name_markup, a.color)) : nameFg(a.name, a.color, a.display));
-        return dim(board.names?.[id] || "pi·" + id.slice(-4));
+        const n = "@" + (board.names?.[id] || a?.display || "pi·" + id.slice(-4));
+        return a ? nameFg(a.name, a.color, n) : bold(n);
       });
       const w0 = String(p.where?.text || "").trim(); // until the daemon's summary is ready: its start
       const short = p.short || (w0.length > 40 ? w0.slice(0, 39).replace(/\s+\S*$/, "") + "…" : w0);
       const d = openDecides(p);
       const badge = d ? fg(c, bold("D")) : " ";
-      const text = `${nm}${members.length ? dot + members.join(dot) : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
+      const text = `${nm}${members.length ? dot + members.join(" ") : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
       projRowY[rows.length + 1] = p.id;
       rows.push(p.status === "paused" || p.status === "archived" ? midFg(`  ${badge} ${text}${dot}${p.status}`) : `  ${badge} ${text}`);
     }
