@@ -53,6 +53,11 @@ async function rows() {
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
   const seen = new Set();
+  // A separator row between the agents and the projects (Angus). The menu has no real divider for
+  // these rows, so it is a row made only of line characters: typing never matches it (the menu
+  // filters on label and detail, which have no letters here), and Enter on it does nothing.
+  const firstProject = out.findIndex((r) => r.kind === "project");
+  if (firstProject > 0) out.splice(firstProject, 0, { kind: "separator", glyph: "", label: "─".repeat(28), sub: "", sort: "" });
   for (const r of out) {
     if (!DETAIL) { r.sub = ""; if (seen.has(r.label)) r.label += ` (${r.room || r.world || "?"})`; while (seen.has(r.label)) r.label += "·"; r.key = r.label; }
     else { let k = `${r.label}\t${r.sub}`; while (seen.has(k)) { r.sub += " "; k = `${r.label}\t${r.sub}`; } r.key = k; }
@@ -62,6 +67,7 @@ async function rows() {
 }
 
 async function act(r) {
+  if (r.kind === "separator") return;
   if (r.kind === "agent") {
     if (r.parked) return request("agent.unpark", { agent: r.id });
     return request("agent.focus", { agent: r.id });
@@ -85,7 +91,7 @@ const main = async () => {
   const list = process.argv.includes("--list");
   let rs;
   try { rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
-  const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`;
+  const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`; // "" glyph → a row without an icon
   if (list) { for (const r of rs) console.log(row(r)); return; }
   if (toggleOff()) return;
   fs.mkdirSync(path.dirname(LOCK), { recursive: true });
