@@ -130,8 +130,8 @@ function draw() {
     const dot = " · ";
     // Where it is, as hyprpi list says it (Angus): "pi·k3vg · C2 · topic · opus-5-5". Parked rows say "parked" instead.
     const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
-    // Runs in a container (Angus): "🐳 docker" right after the name.
-    const box = a.container ? dot + "🐳 " + String(a.container).split(":")[0] : "";
+    // Runs in a container (Angus): " (🐳 docker)" right after the name, then the usual " · …".
+    const box = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
     const rest = box + ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
