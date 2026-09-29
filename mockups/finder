@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Agents and projects finder (Angus, 2026-09-29; SUPER+SHIFT+SPACE): the Omarchy menu, as the apps
 // menu (SUPER+ALT+SPACE) shows it, listing every world's live and parked agents and its open
-// projects, A–Z in one list. Type to filter (the subtext counts too: "C3", "working"), ↑↓, Enter, Esc.
+// projects, A–Z in one list. The search box reads "Agents…" (the prompt, Angus). Type to filter (the subtext counts too: "C3", "working"), ↑↓, Enter, Esc.
 //   Enter on an agent    jump to its window (parked: brought back here)
 //   Enter on a project   its card in that world's projects panel (the panel comes here)
 // Plan: ~/Obsidian/Tinker/2026-09-29 Agents and projects finder.md
@@ -91,7 +91,7 @@ const main = async () => {
   fs.writeFileSync(LOCK, String(process.pid));
   const unlock = () => { try { if (Number(fs.readFileSync(LOCK, "utf8")) === process.pid) fs.unlinkSync(LOCK); } catch { /* gone */ } };
   if (!rs.length) { unlock(); return; }
-  const child = spawn("omarchy-menu-select", ["hyprpi", ...rs.map(row), "--", "--width", DETAIL ? "900" : "520"], { stdio: ["ignore", "pipe", "ignore"] });
+  const child = spawn("omarchy-menu-select", ["Agents", ...rs.map(row), "--", "--width", DETAIL ? "900" : "520"], { stdio: ["ignore", "pipe", "ignore"] });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
   const t = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_S * 1000);
