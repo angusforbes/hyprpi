@@ -11,17 +11,19 @@ local HYPRPI_BIN = (os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/
 --                      another workspace if open there, opened here if not), then focused
 --   SUPER + ALT + A    agent panel (kitty) for the current world
 --   SUPER + ALT + R    room / stream panel (kitty) for the current world
---   SUPER + ALT + P    all four panels here (opened if needed), tiled as a 2x2 grid
+--   SUPER + ALT + P    projects panel (the project board) for the current world
+--   SUPER + CTRL + ALT + P  all four panels here (opened if needed), tiled as a 2x2 grid
 --   SUPER + ALT + /    search TUI (kitty) for the current world's room
 o.bind("SUPER + A", "Pi agent (hyprpi)", HYPRPI_BIN .. " new")
 o.bind("SUPER + ALT + A", "hyprpi agent panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 1")
 o.bind("SUPER + ALT + R", "hyprpi room / stream panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 2")
-o.bind("SUPER + ALT + P", "hyprpi panels here as a 2x2 grid", "/home/agf/Work/hyprpi/mockups/panels")
+o.bind("SUPER + CTRL + ALT + P", "hyprpi panels here as a 2x2 grid", "/home/agf/Work/hyprpi/mockups/panels")
 -- Omarchy binds SUPER + ALT + / to "Monitor scaling down"; both fired on one press. Take the key
 -- for search and move scaling down to SUPER + SHIFT + / (scaling up stays on SUPER + /).
 hl.unbind("SUPER + ALT + SLASH")
 o.bind("SUPER + SHIFT + SLASH", "Monitor scaling down", "omarchy-hyprland-monitor-scaling down")
-o.bind("SUPER + ALT + B", "hyprpi board panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 4")
+-- The board panel is the projects panel on SUPER + ALT + P (Angus, 2026-09-29); SUPER + ALT + B is free.
+o.bind("SUPER + ALT + P", "hyprpi projects panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 4")
 o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 3")
 
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send

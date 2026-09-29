@@ -69,6 +69,27 @@ const listHere = () => [...hereLive(), ...hereParked(), ...hereDormant()];
 const byId = (id) => listHere().find((a) => a.id === id);
 const isMarked = (id) => marks.all || marks.agents.includes(id);
 
+// Projects (Angus, 2026-09-29; ~/Obsidian/Tinker/2026-09-29 Projects in the agents panel.md): a
+// section below the agents, one row per project of this world's board: "@name · members · short"
+// (short = the card's where line summarised to topic length by the daemon). Active and new ones;
+// paused ones dimmed at the end; archived only in the ^O "+ parked" view. Projects with open
+// Decide items first (a D badge), then the most recently changed. The cursor runs on into them
+// (cursorId "p:<id>"): ⏎ opens the card in the projects panel, Space marks its members.
+let board = { room: "", projects: [], names: {} };
+let projRowY = {};                           // screen row -> project id (clicks)
+const openDecides = (p) => (p.items || []).filter((it) => it.sec === "decide").length;
+function hereProjects() {
+  if (board.room !== room) return [];
+  const rank = (p) => p.status === "archived" ? 2 : p.status === "paused" ? 1 : 0;
+  return (board.projects || []).filter((p) => p.status !== "archived" || showMode >= 1)
+    .sort((a, b) => rank(a) - rank(b) || (openDecides(b) > 0) - (openDecides(a) > 0) || (b.updated || 0) - (a.updated || 0));
+}
+const projOf = (cid) => String(cid).startsWith("p:") ? hereProjects().find((p) => p.id === cid.slice(2)) : null;
+async function loadBoard() {
+  if (!api || !room) return;
+  try { const b = await api.call("board.get", { room }); if (b?.room === room) { board = b; render(); } } catch { /* older daemon */ }
+}
+
 function mark(a) { // same marks as the room window
   if (a.status === "working") return "●";
   if (a.status === "blocked") return "×";
@@ -91,7 +112,8 @@ function draw() {
 
   // The agent under the cursor went away (closed, killed, moved out of the room): stay in
   // place — the one that took its row, or the last row if it was the bottom one.
-  if (!here.find((a) => a.id === cursorId)) cursorId = here[Math.min(lastCursorIdx, here.length - 1)]?.id || "";
+  const projs = showHelp ? [] : hereProjects();
+  if (!here.find((a) => a.id === cursorId) && !projOf(cursorId)) cursorId = here[Math.min(lastCursorIdx, here.length - 1)]?.id || "";
   const cur = Math.max(0, here.findIndex((a) => a.id === cursorId));
   if (here.length) lastCursorIdx = cur;
   // The command line first: its height decides the list's.
@@ -101,7 +123,10 @@ function draw() {
     : "/help · ^↑↓ move · ⏎ open · Space ▸ · ^O views · ^N new · ^W close · ^Tab world · ^Q quit"));
   const IR = inputRows(box, { W, H, prompt, promptW, hint: hintText ? dim("  " + hintText) : "", width, clip,
     rule: (h) => fg(c, "─ ") + h + " " + fg(c, "─".repeat(Math.max(0, W - 3 - width(h)))) });
-  listRows = Math.max(1, Math.min(here.length, H - 3 - IR.rows.length));
+  // The projects section takes at most about half the height (header rule + one row each).
+  const projShow = projs.length ? Math.min(projs.length, Math.max(1, Math.floor((H - 4 - IR.rows.length) / 2))) : 0;
+  const projRows = projShow ? projShow + 1 : 0;
+  listRows = Math.max(1, Math.min(here.length, H - 3 - IR.rows.length - projRows));
   if (cur < listTop) listTop = cur;
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
   listTop = Math.max(0, Math.min(listTop, Math.max(0, here.length - listRows)));
@@ -116,7 +141,8 @@ function draw() {
   const nameBg = theme.muted || theme.selection;
   if (showHelp) {
     for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ ↑↓ · click", "move the cursor · wheel scrolls"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
-      ["Space · ^A · Esc", "mark ▸ (the shared per-room selection) · all / none · all again"], ["^O", "views: live · + parked / closed"],
+      ["Space · ^A · Esc", "mark ▸ (the shared per-room selection) · all / none · all again"], ["^O", "views: live · + parked / closed (and archived projects)"],
+      ["⏎ · Space on @project", "its card in the projects panel (SUPER+ALT+P) · mark its members ▸"],
       ["^W ^W · ^K ^K", "close / kill (on a closed agent: forget it)"], ["^N · ^Tab ^⇧Tab · ^Q", "new agent here · switch world · quit"],
       ["box", "Tab completes a /command · //text is not a command · Esc clears the box"]])
       rows.push(k ? `   ${bold(k.padEnd(22))} ${dim(d)}` : "");
@@ -150,6 +176,29 @@ function draw() {
   }
   pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
   if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
+  projRowY = {};
+  if (projShow && rows.length < H - 2 - IR.rows.length - 1) {
+    const more = projs.length - projShow;
+    rows.push(rule(`projects · room ${room}${more > 0 ? ` · +${more} more (SUPER+ALT+P)` : ""}`));
+    const dot = " · ";
+    for (const p of projs.slice(0, projShow)) {
+      const cur = cursorId === "p:" + p.id;
+      let nm = bold("@" + p.name);
+      if (cur) nm = nameBg ? `${ESC}48;2;${rgb(nameBg)}m${nm}${ESC}49m` : `${ESC}4m${nm}${ESC}24m`;
+      const members = (p.members || []).map((id) => {
+        const a = agents.find((x) => x.id === id);
+        if (a) return (a.icon ? a.icon + " " : "") + (a.name_markup && !unnamed(a.name) ? bold(markupFg(a.name_markup, a.color)) : nameFg(a.name, a.color, a.display));
+        return dim(board.names?.[id] || "pi·" + id.slice(-4));
+      });
+      const w0 = String(p.where?.text || "").trim(); // until the daemon's summary is ready: its start
+      const short = p.short || (w0.length > 40 ? w0.slice(0, 39).replace(/\s+\S*$/, "") + "…" : w0);
+      const d = openDecides(p);
+      const badge = d ? fg(c, bold("D")) : " ";
+      const text = `${nm}${members.length ? dot + members.join(dot) : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
+      projRowY[rows.length + 1] = p.id;
+      rows.push(p.status === "paused" || p.status === "archived" ? midFg(`  ${badge} ${text}${dot}${p.status}`) : `  ${badge} ${text}`);
+    }
+  }
 
   while (rows.length < H - 2 - IR.rows.length) rows.push("");
   rows.length = Math.min(rows.length, H - 2 - IR.rows.length);
@@ -208,17 +257,38 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "selection" && data?.room === room) { marks = data; render(); }
+        else if (ev === "board" && data?.room === room) loadBoard();
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
     online = true;
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadMarks();
+    await loadBoard();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
 
 // ---- actions ---------------------------------------------------------------
+// ⏎ on a project: its card in this world's projects panel (jump to it, or open it here).
+function openProject(p) {
+  if (!api) return;
+  api.call("board.open", { room, project: p.id }).catch(() => {});
+  const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+  const c = spawn(new URL("./panel-here", import.meta.url).pathname, ["board", room], { detached: true, stdio: "ignore", env });
+  c.on("error", () => {}); c.unref();
+  note = `→ @${p.name} in the projects panel`; render();
+}
+// Space on a project: mark just its live members (the shared selection), so a message goes to them.
+function markProject(p) {
+  if (!api) return;
+  const ids = (p.members || []).filter((id) => agents.find((a) => a.id === id && a.room === room));
+  if (!ids.length) { note = `✗ none of @${p.name}'s members are live here`; return render(); }
+  api.call("selection.set", { room, all: false, agents: ids }).then((m) => { marks = m; note = `▸ @${p.name}'s members · Esc all`; render(); }).catch(() => {});
+}
+
 function enter() {
+  const pj = projOf(cursorId);
+  if (pj) return openProject(pj);
   const a = byId(cursorId);
   if (!a || !api) return;
   const fail = (e) => { note = "✗ " + e.message; render(); };
@@ -228,6 +298,8 @@ function enter() {
 }
 
 function toggleMark() {
+  const pj = projOf(cursorId);
+  if (pj) return markProject(pj);
   const a = byId(cursorId);
   if (!a || a.dormant || a.parked || !api) return;
   api.call("selection.toggle", { room, agent: a.id }).then((m) => { marks = m; render(); }).catch(() => {});
@@ -278,10 +350,10 @@ function newAgent() {
 }
 
 function moveCursor(d) {
-  const here = listHere();
-  if (!here.length) return;
-  const i = Math.max(0, here.findIndex((a) => a.id === cursorId));
-  cursorId = here[Math.max(0, Math.min(here.length - 1, i + d))].id;
+  const nav = [...listHere().map((a) => a.id), ...hereProjects().map((p) => "p:" + p.id)];
+  if (!nav.length) return;
+  const i = nav.indexOf(cursorId);
+  cursorId = nav[i < 0 ? 0 : Math.max(0, Math.min(nav.length - 1, i + d))];
   confirm = null; render();
 }
 
@@ -290,7 +362,7 @@ function cycleRoom(d) {
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
   cursorId = ""; listTop = 0; confirm = null; note = ""; render();
-  if (api) loadMarks();
+  if (api) { loadMarks(); loadBoard(); }
 }
 
 // ---- input -----------------------------------------------------------------
@@ -351,6 +423,14 @@ function onKey(d) {
   if (m) {
     const b = Number(m[1]), y = Number(m[3]), press = m[4] === "M";
     if (b === 64 || b === 65) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); return render(); }
+    const pid = projRowY[y];
+    if (pid && press && (b === 0 || b === 16)) {
+      const pj = hereProjects().find((p) => p.id === pid);
+      if (!pj) return;
+      if (b === 16) { cursorId = "p:" + pid; return openProject(pj); }
+      if (cursorId === "p:" + pid) return markProject(pj);            // second click marks its members
+      cursorId = "p:" + pid; confirm = null; return render();
+    }
     if (b === 16) { // Ctrl+click: that agent, as Enter would (live: jump to it · parked: revive · closed: resume)
       const a = press && listHere()[listTop + y - listRowY];
       if (a) { cursorId = a.id; confirm = null; enter(); render(); }

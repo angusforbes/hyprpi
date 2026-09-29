@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Panel 4 (N26): the hyprpi PROJECT BOARD in its own window, SUPER+ALT+B. One world's board
+// Panel 4 (N26): the hyprpi PROJECT BOARD in its own window: the "projects panel", SUPER+ALT+P (was SUPER+ALT+B). One world's board
 // (lib/board.mjs via the daemon): a "Needs you" strip, then one card per project. The pane is
 // lib/tui/board-view.mjs (the same view the room panel had under Ctrl+B); the box at the bottom
 // is lib/tui/input-box.mjs.
@@ -138,7 +138,7 @@ function draw() {
   const rows = [];
   const open = hereProjects().find((p) => p.id === bv.focused);
   // The box first (its height decides the pane's).
-  const prompt = fg(c, bold(`${room} board${open ? " @" + open.name : ""} ❯ `)), pw = width(prompt);
+  const prompt = fg(c, bold(`${room} projects${open ? " @" + open.name : ""} ❯ `)), pw = width(prompt);
   const L = box.layout(Math.max(10, W - pw)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
@@ -166,7 +166,7 @@ function draw() {
   inRows.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && fits ? hint : "")));
   // Status bar: the worlds, this one highlighted.
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
-  const left = ` hyprpi board ${online ? "" : "· daemon offline "}`, d = new Date();
+  const left = ` hyprpi projects ${online ? "" : "· daemon offline "}`, d = new Date();
   const right = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} `;
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, W - width(left) - width(strip(tabs)) - width(right)))}${right}${ESC}27m`);
 
@@ -203,14 +203,20 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "board" && data?.room === room) loadBoard();
+        else if (ev === "board.open" && data?.room === room && data.project) openCard(data.project);
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
     online = true;
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadBoard();
+    // Opened by ⏎ on a project row in the agents panel: that card (asked just before we started).
+    const req = await api.call("board.open", { room }).catch(() => null);
+    if (req?.project) openCard(req.project);
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
+// The agents panel's ⏎ on a project row (daemon board.open): show that card.
+function openCard(id) { bv.focus(id); note = ""; loadBoard(); }
 function cycle(dir) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);

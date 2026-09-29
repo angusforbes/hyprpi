@@ -11,7 +11,7 @@
 // the room and delivered to nobody; "@Name text" always goes to that agent.
 // Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
 // room + stream / room + stream · topics / stream · topics only (just topic changes).
-// The project board has its own panel (SUPER+ALT+B, mockups/board-tui.mjs). Ctrl+B used to show it in here (lib/tui/board-view.mjs): Needs-you strip + one card per
+// The project board has its own panel (SUPER+ALT+P, mockups/board-tui.mjs). Ctrl+B used to show it in here (lib/tui/board-view.mjs): Needs-you strip + one card per
 // project; in board mode the box takes @project … and board commands (/help there lists them).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
 // Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · Ctrl+/ opens the search panel on this room ·
@@ -50,7 +50,7 @@ const helpRows = () => {
     `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A (panel 1, the marks ▸ live there) · search: SUPER+ALT+/ (panel 3)")}`,
-    `   ${dim("the project board has its own panel: SUPER+ALT+B")}`,
+    `   ${dim("the projects panel (the board) is its own panel: SUPER+ALT+P")}`,
   ];
 };
 import fs from "node:fs";
@@ -680,12 +680,12 @@ async function boardSend(raw) {
 }
 function toggleBoard() {
   if (view === "board") { view = "stream"; note = ""; return render(); }
-  // The board has its own panel (panel 4, SUPER+ALT+B) once mockups/board-tui.mjs exists:
+  // The board has its own panel (panel 4, SUPER+ALT+P) once mockups/board-tui.mjs exists:
   // Ctrl+B opens / focuses it for this room. Until then the board shows in here.
   const boardTui = new URL("./board-tui.mjs", import.meta.url).pathname;
   if (fs.existsSync(boardTui)) {
     const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
-    try { spawn(new URL("./panels", import.meta.url).pathname, [room, "--only", "4"], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); note = `board ${room} → its own panel (SUPER+ALT+B)`; }
+    try { spawn(new URL("./panels", import.meta.url).pathname, [room, "--only", "4"], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); note = `board ${room} → its own panel (SUPER+ALT+P)`; }
     catch (e) { note = "✗ " + e.message; }
     return render();
   }
@@ -800,7 +800,7 @@ function onKey(d) {
   }
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world (too
   // easy to hit): it completes an @name (again: the next match; Shift+Tab: back).
-  // (No Ctrl+B: the board has its own panel, SUPER+ALT+B. Angus: removed, it pulled the board panel over.)
+  // (No Ctrl+B: the board has its own panel, SUPER+ALT+P. Angus: removed, it pulled the board panel over.)
   if (d === "\x02" && view === "board") return toggleBoard(); // only to leave an old in-panel board view
   // Board mode: ↑↓ always move the board's cursor; Shift+↑↓ move within the message box
   // (what plain ↑↓ do there in the stream), like search's box vs results.
