@@ -88,6 +88,31 @@ async function act(r) {
   spawn(here + "panel-here", ["board", r.room], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref();
 }
 
+// The menu's width, as narrow as the longest row allows (Angus). omarchy-menu-select takes it in the
+// shell's spacing units (Style.space(w) = w × scale, scale = base-size / 12 from
+// ~/.config/omarchy/shell.toml [font]). A row is: padding 18 + border/8 + icon 36 + 6 + LABEL + 6 +
+// trail 14 + padding 18 = 106 units + the label. The label is the heading font (base-size × 1.333 px),
+// monospace (JetBrains Mono: 0.6 em a character, wide characters count 2); the grey detail line is
+// body-small (base-size × 0.917 px). + 3 characters of slack so nothing is cut off with "…".
+function shellFont() {
+  try {
+    const t = fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config"), "omarchy", "shell.toml"), "utf8");
+    const sec = (name) => (new RegExp(`\\[${name}\\]([^\\[]*)`).exec(t) || [])[1] || "";
+    const base = Number((/^\s*base-size\s*=\s*([\d.]+)/m.exec(sec("font")) || [])[1]) || 12;
+    const scale = Number((/^\s*scale\s*=\s*([\d.]+)/m.exec(sec("spacing")) || [])[1]) || 1;
+    return { base, scale };
+  } catch { return { base: 12, scale: 1 }; }
+}
+const cells = (s) => [...new Intl.Segmenter().segment(String(s))].reduce((n, { segment: g }) => n + (/[\p{Extended_Pictographic}\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFF00-\uFF60]/u.test(g) ? 2 : 1), 0);
+function menuWidth(rs) {
+  const { base, scale } = shellFont();
+  const unit = scale * (base / 12);                     // px per spacing unit
+  const px = (chars, fontPx) => (chars + 3) * fontPx * 0.6;
+  const label = Math.max(...rs.map((r) => px(cells(r.label), Math.round(base * 1.333))), px(cells("Agents…"), Math.round(base * 1.333)));
+  const detail = DETAIL ? Math.max(0, ...rs.map((r) => px(cells(r.sub), Math.round(base * 0.917)))) : 0;
+  return Math.ceil(106 + Math.max(label, detail) / unit);
+}
+
 // One finder at a time: a second press closes the open one.
 const LOCK = path.join(runtimeDir(), "finder.pid");
 function toggleOff() {
@@ -103,13 +128,13 @@ const main = async () => {
   let rs;
   try { rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
   const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`; // "" glyph → a row without an icon
-  if (list) { for (const r of rs) console.log(row(r)); return; }
+  if (list) { for (const r of rs) console.log(row(r)); if (process.argv.includes("--width")) console.log("width", menuWidth(rs)); return; }
   if (toggleOff()) return;
   fs.mkdirSync(path.dirname(LOCK), { recursive: true });
   fs.writeFileSync(LOCK, String(process.pid));
   const unlock = () => { try { if (Number(fs.readFileSync(LOCK, "utf8")) === process.pid) fs.unlinkSync(LOCK); } catch { /* gone */ } };
   if (!rs.length) { unlock(); return; }
-  const child = spawn("omarchy-menu-select", ["Agents", ...rs.map(row), "--", "--width", DETAIL ? "900" : "520"], { stdio: ["ignore", "pipe", "ignore"] });
+  const child = spawn("omarchy-menu-select", ["Agents", ...rs.map(row), "--", "--width", String(menuWidth(rs))], { stdio: ["ignore", "pipe", "ignore"] });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
   const t = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_S * 1000);
