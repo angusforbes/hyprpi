@@ -8,7 +8,8 @@
 // kept in ui/). Angus, 2026-09-28 (a toggle that always acts HERE):
 //   - the panel is open on the current workspace: close it;
 //   - open on another workspace, or parked in Reprieve (a special workspace): bring it here,
-//     out of fullscreen, and focus it (like the SUPER+ALT panel keys);
+//     out of fullscreen;
+// Focus and the mouse pointer stay where they were (Angus): the panel is shown, not focused.
 //   - not open: open it on the current workspace in the TOP-LEFT slot: dwindle's
 //     "preselect l" on the top-left tiled window makes the new window open to its left.
 import { spawn } from "node:child_process";
@@ -44,11 +45,17 @@ const main = async () => {
     await hypr.moveWindow(found.address, String(ws));
     await sleep(150);
     await hypr.clearFullscreen(ws, [found.address]); // you want to see it: nothing fullscreen over it
-    await hypr.focusWindow(found.address);
     return console.log(`agents panel ${room}: brought here from ${from}`);
   }
   // Not open: the top-left slot. Focus the top-left tiled window here and preselect "left", so the
   // new window splits it and takes its left part (an empty workspace just gets the window).
+  // The top-left trick and the new window both take focus; put focus and the pointer back after.
+  const prev = await hypr.activeWindow().catch(() => null);
+  const ptr = await hypr.cursorPos().catch(() => null);
+  const restore = async () => {
+    if (prev?.address) await hypr.focusWindow(prev.address).catch(() => {});
+    if (ptr && Number.isFinite(ptr.x)) await hypr.moveCursor(ptr.x, ptr.y).catch(() => {});
+  };
   const tiled = cs.filter((c) => c.workspace?.id === ws && !c.floating && c.mapped !== false && !c.hidden);
   const tl = tiled.sort((a, b) => (a.at[1] - b.at[1]) || (a.at[0] - b.at[0]))[0];
   if (tl) {
@@ -61,8 +68,9 @@ const main = async () => {
   for (let i = 0; i < 80; i++) { // up to ~8 s for the window to map and set its title
     await sleep(100);
     const c = (await clients()).find((x) => title.test(x.title || "") && !before.has(x.address));
-    if (c) { await hypr.focusWindow(c.address).catch(() => {}); return console.log(`agents panel ${room}: opened on workspace ${ws}`); }
+    if (c) { await restore(); return console.log(`agents panel ${room}: opened on workspace ${ws}`); }
   }
+  await restore();
   console.error(`agents-here: the agents panel for ${room} did not appear`);
   process.exit(1);
 };
