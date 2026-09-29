@@ -75,7 +75,7 @@ page, not a stream.
 
 - `/clarify @p D1 question` · `/refresh [@p]` (members reconcile the card with reality)
 - `/todo @p text` · `/note @p text` (Angus's own entries, verbatim) · `/done @p N2` · `/drop @p N2`
-- `/new @name [what] [+@Agent…]` · `/assign @p +@A -@B` · `/rename @p @new`
+- `/project @name [what] [+@Agent…]` · `/assign @p +@A -@B` · `/rename @p @new`
 - `/split @p` (members propose, as a Decide item) · `/split @p into @a @b` · `/merge @a @b [into @c]`
 - `/spinout @p WORLD` (pi·ze03's design) · `/pause @p` · `/archive @p`
 
