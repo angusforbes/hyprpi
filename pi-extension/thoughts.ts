@@ -25,16 +25,18 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "search_history",
     label: "Search history",
-    description: "Search this world's history (agents' conversations, the room, activity). mode keyword = exact words (fast); ai = a model reads recent history and answers with evidence (slower).",
+    description: "Search this world's history (agents' conversations, the room, activity). mode keyword = exact words (fast, the 10 newest matching turns); ask = a small model answers from the history and cites the turns (slower). Angus sees the results in his thread as evidence lines, numbered as you get them, so you can refer to them (\"the third one\").",
     promptSnippet: "Search the world's history",
     parameters: Type.Object({
       query: Type.String(),
-      mode: Type.Optional(Type.Union([Type.Literal("keyword"), Type.Literal("ai")])),
+      mode: Type.Optional(Type.Union([Type.Literal("keyword"), Type.Literal("ask"), Type.Literal("ai")])),
+      n: Type.Optional(Type.Number({ description: "how many turns (default 10)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
-      const r: any = await call("search", { query: p.query, mode: p.mode || "keyword", from_thoughts: true }, 180000);
-      const hits = (r.results || []).slice(0, 12).map((h: any) => `- ${h.name} (${new Date(h.ts).toLocaleString()}): ${String((h.pre || "") + (h.match || "") + (h.post || "")).replace(/\s+/g, " ").slice(0, 300)}${h.why ? " ↳ " + h.why : ""}`);
-      return out(`${r.answer ? "Answer: " + r.answer + "\n\n" : ""}${hits.length ? hits.join("\n") : "No matches."}`);
+      const ev: any = await call("thoughts.find", { query: p.query, kind: p.mode === "ai" || p.mode === "ask" ? "ask" : "keyword", n: p.n }, 180000);
+      const lines = (ev.items || []).map((it: any, i: number) => `${i + 1}. ${new Date(it.ts).toLocaleString()} · ${it.who}${it.role ? " (" + it.role + ")" : ""}: ${String(it.text ?? ((it.pre || "") + (it.match || "") + (it.post || ""))).replace(/\s+/g, " ").slice(0, 300)}`);
+      const more = ev.total > (ev.items || []).length ? `\n(${ev.total - ev.items.length} older matches not shown; ask with a larger n for more)` : "";
+      return out(`${ev.answer ? "Answer: " + ev.answer + "\n\n" : ""}${lines.length ? lines.join("\n") + more : "No matches."}`, { evidence: ev });
     },
   });
 
