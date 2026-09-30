@@ -465,28 +465,27 @@ function render() {
   const hint = slash ? dim("  " + slash) : query ? "" : dim(`talk to Thoughts-${room} · /keyword WORDS · /ask QUESTION · /help`);
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   boxIn();
-  // The shared box, wrapped to the panel's width (Angus: long searches were cut off on one line):
-  // @names coloured, selection highlighted, up to a third of the height, scrolled to the cursor.
+  // The bottom block, like an agent window (Angus: the box at the bottom): the status line
+  // ("thinking…"), a rule, the box (wrapped, up to a third of the height, scrolled to the cursor),
+  // the 📎 chips of pasted images. Built first: its height decides the thread's.
   const pw = width(prompt), L = box.layout(Math.max(10, W - pw)), MAXI = Math.max(2, Math.min(8, Math.floor(H / 3)));
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
-  const boxY = rows.length + 1;
-  inRows.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
-  const cursorRow = boxY + (L.cRow - inTop), cursorCol = Math.min(W, pw + L.cCol + 1);
-  let chipLinks = null;
-  if (thoughtsOn && attach.length) { // 📎 chips: the pasted images going with the next message
-    const md = mdRows(attach.map((f, i) => `📎 image ${i + 1}: ${f}`).join("   "), Math.max(10, W - pw), wrap, gw)[0];
-    chipLinks = { y: rows.length + 1, links: md.links.map((q) => ({ ...q, x0: q.x0 + pw, x1: q.x1 + pw })) };
-    rows.push(" ".repeat(pw) + dim(md.line));
-  }
-  const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
-  rows.push(" " + (EV.busy ? shimmerAt(EV.busy === "ask" ? "asking the history…" : "searching…", c, EV.startedAt) : TH.busy ? shimmer(`Thoughts-${room} is thinking…`, c) : note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
+  const bottom = [];
+  bottom.push(" " + (EV.busy ? shimmerAt(EV.busy === "ask" ? "asking the history…" : "searching…", c, EV.startedAt) : TH.busy ? shimmer(`Thoughts-${room} is thinking…`, c) : note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
+  bottom.push(fg(c, "─".repeat(W)));
+  const boxAt = bottom.length;
+  inRows.forEach((l, i) => bottom.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
+  let chipMd = null, chipAt = -1;
+  if (attach.length) { // 📎 chips: the pasted images going with the next message
+    chipMd = mdRows(attach.map((f, i) => `📎 image ${i + 1}: ${f}`).join("   "), Math.max(10, W - pw), wrap, gw)[0];
+    chipAt = bottom.length; bottom.push(" ".repeat(pw) + dim(chipMd.line));
+  }
   const ruleAt = rows.length; rows.push("");
-  const avail = Math.max(1, H - rows.length - 1);
+  const avail = Math.max(1, H - rows.length - bottom.length - 1); // the thread; 1 = the status bar
   resultRows = {}; rowMeta = {}; items = []; linkRows = {};
-  if (chipLinks) linkRows[chipLinks.y] = chipLinks.links;
 
   if (!showHelp && thoughtsOn) {
     // The thread, newest at the bottom; ^↑↓ / PgUp PgDn / the wheel scroll it.
@@ -535,6 +534,7 @@ function render() {
     TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
     const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
     rows[ruleAt] = rule(TH.scroll ? `thread · ↓ ${TH.scroll} more below (^↓ / End)` : start ? "thread · ^↑ PgUp scroll back" : "thread");
+    while (shown.length < avail) shown.unshift({ l: "" }); // a short thread sits just above the box, like a chat
     shown.forEach((x, k) => { if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; if (x.links?.length) linkRows[rows.length + 1 + k] = x.links; });
     rows.push(...shown.map((x) => x.l));
   } else if (showHelp) {
@@ -575,6 +575,12 @@ function render() {
     if (S.ranFor && !S.busy && !S.results.length && !S.answer && !S.status.startsWith("✗")) shown.push({ l: dim(S.mode === "ai" ? "  Nothing matched that idea." : "  No exact matches.") });
     rows.push(...shown.map((x) => x.l));
   }
+  while (rows.length < ruleAt + 1 + avail) rows.push(""); // the thread's area, then the bottom block
+  rows.length = Math.min(rows.length, ruleAt + 1 + avail);
+  const bottomY = rows.length + 1;
+  rows.push(...bottom);
+  const cursorRow = bottomY + boxAt + (L.cRow - inTop), cursorCol = Math.min(W, pw + L.cCol + 1);
+  if (chipMd) linkRows[bottomY + chipAt] = chipMd.links.map((q) => ({ ...q, x0: q.x0 + pw, x1: q.x1 + pw }));
   while (rows.length < H - 1) rows.push("");
 
   // status bar: rooms as tabs (like the room TUI)
