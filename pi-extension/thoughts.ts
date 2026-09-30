@@ -74,6 +74,21 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "assign_tinker",
+    label: "Route a drop-off",
+    description: "Decide who does a /tinker drop-off (a message starting with \"[tinker drop-off\"): job = its id, agent = a free agent (idle or done) whose project or recent work fits, or \"new\" to open a fresh agent in the workshop. Never yourself. Don't do the job or report it to Angus: the agent reports with \"🔧 done\".",
+    promptSnippet: "Decide who does a tinker drop-off",
+    parameters: Type.Object({
+      job: Type.String({ description: "the drop-off's job id" }),
+      agent: Type.String({ description: "agent name (e.g. Tinker, pi·k3vg), or \"new\"" }),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.tinkerAssign", p);
+      return out(`Gave drop-off ${p.job} to ${r.agent}${r.new ? " (a new agent)" : ""}.`, { action: `gave the drop-off to @${r.agent}${r.new ? " (new)" : ""}` });
+    },
+  });
+
+  pi.registerTool({
     name: "set_topic",
     label: "Set topic",
     description: "Set your topic in the world's room stream (2–5 words, e.g. \"NIM research\"). Only when the subject of the conversation with Angus clearly changes, not per message.",
