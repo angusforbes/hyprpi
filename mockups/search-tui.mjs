@@ -10,8 +10,8 @@
 // matching turns, oldest first, numbered; "+N older" when more matched. Each line keeps a
 // reference to its turn (agent, session, entry id) for a future jump. Results go to the Thoughts
 // agent with your next message, so "tell me more about the second one" works.
-// Whose history: @Names in the words ("/keyword @Sankey kafka"), else the agent marks (▸, the
-// agents panel) when not everyone is marked; the evidence header says so.
+// Whose history: @Names in the words ("/keyword @Sankey kafka"), else everyone's; the evidence
+// header says so. (The ▸ marks are retired, Angus 2026-09-30.)
 // Keys: ⏎ send · Tab completes @names and /commands · Ctrl+Tab world · Ctrl+↑↓ PgUp PgDn wheel
 // scroll · Ctrl+V pastes text or a screenshot · Ctrl+click an agent's name (or an evidence line)
 // jumps to its window · links and file paths open on click · Esc clears · Ctrl+Q quits.
@@ -99,7 +99,6 @@ let api = null, online = false, rooms = [], room = (process.argv[2] || "").toUpp
 let showHelp = false, note = "";
 let query = "", qc = 0; // the search box and its cursor (in graphemes)
 let top = 0, resultRows = {}; // resultRows: screen row -> result index
-let marks = { all: true, agents: [] }; // still fetched (unused for scope since @names)
 let known = []; // agents of every room, live and closed: [{ id, name, display, icon, color, room, live }]
 const hereKnown = () => known.filter((a) => a.room === room);
 // The box's @names -> agent ids (this room). Unknown names are reported, not ignored.
@@ -110,7 +109,7 @@ function scopeOf(text = query) {
 }
 const onlyIds = () => scopeOf().ids;
 const S = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: onlyIds, closed: true, roomLog: true, order: "auto" }); // (unused since the Thoughts window; kept for S.startedAt)
-// /keyword and /ask: whose history (the words' @names, else the marks) and the one running.
+// /keyword and /ask: whose history (the words' @names, else everyone's) and the one running.
 const EV = { busy: "", last: null, startedAt: 0, gen: 0 };
 // Esc (Angus): interrupt what's running (a /keyword /ask /more, or a Thoughts turn), never the box.
 function interrupt() {
@@ -122,8 +121,7 @@ function interrupt() {
 function evFilter(text) {
   const sc = scopeOf(text);
   if (sc.unknown.length) throw new Error(`no agent ${sc.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`);
-  const ids = sc.ids.length ? sc.ids : (!marks.all && marks.agents?.length ? marks.agents : []);
-  return { words: sc.rest, ids, how: sc.ids.length ? "@names" : ids.length ? "marks" : "" };
+  return { words: sc.rest, ids: sc.ids, how: sc.ids.length ? "@names" : "" };
 }
 function evidence(kind, text, n = 10) {
   let f; try { f = evFilter(text); } catch (e) { note = "✗ " + e.message; return render(); }
@@ -219,17 +217,12 @@ function scopeLabel() {
   return S.mode === "ai" ? "everyone · conversations + room log + activity" : "everyone · every agent's conversation + the room log";
 }
 
-function loadMarks() {
-  if (!api) return;
-  const r = room;
-  api.call("selection.get", { room: r }).then((m) => { if (r === room) { marks = m; render(); } }).catch(() => {});
-}
 function cycle(d) {
   if (!rooms.length) return;
   const i = Math.max(0, rooms.indexOf(room));
   room = rooms[(i + d + rooms.length) % rooms.length];
-  marks = { all: true, agents: [] }; top = 0; note = "";
-  S.reset(); loadMarks(); if (thoughtsOn) { TH.entries = []; TH.scroll = 0; loadThoughts(); } render();
+  top = 0; note = "";
+  S.reset(); if (thoughtsOn) { TH.entries = []; TH.scroll = 0; loadThoughts(); } render();
 }
 // Tab on an @word: complete it from this room's agents (again: the next match).
 let atCycle = null; // completeAt's state: Tab again steps through the same matches
@@ -309,7 +302,7 @@ function helpLines() {
     k("text + ⏎", `talk to Thoughts-${room} (it remembers; it can ask agents and hand them work)`),
     k("/keyword WORDS", "exact-word search of the history: the 10 newest matching turns, oldest first (+N older · /more)"),
     k("/ask QUESTION", "an answer from the history, with the turns it cites; the answer prints last"),
-    k("@Name in the words", "only those agents' history (else the agent marks ▸, when not everyone is marked)"),
+    k("@Name in the words", "only those agents' history (\"/keyword @Sankey poetry\"); else everyone's"),
     k("follow-ups", "results go to Thoughts with your next message: \"tell me more about the second one\""),
     k("Tab · Ctrl+Tab", "complete an @name or a /command · next world"),
     k("^↑↓ PgUp PgDn wheel", "scroll back through the thread (plain ↑↓ are the box's: your earlier messages)"),
@@ -483,8 +476,7 @@ function render() {
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30, c = worldFg(room);
   const rows = [];
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
-  const marked = !marks.all && marks.agents?.length ? marks.agents.map((id) => "@" + (known.find((a) => a.id === id)?.display || id)).join(" ") : "";
-  const headLabel = `thoughts ${room}${marked ? ` · /keyword /ask: only ${marked} (marks)` : ""}`; // "— thoughts C" (Angus)
+  const headLabel = `thoughts ${room}`; // "— thoughts C" (Angus)
   rows.push(rule(headLabel));
   const prompt = fg(c, bold("💭 "));
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
@@ -665,7 +657,6 @@ async function start() {
     api = await connect({
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
-        else if (ev === "selection" && data?.room === room) { marks = data; render(); }
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
         else if (ev === "thoughts" && data?.room === room) { if (data.entry) { TH.entries.push(data.entry); TH.scroll = 0; } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
       },
@@ -675,7 +666,7 @@ async function start() {
     if (thoughtsOn) loadThoughts();
     applyRooms(await api.call("ui.subscribe", { windows: false }));
     if (!startRan) { startRan = true; runFrom(startArgs.mode, startArgs.query); } // opened by /search or /ai elsewhere
-    loadMarks(); render();
+    render();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
 function applyRooms(r) {

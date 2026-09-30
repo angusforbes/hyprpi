@@ -55,14 +55,14 @@ room log. **Keyword**: exact phrase, case-insensitive, live as you type.
 **✦ AI** (Ctrl+/ here; Ctrl+S in the room TUI): describe what you mean and press Enter; a small model
 (`searchModel`, default claude-haiku-4-5) reads the recent entries and returns
 the ones that match, each with a short reason. `@Names` in the box limit it to those agents'
-history (`@Lippy kafka`; Tab completes; independent of the marks). Also from the terminal:
+history (`@Lippy kafka`; Tab completes). Also from the terminal:
 `hyprpi find [--ai] QUERY`. What choosing a result does is still open.
 
 ### Room TUI keys: three parts, one modifier each
 
 | Part | Keys |
 |---|---|
-| **Top: agent list** (Shift) | Shift+↑↓ cursor · Shift+Space (or Ctrl+Space) mark / unmark · Ctrl+A all off / on · Esc all on · Enter on an empty box (right after using the list) jumps to the agent |
+| **Top: agent list** (Shift) | Shift+↑↓ cursor · Enter on an empty box (right after using the list) jumps to the agent (the ▸ marks are retired) |
 | **Middle: stream / search / ask** (Ctrl) | Ctrl+↑↓ select the previous / next stream item (highlighted like a search result; past the newest = follow new items again) or search result · PgUp PgDn a page · Ctrl+Home oldest item / Ctrl+End back to the newest · Esc clears the selection · Ctrl+/ next view (stream → search → ask) · Ctrl+S keyword ⇄ AI · Ctrl+F stream view |
 | **Bottom: message box** (plain keys) | multi-line: ↑↓ between lines, Shift+Enter new line, Home/End line start / end · Shift+←→, Ctrl+Shift+←→, Shift+Home/End select · typing replaces the selection · Ctrl+C copy (no selection: clear the box) · Ctrl+X cut · Ctrl+V or SUPER+V paste (line breaks kept) · SUPER+C copy · Enter send |
 | **Other** | Tab / Shift+Tab room · Ctrl+N new agent · Ctrl+W close / Ctrl+K kill (press twice) · Ctrl+Q quit (Ctrl+C never quits) |
@@ -253,30 +253,17 @@ Angus's names (2026-09-28), kept clearly distinct:
   and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
   `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.
 
-## Marked agents filter everything (room TUI)
+## Who a message goes to (room panel)
 
-Every agent in the list starts **marked** (▸), including ones that join later. Shift+↑↓ + Shift+Space
-(or Ctrl+Space; works in every view, even while typing; plain Space is always text), or a click on
-the cursor row, turns one off and on; Ctrl+A turns all off / all on; Esc marks all again.
-The marks filter the whole TUI:
+The ▸ marks (a shared per-room selection of agents) are **retired** (Angus, 2026-09-30, @hyprpi D4).
+In the room panel (prompt `C ❯`):
 
-- **who you talk to:** all marked = a room post (the prompt shows `C → everyone ❯`); some =
-  straight to them (`C → @Lippy @Sankey ❯`); none = written in the room but sent to no agent
-  (`C → nobody ❯`; daemon `room.post` with `deliver: false`). The same selection can be set
-  from the room panel's box: `@Lippy @Sankey` on its own + Enter (`@all`, `@nobody`); Tab
-  completes @names; `@Name text` goes just to them, once;
-- **the stream:** only the marked agents' posts and activity and messages to them, plus all of
-  Angus's room posts (none marked = just Angus's posts);
-- **`/ask`:** the marked agents' conversations, room posts and activity, plus Angus's
-  room posts (daemon `ask` takes `agents: [ids]`).
-
-The **search panel does not follow the marks**: its scope is `@Names` typed in its own box
-(`@Lippy @Sankey kafka`; none = everyone; closed agents too). The two sets are independent,
-but written the same way (`lib/at-names.mjs`), so `@Lippy @Sankey` can be copied from one
-panel and pasted into the other.
-
-Headings show `2/3 ▸` and `only ▸ Name, …`. In the stream, agents with an icon appear as just
-their icon (the list above has the names).
+- plain text: a **room post**, every agent in the room gets it;
+- `@Name text`: just those agents; `@project text`: that project's owner answers (one voice per
+  project); Tab / Shift+Tab complete @projects / @agents;
+- the stream: `/stream @Name` shows only that agent's rows (its posts, did lines, messages to and
+  from it), `/stream WORDS` only rows with those words, `/stream` alone clears;
+- searches (the Thoughts window): `@Name` in the words (`/keyword @Sankey poetry`), else everyone.
 
 ## Activity stream
 

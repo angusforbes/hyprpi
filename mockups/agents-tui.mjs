@@ -10,8 +10,7 @@
 // of every room). Ctrl+O cycles: live · + parked.
 //   Ctrl+↑↓ (or ↑↓) / click / wheel   move the cursor · PgUp PgDn · Home End / Ctrl+Home End
 //   Enter / Ctrl+click   live: jump to its window · parked: revive it here · closed: resume it
-//   Space / Shift+Space  mark ▸ (the shared per-room selection every panel uses)
-//   Ctrl+A               mark all / none      Esc  mark all again
+//   (The ▸ marks are retired, Angus 2026-09-30: messages go to @Name / @project; Space is unbound.)
 //   Ctrl+W / Ctrl+K      close / kill (twice); on a closed agent: forget it
 //   Ctrl+N               new agent here       ^Tab / ^⇧Tab  switch world
 //   Ctrl+Q               quit
@@ -36,7 +35,6 @@ let worldBar = null;
 
 // ---- state -----------------------------------------------------------------
 let agents = [], dormant = [], rooms = [], room = (process.argv[2] || "").toUpperCase();
-let marks = { all: true, agents: [] };      // the daemon's per-room selection
 let cursorId = "", listTop = 0, listRows = 0, listRowY = 0, lastCursorIdx = 0;
 let note = "", online = false, confirm = null, api = null, restarting = false;
 let showMode = 0;                            // 0 = live (+ lost to a restart), 1 = + parked/closed
@@ -69,14 +67,13 @@ const hereParked = () => showMode >= 1 ? agents.filter((a) => a.parked && (!a.pa
 const hereDormant = () => dormant.filter((a) => a.room === room && (a.kind !== "closed" || showMode >= 1));
 const listHere = () => [...hereLive(), ...hereParked(), ...hereDormant()];
 const byId = (id) => listHere().find((a) => a.id === id);
-const isMarked = (id) => marks.all || marks.agents.includes(id);
 
 // Projects (Angus, 2026-09-29; ~/Obsidian/Tinker/2026-09-29 Projects in the agents panel.md): a
 // section below the agents, one row per project of this world's board: "@name · members · short"
 // (short = the card's where line summarised to topic length by the daemon). Active and new ones;
 // paused ones dimmed at the end; archived only in the ^O "+ parked" view. Projects with open
 // Decide items first (a D badge), then the most recently changed. The cursor runs on into them
-// (cursorId "p:<id>"): ⏎ opens the card in the projects panel, Space marks its members.
+// (cursorId "p:<id>"): ⏎ opens the card in the projects panel.
 let board = { room: "", projects: [], names: {} };
 let projRowY = {};                           // screen row -> project id (clicks)
 let projMemberX = {};                        // screen row -> [{ x0, x1, id }] where each @member is (clicks)
@@ -131,7 +128,7 @@ function draw() {
   const prompt = fg(c, bold(`${room} ❯ `)), promptW = width(prompt);
   const text = box.text;
   const hintText = (note.startsWith("✗") ? null : cmds.hint(text)) ?? (confirm ? confirm.label : note || (text ? "" : showHelp ? "Esc back"
-    : "/help · ^↑↓ move · ⏎ open · Space ▸ · ^O views · ^N new · ^W close · ^Tab world · ^Q quit"));
+    : "/help · ^↑↓ move · ⏎ open · ^O views · ^N new · ^W close · ^Tab world · ^Q quit"));
   const IR = inputRows(box, { W, H, prompt, promptW, hint: hintText ? dim("  " + hintText) : "", width, clip,
     rule: (h) => fg(c, "─ ") + h + " " + fg(c, "─".repeat(Math.max(0, W - 3 - width(h)))) });
   // The projects section takes at most about half the height (header rule + one row each).
@@ -141,11 +138,9 @@ function draw() {
   if (cur < listTop) listTop = cur;
   if (cur >= listTop + listRows) listTop = cur - listRows + 1;
   listTop = Math.max(0, Math.min(listTop, Math.max(0, here.length - listRows)));
-  const nMarked = live.filter((a) => isMarked(a.id)).length;
   const hidden = here.length - listTop - listRows;
   rows.push(rule(`agents ${room} · ${SHOW_LABEL[showMode]} (^O)`
-    + (here.length > listRows ? ` · ${listTop ? "↑" + listTop + " " : ""}${hidden > 0 ? "↓" + hidden : ""}` : "")
-    + (nMarked === live.length ? "" : ` · ${nMarked}/${live.length} ▸ · Esc all`)));
+    + (here.length > listRows ? ` · ${listTop ? "↑" + listTop + " " : ""}${hidden > 0 ? "↓" + hidden : ""}` : "")));
   listRowY = rows.length + 1;
 
   const nameW = Math.min(24, Math.max(6, ...here.map((a) => width(a.display))));
@@ -156,8 +151,8 @@ function draw() {
   const nameBg = theme.muted || theme.selection;
   if (showHelp) {
     for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ ↑↓ · click", "move the cursor · wheel scrolls"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
-      ["Space · ^A · Esc", "mark ▸ (the shared per-room selection) · all / none · all again"], ["^O", "views: live · + parked / closed (and archived projects)"],
-      ["⏎ · Space on @project", "its card in the projects panel (SUPER+ALT+P) · mark its members ▸"],
+      ["^O", "views: live · + parked / closed (and archived projects)"],
+      ["⏎ on @project", "its card in the projects panel (SUPER+ALT+P)"],
       ["^W ^W · ^K ^K", "close / kill (on a closed agent: forget it)"], ["^N · ^Tab ^⇧Tab · ^Q", "new agent here · switch world · quit"],
       ["box", "Tab completes a /command · //text is not a command · Esc clears the box"]])
       rows.push(k ? `   ${bold(k.padEnd(22))} ${dim(d)}` : "");
@@ -185,7 +180,7 @@ function draw() {
     if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
     else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
     styled = iconPart + styled;
-    const sel = isMarked(a.id) ? fg(c, bold("▸")) : " ";
+    const sel = " "; // (the ▸ column: kept blank so the names don't move)
     if (closing.has(a.id)) { rows.push(dim(`  ${mark(a)} ${iconPart}${name} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
     rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
   }
@@ -277,25 +272,18 @@ function applyList(r) {
   render();
 }
 
-async function loadMarks() {
-  try { marks = await api.call("selection.get", { room }); } catch { marks = { all: true, agents: [] }; }
-  render();
-}
-
 async function start() {
   if (restarting) return;
   try {
     api = await connect({
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
-        else if (ev === "selection" && data?.room === room) { marks = data; render(); }
         else if (ev === "board" && data?.room === room) loadBoard();
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
     online = true;
     applyList(await api.call("ui.subscribe", { windows: false }));
-    await loadMarks();
     await loadBoard();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
@@ -310,14 +298,6 @@ function openProject(p) {
   c.on("error", () => {}); c.unref();
   note = `→ @${p.name} in the projects panel`; render();
 }
-// Space on a project: mark just its live members (the shared selection), so a message goes to them.
-function markProject(p) {
-  if (!api) return;
-  const ids = (p.members || []).filter((id) => agents.find((a) => a.id === id && a.room === room));
-  if (!ids.length) { note = `✗ none of @${p.name}'s members are live here`; return render(); }
-  api.call("selection.set", { room, all: false, agents: ids }).then((m) => { marks = m; note = `▸ @${p.name}'s members · Esc all`; render(); }).catch(() => {});
-}
-
 function enter() {
   const pj = projOf(cursorId);
   if (pj) return openProject(pj);
@@ -327,19 +307,6 @@ function enter() {
   if (a.parked) return api.call("agent.unpark", { agent: a.id }).then(() => { note = "→ " + a.display + " is back"; render(); }).catch(fail), render();
   if (a.dormant) return api.call("agent.resume", { agent: a.id }).then(() => { note = "resuming " + a.display + " …"; render(); }).catch(fail), render();
   api.call("agent.focus", { agent: a.id }).then(() => { note = "→ " + a.display; render(); }).catch(fail);
-}
-
-function toggleMark() {
-  const pj = projOf(cursorId);
-  if (pj) return markProject(pj);
-  const a = byId(cursorId);
-  if (!a || a.dormant || a.parked || !api) return;
-  api.call("selection.toggle", { room, agent: a.id }).then((m) => { marks = m; render(); }).catch(() => {});
-}
-
-function markAll(all) {
-  if (!api) return;
-  api.call("selection.set", { room, all, agents: [] }).then((m) => { marks = m; render(); }).catch(() => {});
 }
 
 function act(kind) { // ^W close / ^K kill; on a closed agent both mean "forget"
@@ -394,7 +361,7 @@ function cycleRoom(d) {
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
   cursorId = ""; listTop = 0; confirm = null; note = ""; render();
-  if (api) { loadMarks(); loadBoard(); }
+  if (api) loadBoard();
 }
 
 // ---- input -----------------------------------------------------------------
@@ -431,9 +398,7 @@ function onKey(d) {
     || /^\x1b\[(1;[2356])?[CDHF]$/.test(d) || d === "\x1b[3~" || d === "\x1b\x7f" || d === "\x1b[200~" || d === "\x1b[201~"
     || !/[\x00-\x1f]/.test(d))) { if (box.key(d)) return; }                        // editing keys while typing
   if (!typing && d.length && !/[\x00-\x1f\x7f]/.test(d) && d !== " ") { showHelp = false; box.insert(d); return; } // typing starts
-  if (d === " " || d === "\x1b[32;2u" || d === "\x00") return toggleMark();
-  if (d === "\x01") return markAll(!(marks.all));             // Ctrl+A
-  if (d === "\x1b") { if (showHelp) { showHelp = false; return render(); } confirm = null; note = ""; return markAll(true); }
+  if (d === "\x1b") { if (showHelp) { showHelp = false; return render(); } confirm = null; note = ""; return render(); } // Esc: close help, clear the note
   if (d === "\x0f") { showMode = (showMode + 1) % SHOW_LABEL.length; note = `agents: ${SHOW_LABEL[showMode]}`; return render(); }
   if (d === "\x17") return act("close");
   if (d === "\x0b") return act("kill");
@@ -471,7 +436,6 @@ function onKey(d) {
         return render();
       }
       if (b === 16) { cursorId = "p:" + pid; return openProject(pj); }
-      if (cursorId === "p:" + pid) return markProject(pj);            // second click marks its members
       cursorId = "p:" + pid; confirm = null; return render();
     }
     if (b === 16) { // Ctrl+click: that agent, as Enter would (live: jump to it · parked: revive · closed: resume)
@@ -482,7 +446,6 @@ function onKey(d) {
     if (!press || b !== 0) return;
     const a = listHere()[listTop + y - listRowY];
     if (!a) return;
-    if (a.id === cursorId) return toggleMark();                 // second click marks
     cursorId = a.id; confirm = null; return render();
   }
 }

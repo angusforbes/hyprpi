@@ -164,6 +164,13 @@ Then use `kitty @ --to unix:/tmp/kt-test send-text|send-key|get-text --extent sc
 - Restarting the daemon after lib changes: `hyprpi ensure` (not every command checks code mtime).
 - Not done: drag-select on activity rows; activity in the QML room window; a per-agent "now doing"
   line in the agent list.
+- **▸ marks retired (Blink, 2026-09-30; Angus answered @hyprpi D4 with c).** Gone: the agents
+  panel's ▸ column (kept blank so names don't move), Space / Ctrl+A / Esc marking and
+  second-click marking; the room panel's "to:" selection (the prompt is just `C ❯`; `@Names` alone
+  now asks for a message), its marks stream filter and "· ▸ N"; the Thoughts window's marks
+  filter and "(marks)" note; the daemon's selection.get / set / toggle and the "selection" event.
+  Replacements: `@Name text` / `@project text`, `/stream @Name` (new), `/keyword @Name …`. Space in
+  the agents panel is unbound.
 - **Did lines (Blink, 2026-09-30).** On each working→done the daemon writes one activity line of
   kind `turn` (lib/topics.mjs `turnInput` reads the session from the turn's start: Angus's message or
   an injected hyprpi-talk / room message, reading back up to 8 MB because tool results make huge

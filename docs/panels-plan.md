@@ -145,7 +145,11 @@ Extracted from room-tui.mjs, imported by all three panels:
 
 Goal: no behaviour change, three thin programs (~150–250 lines each) over shared modules.
 
-### §4 Shared selection (daemon)
+### §4 Shared selection (daemon): RETIRED 2026-09-30
+
+Angus retired the ▸ marks (@hyprpi D4, option c): messages go to @Name / @project, searches and
+the room stream filter with @Name. The daemon's selection.* methods and the "selection" event are
+gone. The notes below are history.
 
 Selection must survive panel boundaries, and dictation retargeting will want it too.
 

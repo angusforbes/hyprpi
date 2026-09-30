@@ -6,21 +6,19 @@
 //
 //   ~/Work/hyprpi/mockups/room-tui [ROOM]   (kitty launcher with the mouse settings)
 //
-// Typing + Enter posts to the room as Angus. The header line shows who is marked (▸,
-// set in panel 1): everyone = a room post, some = straight to them, none = written in
-// the room and delivered to nobody; "@Name text" always goes to that agent.
+// Typing + Enter posts to the room as Angus (every agent in it gets it); "@Name text" goes just to
+// them, "@project text" to a project's members (the ▸ marks are retired, Angus 2026-09-30).
 // Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
 // room + stream / room + stream · topics / stream · topics only (just topic changes).
 // The project board has its own panel (SUPER+ALT+P, mockups/board-tui.mjs). Ctrl+B used to show it in here (lib/tui/board-view.mjs): Needs-you strip + one card per
 // project; in board mode the box takes @project … and board commands (/help there lists them).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
 // Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · Ctrl+/ opens the search panel on this room ·
-// Esc drops a selection, else marks every agent again · Ctrl+Q quits (Ctrl+C copies).
+// Esc drops a selection · Ctrl+Q quits (Ctrl+C copies).
 // Commands: /messages · /stream [WORDS] (live word filter) · /history N|all · /help ·
 // "//text" is only for saying something that starts with a slash (it would otherwise be
 // read as a command): "//stream is down" posts "/stream is down". Ordinary messages need nothing.
-// "@Lippy @Sankey" alone + Enter sets who messages go to (shown as "C → @Lippy @Sankey ❯",
-// the same selection as panel 1's marks); "@Name text" goes just to them once; Tab
+// "@Name text" goes just to them; "/stream @Name" shows only their rows; Tab
 // completes @names (lib/at-names.mjs, shared with the search panel's @Name scope).
 // Drag selects and copies message text, Shift+click/drag whole messages, double-click a
 // word, triple-click a whole message. No ROOM = the current world's room; several copies
@@ -46,12 +44,12 @@ const helpRows = () => {
     ...list.map(([c, d]) => `   ${bold(c.padEnd(w))}  ${d}`),
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
-    `   ${bold("@Name @Name".padEnd(w))}  ${dim("on its own + ⏎: who messages go to from now on (the \"C → @…\" before the box; same as the marks ▸) · @all · @nobody")}`,
+    `   ${bold("/stream @Name".padEnd(w))}  ${dim("only that agent's rows (its posts, did lines, messages to and from it); /stream alone clears")}`,
     `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
     `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
-    `   ${dim("agents: SUPER+ALT+A (panel 1, the marks ▸ live there) · search: SUPER+ALT+/ (panel 3)")}`,
+    `   ${dim("agents: SUPER+ALT+A · projects: SUPER+ALT+P · thoughts: SUPER+ALT+/")}`,
     `   ${dim("the projects panel (the board) is its own panel: SUPER+ALT+P")}`,
   ];
 };
@@ -94,13 +92,8 @@ const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).pa
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
 
 let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the newest
-// Agent list: cursor (by id), marked ids (multi-select recipients), list scroll,
-// and where the rows landed on screen (for mouse clicks).
-// Marks: every agent is marked (▸) unless you turned it off; we keep the OFF set so
-// agents that join later start marked. markedIds() = the marked agents here.
 let convoY = 0, confirm = null;
-// Marks (▸) are the daemon's per-room selection, set in panel 1 (the agent panel).
-let marks = { all: true, agents: [] };
+// (The ▸ marks are retired: messages go to the room, @Name or @project; /stream @Name filters.)
 const listRowY = 0, listRows = 0; // no agent pane here (kept so the copy code reads the same)
 const hereAgents = () => agents.filter((a) => a.room === room);
 // Greyed agents under the live ones; Ctrl+O cycles how many:
@@ -137,17 +130,11 @@ let tabCycle = null; // Tab through several matching commands
 let atCycle = null;  // Tab through several matching @names (completeAt's state)
 const CTRL_TAB = new Set(["\x1b[9;5u", "\x1b[27;5;9~"]), CTRL_SHIFT_TAB = new Set(["\x1b[9;6u", "\x1b[27;6;9~", "\x1b[1;5Z"]); // Ctrl(+Shift)+Tab: world (the launcher maps them; kitty would switch its own tabs)
 
-// Marked agents (▸ in the agent list) filter everything: who messages go to, whose history
-// search and /ask read, and whose rows the stream shows. Esc clears.
-const markedIds = () => new Set(marks.all ? hereAgents().map((a) => a.id) : marks.agents.filter((id) => hereAgents().some((a) => a.id === id)));
-const allMarked = () => marks.all || markedIds().size === hereAgents().length;
-// Search / ask scope: all marked = the whole room (closed agents too); none = only Angus's posts.
 // /history: how far back the stream and /ask go, in interactions (a room message or one
 // agent turn, however many tool calls); "all" = everything. Default 200.
 let historyN = 200;
 function onlyLabel() {
-  if (allMarked()) return ""; // marks filter the stream: just "▸ N" (who: the agents panel; Esc: all)
-  return ` · ▸ ${markedIds().size}`;
+  return "";
 }
 const italic = (s) => `${ESC}3m${s}${ESC}23m`;
 let ic = 0; // cursor position in the message being typed, in graphemes
@@ -298,7 +285,6 @@ function draw() {
 
   // One header line (Angus): "— room C · <view> (^F)" plus the pane's own hints; the agents
   // live in the agents panel (SUPER+ALT+A).
-  const marked = markedIds(), everyone = allMarked();
 
   const msgs = messages[room] || [];
   const authorLabel = (au = {}) => au.kind === "human" ? au.name || "Angus" : (au.icon ? au.icon + " " : "") + (au.name || "agent");
@@ -310,16 +296,10 @@ function draw() {
   const ruleAt = rows.length; rows.push(""); // filled in once scroll is clamped below
   // Input: a long message wraps onto further lines (all shown), continuation
   // lines indented under the text.
-  // Recipients in the prompt, always shown (all marked = the room post goes to all of them):
-  // icons where they exist, names only for agents without one.
-  // Shown as @Names (plain text, so it can be copied into the search panel's box).
-  const toAgents = [...marked].map((id) => agents.find((a) => a.id === id)).filter(Boolean);
-  const toText = cut(toAgents.map((a) => "@" + a.display).join(" "), Math.max(10, Math.floor(W / 3)));
+  // The prompt: "C ❯" (a room post goes to everyone; @Name / @project in the text: just them).
   const bvOpen = view === "board" && hereProjects().find((p) => p.id === bv.focused);
   const prompt = view === "board" ? fg(c, bold(`${room} board${bvOpen ? " @" + bvOpen.name : ""} ❯ `))
-    : everyone || !live.length ? fg(c, bold(`${room} → everyone ❯ `))
-    : toAgents.length ? fg(c, bold(`${room} → `)) + toText.replace(/@[^\s…]+/g, (at) => { const a = toAgents.find((x) => "@" + x.display === at); return a ? nameFg(a.name, a.color, bold(at)) : bold(at); }) + fg(c, bold(" ❯ "))
-    : fg(c, bold(`${room} → nobody ❯ `));
+    : fg(c, bold(`${room} ❯ `));
   const promptW = width(prompt);
   ic = Math.max(0, Math.min(ic, graphemes(input).length));
   const IL = inputLayout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
@@ -346,18 +326,20 @@ function draw() {
   const items = mode.msgs ? msgs.map((m, mi) => ({ ts: m.ts, m, mi })) : [];
   for (const e of acts) items.push({ ts: e.ts, e });
   items.sort((x, y) => x.ts - y.ts);
-  // Not everyone marked: only the marked agents' rows (their posts and activity, direct
-  // messages to or from them) plus all of Angus's room posts. Nobody marked = just Angus.
-  if (!everyone) {
-    const names = new Set([...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean));
-    const keep = ({ m, e }) => m ? (m.author?.kind === "human" || marked.has(m.author?.id))
-      : marked.has(e.agent?.id) || (e.kind === "prompt" ? false : Array.isArray(e.to) && e.to.some((n) => names.has(n)));
+  // /stream @Name [@Name …]: only those agents' rows: their posts and activity, messages to or from
+  // them, and Angus's prompts to them (replaces the ▸ marks filter, Angus 2026-09-30).
+  const atWords = words.filter((w) => w.startsWith("@")), plainWords = words.filter((w) => !w.startsWith("@"));
+  if (atWords.length) {
+    const who = resolveAt(atWords.map((w) => w.slice(1)), [...hereAgents(), ...dormant.filter((a) => a.room === room)]);
+    const ids = new Set(who.ids), names = new Set(who.found.map((a) => (a.display || a.name).toLowerCase()));
+    const keep = ({ m, e }) => m ? ids.has(m.author?.id) || [...names].some((n) => String(m.text).toLowerCase().includes("@" + n))
+      : ids.has(e.agent?.id) || (Array.isArray(e.to) && e.to.some((n) => names.has(String(n).toLowerCase())));
     for (let k = items.length - 1; k >= 0; k--) if (!keep(items[k])) items.splice(k, 1);
   }
   // /stream WORDS: only rows containing every word (text, author, recipients).
-  if (words.length) {
+  if (plainWords.length) {
     const hay = ({ m, e }) => (m ? `${m.text} ${authorLabel(m.author)}` : `${e.text} ${e.agent?.name || ""} ${(Array.isArray(e.to) ? e.to : []).join(" ")}`).toLowerCase();
-    for (let k = items.length - 1; k >= 0; k--) { const h = hay(items[k]); if (!words.every((w) => h.includes(w))) items.splice(k, 1); }
+    for (let k = items.length - 1; k >= 0; k--) { const h = hay(items[k]); if (!plainWords.every((w) => h.includes(w))) items.splice(k, 1); }
   }
   // Activity rows: no indent, no glyphs; names (with their icons) in their own colours.
   // "done" (finished) is logged but not shown here.
@@ -458,7 +440,7 @@ function draw() {
   }
   // Liveness: agents mid-turn, one dim line each at the bottom (their "did" line comes when they finish).
   if (mode.act({ kind: "turn" })) {
-    const busy = hereAgents().filter((a) => a.status === "working" && (everyone || marked.has(a.id)));
+    const busy = hereAgents().filter((a) => a.status === "working");
     if (busy.length) { convo.push({ line: "", msg: null }); convo.push({ line: "   " + dim(busy.map((a) => `● ${a.display} working…`).join("   ")), msg: null }); }
   }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
@@ -581,20 +563,12 @@ const hereProjects = () => (board.room === room ? board.projects : []).filter((p
 // Agents and projects, for @completion (projects marked 📋 in the list shown).
 const atPool = () => [...hereAgents(), ...hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name, project: true }))];
 
-// The marks (▸) are the daemon's per-room selection: panel 1 sets them, this panel follows.
-async function loadMarks() {
-  if (!api) return;
-  try { marks = await api.call("selection.get", { room }); } catch { marks = { all: true, agents: [] }; }
-  render();
-}
-
 async function start() {
   if (restarting) return;
   try {
     api = await connect({
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
-        else if (ev === "selection" && data?.room === room) { marks = data; render(); }
         else if (ev === "board" && data?.room === room) loadBoard();
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
         else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 50000) t.splice(0, t.length - 40000); if (data.room === room) render(); }
@@ -604,7 +578,6 @@ async function start() {
     online = true;
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadRoom(room);
-    await loadMarks();
     loadBoard();
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
@@ -613,7 +586,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; bv.focus(null); render(); loadRoom(room); loadMarks(); loadBoard();
+  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; bv.focus(null); render(); loadRoom(room); loadBoard();
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -713,22 +686,10 @@ async function send() {
   if (!text && !api) return render();
   if (!text) return render(); // Enter on an empty line: nothing to post (the agents live in panel 1)
   if (!api) return render();
-  // "@Lippy @Sankey" on its own: that is who messages go to from now on ("to:", the same
-  // selection as the agent panel's marks). @all / @everyone = everyone, @nobody = nobody.
-  if (onlyAt(text)) {
-    if (resolveAt(parseAt(text).names, hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name }))).found.length) { input = raw + " "; ic = graphemes(input).length; note = "a project takes a message: @project what you want to say"; return render(); }
-    const r = resolveAt(parseAt(text).names, hereAgents());
-    if (r.unknown.length) { input = raw; ic = graphemes(raw).length; note = `✗ no agent ${r.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
-    const p = r.special === "all" && !r.ids.length ? { room, all: true } : { room, agents: r.ids };
-    try { marks = await api.call("selection.set", p); note = p.all ? "to: everyone" : r.ids.length ? "to: " + r.found.map((a) => "@" + a.display).join(" ") : "to: nobody (written in the room, sent to no agent)"; }
-    catch (e) { note = "✗ " + e.message; }
-    return render();
-  }
-  // Everyone marked: a room post (or @Name tokens: just them). Some marked: directly to them.
-  // Nobody marked: written in the room, delivered to no agent.
-  const m0 = markedIds(), all0 = allMarked();
-  let targets = all0 ? [] : [...m0], body = text;
-  // "@Name text": just to them this once, whoever "to:" is.
+  // @names alone: they need a message.
+  if (onlyAt(text)) { input = raw + " "; ic = graphemes(input).length; note = "add your message after the @names (a room post goes to everyone)"; return render(); }
+  // A room post (every agent in the room gets it), or "@Name text" / "@project text": just them.
+  let targets = [], body = text;
   const at = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/);
   if (at) {
     // "@project text": to that project's members (a room message tagged with the project).
@@ -742,13 +703,6 @@ async function send() {
     const r = resolveAt(parseAt(at[1]).names, hereAgents());
     if (r.unknown.length) { input = raw; ic = graphemes(raw).length; note = `✗ no agent ${r.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
     if (r.ids.length) { targets = r.ids; body = at[2]; }
-  }
-  // Nobody marked and no @name / @project given: write it in the room, send it to no agent.
-  // (Checked after @names, so "@Name text" / "@project text" still go out: review finding 4.)
-  if (!all0 && !m0.size && !targets.length) {
-    try { await api.call("room.post", { room, text, as_human: true, via: "room-tui", deliver: false }); note = "written to the room · sent to nobody"; }
-    catch (e) { note = "✗ " + e.message; }
-    return render();
   }
   if (targets.length) {
     const sent = [], failed = [];
@@ -946,7 +900,7 @@ function onKey(d) {
     }
     return render();
   }
-  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } if (streamSel != null) { streamSel = null; return render(); } confirm = null; note = ""; if (api) api.call("selection.set", { room, all: true }).then((m) => { marks = m; render(); }).catch(() => {}); return render(); } // Esc: text selection, else mark every agent again
+  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } if (streamSel != null) { streamSel = null; return render(); } confirm = null; note = ""; return render(); } // Esc: text selection, else the picked row, else the note
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
   if (!d.replace(/[\x00-\x1f]/g, "")) return;
   insertText(d); // typing replaces the selection
