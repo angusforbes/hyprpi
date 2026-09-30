@@ -487,8 +487,8 @@ function draw() {
 
   // tmux-style status bar
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
-  const left = ` hyprpi ${online ? "" : "· daemon offline "}`;
-  const right = `history ${historyN} · ${hhmm(Date.now())} `;
+  const left = ` hyprpi room ${online ? "" : "· daemon offline "}`; // the same label form in every panel (Angus)
+  const right = `history ${historyN} `; // no clock (Angus)
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
@@ -996,7 +996,6 @@ setInterval(() => {
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
 process.stdout.on("resize", render);
-setInterval(render, 30000); // clock
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
 // After a restart onto new code: back to the same view (the board stays the board).
 try {

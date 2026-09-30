@@ -241,7 +241,7 @@ function draw() {
   const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
   const nClosed = dormant.filter((a) => a.room === room).length;
   const extra = [nParked && `${nParked} parked`, nClosed && `${nClosed} closed`].filter(Boolean).join(" · ");
-  const left = ` agents ${online ? "" : "· daemon offline "}`;
+  const left = ` hyprpi agents ${online ? "" : "· daemon offline "}`; // the same label form in every panel (Angus)
   const right = `${live.length} live${extra ? " · " + extra : ""} `;
   const mid = W - width(left) - width(tabs.replace(/\x1b\[[0-9;]*m/g, "")) - width(right);
   worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
