@@ -158,7 +158,23 @@ function pasteImage(type) {
       attach.push(f); note = `📎 image attached (${Math.round(n / 1024)} KB) · ⏎ sends it with your text · Esc drops it`; render(); });
   } catch (e) { note = "✗ " + e.message; render(); }
 }
+// Input history: your earlier messages ("you" entries), newest last; hist.i = -1 means the draft.
+const hist = { i: -1, draft: "" };
+function historyKey(dir) {
+  const mine = TH.entries.filter((e) => e.role === "you" && e.text).map((e) => e.text);
+  const n = graphemes(query).length;
+  if (dir < 0) {
+    if (qc > 0 && hist.i < 0) { qc = 0; return render(); } // first: to the start of what you're typing
+    if (hist.i + 1 >= mine.length) { note = mine.length ? "that's your first message here" : "no earlier messages yet"; return render(); }
+    if (hist.i < 0) hist.draft = query;
+    hist.i++; setBox(mine[mine.length - 1 - hist.i]); note = ""; return render();
+  }
+  if (qc < n && hist.i < 0) { qc = n; return render(); } // first: to the end
+  if (hist.i < 0) return render();
+  hist.i--; setBox(hist.i < 0 ? hist.draft : mine[mine.length - 1 - hist.i]); note = ""; return render();
+}
 function sendThought(text, images = []) {
+  hist.i = -1; hist.draft = "";
   const t = String(text || "").trim();
   if ((!t && !images.length) || !api) return;
   api.call("thoughts.send", { room, text: t, images }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
@@ -474,7 +490,8 @@ function render() {
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
   const bottom = [];
-  bottom.push(" " + (EV.busy ? shimmerAt(EV.busy === "ask" ? "asking the history…" : "searching…", c, EV.startedAt) : TH.busy ? shimmer(`Thoughts-${room} is thinking…`, c) : note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
+  // One animation only (Angus): "thinking…" / "searching…" in the thread; this line stays still.
+  bottom.push(" " + (note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
   bottom.push(fg(c, "─".repeat(W)));
   const boxAt = bottom.length;
   inRows.forEach((l, i) => bottom.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
@@ -694,8 +711,9 @@ function onKey(d) {
   // Plain keys are the box's (↑ start, ↓ end of the one-line box); Ctrl is the pane's.
   if (d === "\x1b[1;5A") return move(-1);
   if (d === "\x1b[1;5B") return move(1);
-  if (d === "\x1b[A") { qc = 0; selA = null; return render(); }
-  if (d === "\x1b[B") { qc = graphemes(query).length; selA = null; return render(); }
+  // ↑↓ like a Pi window (Angus): within the box first (↑ to its start, ↓ to its end); then ↑ steps
+  // back through your earlier messages in this thread, ↓ forward again, to what you were typing.
+  if (d === "\x1b[A" || d === "\x1b[B") { selA = null; return historyKey(d === "\x1b[A" ? -1 : 1); }
   if (d === "\x1b[13;5u") { showHelp = false; selA = null; return enter(); } // Ctrl+Enter: the same as ⏎ here
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
