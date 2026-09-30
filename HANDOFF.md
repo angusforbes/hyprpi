@@ -257,3 +257,23 @@ Tag `panels-combined` marks the single combined TUI from before the split.
    that were never extracted; only `term.mjs` was. The panels still duplicate the message box and
    mouse-selection code — though Blink has since started `lib/tui/command-line.mjs`, which may
    supersede this.
+
+## 2026-09-30 — ⚒ Lathe (hp-mukr623ze03, pi·ze03, workshop room D): panels, spin-out, projects section, Thoughts
+
+**Built (all committed):** `6ffbe5d` spinout · `a64692c` panels override fullscreen (`lib/hypr.mjs` unfullscreen/clearFullscreen) · `ab25106` + `4e57df6` bar world click = agents panel toggle here, without focus (`mockups/agents-here`) · `05bf44a` room "stream · topics only" · `1ac0cd8` projects section in agents-tui, board panel = projects panel on SUPER+ALT+P, arranger on SUPER+CTRL+ALT+P, daemon project `short` summaries + `board.open` · `278655f` clickable world tabs (`lib/tui/world-tabs.mjs`) · `d6bdee7` Ctrl+C copies / search box wraps · Thoughts: `22a4971` `0972621` `61f7be0` `f214db6` `7eb93ef` `fd32611`.
+
+**Thoughts (world agents), state:**
+- `lib/thoughts.mjs`: the daemon runs Thoughts-<room> as `pi --mode rpc` with its own session under `state/thoughts/<room>/`, the thread in `state/thoughts/<room>.thread.jsonl`, and an idle stop after `thoughtsIdleMin`. No built-in tools. The system prompt is read only when the process starts, so a changed prompt needs the daemon restarted while Thoughts is idle (`thoughts.get` busy=false).
+- Tools: `pi-extension/thoughts.ts` → daemon `thoughts.*` methods (world, ask, work, open, answer, topic; Blink added evidence/find).
+- Requests from Thoughts to agents are ordinary `talk` requests with `from: "thoughts:<room>"`; `talk.reply` routes them back. They live in memory, so a daemon restart drops them.
+- The search panel was rebuilt by Blink (`276b60f`, `38a7f97`) into a single Thoughts window. My Thoughts-mode code in search-tui is superseded, but the backend is the same.
+
+**Testing recipe:** isolated daemon: `HYPRLAND_INSTANCE_SIGNATURE=bogus-x HYPRPI_STATE=/tmp/x/state HYPRPI_SOCKET=/tmp/x/s.sock XDG_RUNTIME_DIR=/tmp/x/run node bin/hyprpi daemon`. For wl-paste add `WAYLAND_DISPLAY=/run/user/1000/wayland-1`, since XDG_RUNTIME_DIR is overridden. A fake agent: `connect()` + `agent.hello {agent_id}` + answer `talk` events with `talk.reply`. Panels: run a temp copy (`mockups/.x.tmp.mjs`) in a pty with pyte (`/tmp/pytevenv`), then `mv` it into place. Kill test processes by env (`grep bogus /proc/PID/environ`).
+
+**Decisions (Angus):** Thoughts is one agent per world (Opus 5.5), not in the agents panel, never given tinker jobs, one new agent per request. Its room posts are one line per hand-off, reply and agent question, plus a topic; plain chat is not posted. Links must always be clickable. The board panel is "projects" on SUPER+ALT+P.
+
+**Known issues / next:**
+- Reprieve (@omarchy N1): SUPER+W can file a window as 📌 Stashed. It needs a real-key test (ask Angus first).
+- Thoughts `open_agent` and jot_save are untested live.
+- In-memory Thoughts requests don't survive a daemon restart. Persist them, or let the agent re-ask.
+- `project.spinout` (`6ffbe5d`) has largely been superseded by /move; check before extending either.
