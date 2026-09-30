@@ -72,6 +72,18 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "answer_agent",
+    label: "Answer an agent",
+    description: "Answer an agent that talked to you (a message starting with \"[message from agent\"): request_id from that message, your answer as text.",
+    promptSnippet: "Answer an agent that asked you something",
+    parameters: Type.Object({ request_id: Type.String(), text: Type.String() }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.answer", p);
+      return out(`Answered ${r.agent}.`, { action: `answered @${r.agent}: ${String(p.text).replace(/\s+/g, " ").slice(0, 140)}` });
+    },
+  });
+
+  pi.registerTool({
     name: "open_agent",
     label: "Open an agent",
     description: "Open a NEW hyprpi agent in this world for a task, when no suitable agent is free. At most one per request of Angus's; tell him you did. It reports back to you.",

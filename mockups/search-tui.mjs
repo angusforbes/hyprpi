@@ -476,6 +476,7 @@ function render() {
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         for (const l of wrapP(e.text, tw)) flat.push({ l: `   ${l}`, meta: { item: k, textX: 4 } });
       } else if (e.role === "action") for (const [n, l] of wrapP((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw).entries()) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
+      else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); for (const l of wrapP(e.text, tw - 2).slice(0, 8)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
       else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); for (const l of wrapP(e.text, tw - 2).slice(0, 12)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
       else for (const l of wrapP(e.text, tw)) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
     }
