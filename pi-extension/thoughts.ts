@@ -72,6 +72,15 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "set_topic",
+    label: "Set topic",
+    description: "Set your topic in the world's room stream (2–5 words, e.g. \"NIM research\"). Only when the subject of the conversation with Angus clearly changes, not per message.",
+    promptSnippet: "Set your topic in the room stream",
+    parameters: Type.Object({ topic: Type.String() }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.topic", { topic: p.topic }); return out(r.set ? `Topic set: ${p.topic}` : "Topic unchanged."); },
+  });
+
+  pi.registerTool({
     name: "answer_agent",
     label: "Answer an agent",
     description: "Answer an agent that talked to you (a message starting with \"[message from agent\"): request_id from that message, your answer as text.",
