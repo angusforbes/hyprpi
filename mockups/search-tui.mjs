@@ -17,14 +17,14 @@
 // Nothing runs until Enter (Ctrl+Enter jumps to the selected
 // result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · @Name scope (Tab completes @names and
 // /commands) · Ctrl+Tab / Ctrl+Shift+Tab world · ↑↓ PgUp PgDn wheel select · click select,
-// double-click jump · Esc stops a running search, else clears the box · Ctrl+C clears ·
+// double-click jump · Esc stops a running search, else clears the box · Ctrl+C copies ·
 // Ctrl+Q quits. While a search runs, only "thinking…" shimmers in the world colour; the
 // previous answer is gone at once; new words + Enter replace it.
 // Box: ←→ Home End, Ctrl/Alt+←→ word, Backspace Delete, Ctrl+W / Alt+Backspace word,
 // Ctrl+U clear. Commands: /search WORDS · /ai QUESTION-OR-DESCRIPTION (/ask = /ai) ·
 // /help · //text searches for "/text". Select & copy as in the room panel: drag = text,
 // Shift+drag / Shift+click = whole items, double-click = word, triple-click = item (each
-// copies); in the box Shift+←→ selects, Ctrl+C copies (none: clears), Ctrl+X cuts, Ctrl+V
+// copies); in the box Shift+←→ selects, Ctrl+C copies (none selected: the whole box), Ctrl+X cuts, Ctrl+V
 // pastes. Kitty's own selection: Ctrl+Shift+drag (the launcher maps it).
 // Search state lives in lib/search-view.mjs.
 import fs from "node:fs";
@@ -252,10 +252,10 @@ function helpLines() {
     k("⏎ · ^⏎", "search · jump to the selected result's agent window (⏎ on the same words asks, then re-runs)"),
     k("^↑↓ · click", "select a result (plain ↑↓ are the box's) · ^click on an agent's name jumps to its window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
-    k("box", "Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select · Ctrl+C copy (none: clear) · Ctrl+X cut · Ctrl+V paste"),
+    k("box", "Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select · Ctrl+C copy (none selected: all) · Ctrl+X cut · Ctrl+V paste"),
     k("Esc", "stop a running search · else clear the box · closes this help"),
     k("Enter while searching", "new words replace the running search (same words: keeps going)"),
-    k("Ctrl+C · Ctrl+Q", "clear the box · quit"),
+    k("Esc · Ctrl+U · Ctrl+Q", "clear the box · clear the box · quit"),
     k("editing", "←→ Home End · Ctrl/Alt+←→ word · Ctrl+W / Alt+Backspace word · Ctrl+U clear"),
     "",
     ...cmds.help().map(([c, d]) => k(c, d)),
@@ -272,7 +272,7 @@ const anim = createAnim(() => render());
 const shimmer = (text, c) => shimmerAt(text, c, S.startedAt);
 // ---- select & copy, like the room panel (mockups/room-tui.mjs) ---------------------
 // Search box: Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select; typing replaces the
-// selection; Ctrl+C copies it (no selection: clears the box); Ctrl+X cuts; Ctrl+V /
+// selection; Ctrl+C copies it (no selection: the whole box); Ctrl+X cuts; Ctrl+V /
 // Shift+Insert / bracketed paste paste; SUPER+C (Ctrl+Insert) copies.
 // Pane: drag selects text (answer / snippet text only) and copies on release;
 // Shift+click / Shift+drag = whole items (the answer, or a result with name, time and
@@ -415,8 +415,14 @@ function render() {
   const hint = slash ? dim("  " + slash) : query ? "" : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   boxIn();
-  rows.push(`${prompt}${box.layout(1e6).rows[0]}${hint}`); // the shared box: @names coloured, selection highlighted
-  const cursorRow = rows.length;
+  // The shared box, wrapped to the panel's width (Angus: long searches were cut off on one line):
+  // @names coloured, selection highlighted, up to a third of the height, scrolled to the cursor.
+  const pw = width(prompt), L = box.layout(Math.max(10, W - pw)), MAXI = Math.max(2, Math.min(8, Math.floor(H / 3)));
+  const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
+  const inRows = L.rows.slice(inTop, inTop + MAXI);
+  const boxY = rows.length + 1;
+  inRows.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
+  const cursorRow = boxY + (L.cRow - inTop), cursorCol = Math.min(W, pw + L.cCol + 1);
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
@@ -481,7 +487,7 @@ function render() {
   screen = clipped.map(strip);
   const spans = selSpans(W);
   out(`${ESC}?2026h${ESC}H` + clipped.map((r, i) => (spans[i + 1] ? overlay(r, spans[i + 1][0], spans[i + 1][1], selOn, selOff) : r) + `${ESC}0m${ESC}K`).join("\r\n") + `${ESC}J`);
-  out(`${ESC}${cursorRow};${width(prompt) + width(graphemes(query).slice(0, qc).join("")) + 1}H${ESC}?25h${ESC}?2026l`); // one synchronized frame, cursor never hidden (no flicker while "thinking…" animates)
+  out(`${ESC}${cursorRow};${cursorCol}H${ESC}?25h${ESC}?2026l`); // one synchronized frame, cursor never hidden (no flicker while "thinking…" animates)
 }
 
 // Ctrl+click: a link opens; an agent's name under the pointer (@Name, or as shown, "Sankey[e]"
@@ -557,8 +563,9 @@ function onKey(d) {
     if (query) { setBox(""); note = ""; return render(); }
     return;
   }
-  // Ctrl+C: copy the box's selection, else clear the box (never quits; Ctrl+Q does).
-  if (d === "\x03") { if (copyBoxSel(false)) return; setBox(""); selA = null; note = ""; return render(); }
+  // Ctrl+C: copy the box's selection, else the whole box; it never deletes it (Angus) and never
+  // quits (Ctrl+Q does). Esc or Ctrl+U clears the box.
+  if (d === "\x03") { if (copyBoxSel(false)) return; if (query) { copy(query); note = "copied the search"; } return render(); }
   if (d === "\x1b[2;5~") { copyBoxSel(false); return; } // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
   if (d === "\x18") { copyBoxSel(true); return; } // Ctrl+X: cut
   if (d === "\x16" || d === "\x1b[2;2~") return pasteClipboard(); // Ctrl+V / Shift+Insert: paste

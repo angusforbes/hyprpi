@@ -776,11 +776,11 @@ function onKey(d) {
   if (d === "\x1b[200~") { pasting = true; return; }
   if (d === "\x1b[201~") { pasting = false; return render(); }
   if (pasting) return insertText(d === "\r" ? "\n" : d);
-  // Ctrl+C: copy the selected text, else clear the message; it never quits (too easy to hit
-  // while copying). Ctrl+Q quits.
+  // Ctrl+C: copy the selected text, else the whole message; it never deletes it (Angus) and never
+  // quits (too easy to hit while copying). Ctrl+Q quits; Ctrl+U clears the box.
   if (d === "\x03") {
     if (inputSel()) return copyInputSel(false);
-    if (input) { input = ""; ic = 0; selA = null; note = ""; return render(); }
+    if (input) { copy(input); note = "copied the message"; return render(); }
     note = "Ctrl+Q quits"; return render();
   }
   if (d === "\x11") return quit(); // Ctrl+Q
