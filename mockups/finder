@@ -57,6 +57,19 @@ function lastTurns() {
   return last;
 }
 
+// How long ago, for the end of each row (Angus): 1 min · 2–59 mins · 1 hr · 2–23 hrs · 1 day · N days.
+function since(ts) {
+  if (!ts) return "";
+  const m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 2) return "1 min";
+  if (m < 60) return `${m} mins`;
+  const h = Math.floor(m / 60);
+  if (h < 2) return "1 hr";
+  if (h < 24) return `${h} hrs`;
+  const d = Math.floor(h / 24);
+  return d < 2 ? "1 day" : `${d} days`;
+}
+
 async function rows() {
   const turns = lastTurns();
   const l = await request("list");
@@ -68,8 +81,8 @@ async function rows() {
     // Where it is, in the name (Angus): agents their workspace ("Sankey · C3"), parked ones "parked".
     const loc = a.parked ? "parked" : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
     // The mark first (in the menu's icon column), then the agent's own icon in the name (Angus).
-    const mk = markOf(a);
-    out.push({ kind: "agent", id: a.id, sort: a.display, recent: turns[a.id] || a.since || 0, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : ""), sub, parked: !!a.parked, world: a.room || "" });
+    const mk = markOf(a), recent = turns[a.id] || a.since || 0;
+    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (recent ? " · " + since(recent) : ""), sub, parked: !!a.parked, world: a.room || "" });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
   const byId = Object.fromEntries((l.agents || []).map((a) => [a.id, a]));
@@ -93,7 +106,7 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room), sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + ((p.updated || p.created) ? " · " + since(p.updated || p.created) : ""), sub: sub.slice(0, 160) });
     }
   }
   // Agents first, then projects. Within each, by category, then most recent first (Angus,
