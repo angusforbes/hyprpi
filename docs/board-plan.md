@@ -134,7 +134,8 @@ says this in every project message, and the agents' board-tool guidelines repeat
 
 Each world may have a **Thoughts** agent (Thoughts-A, Thoughts-B, …) that keeps track of the
 workspace as a whole. Any agent, and project owners above all, may talk to one whenever it helps,
-especially when peers can't give a good answer. In the agents' board-tool guidelines too.
+especially when peers can't give a good answer: talk / demand to `Thoughts-<world letter>`. It exists for
+every world and starts when talked to. In the agents' board-tool guidelines too.
 
 ## Permissions (after the gpt-6-sol review, 2026-09-28)
 
