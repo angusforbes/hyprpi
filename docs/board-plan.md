@@ -130,6 +130,12 @@ or hands out the work, answers in the room and updates the card. The other membe
 and do not start on it; they send what they know to the owner and wait to be asked. The daemon
 says this in every project message, and the agents' board-tool guidelines repeat it.
 
+## Thoughts agents (Angus, 2026-09-29)
+
+Each world may have a **Thoughts** agent (Thoughts-A, Thoughts-B, …) that keeps track of the
+workspace as a whole. Any agent, and project owners above all, may talk to one whenever it helps,
+especially when peers can't give a good answer. In the agents' board-tool guidelines too.
+
 ## Permissions (after the gpt-6-sol review, 2026-09-28)
 
 - Only Angus (a panel or the CLI, not an agent connection) answers decisions, sends board
