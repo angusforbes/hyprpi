@@ -533,8 +533,11 @@ function render() {
         (e.items || []).forEach((it, n) => {
           const ki = items.push({ copy: `${it.who} · ${when(it.ts)}\n${String(it.text ?? (it.pre || "") + (it.match || "") + (it.post || "")).replace(/\s+/g, " ").trim()}`, ref: it.ref, who: it.who }) - 1;
           const also = it.also?.length ? dim(` · also ${it.also.slice(0, 4).join(", ")}${it.also.length > 4 ? ` +${it.also.length - 4}` : ""}`) : "";
-          const head = `  ${dim(String(n + 1).padStart(3) + ".")} ${dim(when(it.ts))}  ${hexFg(it.color, bold(it.who))}${dim(" · " + (ROLE[it.role] || it.role || ""))}${also}`;
-          flat.push({ l: head, meta: { item: ki, textX: 8, header: true } });
+          // Name · time (Angus): the name in its agent's colour (looked up when the result has none,
+          // e.g. /ask), the time grey; no number, no role.
+          const col = it.color || known.find((a) => a.display === it.who || a.name === it.who)?.color || "";
+          const head = `   ${hexFg(col, bold(it.who))}${dim(" · " + when(it.ts))}${also}`;
+          flat.push({ l: head, meta: { item: ki, textX: 4, header: true } });
           const body = it.text != null ? String(it.text).replace(/\s+/g, " ") : null;
           const lines = body != null ? wrap(body, tw - 4).slice(0, 3).map((x) => `        ${x}`) : resultLines({ ...it, name: it.who }, -1, W).slice(1, 4).filter((x) => strip(x).trim()).map((x) => "     " + x.slice(1));
           for (const l of lines) flat.push({ l, meta: { item: ki, textX: 9 } });
