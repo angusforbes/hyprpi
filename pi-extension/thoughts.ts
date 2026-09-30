@@ -91,6 +91,30 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "assign_writer",
+    label: "Pick a project's owner",
+    description: "Make an agent the owner (writer) of a project: it keeps the card current and answers Angus's messages to the project. Every project needs a LIVE owner; hyprpi asks you when one has none (\"[board care]\"). Prefer a live member whose work fits; otherwise a live agent in the world whose work fits (check world). The new owner is asked to tidy the card.",
+    promptSnippet: "Pick a project's owner (writer)",
+    parameters: Type.Object({ project: Type.String({ description: "@name or id" }), agent: Type.String({ description: "a live agent's name" }) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.writer", p);
+      return out(`@${r.project}: ${r.writer} is now its owner and has been asked to tidy the card.`, { action: `made @${r.writer} the owner of @${r.project}` });
+    },
+  });
+
+  pi.registerTool({
+    name: "tidy_projects",
+    label: "Tidy projects",
+    description: "Ask a project's owner (or, without project, every project's owner in this world) to tidy its card now: archive what's not current, drop what's irrelevant, turn heard items into work, update where / next step. Use it whenever cards look out of sync with what you know; Angus doesn't want to ask for it.",
+    promptSnippet: "Ask owners to tidy their project cards",
+    parameters: Type.Object({ project: Type.Optional(Type.String({ description: "@name or id; omit for all" })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("board.tidy", p);
+      return out(`${r.told.length ? "Asked to tidy: " + r.told.join(", ") + "." : "Nobody to ask."}${r.noWriter.length ? ` No live owner: ${r.noWriter.join(" ")} (you'll get a [board care] message to pick one).` : ""}`, { action: r.told.length ? `asked owners to tidy ${r.told.map((x: string) => x.split(" ")[0]).join(" ")}` : undefined });
+    },
+  });
+
+  pi.registerTool({
     name: "set_topic",
     label: "Set topic",
     description: "Set your topic in the world's room stream (2–5 words, e.g. \"NIM research\"). Only when the subject of the conversation with Angus clearly changes, not per message.",

@@ -282,6 +282,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     "The hyprpi board (board_read / board_update / project) is how Angus keeps track of projects in your world without hunting for agents. Keep the cards of the projects you are on current: when you finish something notable, add it to done WITH how you verified it; keep 'where' to one line of where things stand; leave a next_step before you stop.",
     "Board working agreement: don't ask Angus what you can find out or decide reversibly: pick the default and note it on the card. Ask him only about irreversible things, taste, direction, money or sending things out, as a decide item with options, your recommendation and a default (adding it dings him at once). Ask project peers (talk) before asking Angus. Bonk only for urgent things. Narrate while you work.",
     "Heard: everything Angus says to you that bears on a project goes on that project's card as a heard item (his words, distilled, with a priority), even if he didn't ask for it; turn heard items into next/decide items as they become work, and drop them when dealt with. If it fits no project, post it in the Agent Message Board for later; if it could fit several, pick one. Project names are short (hyprpi, boards); use longer ones only when a project splits.",
+    "Keep your cards tidy (Angus: they drift out of sync quickly, and he doesn't want to be the one asking): as a project's owner (writer), whenever you finish something or notice drift, archive what's worth keeping but not current (board_update action archive, e.g. handle \"N3 H2\"; restorable), drop what's irrelevant, turn heard items into next / decide items (a question for Angus is a decide item, never a next), and keep where and next_step current. hyprpi also nudges owners to tidy stale cards; no need to ask Angus.",
     "One voice per project (Angus): when Angus writes to a project (@project), its OWNER (the card's writer) coordinates and answers, in the room and on the card. Other members don't post and don't start on it; they send what they know to the owner via talk and wait to be asked. If you own a project, you are that voice.",
     "Thoughts agents (Angus): each world may have a Thoughts agent (Thoughts-A, Thoughts-B, …) that keeps track of the workspace as a whole. Any agent, and project owners above all, may talk to them whenever it helps, e.g. when your peers can't give you a good answer or you need the bigger picture: talk / demand to Thoughts-<world letter> (e.g. Thoughts-C). It exists for every world and starts when talked to, even if `hyprpi list` shows it isn't running.",
   ];
@@ -306,9 +307,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     promptSnippet: "Update a project card on the board (items, where things stand, next step)",
     parameters: Type.Object({
       project: Type.String({ description: "@name or id" }),
-      action: Type.Union([Type.Literal("add"), Type.Literal("edit"), Type.Literal("done"), Type.Literal("drop"), Type.Literal("where"), Type.Literal("next_step")]),
+      action: Type.Union([Type.Literal("add"), Type.Literal("edit"), Type.Literal("done"), Type.Literal("drop"), Type.Literal("archive"), Type.Literal("unarchive"), Type.Literal("where"), Type.Literal("next_step")]),
       section: Type.Optional(Type.Union([Type.Literal("decide"), Type.Literal("next"), Type.Literal("heard"), Type.Literal("done")])),
-      handle: Type.Optional(Type.String({ description: "item handle, e.g. N2 (edit / done / drop)" })),
+      handle: Type.Optional(Type.String({ description: "item handle, e.g. N2 (edit / done / drop); archive / unarchive take several: \"N3 H2\"" })),
       text: Type.Optional(Type.String()),
       options: Type.Optional(Type.Array(Type.String(), { description: "decide: the choices (become a, b, c…)" })),
       recommend: Type.Optional(Type.String({ description: "decide: the option key you recommend" })),
