@@ -172,3 +172,88 @@ Then use `kitty @ --to unix:/tmp/kt-test send-text|send-key|get-text --extent sc
 - **Commit:** landed inside `9551e12` (another agent's commit, "Room panel: explain // …"), so the message doesn't describe it. `git show 9551e12 -- lib/daemon.mjs` shows the 14 lines.
 - **Verified:** throwaway daemon (`HYPRPI_STATE`/`HYPRPI_SOCKET` in a temp dir) with a registry holding an old Lippy record: `agent.hello` with a new id + same session returned name Lippy, 💋, #9b5cff; a second new id on the same session while the first was live got no name. The first version of the test copied icon/colour anyway; that was tightened afterwards and only re-checked with `node --check`, not re-run. The live daemon restarted at 14:07 on 2026-09-28, so the fix is running; it has not yet been observed on a real resume.
 - **Where topics come from** (for anyone confused like Angus was): the daemon, not the agent. `refreshTopic` runs 500 ms after an agent's status goes working→done, summarising the last 3 user messages with claude-haiku-4-5 (`lib/topics.mjs`).
+
+---
+
+## 2026-09-30 — ▥ Mullion (hp-muk23k2vkrh, room C): resume, the agents panel, panel columns
+
+**State: all committed and in use.** Commits `8ad1e6c` → `9551e12`, plus `54698b9`. Full design
+record in `docs/panels-plan.md` (§1 is what was built and why, §4b the layout lessons).
+Tag `panels-combined` marks the single combined TUI from before the split.
+
+### What exists now
+
+| Piece | Where |
+|---|---|
+| Resume agents lost to a reboot | `lib/daemon.mjs` (heartbeat, `dormantList`, `agent.resume`, `agent.forget`), `bin/hyprpi` (`new --id`) |
+| Parked agents (Reprieve) | `agent.unpark`, `parkedFrom` / `parked_from` |
+| Panel 1, agents | `mockups/agents-tui.mjs` + `mockups/agents-tui` launcher, SUPER+ALT+A |
+| Panel 2, room/stream | `mockups/room-tui.mjs`, SUPER+ALT+R |
+| Shared terminal layer | `lib/tui/term.mjs` |
+| Per-room selection (the ▸ marks) | daemon `selection.get/set/toggle` + `selection` event |
+| Column layout | `mockups/panels` + launcher, SUPER+ALT+P |
+
+### How to run / test
+
+- Panels: `SUPER+ALT+A` (agents), `SUPER+ALT+R` (room), `SUPER+ALT+P` (columns). Each panel
+  re-execs itself when its own code changes, so an open window is never stale — except one
+  started before that feature existed, which needs one manual restart.
+- **Test without touching the desktop**: run a daemon on a throwaway state dir and drive a panel
+  in a pty. `HYPRPI_STATE=$T/state HYPRPI_SOCKET=$T/run/t.sock node bin/hyprpi daemon` then the
+  same env for `node mockups/agents-tui.mjs C` under `pty.fork()`. Write a fake `agents.json` and
+  `daemon.beat` to fabricate dormant/parked/closed agents. Screens come back with `\r\r\n` line
+  endings; strip ANSI and split on the card/section marker, not on `\x1b[H`.
+- Before/after comparisons of a refactor: capture both versions the same way and diff the
+  normalised screen. That is how the panel-2 slimming was proved to change nothing visible.
+
+### Decisions and why
+
+- **"Lost to a reboot" vs "closed on purpose"** is decided by a 10 s daemon heartbeat plus
+  `connected`/`leftAt` per agent, and a `/proc/<pid>/environ` check for `HYPRPI_AGENT_ID` so a
+  recycled pid can't fake a live agent. A window closed while hyprpi keeps running is gone for
+  good; one lost within 30 s of the last beat comes back. Rejected: evicting/reopening everything,
+  because the registry holds ~70 dead entries and never prunes.
+- **Resume reuses the agent id** (`hyprpi new --id`). This is the whole reason names, rooms and
+  twin links survive; `twin_of` points at an id, so a new id silently breaks twinning.
+- **Selection lives in the daemon, per room**, because panel 1 sets it and panels 2–3 read it, and
+  because dictation routing will want it later. Per room, not global, so switching worlds doesn't
+  wipe your marks.
+- **Exact columns float; dwindle is the "off" state.** Angus asked for precision "even if we break
+  out of dwindle". Panel mode floats each panel and places it by pixel inside the monitor's
+  reserved area; a second SUPER+ALT+P tiles them back and deliberately leaves dwindle's own
+  50/25/25 so the two states look different at a glance.
+- **In panel mode a new agent goes to the neighbouring workspace** (after, or before on the
+  world's last), not the first free one — Angus's rule.
+
+### Known bugs / traps
+
+- **Resizing tiled windows one by one skews dwindle's tree** — a panel ended up 16 px wide. The
+  working recipe is: float all, tile back left-to-right with `hl.dsp.layout("preselect r")`
+  between, then ONE exact resize of the left-most window. An exact resize needs a real height;
+  `y = 0` is rejected as "Invalid size".
+- **Hyprland Lua dispatch names are not the hyprctl ones.** `hl.dsp.layout("preselect r")`,
+  `hl.dsp.window.resize({x, y, relative=false})`, `hl.dsp.window.move({x, y, relative=false})`,
+  `hl.dsp.focus({ workspace = "29" })`, `hl.dsp.window.float()` (which TOGGLES — drive it towards
+  the state you want). `hl.dsp.layoutmsg`, `hl.dsp.workspace(n)`, `splitratio exact` do not exist.
+- **Panel window titles are the panel identity** (`hyprpi-router C`, `hyprpi-room C`,
+  `hyprpi-search C`, and now `hyprpi-board C`). They deliberately do NOT end in ` · <ROOM>`,
+  because the daemon treats titles ending that way as its own room windows and repositions them.
+  If you change a panel's title, change `mockups/panels` in the same commit.
+- **Restarting the daemon by hand is racy.** Any live agent runs `hyprpi ensure` within ~2 s, so
+  "stop, edit `agents.json`, start" must be one script that waits for the pid to be gone. I lost
+  an edit to this.
+- **A visible special workspace swallows new windows.** `hyprpi new` now hides it first; anything
+  else that spawns windows should too.
+- Duplicate panel windows accumulate (several stale ones sit in Reprieve). Nothing cleans them up.
+
+### Next steps
+
+1. Revive-a-parked-agent (Enter on a parked row) is **untested end to end** — park something and try it.
+2. `--tidy` for `mockups/panels`: close duplicate panels for a room.
+3. Optional, discussed with Angus and not taken: daemon-side eviction of non-panel windows from a
+   panel workspace. It is the only thing that would cover terminals; the current rule only governs
+   windows hyprpi launches itself. Put it behind a config flag, default off.
+4. `docs/panels-plan.md` §3 still lists shared modules (`selectcopy`, `inputbox`, `stream`, `conn`)
+   that were never extracted; only `term.mjs` was. The panels still duplicate the message box and
+   mouse-selection code — though Blink has since started `lib/tui/command-line.mjs`, which may
+   supersede this.

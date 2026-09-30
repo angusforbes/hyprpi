@@ -40,6 +40,7 @@ Config: ~/.config/hyprpi/config.json   Socket: ${socketPath()}`;
 
 const args = process.argv.slice(2);
 const cmd = args.shift() || "help";
+const directTerminal = !!(process.stdin.isTTY && process.stdout.isTTY && !process.env.HYPRPI_ROUTER);
 
 function die(msg, code = 1) { console.error(`hyprpi: ${msg}`); process.exit(code); }
 function opt(name, dflt) {
@@ -182,9 +183,21 @@ async function cmdNew() {
   const id = wantId || newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");
   const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}) });
+  const piCmd = cfg.pi;
+  const piArgv = ["-e", ext, ...(cfg.piArgs || []), ...piArgs];
+  if (directTerminal) {
+    process.stdout.write(`\x1b]2;pi\x07`);
+    const child = spawn(piCmd, piArgv, { cwd, env, stdio: "inherit" });
+    child.on("exit", (code, signal) => {
+      if (signal) process.kill(process.pid, signal);
+      else process.exit(code ?? 0);
+    });
+    child.on("error", (e) => die(e.message));
+    return;
+  }
   let termPrefix;
   try { termPrefix = terminalCommand(cfg, { title: "pi", cwd }); } catch (e) { die(e.message); }
-  const term = [...termPrefix, cfg.pi, "-e", ext, ...(cfg.piArgs || []), ...piArgs];
+  const term = [...termPrefix, piCmd, ...piArgv];
   // A visible special workspace (Reprieve's parked view) swallows new windows: hide it first.
   try {
     const mons = await hypr.hyprJson("monitors");

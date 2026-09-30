@@ -374,7 +374,7 @@ function newAgent() {
   if (Date.now() - lastNew < 2000) return;
   lastNew = Date.now();
   const cwd = loadConfig().cwd.replace(/^~(?=$|\/)/, process.env.HOME);
-  const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+  const env = { ...process.env, HYPRPI_ROUTER: "1" }; delete env.HYPRPI_AGENT_ID;
   spawn(new URL("../bin/hyprpi", import.meta.url).pathname, ["new", "--cwd", cwd], { detached: true, stdio: "ignore", env }).unref();
   pendingNew.push({ cwd, t: Date.now(), known: new Set(agents.map((a) => a.id)) });
   setTimeout(render, 30500);
