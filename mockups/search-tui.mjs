@@ -120,6 +120,27 @@ function scopeOf(text = query) {
 const onlyIds = () => scopeOf().ids;
 const S = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: onlyIds, closed: true, roomLog: true, order: "auto" });
 
+// Thoughts mode (Angus, 2026-09-29; lib/thoughts.mjs): the third mode after keyword and AI. You
+// talk to the world's own agent, Thoughts-<room> (Opus 5.5, remembers the conversation, can ask
+// agents and hand them work). The pane is a clean chat thread from the daemon: your messages, its
+// replies, one dim line per thing it did for you, agents' replies. Ctrl+/ cycles the three modes.
+let thoughtsOn = false;
+const TH = { room: "", entries: [], busy: false, scroll: 0 }; // scroll: rows up from the bottom
+const modeName = () => thoughtsOn ? "thoughts" : S.mode;
+const wrapP = (t, n) => String(t || "").split(/\r?\n/).flatMap((q) => q.trim() ? wrap(q, n) : [""]); // paragraphs kept
+function loadThoughts() {
+  if (!api) return;
+  const r = room;
+  api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+}
+function setThoughts(on) { thoughtsOn = on; TH.scroll = 0; note = ""; if (on) loadThoughts(); render(); }
+function sendThought(text) {
+  const t = String(text || "").trim();
+  if (!t || !api) return;
+  api.call("thoughts.send", { room, text: t }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  TH.scroll = 0; TH.busy = true; render();
+}
+
 // Commands: the search panel's own (/search, /ai, /ask) plus the ones every panel has (/help,
 // /tinker, /quit), all through lib/tui/command-line.mjs.
 const searchCmd = (mode) => (arg) => { setBox(arg); if (S.mode !== mode) S.toggleMode(); if (arg) return enter(); render(); };
@@ -155,7 +176,7 @@ function cycle(d) {
   const i = Math.max(0, rooms.indexOf(room));
   room = rooms[(i + d + rooms.length) % rooms.length];
   marks = { all: true, agents: [] }; top = 0; note = "";
-  S.reset(); loadMarks(); render();
+  S.reset(); loadMarks(); if (thoughtsOn) { TH.entries = []; TH.scroll = 0; loadThoughts(); } render();
 }
 // Tab on an @word: complete it from this room's agents (again: the next match).
 let atCycle = null; // completeAt's state: Tab again steps through the same matches
@@ -170,12 +191,19 @@ function completeName(dir = 1) {
   note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸@" + o : "@" + o)).join("  ") : "";
   render(); return true;
 }
-function toggleMode() { note = ""; top = 0; S.toggleMode(); }
+// Ctrl+/: keyword → ✦ AI → 💭 Thoughts → keyword.
+function toggleMode() {
+  note = ""; top = 0;
+  if (thoughtsOn) { thoughtsOn = false; if (S.mode !== "keyword") S.toggleMode(); return render(); }
+  if (S.mode === "ai") { S.toggleMode(); return setThoughts(true); }
+  S.toggleMode();
+}
 
 function enter() {
   const raw = query.trim();
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
   const box = raw.startsWith("//") ? raw.slice(1) : raw;
+  if (thoughtsOn) { if (!box) { note = "type a thought, then ⏎"; return render(); } setBox(""); return sendThought(box); }
   if (!box) { note = "type words, then ⏎ · ^⏎ jumps to the selected result"; return render(); }
   // @names scope the search; the rest are the words.
   const sc = scopeOf(box);
@@ -197,6 +225,8 @@ function setBox(text) { query = text; qc = graphemes(text).length; }
 // ui.searchRun, or --mode / --query when that opened this panel): switch mode and run it.
 function runFrom(mode, query) {
   showHelp = false; note = "";
+  if (mode === "thoughts") { if (!thoughtsOn) setThoughts(true); if (query) sendThought(query); return render(); }
+  if (mode === "ai" || mode === "keyword") thoughtsOn = false;
   if ((mode === "ai" || mode === "keyword") && S.mode !== (mode === "ai" ? "ai" : "keyword")) S.toggleMode();
   if (query) { setBox(query); return enter(); }
   render();
@@ -400,7 +430,7 @@ function multiClick(n, x, y) { // 2 = the word under the pointer, 3 = the whole 
 }
 
 function syncAnim() {
-  anim.sync(!!S.busy);
+  anim.sync(!!S.busy || (thoughtsOn && TH.busy));
 }
 
 function render() {
@@ -409,10 +439,10 @@ function render() {
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30, c = worldFg(room);
   const rows = [];
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
-  rows.push(rule(`search · room ${room} · ${scopeLabel()}`));
-  const prompt = fg(c, bold(S.mode === "ai" ? "✦ " : "⌕ "));
+  rows.push(rule(thoughtsOn ? `thoughts · room ${room} · talking to Thoughts-${room}` : `search · room ${room} · ${scopeLabel()}`));
+  const prompt = fg(c, bold(thoughtsOn ? "💭 " : S.mode === "ai" ? "✦ " : "⌕ "));
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
-  const hint = slash ? dim("  " + slash) : query ? "" : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
+  const hint = slash ? dim("  " + slash) : query ? "" : thoughtsOn ? dim(`tell Thoughts-${room} what's on your mind · ⏎ sends · ^/ next mode`) : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   boxIn();
   // The shared box, wrapped to the panel's width (Angus: long searches were cut off on one line):
@@ -426,14 +456,38 @@ function render() {
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
-  rows.push(` ${S.mode === "ai" ? tag("✦ AI", "keyword") : tag("keyword", "✦ AI")}  ` + (S.busy
-    ? shimmer(S.mode === "ai" ? "thinking…" : "searching…", c)
+  const MODES3 = [["keyword", "keyword"], ["ai", "✦ AI"], ["thoughts", "💭 Thoughts"]];
+  const tabs3 = MODES3.map(([k, l]) => k === modeName() ? `${ESC}${worldBg(room)};30m ${l} ${ESC}49;39m` : dim(l)).join(" ");
+  rows.push(` ${tabs3}  ` + (thoughtsOn ? (TH.busy ? shimmer(`Thoughts-${room} is thinking…`, c) : note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`))
+    : S.busy ? shimmer(S.mode === "ai" ? "thinking…" : "searching…", c)
     : statusStyled));
   const ruleAt = rows.length; rows.push("");
   const avail = Math.max(1, H - rows.length - 1);
   resultRows = {}; rowMeta = {}; items = [];
 
-  if (showHelp) {
+  if (!showHelp && thoughtsOn) {
+    // The thread, newest at the bottom; ^↑↓ / PgUp PgDn / the wheel scroll it.
+    const tw = Math.max(10, W - 5), flat = [];
+    const who = (e) => e.role === "you" ? fg(c, bold("you")) : e.role === "thoughts" ? bold(`💭 Thoughts-${room}`) : "";
+    for (const e of TH.entries) {
+      const k = items.push({ copy: e.text }) - 1;
+      if (e.role === "you" || e.role === "thoughts") {
+        flat.push({ l: "" });
+        flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        for (const l of wrapP(e.text, tw)) flat.push({ l: `   ${l}`, meta: { item: k, textX: 4 } });
+      } else if (e.role === "action") for (const [n, l] of wrapP((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw).entries()) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
+      else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); for (const l of wrapP(e.text, tw - 2).slice(0, 12)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
+      else for (const l of wrapP(e.text, tw)) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
+    }
+    if (!TH.entries.length) flat.push({ l: "" }, { l: dim(`   Thoughts-${room} is this world's own agent: think out loud, ask about what's going on,`) }, { l: dim("   have it keep a thought (\"keep this\"), ask an agent, or hand something off. It remembers.") });
+    if (TH.busy) flat.push({ l: "" }, { l: "   " + shimmer("thinking…", c) });
+    const maxScroll = Math.max(0, flat.length - avail);
+    TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
+    const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
+    rows[ruleAt] = rule(TH.scroll ? `thread · ↓ ${TH.scroll} more below (^↓ / End)` : start ? "thread · ^↑ PgUp scroll back" : "thread");
+    shown.forEach((x, k) => { if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; });
+    rows.push(...shown.map((x) => x.l));
+  } else if (showHelp) {
     rows[ruleAt] = rule("help · Esc closes");
     rows.push(...helpLines().slice(0, avail));
   } else if (S.busy) {
@@ -524,10 +578,12 @@ async function start() {
         if (ev === "agents") applyRooms(data);
         else if (ev === "selection" && data?.room === room) { marks = data; render(); }
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
+        else if (ev === "thoughts" && data?.room === room) { if (data.entry) { TH.entries.push(data.entry); TH.scroll = 0; } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
     online = true;
+    if (thoughtsOn) loadThoughts();
     applyRooms(await api.call("ui.subscribe", { windows: false }));
     if (!startRan) { startRan = true; runFrom(startArgs.mode, startArgs.query); } // opened by /search or /ai elsewhere
     loadMarks(); render();
@@ -548,7 +604,7 @@ const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;?]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b[\s\S]|[
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); });
-function move(d) { if (!showHelp) S.move(d); }
+function move(d) { if (showHelp) return; if (thoughtsOn) { TH.scroll = Math.max(0, TH.scroll - d * (Math.abs(d) >= 5 ? 1 : 3)); return render(); } S.move(d); }
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) sel = null; // a pane selection lasts until the next key
   // Bracketed paste (SUPER+V / Ctrl+Shift+V): inserted as text (line breaks become spaces).
@@ -643,14 +699,14 @@ const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
-  if (restarting || codeStamp() === codeAtStart || S.busy) return;
+  if (restarting || codeStamp() === codeAtStart || S.busy) return; // (a Thoughts reply keeps coming in the daemon: fine to restart)
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(MODES_OFF);
   // The launcher (mockups/search-tui) loops on exit 75: the state goes in its file and this
   // process ends, so restarts don't pile up processes (N19). Older windows: a child, as before.
   const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
-  if (sf) { try { fs.writeFileSync(sf, JSON.stringify({ query, qc, mode: S.mode })); } catch { /* start fresh */ } process.exit(75); }
+  if (sf) { try { fs.writeFileSync(sf, JSON.stringify({ query, qc, mode: modeName() })); } catch { /* start fresh */ } process.exit(75); }
   spawnChild(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env }).on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
@@ -658,7 +714,7 @@ out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt scre
 { // after a restart onto new code: the same words in the box, the same mode
   const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
   try { const k = sf && JSON.parse(fs.readFileSync(sf, "utf8") || "null"); if (sf) fs.writeFileSync(sf, "");
-    if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); if (k.mode && k.mode !== S.mode) S.toggleMode(); } } catch { /* fresh */ }
+    if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); if (k.mode === "thoughts") thoughtsOn = true; else if (k.mode && k.mode !== S.mode) S.toggleMode(); } } catch { /* fresh */ }
 }
 render();
 start();
