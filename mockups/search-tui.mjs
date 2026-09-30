@@ -313,7 +313,7 @@ function helpLines() {
     k("follow-ups", "results go to Thoughts with your next message: \"tell me more about the second one\""),
     k("Tab · Ctrl+Tab", "complete an @name or a /command · next world"),
     k("^↑↓ PgUp PgDn wheel", "scroll back through the thread (plain ↑↓ are the box's: your earlier messages)"),
-    k("^End · ^Home", "back to the newest · the oldest (the header says \"scrolled back\" while you are)"),
+    k("^End · ^Home", "back to the newest · the oldest (the header counts the lines ↑ above and ↓ below)"),
     k("Ctrl+V", "paste text, or a screenshot to send with your message"),
     k("click · ^click", "open a link / file path · ^click an agent's name or an evidence line: that agent's window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
@@ -484,7 +484,7 @@ function render() {
   const rows = [];
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const marked = !marks.all && marks.agents?.length ? marks.agents.map((id) => "@" + (known.find((a) => a.id === id)?.display || id)).join(" ") : "";
-  const headLabel = `thoughts · room ${room} · Thoughts-${room}${marked ? ` · /keyword /ask: only ${marked} (marks)` : ""}`;
+  const headLabel = `thoughts ${room}${marked ? ` · /keyword /ask: only ${marked} (marks)` : ""}`; // "— thoughts C" (Angus)
   rows.push(rule(headLabel));
   const prompt = fg(c, bold("💭 "));
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
@@ -565,7 +565,9 @@ function render() {
     const maxScroll = Math.max(0, flat.length - avail);
     TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
     const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
-    if (TH.scroll) rows[ruleAt] = rule(`${headLabel} · scrolled back · ^End returns`);
+    // Lines out of view, like the projects panel: "· ↑ N above · ↓ N below".
+    const above = start, below = Math.max(0, flat.length - start - avail);
+    if (above || below) rows[ruleAt] = rule(`${headLabel}${above ? ` · ↑ ${above} above` : ""}${below ? ` · ↓ ${below} below` : ""}`);
     while (shown.length < avail) shown.unshift({ l: "" }); // a short thread sits just above the box, like a chat
     shown.forEach((x, k) => { if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; if (x.links?.length) linkRows[rows.length + 1 + k] = x.links; });
     rows.push(...shown.map((x) => x.l));
