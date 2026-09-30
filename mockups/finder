@@ -96,9 +96,13 @@ async function rows() {
       out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room), sub: sub.slice(0, 160) });
     }
   }
-  // Agents first, then projects; each by most recent first (agents: their last turn event; projects:
-  // their card's last change), so who just dinged Angus is at the top (Angus, 2026-09-30). Ties A–Z.
-  out.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "agent" ? -1 : 1) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
+  // Agents first, then projects. Within each, by category, then most recent first (Angus,
+  // 2026-09-30): × needs you (blocked, a decision, a bonk) · ✓ finished, not seen yet · ● working ·
+  // ○ idle (a finished one already seen shows ○ too) · ◌ parked / nobody live. "Recent": agents
+  // their last turn event, projects their card's last change. Ties A–Z.
+  const CAT = { "×": 0, "✓": 1, "●": 2, "○": 3, "◌": 4 };
+  const cat = (r) => CAT[r.mark] ?? 3;
+  out.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "agent" ? -1 : 1) || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
   const seen = new Set();
