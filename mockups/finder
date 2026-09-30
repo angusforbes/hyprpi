@@ -17,7 +17,7 @@ import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
 import * as hypr from "../lib/hypr.mjs";
-import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS } from "../lib/paths.mjs";
+import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib/paths.mjs";
 
 const TIMEOUT_S = Number(process.env.HYPRPI_FINDER_TIMEOUT) || 600; // env only for tests
 // Rows show only icon + name (Angus, 2026-09-29: one line each, so far more fit in the menu, which
@@ -33,7 +33,32 @@ const markOf = (a) => a.parked ? "◌" : a.status === "working" ? "●" : a.stat
 const projMark = (p, byId) => { const ms = (p.members || []).map((id) => byId[id]).filter((a) => a && !a.parked).map(markOf); return ms.length ? ["×", "●", "✓"].find((k) => ms.includes(k)) || "○" : "◌"; };
 const clean = (s) => String(s ?? "").replace(/[\t\n\r\x00-\x1f\x7f]+/g, " ").trim();
 
+// When each agent last changed state (Angus: "order the whole thing by most recently worked", so
+// whoever just finished or got blocked, i.e. just dinged him, is on top): the newest turn event in
+// the worlds' activity logs (finished, blocked, started a task, aborted, resumed, joined), read from
+// the end of each file (they survive daemon restarts, unlike the live lastActive). Tool calls don't
+// count, or busy agents would always win.
+const TURN = new Set(["done", "blocked", "prompt", "aborted", "resumed", "joined"]);
+function lastTurns() {
+  const last = {}, dir = path.join(stateDir(), "activity");
+  let files = []; try { files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl")); } catch { return last; }
+  for (const f of files) {
+    let fd; try { fd = fs.openSync(path.join(dir, f), "r"); } catch { continue; }
+    try {
+      const size = fs.fstatSync(fd).size, n = Math.min(size, 4 << 20), buf = Buffer.alloc(n);
+      fs.readSync(fd, buf, 0, n, size - n);
+      for (const line of buf.toString("utf8").split("\n")) {
+        if (!line.includes('"kind"')) continue;
+        let e; try { e = JSON.parse(line); } catch { continue; }
+        if (e.agent?.id && TURN.has(e.kind) && e.ts > (last[e.agent.id] || 0)) last[e.agent.id] = e.ts;
+      }
+    } finally { fs.closeSync(fd); }
+  }
+  return last;
+}
+
 async function rows() {
+  const turns = lastTurns();
   const l = await request("list");
   const out = [];
   for (const a of l.agents || []) {
@@ -44,7 +69,7 @@ async function rows() {
     const loc = a.parked ? "parked" : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
     // The mark first (in the menu's icon column), then the agent's own icon in the name (Angus).
     const mk = markOf(a);
-    out.push({ kind: "agent", id: a.id, sort: a.display, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : ""), sub, parked: !!a.parked, world: a.room || "" });
+    out.push({ kind: "agent", id: a.id, sort: a.display, recent: turns[a.id] || a.since || 0, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : ""), sub, parked: !!a.parked, world: a.room || "" });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
   const byId = Object.fromEntries((l.agents || []).map((a) => [a.id, a]));
@@ -68,14 +93,12 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room), sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room), sub: sub.slice(0, 160) });
     }
   }
-  // Agents first, then projects (Angus); within each, needs you (×), working (●), done unseen (✓),
-  // then the rest (○ idle, ◌ parked / nobody live); A–Z inside each of those.
-  const RANK = { "×": 0, "●": 1, "✓": 2 };
-  const rank = (r) => RANK[r.mark] ?? 3;
-  out.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "agent" ? -1 : 1) || rank(x) - rank(y) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
+  // Agents first, then projects; each by most recent first (agents: their last turn event; projects:
+  // their card's last change), so who just dinged Angus is at the top (Angus, 2026-09-30). Ties A–Z.
+  out.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "agent" ? -1 : 1) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
   const seen = new Set();
@@ -137,7 +160,12 @@ const main = async () => {
   let rs;
   try { rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
   const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`; // "" glyph → a row without an icon
-  if (list) { for (const r of rs) console.log(row(r)); if (process.argv.includes("--width")) console.log("width", menuWidth(rs)); return; }
+  if (list) {
+    const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
+    for (const r of rs) console.log(row(r) + (process.argv.includes("--ages") ? `\t(${r.recent ? ago(r.recent) : "?"})` : ""));
+    if (process.argv.includes("--width")) console.log("width", menuWidth(rs));
+    return;
+  }
   if (toggleOff()) return;
   fs.mkdirSync(path.dirname(LOCK), { recursive: true });
   fs.writeFileSync(LOCK, String(process.pid));
