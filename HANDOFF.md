@@ -277,3 +277,46 @@ Tag `panels-combined` marks the single combined TUI from before the split.
 - Thoughts `open_agent` and jot_save are untested live.
 - In-memory Thoughts requests don't survive a daemon restart. Persist them, or let the agent re-ask.
 - `project.spinout` (`6ffbe5d`) has largely been superseded by /move; check before extending either.
+
+## 2026-09-30 15:25 CDT — 📌 Tack (pi·k3vg, hp-muljw28k3vg, room C): the project board's view and panel
+
+**Current state.** The board's view is `lib/tui/board-view.mjs`. `createBoardView({render})` returns:
+- `frame(ctx)` draws rows in the stream's row shape, so selection and copy work unchanged;
+- `input(text, ctx)` handles what is typed in board mode: commands, "@p …" and bare handles;
+- `key(d, ctx)` handles the modifier keys;
+- plus `complete`, `click`, `pick`, `scroll`, `refresh` and `status`.
+
+It is shown by
+- `mockups/board-tui.mjs`, "hyprpi-board ROOM", panel 4, SUPER+ALT+B (launcher `mockups/board-tui`, Blink);
+- the room panel's board mode, still in room-tui. When board-tui exists, Ctrl+B there opens the panel instead.
+
+Folds are per machine in `~/.local/state/hyprpi/board-folds.json`. The shimmer lives in `lib/tui/shimmer.mjs`, the box in `lib/tui/input-box.mjs` (Blink).
+
+**Keys (Angus's rule): plain keys type, board actions need a modifier.**
+- ^↑↓ move the highlight.
+- ^⏎, or ⏎ on an empty box, opens a card, goes back to all projects, or puts a handle into the box.
+- ^Space/^O fold. ^D drops an item (on a header: archives the project). ^T done. ^Z undoes a drop or archive.
+- Alt+1…9 answers the highlighted decision.
+- Esc clears the box selection, then the highlight, then the open card; it never quits.
+
+**How to test (nothing touches Angus's boards or windows).**
+- Drive the real panel in a pty and pyte: `uv run --with pyte python drive.py` (pty.fork, TIOCSWINSZ, pyte.ByteStream; send keys and SGR mouse, dump `screen.display`; cell `.bg` shows the highlight).
+- Call it with `node mockups/board-tui.mjs Z` (or room-tui Z + ^B). Use a throwaway board **Z** only (`board.project create/remove` with room:"Z").
+- Test projects with **no live members**: every board.request otherwise prompts real agents, yourself included.
+- **Clean up all of** `~/.local/state/hyprpi/boards/Z.*`, `rooms/Z.jsonl` and `activity/Z.jsonl` (else a stray Z world tab appears), and take test ids out of board-folds.json.
+- Unset WAYLAND_DISPLAY while testing copy, so wl-copy doesn't overwrite Angus's clipboard.
+- Unit checks: import board-view with `HYPRPI_STATE=$(mktemp -d)` and a fake `api.call`.
+
+**Decisions.**
+- A handle is unique only within a project. A bare handle resolves to the open card first, else to the only project that has it, else it's refused with the @p to add.
+- "Thinking" clears only on a change **not by Angus** (board.changes `by`), and the timer runs only while the board is visible.
+- /move and /merge confirm with ⏎ twice and return `{confirm:true}`, so the resend guard doesn't swallow the second ⏎.
+- Typing replaces the text left in the box after a send, and an arrow or Backspace first switches to editing it. This stops accidental resends.
+- The @project **owner answers** room/board requests; other members talk the owner and don't post. It's built into the daemon's prompts now, after we crossed wires repeatedly.
+
+**Known sharp edges.**
+- Several agents share this tree, so commit only your hunks (`git diff`, then `git apply --cached` with a filtered patch). I once swept in Blink's work.
+- Don't use `mockups/panels --only N` from a panel: it pulls windows onto the current workspace and breaks the 2×2 grid.
+- Messages cross with Blink's constantly; check `git log` and the working tree before assuming a talk is current.
+
+**Next (none claimed by me):** multi-project /fold; "since you left" was only ever tested with simulated agent changes; Ctrl+click to jump to an agent in board-tui is untested with a real agent.
