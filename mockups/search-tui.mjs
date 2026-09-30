@@ -111,7 +111,14 @@ function scopeOf(text = query) {
 const onlyIds = () => scopeOf().ids;
 const S = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: onlyIds, closed: true, roomLog: true, order: "auto" }); // (unused since the Thoughts window; kept for S.startedAt)
 // /keyword and /ask: whose history (the words' @names, else the marks) and the one running.
-const EV = { busy: "", last: null, startedAt: 0 };
+const EV = { busy: "", last: null, startedAt: 0, gen: 0 };
+// Esc (Angus): interrupt what's running (a /keyword /ask /more, or a Thoughts turn), never the box.
+function interrupt() {
+  if (!EV.busy && !TH.busy) return false;
+  EV.gen++; EV.busy = ""; TH.busy = false;
+  if (api) api.call("thoughts.interrupt", { room }).catch((e) => { note = "✗ " + e.message; render(); });
+  render(); return true;
+}
 function evFilter(text) {
   const sc = scopeOf(text);
   if (sc.unknown.length) throw new Error(`no agent ${sc.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`);
@@ -122,10 +129,11 @@ function evidence(kind, text, n = 10) {
   let f; try { f = evFilter(text); } catch (e) { note = "✗ " + e.message; return render(); }
   if (!f.words) { note = kind === "ask" ? "/ask QUESTION" : "/keyword WORDS"; return render(); }
   if (!api) { note = "✗ daemon offline"; return render(); }
+  const gen = ++EV.gen; // Esc bumps it: a cancelled request's late reply is ignored here too
   EV.busy = kind; EV.startedAt = Date.now(); EV.last = { kind, text, n }; note = ""; TH.scroll = 0; render();
   api.call("thoughts.evidence", { room, kind, query: f.words, n, agents: f.ids }, { timeoutMs: 180000 })
-    .then(() => { EV.busy = ""; render(); })
-    .catch((e) => { EV.busy = ""; note = "✗ " + e.message; render(); });
+    .then(() => { if (gen === EV.gen) { EV.busy = ""; render(); } })
+    .catch((e) => { if (gen === EV.gen) { EV.busy = ""; note = "✗ " + e.message; render(); } });
 }
 
 // Thoughts mode (Angus, 2026-09-29; lib/thoughts.mjs): the third mode after keyword and AI. You
@@ -687,10 +695,12 @@ function onKey(d) {
   if (d === "\x1b[201~") { pasting = false; return render(); }
   if (pasting) return insertText(d);
   if (d === "\x11") return quit(); // Ctrl+Q
-  if (d === "\x1b" || d === "\x1b\x1b") { // Esc: drop a box selection, close help, stop a search, else clear the box
-    if (boxSel()) { selA = null; return render(); }
+  if (d === "\x1b" || d === "\x1b\x1b") { // Esc: interrupt, else close help, else drop images; never the box
+    // Esc (Angus): interrupt what's running; else close help, else drop pasted images. It never
+    // touches the text box (its text, cursor or selection).
+    if (interrupt()) return;
     if (showHelp) { showHelp = false; return render(); }
-    if (query || attach.length) { setBox(""); attach = []; note = ""; return render(); }
+    if (attach.length) { attach = []; note = ""; return render(); }
     return;
   }
   // Ctrl+C: copy the box's selection, else the whole box; it never deletes it (Angus) and never
