@@ -27,6 +27,10 @@ const DETAIL = loadConfig().finderDetail === true;
 const here = new URL(".", import.meta.url).pathname;
 const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
+// The agents panel's marks (Angus): ● working · × needs you · ✓ finished (unseen) · ○ idle; ◌ parked.
+// A project's mark comes from its live members, most urgent first (◌ when none is live).
+const markOf = (a) => a.parked ? "◌" : a.status === "working" ? "●" : a.status === "blocked" ? "×" : a.status === "done" && !a.seen ? "✓" : "○";
+const projMark = (p, byId) => { const ms = (p.members || []).map((id) => byId[id]).filter((a) => a && !a.parked).map(markOf); return ms.length ? ["×", "●", "✓"].find((k) => ms.includes(k)) || "○" : "◌"; };
 const clean = (s) => String(s ?? "").replace(/[\t\n\r\x00-\x1f\x7f]+/g, " ").trim();
 
 async function rows() {
@@ -38,7 +42,7 @@ async function rows() {
     const sub = [where, a.parked ? "" : STATUS[a.status] || a.status, a.topic].map(clean).filter(Boolean).join(" · ");
     // Where it is, in the name (Angus): agents their workspace ("Sankey · C3"), parked ones "parked".
     const loc = a.parked ? "parked" : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
-    out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: clean(a.display) + (loc ? " · " + loc : ""), sub, parked: !!a.parked, world: a.room || "" });
+    out.push({ kind: "agent", id: a.id, sort: a.display, glyph: a.icon || "🤖", label: markOf(a) + " " + clean(a.display) + (loc ? " · " + loc : ""), sub, parked: !!a.parked, world: a.room || "" });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
   const byId = Object.fromEntries((l.agents || []).map((a) => [a.id, a]));
@@ -62,7 +66,7 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: "@" + clean(p.name) + " · " + projLoc(p, room), sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, glyph: p.icon || "📋", label: projMark(p, byId) + " @" + clean(p.name) + " · " + projLoc(p, room), sub: sub.slice(0, 160) });
     }
   }
   // Agents A–Z, then projects A–Z (Angus: a "(Project)" tag made every project match "p").
