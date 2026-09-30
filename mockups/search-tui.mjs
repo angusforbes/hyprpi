@@ -142,12 +142,18 @@ let thoughtsOn = true; // always (no modes any more)
 let linkRows = {}; // screen row -> [{ x0, x1, target }] (1-based rows, 0-based columns): clickable links in the thread
 const linkAt = (x, y) => (linkRows[y] || []).find((q) => x - 1 >= q.x0 && x - 1 < q.x1)?.target || null;
 const TH = { room: "", entries: [], busy: false, scroll: 0 }; // scroll: rows up from the bottom
+// Thread build cache (Angus via Thoughts-C 2026-09-30: typing re-wrapped the whole thread on
+// every keystroke, ~170 ms on the long world-C thread). The per-entry wrapped lines and their
+// items are rebuilt only on a width change, new/changed entries (bumpThread), a world switch,
+// a theme change or a date change; every other render just re-slices the visible window.
+let threadCache = { key: "", flat: null, items: null };
+const bumpThread = () => { threadCache.flat = null; };
 const modeName = () => thoughtsOn ? "thoughts" : S.mode;
 const wrapP = (t, n) => String(t || "").split(/\r?\n/).flatMap((q) => q.trim() ? wrap(q, n) : [""]); // paragraphs kept
 function loadThoughts() {
   if (!api) return;
   const r = room;
-  api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; bumpThread(); render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function setThoughts(on) { thoughtsOn = on; TH.scroll = 0; note = ""; if (on) loadThoughts(); render(); }
 // Pasted screenshots for the next thought (Ctrl+V with an image on the clipboard, Thoughts mode):
@@ -222,7 +228,7 @@ function cycle(d) {
   const i = Math.max(0, rooms.indexOf(room));
   room = rooms[(i + d + rooms.length) % rooms.length];
   top = 0; note = "";
-  S.reset(); if (thoughtsOn) { TH.entries = []; TH.scroll = 0; loadThoughts(); } render();
+  S.reset(); if (thoughtsOn) { TH.entries = []; TH.scroll = 0; bumpThread(); loadThoughts(); } render();
 }
 // Tab on an @word: complete it from this room's agents (again: the next match).
 let atCycle = null; // completeAt's state: Tab again steps through the same matches
@@ -510,7 +516,12 @@ function render() {
 
   if (!showHelp && thoughtsOn) {
     // The thread, newest at the bottom; ^↑↓ / PgUp PgDn / the wheel scroll it.
-    const tw = Math.max(10, W - 5), flat = [];
+    // Built through threadCache (top of file): the per-entry wrapped lines are reused between
+    // renders and re-wrapped only on a width change or new/changed entries — typing used to
+    // re-wrap the whole thread on every keystroke (~170 ms on the long world-C thread).
+    const tw = Math.max(10, W - 5);
+    function buildThread() {
+      const flat = [], items = [];
     const who = (e) => e.role === "you" ? fg(c, bold("you")) : e.role === "thoughts" ? bold(`💭 Thoughts-${room}`) : "";
     // Every entry through mdRows: Markdown, and links / file paths clickable (Angus: all links and
     // paths must be clickable). x.links: [{ x0, x1, target }] in the row's own columns.
@@ -551,6 +562,12 @@ function render() {
       else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 12), 6); }
       else add(md(e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
     }
+      return { flat, items };
+    }
+    const ck = `${tw}|${room}|${new Date().toDateString()}|${Object.values(theme).join()}|` + known.map((a) => a.display + (a.color || "")).join("");
+    if (!threadCache.flat || threadCache.key !== ck) threadCache = { key: ck, ...buildThread() };
+    items = threadCache.items;
+    const flat = threadCache.flat.slice();
     if (!TH.entries.length) flat.push({ l: "" }, { l: dim(`   Thoughts-${room} is this world's own agent: think out loud, ask about what's going on,`) }, { l: dim("   have it keep a thought (\"keep this\"), ask an agent, or hand something off. It remembers.") }, { l: dim("   /keyword WORDS searches the history · /ask QUESTION answers from it, with the turns it used.") });
     if (TH.busy) flat.push({ l: "" }, { l: "   " + shimmer("thinking…", c) });
     if (EV.busy) flat.push({ l: "" }, { l: "   " + shimmerAt(EV.busy === "ask" ? "asking the history…" : "searching…", c, EV.startedAt) });
@@ -658,7 +675,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
-        else if (ev === "thoughts" && data?.room === room) { if (data.entry) { TH.entries.push(data.entry); TH.scroll = 0; } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
+        else if (ev === "thoughts" && data?.room === room) { if (data.entry) { TH.entries.push(data.entry); TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
@@ -670,6 +687,7 @@ async function start() {
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
 function applyRooms(r) {
+  bumpThread(); // agents' colours/names feed the thread's evidence heads (Blink)
   known = [...(r.agents || []).map((a) => ({ ...a, live: true })), ...(r.dormant || []).map((a) => ({ ...a, live: false }))];
   rooms = (r.rooms || []).map((x) => x.id).sort();
   if (!room) room = r.active_room || rooms[0] || "A";
