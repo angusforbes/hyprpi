@@ -1,32 +1,21 @@
 #!/usr/bin/env node
-// MOCKUP: terminal search panel (panel 3, SUPER+ALT+/; ui/SearchWindow.qml stays the
-// real one). Searches a room through the daemon's "search": every agent's conversation
-// (closed ones too), the room log and, in AI mode, the activity stream (tool calls etc.).
-//   keyword — exact words, case-insensitive, newest first.
-//   AI      — a small model reads the room's recent history and returns a short ANSWER
-//             (when you typed a question) plus the entries it used as EVIDENCE, each with
-//             a "why". Budget and activity cap: aiSearchChars / aiSearchActivityShare
-//             in ~/.config/hyprpi/config.json (explained in lib/paths.mjs).
-// Whose history: @Names in the box ("@Lippy @Sankey kafka") search only those agents
-// (live or closed, in this room); none = everyone. Tab completes an @name. Independent of
-// the room panel's "to:" and the agent panel's marks; the same @Names text can be copied
-// between the panels (lib/at-names.mjs).
-//
-//   ~/Work/hyprpi/mockups/search-tui [ROOM]   (kitty launcher)
-//
-// Nothing runs until Enter (Ctrl+Enter jumps to the selected
-// result). Keys: Ctrl+/ or Ctrl+T keyword ⇄ AI · @Name scope (Tab completes @names and
-// /commands) · Ctrl+Tab / Ctrl+Shift+Tab world · ↑↓ PgUp PgDn wheel select · click select,
-// double-click jump · Esc stops a running search, else clears the box · Ctrl+C copies ·
-// Ctrl+Q quits. While a search runs, only "thinking…" shimmers in the world colour; the
-// previous answer is gone at once; new words + Enter replace it.
-// Box: ←→ Home End, Ctrl/Alt+←→ word, Backspace Delete, Ctrl+W / Alt+Backspace word,
-// Ctrl+U clear. Commands: /search WORDS · /ai QUESTION-OR-DESCRIPTION (/ask = /ai) ·
-// /help · //text searches for "/text". Select & copy as in the room panel: drag = text,
-// Shift+drag / Shift+click = whole items, double-click = word, triple-click = item (each
-// copies); in the box Shift+←→ selects, Ctrl+C copies (none selected: the whole box), Ctrl+X cuts, Ctrl+V
-// pastes. Kitty's own selection: Ctrl+Shift+drag (the launcher maps it).
-// Search state lives in lib/search-view.mjs.
+// The Thoughts window (panel 3, SUPER+ALT+/; Angus 2026-09-29 via Thoughts-C): ONE chat window
+// with this world's Thoughts agent (lib/thoughts.mjs), like an agent window: the thread on top,
+// newest at the bottom, the box at the bottom. No modes.
+//   plain text            talk to Thoughts-<room> (it remembers; it can ask agents, hand off work)
+//   /keyword WORDS        exact-word search over the world's history, instant, no model
+//   /ask QUESTION         a small model answers from the history and cites the turns (lib/ask.mjs)
+//   /more [N]             the last /keyword again with N (default +20) more of the older matches
+// Evidence (from /keyword, /ask, or the Thoughts agent's own searches): at most the 10 newest
+// matching turns, oldest first, numbered; "+N older" when more matched. Each line keeps a
+// reference to its turn (agent, session, entry id) for a future jump. Results go to the Thoughts
+// agent with your next message, so "tell me more about the second one" works.
+// Whose history: @Names in the words ("/keyword @Sankey kafka"), else the agent marks (▸, the
+// agents panel) when not everyone is marked; the evidence header says so.
+// Keys: ⏎ send · Tab completes @names and /commands · Ctrl+Tab world · Ctrl+↑↓ PgUp PgDn wheel
+// scroll · Ctrl+V pastes text or a screenshot · Ctrl+click an agent's name (or an evidence line)
+// jumps to its window · links and file paths open on click · Esc clears · Ctrl+Q quits.
+// Select & copy as in the room panel (drag, Shift+click whole items, double / triple click).
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { connect } from "../lib/client.mjs";
@@ -120,13 +109,30 @@ function scopeOf(text = query) {
   return { ...r, names, rest };
 }
 const onlyIds = () => scopeOf().ids;
-const S = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: onlyIds, closed: true, roomLog: true, order: "auto" });
+const S = createSearch({ api: () => api, room: () => room, onChange: () => render(), only: onlyIds, closed: true, roomLog: true, order: "auto" }); // (unused since the Thoughts window; kept for S.startedAt)
+// /keyword and /ask: whose history (the words' @names, else the marks) and the one running.
+const EV = { busy: "", last: null, startedAt: 0 };
+function evFilter(text) {
+  const sc = scopeOf(text);
+  if (sc.unknown.length) throw new Error(`no agent ${sc.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`);
+  const ids = sc.ids.length ? sc.ids : (!marks.all && marks.agents?.length ? marks.agents : []);
+  return { words: sc.rest, ids, how: sc.ids.length ? "@names" : ids.length ? "marks" : "" };
+}
+function evidence(kind, text, n = 10) {
+  let f; try { f = evFilter(text); } catch (e) { note = "✗ " + e.message; return render(); }
+  if (!f.words) { note = kind === "ask" ? "/ask QUESTION" : "/keyword WORDS"; return render(); }
+  if (!api) { note = "✗ daemon offline"; return render(); }
+  EV.busy = kind; EV.startedAt = Date.now(); EV.last = { kind, text, n }; note = ""; TH.scroll = 0; render();
+  api.call("thoughts.evidence", { room, kind, query: f.words, n, agents: f.ids }, { timeoutMs: 180000 })
+    .then(() => { EV.busy = ""; render(); })
+    .catch((e) => { EV.busy = ""; note = "✗ " + e.message; render(); });
+}
 
 // Thoughts mode (Angus, 2026-09-29; lib/thoughts.mjs): the third mode after keyword and AI. You
 // talk to the world's own agent, Thoughts-<room> (Opus 5.5, remembers the conversation, can ask
 // agents and hand them work). The pane is a clean chat thread from the daemon: your messages, its
 // replies, one dim line per thing it did for you, agents' replies. Ctrl+/ cycles the three modes.
-let thoughtsOn = false;
+let thoughtsOn = true; // always (no modes any more)
 let linkRows = {}; // screen row -> [{ x0, x1, target }] (1-based rows, 0-based columns): clickable links in the thread
 const linkAt = (x, y) => (linkRows[y] || []).find((q) => x - 1 >= q.x0 && x - 1 < q.x1)?.target || null;
 const TH = { room: "", entries: [], busy: false, scroll: 0 }; // scroll: rows up from the bottom
@@ -161,12 +167,17 @@ function sendThought(text, images = []) {
 
 // Commands: the search panel's own (/search, /ai, /ask) plus the ones every panel has (/help,
 // /tinker, /quit), all through lib/tui/command-line.mjs.
-const searchCmd = (mode) => (arg) => { setBox(arg); if (S.mode !== mode) S.toggleMode(); if (arg) return enter(); render(); };
 const cmds = createCommands({
   commands: [
-    { name: "/search", usage: "/search WORDS", help: "keyword search (no words: keyword mode)", run: searchCmd("keyword") },
-    { name: "/ai", usage: "/ai QUESTION", help: "AI: a short answer + the evidence (or a description: just the matches)", run: searchCmd("ai") },
-    { name: "/ask", usage: "/ask QUESTION", help: "same as /ai", run: searchCmd("ai") },
+    { name: "/keyword", usage: "/keyword WORDS", help: "exact-word search of this world's history (instant, no model): the 10 newest matching turns", run: (a) => evidence("keyword", a) },
+    { name: "/search", usage: "/search WORDS", help: "the same as /keyword", run: (a) => evidence("keyword", a) },
+    { name: "/ask", usage: "/ask QUESTION", help: "a small model answers from the history and cites the turns (answer last)", run: (a) => evidence("ask", a) },
+    { name: "/ai", usage: "/ai QUESTION", help: "the same as /ask", run: (a) => evidence("ask", a) },
+    { name: "/more", usage: "/more [N]", help: "the last /keyword again with N (default 20) more of the older matches", run: (a) => {
+      if (!EV.last) { note = "nothing to show more of yet (/keyword WORDS first)"; return render(); }
+      const add = Math.max(1, Number(a) || 20); evidence(EV.last.kind, EV.last.text, EV.last.n + add);
+    } },
+    { name: "/thought", usage: "/thought TEXT", help: "the same as typing TEXT: tell Thoughts", run: (a) => sendThought(a) },
   ],
   ctx: {
     panel: "search", world: () => room, worlds: () => rooms, cycle: (d) => cycle(d), agents: () => known.filter((a) => a.live),
@@ -209,45 +220,24 @@ function completeName(dir = 1) {
   note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸@" + o : "@" + o)).join("  ") : "";
   render(); return true;
 }
-// Ctrl+/: keyword → ✦ AI → 💭 Thoughts → keyword.
-function toggleMode() {
-  note = ""; top = 0;
-  if (thoughtsOn) { thoughtsOn = false; if (S.mode !== "keyword") S.toggleMode(); return render(); }
-  if (S.mode === "ai") { S.toggleMode(); return setThoughts(true); }
-  S.toggleMode();
-}
+function toggleMode() { note = "one window now: type to Thoughts · /keyword WORDS · /ask QUESTION"; render(); }
 
 function enter() {
   const raw = query.trim();
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
-  const box = raw.startsWith("//") ? raw.slice(1) : raw;
-  if (thoughtsOn) { if (!box && !attach.length) { note = "type a thought (or paste a screenshot), then ⏎"; return render(); } const imgs = attach; attach = []; setBox(""); return sendThought(box, imgs); }
-  if (!box) { note = "type words, then ⏎ · ^⏎ jumps to the selected result"; return render(); }
-  // @names scope the search; the rest are the words.
-  const sc = scopeOf(box);
-  if (sc.unknown.length) { note = `✗ no agent ${sc.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`; return render(); }
-  const text = sc.rest;
-  if (!text) { note = `now add words: whose history is ${sc.found.map((a) => "@" + a.display).join(" ") || "everyone's"}`; return render(); }
-  const r = S.ranFor;
-  if (S.busy && r && r.q === text && r.mode === S.mode) { note = ""; return render(); } // already searching for exactly that
-  // New words while a search runs: S.run() supersedes it (its reply is ignored).
-  // Same words again: ask first (a second ⏎ within 4 s runs it again). ^⏎ jumps to the result.
-  if (r && r.q === text && r.mode === S.mode && r.room === room && r.only === sc.ids.join(",") && !S.busy) {
-    if (Date.now() - (enter.asked || 0) > 4000) { enter.asked = Date.now(); note = "already searched · ⏎ again runs it again · ^⏎ jumps to the selected result"; return render(); }
-    enter.asked = 0;
-  }
-  top = 0; S.run(text, S.mode); if (S.ranFor) S.ranFor.box = box;
+  const text = raw.startsWith("//") ? raw.slice(1) : raw;
+  if (!text && !attach.length) { note = "type to Thoughts (or /keyword WORDS, /ask QUESTION), then ⏎"; return render(); }
+  const imgs = attach; attach = []; setBox(""); return sendThought(text, imgs);
 }
 function setBox(text) { query = text; qc = graphemes(text).length; }
 // A search sent from another panel (/search WORDS, /ai Q: mockups/panel-here → the daemon's
 // ui.searchRun, or --mode / --query when that opened this panel): switch mode and run it.
 function runFrom(mode, query) {
   showHelp = false; note = "";
-  if (mode === "thoughts") { if (!thoughtsOn) setThoughts(true); if (query) sendThought(query); return render(); }
-  if (mode === "ai" || mode === "keyword") thoughtsOn = false;
-  if ((mode === "ai" || mode === "keyword") && S.mode !== (mode === "ai" ? "ai" : "keyword")) S.toggleMode();
-  if (query) { setBox(query); return enter(); }
-  render();
+  if (!query) return render();
+  if (mode === "ai" || mode === "ask") return evidence("ask", query);
+  if (mode === "keyword") return evidence("keyword", query);
+  sendThought(query); // mode thoughts (/thought)
 }
 const startArgs = (() => { const a = process.argv.slice(3), o = {}; for (let i = 0; i < a.length; i += 2) if (a[i] === "--mode" || a[i] === "--query") o[a[i].slice(2)] = a[i + 1] ?? ""; return o; })();
 let startRan = !(startArgs.mode || startArgs.query);
@@ -292,22 +282,19 @@ function resultLines(r, i, W) {
 function helpLines() {
   const k = (keys, what) => `   ${bold(keys.padEnd(22))} ${what}`;
   return [
-    k("Ctrl+/ or Ctrl+T", "keyword ⇄ AI (AI: an answer to your question + the evidence it used)"),
-    k("@Name words", "search only those agents' history (@Lippy @Sankey kafka); Tab completes @names; none = everyone"),
-    k("Tab / Shift+Tab", "complete an @name (again: next / previous match) or a /command"),
-    k("Ctrl+Tab / Ctrl+⇧Tab", "next / previous world"),
-    k("↑↓ PgUp PgDn wheel", "select a result (the list scrolls with it)"),
-    k("⏎ · ^⏎", "search · jump to the selected result's agent window (⏎ on the same words asks, then re-runs)"),
-    k("^↑↓ · click", "select a result (plain ↑↓ are the box's) · ^click on an agent's name jumps to its window"),
+    k("text + ⏎", `talk to Thoughts-${room} (it remembers; it can ask agents and hand them work)`),
+    k("/keyword WORDS", "exact-word search of the history: the 10 newest matching turns, oldest first (+N older · /more)"),
+    k("/ask QUESTION", "an answer from the history, with the turns it cites; the answer prints last"),
+    k("@Name in the words", "only those agents' history (else the agent marks ▸, when not everyone is marked)"),
+    k("follow-ups", "results go to Thoughts with your next message: \"tell me more about the second one\""),
+    k("Tab · Ctrl+Tab", "complete an @name or a /command · next world"),
+    k("^↑↓ PgUp PgDn wheel", "scroll the thread (plain ↑↓ are the box's)"),
+    k("Ctrl+V", "paste text, or a screenshot to send with your message"),
+    k("click · ^click", "open a link / file path · ^click an agent's name or an evidence line: that agent's window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
-    k("box", "Shift+←→ / Ctrl+Shift+←→ / Shift+Home End select · Ctrl+C copy (none selected: all) · Ctrl+X cut · Ctrl+V paste"),
-    k("Esc", "stop a running search · else clear the box · closes this help"),
-    k("Enter while searching", "new words replace the running search (same words: keeps going)"),
     k("Esc · Ctrl+U · Ctrl+Q", "clear the box · clear the box · quit"),
-    k("editing", "←→ Home End · Ctrl/Alt+←→ word · Ctrl+W / Alt+Backspace word · Ctrl+U clear"),
     "",
     ...cmds.help().map(([c, d]) => k(c, d)),
-    k("//text", "search for \"/text\""),
   ];
 }
 
@@ -462,7 +449,7 @@ function multiClick(n, x, y) { // 2 = the word under the pointer, 3 = the whole 
 }
 
 function syncAnim() {
-  anim.sync(!!S.busy || (thoughtsOn && TH.busy));
+  anim.sync(!!EV.busy || TH.busy);
 }
 
 function render() {
@@ -471,10 +458,11 @@ function render() {
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30, c = worldFg(room);
   const rows = [];
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
-  rows.push(rule(thoughtsOn ? `thoughts · room ${room} · talking to Thoughts-${room}` : `search · room ${room} · ${scopeLabel()}`));
-  const prompt = fg(c, bold(thoughtsOn ? "💭 " : S.mode === "ai" ? "✦ " : "⌕ "));
+  const marked = !marks.all && marks.agents?.length ? marks.agents.map((id) => "@" + (known.find((a) => a.id === id)?.display || id)).join(" ") : "";
+  rows.push(rule(`thoughts · room ${room} · Thoughts-${room}${marked ? ` · /keyword /ask: only ${marked} (marks)` : ""}`));
+  const prompt = fg(c, bold("💭 "));
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
-  const hint = slash ? dim("  " + slash) : query ? "" : thoughtsOn ? dim(`tell Thoughts-${room} what's on your mind · ⏎ sends · ^/ next mode`) : dim(S.mode === "ai" ? "ask a question, or describe what you're looking for · /help" : "exact words (case-insensitive) · /help");
+  const hint = slash ? dim("  " + slash) : query ? "" : dim(`talk to Thoughts-${room} · /keyword WORDS · /ask QUESTION · /help`);
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
   boxIn();
   // The shared box, wrapped to the panel's width (Angus: long searches were cut off on one line):
@@ -494,11 +482,7 @@ function render() {
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
-  const MODES3 = [["keyword", "keyword"], ["ai", "✦ AI"], ["thoughts", "💭 Thoughts"]];
-  const tabs3 = MODES3.map(([k, l]) => k === modeName() ? `${ESC}${worldBg(room)};30m ${l} ${ESC}49;39m` : dim(l)).join(" ");
-  rows.push(` ${tabs3}  ` + (thoughtsOn ? (TH.busy ? shimmer(`Thoughts-${room} is thinking…`, c) : note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`))
-    : S.busy ? shimmer(S.mode === "ai" ? "thinking…" : "searching…", c)
-    : statusStyled));
+  rows.push(" " + (EV.busy ? shimmerAt(EV.busy === "ask" ? "asking the history…" : "searching…", c, EV.startedAt) : TH.busy ? shimmer(`Thoughts-${room} is thinking…`, c) : note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
   const ruleAt = rows.length; rows.push("");
   const avail = Math.max(1, H - rows.length - 1);
   resultRows = {}; rowMeta = {}; items = []; linkRows = {};
@@ -521,11 +505,32 @@ function render() {
         if (e.images?.length) add(md(e.images.map((f) => `📎 ${f}`).join("\n"), tw, "   ", dim), 4); // pasted screenshots (click opens)
       } else if (e.role === "action") add(md((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
       else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 8), 6); }
+      else if (e.role === "evidence") {
+        items[k].copy = `${e.kind === "ask" ? "/ask" : "/keyword"} ${e.query}${e.answer ? "\n" + e.answer : ""}`;
+        // /keyword · /ask (by you) or the Thoughts agent's own search: numbered, oldest first; the
+        // answer (ask) last. Each line keeps its turn's reference (items[k].ref, for Ctrl+click).
+        flat.push({ l: "" });
+        const tag = e.kind === "ask" ? "✦ ask" : "⌕ keyword";
+        const count = e.items?.length ? `${e.items.length}${e.total > e.items.length ? " of " + e.total : ""} ${e.kind === "ask" ? "cited" : "matching"} turn${e.items.length === 1 ? "" : "s"}` : "no matches";
+        flat.push({ l: `  ${fg(c, bold(tag))} ${italic(`"${e.query}"`)}${dim(` · ${count}${e.filter?.length ? " · only " + e.filter.map((n) => "@" + n).join(" ") : ""}${e.by === "thoughts" ? ` · by Thoughts-${room}` : ""} · ${when(e.ts)}`)}`, meta: { item: k, textX: 3, header: true } });
+        if (e.older > 0) flat.push({ l: `     ${dim(`+${e.older} older · /more`)}` });
+        (e.items || []).forEach((it, n) => {
+          const ki = items.push({ copy: `${it.who} · ${when(it.ts)}\n${String(it.text ?? (it.pre || "") + (it.match || "") + (it.post || "")).replace(/\s+/g, " ").trim()}`, ref: it.ref, who: it.who }) - 1;
+          const also = it.also?.length ? dim(` · also ${it.also.slice(0, 4).join(", ")}${it.also.length > 4 ? ` +${it.also.length - 4}` : ""}`) : "";
+          const head = `  ${dim(String(n + 1).padStart(3) + ".")} ${dim(when(it.ts))}  ${hexFg(it.color, bold(it.who))}${dim(" · " + (ROLE[it.role] || it.role || ""))}${also}`;
+          flat.push({ l: head, meta: { item: ki, textX: 8, header: true } });
+          const body = it.text != null ? String(it.text).replace(/\s+/g, " ") : null;
+          const lines = body != null ? wrap(body, tw - 4).slice(0, 3).map((x) => `        ${x}`) : resultLines({ ...it, name: it.who }, -1, W).slice(1, 4).filter((x) => strip(x).trim()).map((x) => "     " + x.slice(1));
+          for (const l of lines) flat.push({ l, meta: { item: ki, textX: 9 } });
+        });
+        if (e.answer) { flat.push({ l: "" }); add(md("↳ " + e.answer, tw, "   "), 4); } // the answer prints last, below the evidence
+      }
       else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 12), 6); }
       else add(md(e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
     }
-    if (!TH.entries.length) flat.push({ l: "" }, { l: dim(`   Thoughts-${room} is this world's own agent: think out loud, ask about what's going on,`) }, { l: dim("   have it keep a thought (\"keep this\"), ask an agent, or hand something off. It remembers.") });
+    if (!TH.entries.length) flat.push({ l: "" }, { l: dim(`   Thoughts-${room} is this world's own agent: think out loud, ask about what's going on,`) }, { l: dim("   have it keep a thought (\"keep this\"), ask an agent, or hand something off. It remembers.") }, { l: dim("   /keyword WORDS searches the history · /ask QUESTION answers from it, with the turns it used.") });
     if (TH.busy) flat.push({ l: "" }, { l: "   " + shimmer("thinking…", c) });
+    if (EV.busy) flat.push({ l: "" }, { l: "   " + shimmerAt(EV.busy === "ask" ? "asking the history…" : "searching…", c, EV.startedAt) });
     const maxScroll = Math.max(0, flat.length - avail);
     TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
     const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
@@ -574,9 +579,8 @@ function render() {
 
   // status bar: rooms as tabs (like the room TUI)
   const tabs = rooms.map((r) => r === room ? `${ESC}${worldBg(r)};30m ${r} ${ESC}49;39m` : ` ${fg(worldFg(r), r)} `).join("");
-  const left = ` hyprpi search ${online ? "" : "· daemon offline "}`;
-  const pos = S.results.length ? (S.selected + 1) + "/" + S.results.length + " · " : "";
-  const right = `${pos}^/ mode · @name scope · /help · ^Q quit `;
+  const left = ` hyprpi thoughts ${online ? "" : "· daemon offline "}`;
+  const right = `/keyword · /ask · /more · /help · ^Q quit `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
@@ -600,12 +604,10 @@ function ctrlClick(x, y) {
   if (url) { try { spawnChild("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); } catch { /* none */ } return; }
   if (!api) return;
   let hit = word ? agentIn(word, known.filter((ag) => ag.live)) : null;
-  if (!hit && resultRows[y] !== undefined) {
-    const r = S.results[resultRows[y]];
-    if (r?.kind === "agent") {
-      hit = known.find((ag) => ag.live && ag.id === r.source) || null;
-      if (!hit) { note = `${r.name} is closed`; return render(); }
-    }
+  const ref = rowMeta[y] != null ? items[rowMeta[y].item]?.ref : null; // an evidence line: its turn's agent
+  if (!hit && ref?.kind === "agent") {
+    hit = known.find((ag) => ag.live && ag.id === ref.source) || null;
+    if (!hit) { note = `${items[rowMeta[y].item].who} is closed`; return render(); }
   }
   if (!hit) { const n = bareName(word); if (n) { note = `no live agent @${n}`; render(); } return; }
   api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
@@ -651,7 +653,7 @@ const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;?]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b[\s\S]|[
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); });
-function move(d) { if (showHelp) return; if (thoughtsOn) { TH.scroll = Math.max(0, TH.scroll - d * (Math.abs(d) >= 5 ? 1 : 3)); return render(); } S.move(d); }
+function move(d) { if (showHelp) return; TH.scroll = Math.max(0, TH.scroll - d * (Math.abs(d) >= 5 ? 1 : 3)); render(); }
 function onKey(d) {
   if (sel && !d.startsWith("\x1b[<")) sel = null; // a pane selection lasts until the next key
   // Bracketed paste (SUPER+V / Ctrl+Shift+V): inserted as text (line breaks become spaces).
@@ -662,7 +664,6 @@ function onKey(d) {
   if (d === "\x1b" || d === "\x1b\x1b") { // Esc: drop a box selection, close help, stop a search, else clear the box
     if (boxSel()) { selA = null; return render(); }
     if (showHelp) { showHelp = false; return render(); }
-    if (S.stop()) return; // a running search: stop it (the box keeps its words)
     if (query || attach.length) { setBox(""); attach = []; note = ""; return render(); }
     return;
   }
@@ -689,7 +690,7 @@ function onKey(d) {
   if (d === "\x1b[1;5B") return move(1);
   if (d === "\x1b[A") { qc = 0; selA = null; return render(); }
   if (d === "\x1b[B") { qc = graphemes(query).length; selA = null; return render(); }
-  if (d === "\x1b[13;5u") { showHelp = false; return jump(); } // Ctrl+Enter (the launcher maps it)
+  if (d === "\x1b[13;5u") { showHelp = false; selA = null; return enter(); } // Ctrl+Enter: the same as ⏎ here
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
   if (d === "\r") { showHelp = false; selA = null; return enter(); }
@@ -727,7 +728,6 @@ function onKey(d) {
       sel = null;
       const lt = linkAt(x, y); // a plain click on a link / file path in the thread opens it
       if (lt) { if (openTarget(lt)) note = `opened ${lt.replace(process.env.HOME || "\0", "~")}`; return render(); }
-      if (!showHelp && resultRows[y] !== undefined) S.selected = resultRows[y];
       return render();
     }
     return;
@@ -748,14 +748,14 @@ const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
-  if (restarting || codeStamp() === codeAtStart || S.busy) return; // (a Thoughts reply keeps coming in the daemon: fine to restart)
+  if (restarting || codeStamp() === codeAtStart || EV.busy) return; // (a Thoughts reply keeps coming in the daemon: fine to restart)
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(MODES_OFF);
   // The launcher (mockups/search-tui) loops on exit 75: the state goes in its file and this
   // process ends, so restarts don't pile up processes (N19). Older windows: a child, as before.
   const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
-  if (sf) { try { fs.writeFileSync(sf, JSON.stringify({ query, qc, mode: modeName() })); } catch { /* start fresh */ } process.exit(75); }
+  if (sf) { try { fs.writeFileSync(sf, JSON.stringify({ query, qc })); } catch { /* start fresh */ } process.exit(75); }
   spawnChild(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env }).on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
@@ -763,7 +763,7 @@ out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt scre
 { // after a restart onto new code: the same words in the box, the same mode
   const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
   try { const k = sf && JSON.parse(fs.readFileSync(sf, "utf8") || "null"); if (sf) fs.writeFileSync(sf, "");
-    if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); if (k.mode === "thoughts") thoughtsOn = true; else if (k.mode && k.mode !== S.mode) S.toggleMode(); } } catch { /* fresh */ }
+    if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); } } catch { /* fresh */ }
 }
 render();
 start();
