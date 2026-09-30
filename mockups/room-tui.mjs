@@ -142,11 +142,8 @@ const allMarked = () => marks.all || markedIds().size === hereAgents().length;
 // agent turn, however many tool calls); "all" = everything. Default 200.
 let historyN = 200;
 function onlyLabel() {
-  if (allMarked()) return "";
-  const ids = markedIds();
-  if (!ids.size) return " · no agents ▸ (Esc: all)";
-  const names = [...ids].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
-  return ` · only ▸ ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}`;
+  if (allMarked()) return ""; // marks filter the stream: just "▸ N" (who: the agents panel; Esc: all)
+  return ` · ▸ ${markedIds().size}`;
 }
 const italic = (s) => `${ESC}3m${s}${ESC}23m`;
 let ic = 0; // cursor position in the message being typed, in graphemes
@@ -295,15 +292,9 @@ function draw() {
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const rows = [];
 
-  // No agent pane here: panel 1 (SUPER+ALT+A) owns the agents. One header line instead —
-  // the room, who is marked (▸, set in panel 1), and what else is in the world.
+  // One header line (Angus): "— room C · <view> (^F)" plus the pane's own hints; the agents
+  // live in the agents panel (SUPER+ALT+A).
   const marked = markedIds(), everyone = allMarked();
-  const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
-  const nClosed = dormant.filter((a) => a.room === room).length;
-  const markedNames = [...marked].map((id) => agents.find((a) => a.id === id)?.display).filter(Boolean);
-  const who = everyone ? `${live.length} agent${live.length === 1 ? "" : "s"}`
-    : marked.size ? `only ▸ ${cut(markedNames.join(", "), 40)}` : "no agents ▸ (Esc: all)";
-  rows.push(rule(`room ${room} · ${who}${nParked ? ` · ${nParked} parked` : ""}${nClosed ? ` · ${nClosed} closed` : ""}`));
 
   const msgs = messages[room] || [];
   const authorLabel = (au = {}) => au.kind === "human" ? au.name || "Angus" : (au.icon ? au.icon + " " : "") + (au.name || "agent");
@@ -463,7 +454,7 @@ function draw() {
   }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   const streamLabel = FILTER_LABEL[filter];
-  rows[ruleAt] = rule(`${streamLabel} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "") + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
+  rows[ruleAt] = rule(`room ${room} · ${streamLabel} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "") + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim(words.length ? `  (nothing matches "${words.join(" ")}" · /stream alone clears)` : MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
@@ -520,7 +511,7 @@ function draw() {
 let askTop = 0;
 function drawPane(rows, ruleAt, avail, W, c, rule) {
   const pane = ["", ...helpRows()];
-  rows[ruleAt] = rule("commands (Esc back)");
+  rows[ruleAt] = rule(`room ${room} · commands (Esc back)`);
   rowMeta = {}; resultRowMap = {}; lastAvail = avail;
   rows.push(...pane.slice(0, avail));
   for (let k = pane.length; k < avail; k++) rows.push("");
