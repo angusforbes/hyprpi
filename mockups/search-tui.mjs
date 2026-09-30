@@ -35,6 +35,7 @@ import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { mdLines } from "../lib/tui/markdown.mjs";
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -474,10 +475,10 @@ function render() {
       if (e.role === "you" || e.role === "thoughts") {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
-        for (const l of wrapP(e.text, tw)) flat.push({ l: `   ${l}`, meta: { item: k, textX: 4 } });
+        for (const l of e.role === "thoughts" ? mdLines(e.text, tw, wrap) : wrapP(e.text, tw)) flat.push({ l: `   ${l}`, meta: { item: k, textX: 4 } }); // its replies: **bold**, *italic*, `code`, bullets
       } else if (e.role === "action") for (const [n, l] of wrapP((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw).entries()) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
       else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); for (const l of wrapP(e.text, tw - 2).slice(0, 8)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
-      else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); for (const l of wrapP(e.text, tw - 2).slice(0, 12)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
+      else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); for (const l of mdLines(e.text, tw - 2, wrap).slice(0, 12)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
       else for (const l of wrapP(e.text, tw)) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
     }
     if (!TH.entries.length) flat.push({ l: "" }, { l: dim(`   Thoughts-${room} is this world's own agent: think out loud, ask about what's going on,`) }, { l: dim("   have it keep a thought (\"keep this\"), ask an agent, or hand something off. It remembers.") });
@@ -696,7 +697,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
