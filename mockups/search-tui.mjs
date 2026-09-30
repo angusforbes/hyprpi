@@ -312,7 +312,8 @@ function helpLines() {
     k("@Name in the words", "only those agents' history (else the agent marks ▸, when not everyone is marked)"),
     k("follow-ups", "results go to Thoughts with your next message: \"tell me more about the second one\""),
     k("Tab · Ctrl+Tab", "complete an @name or a /command · next world"),
-    k("^↑↓ PgUp PgDn wheel", "scroll the thread (plain ↑↓ are the box's)"),
+    k("^↑↓ PgUp PgDn wheel", "scroll back through the thread (plain ↑↓ are the box's: your earlier messages)"),
+    k("^End · ^Home", "back to the newest · the oldest (the header says \"scrolled back\" while you are)"),
     k("Ctrl+V", "paste text, or a screenshot to send with your message"),
     k("click · ^click", "open a link / file path · ^click an agent's name or an evidence line: that agent's window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
@@ -483,7 +484,8 @@ function render() {
   const rows = [];
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const marked = !marks.all && marks.agents?.length ? marks.agents.map((id) => "@" + (known.find((a) => a.id === id)?.display || id)).join(" ") : "";
-  rows.push(rule(`thoughts · room ${room} · Thoughts-${room}${marked ? ` · /keyword /ask: only ${marked} (marks)` : ""}`));
+  const headLabel = `thoughts · room ${room} · Thoughts-${room}${marked ? ` · /keyword /ask: only ${marked} (marks)` : ""}`;
+  rows.push(rule(headLabel));
   const prompt = fg(c, bold("💭 "));
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
   const hint = slash ? dim("  " + slash) : query ? "" : dim(`talk to Thoughts-${room} · /keyword WORDS · /ask QUESTION · /help`);
@@ -508,7 +510,9 @@ function render() {
     chipMd = mdRows(attach.map((f, i) => `📎 image ${i + 1}: ${f}`).join("   "), Math.max(10, W - pw), wrap, gw)[0];
     chipAt = bottom.length; bottom.push(" ".repeat(pw) + dim(chipMd.line));
   }
-  const ruleAt = rows.length; rows.push("");
+  // No second rule (Angus: no "thread" line): the conversation starts right under the header, and
+  // the header itself says so when you've scrolled back or opened /help.
+  const ruleAt = 0;
   const avail = Math.max(1, H - rows.length - bottom.length - 1); // the thread; 1 = the status bar
   resultRows = {}; rowMeta = {}; items = []; linkRows = {};
 
@@ -561,12 +565,12 @@ function render() {
     const maxScroll = Math.max(0, flat.length - avail);
     TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
     const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
-    rows[ruleAt] = rule(TH.scroll ? `thread · ↓ ${TH.scroll} more below (^↓ / End)` : start ? "thread · ^↑ PgUp scroll back" : "thread");
+    if (TH.scroll) rows[ruleAt] = rule(`${headLabel} · scrolled back · ^End returns`);
     while (shown.length < avail) shown.unshift({ l: "" }); // a short thread sits just above the box, like a chat
     shown.forEach((x, k) => { if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; if (x.links?.length) linkRows[rows.length + 1 + k] = x.links; });
     rows.push(...shown.map((x) => x.l));
   } else if (showHelp) {
-    rows[ruleAt] = rule("help · Esc closes");
+    rows[ruleAt] = rule(`${headLabel} · help · Esc closes`);
     rows.push(...helpLines().slice(0, avail));
   } else if (S.busy) {
     // Nothing from the previous search stays on screen while this one runs.
@@ -603,8 +607,8 @@ function render() {
     if (S.ranFor && !S.busy && !S.results.length && !S.answer && !S.status.startsWith("✗")) shown.push({ l: dim(S.mode === "ai" ? "  Nothing matched that idea." : "  No exact matches.") });
     rows.push(...shown.map((x) => x.l));
   }
-  while (rows.length < ruleAt + 1 + avail) rows.push(""); // the thread's area, then the bottom block
-  rows.length = Math.min(rows.length, ruleAt + 1 + avail);
+  while (rows.length < 1 + avail) rows.push(""); // the thread's area, then the bottom block
+  rows.length = Math.min(rows.length, 1 + avail);
   const bottomY = rows.length + 1;
   rows.push(...bottom);
   const cursorRow = bottomY + boxAt + (L.cRow - inTop), cursorCol = Math.min(W, pw + L.cCol + 1);
@@ -722,6 +726,8 @@ function onKey(d) {
   // Same scheme as the board: plain keys type (⏎ searches); ↑↓ / ^↑↓ move the highlight;
   // ^⏎ acts on it (jumps to that agent's window); ^click on a name jumps too.
   // Plain keys are the box's (↑ start, ↓ end of the one-line box); Ctrl is the pane's.
+  if (d === "\x1b[1;5F") { TH.scroll = 0; return render(); } // Ctrl+End: back to the newest
+  if (d === "\x1b[1;5H") { TH.scroll = 1e9; return render(); } // Ctrl+Home: the oldest
   if (d === "\x1b[1;5A") return move(-1);
   if (d === "\x1b[1;5B") return move(1);
   // ↑↓ like a Pi window (Angus): within the box first (↑ to its start, ↓ to its end); then ↑ steps
