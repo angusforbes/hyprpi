@@ -280,11 +280,16 @@ their icon (the list above has the names).
 
 ## Activity stream
 
-The room TUI shows each room as a **stream**: its messages plus what its agents are doing.
-Ctrl+F cycles the view: **room · all activity** (room messages and agent-to-agent messages) ·
-**stream · all activity** (all activity, no room messages) · **room + stream** (everything) ·
-**room + stream · topics only** (room messages and topic changes; the default). Finishes and "needs you" are
-logged but not shown: the agent list's ✓ and × show them. Activity is a history for you (and tools
+The room TUI shows each room as a **stream**: its messages plus what its agents **did**. When an
+agent finishes a turn, the daemon's small model (the topic model, claude-haiku-4-5) writes one
+**"did" line** (kind `turn`) from that turn's tool calls and final message, e.g. "made the room
+header one line; tested in a hidden pty; committed 161186f" (lib/topics.mjs `turnInput` /
+`summarizeTurn`; config `"turnLines": false` turns them off). Agents mid-turn show as a dim
+"● Name working…" line at the bottom. Ctrl+F cycles the view: **room + stream** (the default:
+room messages, did lines, topics, agent-to-agent messages, joins and moves) · **room** (room and
+agent-to-agent messages) · **stream** (the same without room messages) · **topics** (topic changes
+only). **Raw tool lines** ("$ …", "reading a.ts") are in no view (Angus, 2026-09-30); `/stream raw`
+shows them (again: back). Finishes and "needs you" are logged but not shown: the agent list's ✓ and × show them. Activity is a history for you (and tools
 like dashboards); it is never part of any agent's context.
 
 Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, or `$HYPRPI_STATE`):
@@ -302,6 +307,7 @@ Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, o
 |---|---|---|
 | `tool` | one line per tool call, batched ("reading a.ts, b.ts +3", "$ git push", "web search: …") | the agent's Pi extension |
 | `topic` | the new topic label | topic labelling (on the ding) |
+| `turn` | the "did" line: what the agent did in its last turn and how it ended | turn summary (on the ding) |
 | `done` / `blocked` | "finished" / "needs you" | status changes |
 | `talk` / `demand` | "to Name: gist" / "asks Name: gist" (`to`: recipients) | `talk` / `demand` between agents |
 | `reply` | "replies to Name: gist" (`to`: the asker) | `talk_reply` |

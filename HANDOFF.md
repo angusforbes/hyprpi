@@ -164,6 +164,16 @@ Then use `kitty @ --to unix:/tmp/kt-test send-text|send-key|get-text --extent sc
 - Restarting the daemon after lib changes: `hyprpi ensure` (not every command checks code mtime).
 - Not done: drag-select on activity rows; activity in the QML room window; a per-agent "now doing"
   line in the agent list.
+- **Did lines (Blink, 2026-09-30).** On each working→done the daemon writes one activity line of
+  kind `turn` (lib/topics.mjs `turnInput` reads the session from the turn's start: Angus's message or
+  an injected hyprpi-talk / room message, reading back up to 8 MB because tool results make huge
+  lines; `summarizeTurn` = one haiku call). The room panel shows did lines and hides tool lines in
+  every view (`/stream raw` shows them); agents mid-turn show "● Name working…". Tool lines are
+  still logged: AI search, /ask (which ranks did lines above tool lines) and historySince read them.
+  Dropping tool-line logging waits until /ask can read session files for exact details.
+  Next: the agents panel's "last did" line. The daemon already sends `last_did` {text, ts} on every
+  agent (lib/daemon.mjs `lastDidOf`); agents-tui draws one row per agent and its click mapping
+  assumes that, so a second row needs care.
 
 ## Resumed sessions keep their identity (💋 Lippy, 2026-09-28)
 

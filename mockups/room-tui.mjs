@@ -115,17 +115,21 @@ let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messa
 let activity = {}; // room -> events
 // Ctrl+F modes. "done" and "blocked" are logged but never shown (the agent list shows ✓ / ×).
 const DIRECT = new Set(["talk", "demand", "reply", "prompt"]);
+// Stream views (Angus 2026-09-30): what agents DID, one line per finished turn ("turn", written by
+// the daemon's small model), plus topics, agent-to-agent messages and events; raw tool lines
+// ("$ …", "reading a.ts") are in no view any more, only in the hidden "/stream raw".
+const noTools = (e) => e.kind !== "tool";
 const MODES = {
-  room:   { label: "room · all activity", msgs: true, act: (e) => DIRECT.has(e.kind) },        // room messages + agent-to-agent
-  stream: { label: "stream · all activity", msgs: false, act: () => true },                      // activity, no room messages
-  all:    { label: "room + stream", msgs: true, act: () => true },                               // everything
-  topics: { label: "room + stream · topics only", msgs: true, act: (e) => e.kind === "topic" || DIRECT.has(e.kind) },  // room messages + agent-to-agent + topic changes (no tool lines)
-  topiclines: { label: "stream · topics only", msgs: false, act: (e) => e.kind === "topic" },  // just the agents' topic changes (Angus): no messages, no tools
+  all:    { label: "room + stream", msgs: true, act: noTools },                                   // everything but tool lines (the default)
+  room:   { label: "room", msgs: true, act: (e) => DIRECT.has(e.kind) },                        // room messages + agent-to-agent
+  stream: { label: "stream", msgs: false, act: noTools },                                          // did lines, topics, agent events; no room messages
+  topiclines: { label: "topics", msgs: false, act: (e) => e.kind === "topic" },                   // just the agents' topic changes
+  raw:    { label: "stream · raw tool lines", msgs: false, act: () => true },                      // hidden: /stream raw
 };
-const FILTERS = ["room", "stream", "all", "topics", "topiclines"];
+const FILTERS = ["all", "room", "stream", "topiclines"]; // ^F cycles these (raw only via /stream raw)
 const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
 const HIDDEN = new Set(["done", "blocked"]);
-let filter = "topics"; // default view
+let filter = "all"; // default view
 // What the pane shows: "stream" | "help".
 let view = "stream", words = []; // words: /stream WORDS live filter (lower case)
 let resultRowMap = {}; // screen row -> search result index (clicks)
@@ -404,14 +408,14 @@ function draw() {
       // Topics: mid tone, italic. Agent events (joined, left, renamed, moved, model): mid tone.
       // Errors and "needs you": normal text. Tool lines and Esc stops: dim.
       const MID = new Set(["joined", "left", "renamed", "moved", "model"]);
-      const line = e.kind === "blocked" ? "needs you" : e.kind === "error" ? e.text
+      const line = e.kind === "blocked" ? "needs you" : e.kind === "error" || e.kind === "turn" ? e.text
         : e.kind === "topic" ? midFg(`${ESC}3mtopic: ${e.text}${ESC}23m`) : MID.has(e.kind) ? midFg(e.text) : dim(e.text);
       if (lastAct !== au.id) {
         if (convo.length) convo.push({ line: "", msg: null });
         convo.push({ line: "   " + sender, msg: mi, header: true, act: true });
       }
       sItems[mi].copy = `${au.name || "agent"}: ${strip(line)}`;
-      push(line, e.kind === "blocked" || e.kind === "error" || e.kind === "topic" || MID.has(e.kind));
+      push(line, e.kind === "blocked" || e.kind === "error" || e.kind === "topic" || e.kind === "turn" || MID.has(e.kind));
       lastAct = au.id;
       return;
     }
@@ -451,6 +455,11 @@ function draw() {
       r.line = " " + fg(c, "▌") + " " + rest;
       first = false;
     }
+  }
+  // Liveness: agents mid-turn, one dim line each at the bottom (their "did" line comes when they finish).
+  if (mode.act({ kind: "turn" })) {
+    const busy = hereAgents().filter((a) => a.status === "working" && (everyone || marked.has(a.id)));
+    if (busy.length) { convo.push({ line: "", msg: null }); convo.push({ line: "   " + dim(busy.map((a) => `● ${a.display} working…`).join("   ")), msg: null }); }
   }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   const streamLabel = FILTER_LABEL[filter];
@@ -631,7 +640,9 @@ const cmds = createCommands({
   commands: [
     { name: "/messages", help: "show room messages + agent-to-agent (was /room; /room now goes to this panel)", run: () => { filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); } },
     { name: "/stream", usage: "/stream [WORDS]", help: "only rows with those words; /stream alone clears the filter",
-      run: (arg) => { words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } } },
+      run: (arg) => {
+        if (/^raw$/i.test(arg || "")) { filter = filter === "raw" ? "all" : "raw"; words = []; scroll = 0; lastConvoLen = 0; note = filter === "raw" ? "raw tool lines (/stream raw again, or ^F, leaves)" : ""; return setView("stream"); }
+        words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } } },
     { name: "/history", usage: "/history N | all", help: "how far back the stream goes (N interactions; default 200)",
       run: (arg) => {
         if (!arg) { note = `history: ${historyN === "all" ? "everything" : "last " + historyN + " interactions"} · /history N or /history all`; render(); return; }
@@ -995,7 +1006,7 @@ try {
   const k = raw ? JSON.parse(raw) : null;
   delete process.env.HYPRPI_ROOM_TUI_STATE;
   if (k) {
-    if (FILTERS.includes(k.filter)) filter = k.filter;
+    if (FILTERS.includes(k.filter) || k.filter === "raw") filter = k.filter; // (old "topics" → the default)
     if (Array.isArray(k.words)) words = k.words;
     if (k.view === "board") { view = "board"; if (k.focus) bv.focus(k.focus); bv.st.top = Number(k.bvTop) || 0; bv.st.anchor = k.bvAnchor || null; bv.st.cur = k.bvCur || null; }
     if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); if (k.sent) sentText = input; }
