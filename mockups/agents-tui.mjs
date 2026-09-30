@@ -143,7 +143,7 @@ function draw() {
   listTop = Math.max(0, Math.min(listTop, Math.max(0, here.length - listRows)));
   const nMarked = live.filter((a) => isMarked(a.id)).length;
   const hidden = here.length - listTop - listRows;
-  rows.push(rule(`agents · room ${room} · ${SHOW_LABEL[showMode]} (^O)`
+  rows.push(rule(`agents ${room} · ${SHOW_LABEL[showMode]} (^O)`
     + (here.length > listRows ? ` · ${listTop ? "↑" + listTop + " " : ""}${hidden > 0 ? "↓" + hidden : ""}` : "")
     + (nMarked === live.length ? "" : ` · ${nMarked}/${live.length} ▸ · Esc all`)));
   listRowY = rows.length + 1;
@@ -197,7 +197,7 @@ function draw() {
     // What ^O does here too (Angus): the "+ parked" view also shows archived projects.
     const view = showMode >= 1 ? "+ archived (^O)" : "open (^O)"; // no archived count (Angus)
     rows.push(""); // a line of space between the agents and the projects (Angus)
-    rows.push(rule(`projects · room ${room} · ${view}${more > 0 ? ` · +${more} more (SUPER+ALT+P)` : ""}`));
+    rows.push(rule(`projects ${room} · ${view}${more > 0 ? ` · +${more} more (SUPER+ALT+P)` : ""}`));
     const dot = " · ";
     for (const p of projs.slice(0, projShow)) {
       const cur = cursorId === "p:" + p.id;
