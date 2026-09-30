@@ -47,6 +47,7 @@ export default function thoughts(pi: ExtensionAPI) {
       agent: Type.String({ description: "agent name, e.g. Sankey or pi·k3vg" }),
       question: Type.String(),
       urgent: Type.Optional(Type.Boolean()),
+      images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.ask", p);
@@ -64,6 +65,7 @@ export default function thoughts(pi: ExtensionAPI) {
       agent: Type.Optional(Type.String()),
       project: Type.Optional(Type.String({ description: "@name of a project on the board" })),
       urgent: Type.Optional(Type.Boolean({ description: "also if the agent is working (queued after its turn)" })),
+      images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.work", p);
@@ -101,6 +103,7 @@ export default function thoughts(pi: ExtensionAPI) {
       task: Type.String(),
       project: Type.Optional(Type.String({ description: "@name: the new agent joins it" })),
       cwd: Type.Optional(Type.String({ description: "working folder (default ~/Work)" })),
+      images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.open", p);

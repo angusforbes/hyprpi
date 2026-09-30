@@ -28,6 +28,7 @@
 // pastes. Kitty's own selection: Ctrl+Shift+drag (the launcher maps it).
 // Search state lives in lib/search-view.mjs.
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
@@ -137,10 +138,24 @@ function loadThoughts() {
   api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function setThoughts(on) { thoughtsOn = on; TH.scroll = 0; note = ""; if (on) loadThoughts(); render(); }
-function sendThought(text) {
+// Pasted screenshots for the next thought (Ctrl+V with an image on the clipboard, Thoughts mode):
+// saved like pi's own, /tmp/pi-clipboard-<id>.png, shown as 📎 chips under the box (click: open).
+let attach = [];
+function pasteImage(type) {
+  const f = `/tmp/pi-clipboard-${randomUUID()}.${type.split("/")[1] === "jpeg" ? "jpg" : type.split("/")[1] || "png"}`;
+  try {
+    const out = fs.openSync(f, "w");
+    const p = spawnChild("wl-paste", ["--type", type], { stdio: ["ignore", out, "ignore"] });
+    p.on("error", () => { note = "✗ wl-paste failed"; render(); });
+    p.on("close", (code) => { fs.closeSync(out); let n = 0; try { n = fs.statSync(f).size; } catch { /* gone */ }
+      if (code || !n) { note = "✗ couldn't read the image from the clipboard"; return render(); }
+      attach.push(f); note = `📎 image attached (${Math.round(n / 1024)} KB) · ⏎ sends it with your text · Esc drops it`; render(); });
+  } catch (e) { note = "✗ " + e.message; render(); }
+}
+function sendThought(text, images = []) {
   const t = String(text || "").trim();
-  if (!t || !api) return;
-  api.call("thoughts.send", { room, text: t }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  if ((!t && !images.length) || !api) return;
+  api.call("thoughts.send", { room, text: t, images }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
   TH.scroll = 0; TH.busy = true; render();
 }
 
@@ -206,7 +221,7 @@ function enter() {
   const raw = query.trim();
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
   const box = raw.startsWith("//") ? raw.slice(1) : raw;
-  if (thoughtsOn) { if (!box) { note = "type a thought, then ⏎"; return render(); } setBox(""); return sendThought(box); }
+  if (thoughtsOn) { if (!box && !attach.length) { note = "type a thought (or paste a screenshot), then ⏎"; return render(); } const imgs = attach; attach = []; setBox(""); return sendThought(box, imgs); }
   if (!box) { note = "type words, then ⏎ · ^⏎ jumps to the selected result"; return render(); }
   // @names scope the search; the rest are the words.
   const sc = scopeOf(box);
@@ -326,6 +341,20 @@ const boxOut = () => { const st = box.state(); query = st.text; qc = st.cursor; 
 function insertText(t) { boxIn(); box.insert(t); boxOut(); note = ""; render(); }
 function copyBoxSel(cut) { boxIn(); const ok = box.copySel(cut); boxOut(); render(); return ok; }
 function pasteClipboard() {
+  // An image on the clipboard (a screenshot): attached in Thoughts mode (Angus), else a note.
+  try {
+    const lt = spawnChild("wl-paste", ["--list-types"], { stdio: ["ignore", "pipe", "ignore"] });
+    let types = ""; lt.stdout.on("data", (b) => { types += b; }); lt.on("error", () => pasteText());
+    lt.on("close", () => {
+      const img = types.split("\n").map((x) => x.trim()).find((x) => /^image\/(png|jpeg|webp|gif)$/.test(x));
+      const hasText = /^text\/plain/m.test(types);
+      if (img && thoughtsOn) return pasteImage(img);
+      if (img && !hasText) { note = "images can be pasted in 💭 Thoughts mode (Ctrl+/)"; return render(); }
+      pasteText();
+    });
+  } catch { pasteText(); }
+}
+function pasteText() {
   try {
     const p = spawnChild("wl-paste", ["--no-newline", "--type", "text/plain"], { stdio: ["ignore", "pipe", "ignore"] });
     let buf = ""; p.stdout.on("data", (b) => { buf += b; }); p.on("error", () => {}); p.on("close", () => { if (buf) insertText(buf); });
@@ -456,6 +485,12 @@ function render() {
   const boxY = rows.length + 1;
   inRows.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
   const cursorRow = boxY + (L.cRow - inTop), cursorCol = Math.min(W, pw + L.cCol + 1);
+  let chipLinks = null;
+  if (thoughtsOn && attach.length) { // 📎 chips: the pasted images going with the next message
+    const md = mdRows(attach.map((f, i) => `📎 image ${i + 1}: ${f}`).join("   "), Math.max(10, W - pw), wrap, gw)[0];
+    chipLinks = { y: rows.length + 1, links: md.links.map((q) => ({ ...q, x0: q.x0 + pw, x1: q.x1 + pw })) };
+    rows.push(" ".repeat(pw) + dim(md.line));
+  }
   const tag = (on, off) => `${ESC}${worldBg(room)};30m ${on} ${ESC}49;39m ${dim(off)}`;
   const status = note || S.status;
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
@@ -467,6 +502,7 @@ function render() {
   const ruleAt = rows.length; rows.push("");
   const avail = Math.max(1, H - rows.length - 1);
   resultRows = {}; rowMeta = {}; items = []; linkRows = {};
+  if (chipLinks) linkRows[chipLinks.y] = chipLinks.links;
 
   if (!showHelp && thoughtsOn) {
     // The thread, newest at the bottom; ^↑↓ / PgUp PgDn / the wheel scroll it.
@@ -482,6 +518,7 @@ function render() {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         add(md(e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
+        if (e.images?.length) add(md(e.images.map((f) => `📎 ${f}`).join("\n"), tw, "   ", dim), 4); // pasted screenshots (click opens)
       } else if (e.role === "action") add(md((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
       else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 8), 6); }
       else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 12), 6); }
@@ -626,7 +663,7 @@ function onKey(d) {
     if (boxSel()) { selA = null; return render(); }
     if (showHelp) { showHelp = false; return render(); }
     if (S.stop()) return; // a running search: stop it (the box keeps its words)
-    if (query) { setBox(""); note = ""; return render(); }
+    if (query || attach.length) { setBox(""); attach = []; note = ""; return render(); }
     return;
   }
   // Ctrl+C: copy the box's selection, else the whole box; it never deletes it (Angus) and never
