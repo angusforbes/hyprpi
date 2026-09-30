@@ -35,7 +35,7 @@ import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
-import { mdLines } from "../lib/tui/markdown.mjs";
+import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -126,6 +126,8 @@ const S = createSearch({ api: () => api, room: () => room, onChange: () => rende
 // agents and hand them work). The pane is a clean chat thread from the daemon: your messages, its
 // replies, one dim line per thing it did for you, agents' replies. Ctrl+/ cycles the three modes.
 let thoughtsOn = false;
+let linkRows = {}; // screen row -> [{ x0, x1, target }] (1-based rows, 0-based columns): clickable links in the thread
+const linkAt = (x, y) => (linkRows[y] || []).find((q) => x - 1 >= q.x0 && x - 1 < q.x1)?.target || null;
 const TH = { room: "", entries: [], busy: false, scroll: 0 }; // scroll: rows up from the bottom
 const modeName = () => thoughtsOn ? "thoughts" : S.mode;
 const wrapP = (t, n) => String(t || "").split(/\r?\n/).flatMap((q) => q.trim() ? wrap(q, n) : [""]); // paragraphs kept
@@ -464,22 +466,26 @@ function render() {
     : statusStyled));
   const ruleAt = rows.length; rows.push("");
   const avail = Math.max(1, H - rows.length - 1);
-  resultRows = {}; rowMeta = {}; items = [];
+  resultRows = {}; rowMeta = {}; items = []; linkRows = {};
 
   if (!showHelp && thoughtsOn) {
     // The thread, newest at the bottom; ^↑↓ / PgUp PgDn / the wheel scroll it.
     const tw = Math.max(10, W - 5), flat = [];
     const who = (e) => e.role === "you" ? fg(c, bold("you")) : e.role === "thoughts" ? bold(`💭 Thoughts-${room}`) : "";
+    // Every entry through mdRows: Markdown, and links / file paths clickable (Angus: all links and
+    // paths must be clickable). x.links: [{ x0, x1, target }] in the row's own columns.
+    const md = (text, n, pre, style = (l) => l) => mdRows(text, n, wrap, gw).map((r) => ({ l: pre + style(r.line), links: r.links.map((q) => ({ ...q, x0: q.x0 + pre.length, x1: q.x1 + pre.length })) }));
     for (const e of TH.entries) {
-      const k = items.push({ copy: e.text }) - 1;
+      const k = items.push({ copy: e.text }) - 1, red = (l) => `${ESC}31m${l}${ESC}39m`;
+      const add = (rs, textX) => { for (const r of rs) flat.push({ ...r, meta: { item: k, textX } }); };
       if (e.role === "you" || e.role === "thoughts") {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
-        for (const l of e.role === "thoughts" ? mdLines(e.text, tw, wrap) : wrapP(e.text, tw)) flat.push({ l: `   ${l}`, meta: { item: k, textX: 4 } }); // its replies: **bold**, *italic*, `code`, bullets
-      } else if (e.role === "action") for (const [n, l] of wrapP((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw).entries()) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
-      else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); for (const l of wrapP(e.text, tw - 2).slice(0, 8)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
-      else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); for (const l of mdLines(e.text, tw - 2, wrap).slice(0, 12)) flat.push({ l: `     ${dim(l)}`, meta: { item: k, textX: 6 } }); }
-      else for (const l of wrapP(e.text, tw)) flat.push({ l: `   ${e.text.startsWith("✗") ? `${ESC}31m${l}${ESC}39m` : dim(l)}`, meta: { item: k, textX: 4 } });
+        add(md(e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
+      } else if (e.role === "action") add(md((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
+      else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 8), 6); }
+      else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 12), 6); }
+      else add(md(e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
     }
     if (!TH.entries.length) flat.push({ l: "" }, { l: dim(`   Thoughts-${room} is this world's own agent: think out loud, ask about what's going on,`) }, { l: dim("   have it keep a thought (\"keep this\"), ask an agent, or hand something off. It remembers.") });
     if (TH.busy) flat.push({ l: "" }, { l: "   " + shimmer("thinking…", c) });
@@ -487,7 +493,7 @@ function render() {
     TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
     const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
     rows[ruleAt] = rule(TH.scroll ? `thread · ↓ ${TH.scroll} more below (^↓ / End)` : start ? "thread · ^↑ PgUp scroll back" : "thread");
-    shown.forEach((x, k) => { if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; });
+    shown.forEach((x, k) => { if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; if (x.links?.length) linkRows[rows.length + 1 + k] = x.links; });
     rows.push(...shown.map((x) => x.l));
   } else if (showHelp) {
     rows[ruleAt] = rule("help · Esc closes");
@@ -550,6 +556,8 @@ function render() {
 // too) jumps to its window; elsewhere on a result, that result's agent (if still open).
 // Matching: lib/tui/agent-click.mjs.
 function ctrlClick(x, y) {
+  const lt = linkAt(x, y);
+  if (lt) { if (openTarget(lt)) { note = `opened ${lt.replace(process.env.HOME || "\0", "~")}`; render(); } return; }
   const word = wordAt(screen[y - 1] || "", x, gw);
   const url = urlIn(word);
   if (url) { try { spawnChild("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); } catch { /* none */ } return; }
@@ -680,6 +688,8 @@ function onKey(d) {
       if ((sel.dragging || sel.mode === "item") && selRange()) { copy(selectedText()); return render(); } // highlight stays until the next key or click
       if (sel.clicks >= 2) return multiClick(Math.min(3, sel.clicks), x, y);
       sel = null;
+      const lt = linkAt(x, y); // a plain click on a link / file path in the thread opens it
+      if (lt) { if (openTarget(lt)) note = `opened ${lt.replace(process.env.HOME || "\0", "~")}`; return render(); }
       if (!showHelp && resultRows[y] !== undefined) S.selected = resultRows[y];
       return render();
     }
