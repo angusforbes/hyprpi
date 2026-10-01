@@ -2,7 +2,7 @@
 // Summon & dismiss keys (hypr/hyprpi.lua): guest dismiss · guest dismiss --all · guest pin
 //   SUPER+D      send the focused summoned agent home (a hyprpi panel: closed, like its toggle key)
 //   SUPER+ALT+D  send every unpinned guest on this workspace home
-//   SUPER+ALT+S  pin / unpin the focused guest (pinned guests stay; orange border)
+//   SUPER+ALT+S  pin / unpin the focused guest or hyprpi panel (pinned ones stay; orange border)
 // A short notification says what happened when there's something to say.
 import { execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
