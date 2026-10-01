@@ -245,6 +245,14 @@ function toggleMode() { note = "one window now: type to Thoughts · /keyword WOR
 function enter() {
   const raw = query.trim();
   if (raw) box.remember(raw); // ↑ brings it back, /commands included (N51)
+  // "/ignore TEXT" (Angus, N52): a secret signpost. A normal line from Angus in the thread, given to
+  // Thoughts with his next message, no reply. Not in /help or Tab.
+  if (/^\/ignore(?:\s|$)/.test(raw)) {
+    setBox(""); note = "";
+    if (!api) { note = "✗ daemon offline"; return render(); }
+    api.call("thoughts.ignore", { room, text: raw }).catch((e) => { note = "✗ " + e.message; render(); });
+    return render();
+  }
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !attach.length) { note = "type to Thoughts (or /keyword WORDS, /ask QUESTION), then ⏎"; return render(); }

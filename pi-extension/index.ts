@@ -6,7 +6,7 @@
  * CLI-loaded extensions win tool-name conflicts, so room_read / room_post /
  * room_reply / talk / demand here replace the Herdr versions for this agent.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { UserMessageComponent, getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { execFile } from "node:child_process";
@@ -16,6 +16,7 @@ import { ROOT } from "../lib/paths.mjs";
 type Conn = Awaited<ReturnType<typeof connect>>;
 
 export default function hyprpi(pi: ExtensionAPI) {
+  ignoreNotes(pi); // /ignore works in any window that loads this extension
   const AGENT_ID = process.env.HYPRPI_AGENT_ID;
   if (!AGENT_ID) return;
 
@@ -479,3 +480,25 @@ export default function hyprpi(pi: ExtensionAPI) {
 }
 
 function safe<T>(f: () => T): T | undefined { try { return f(); } catch { return undefined; } }
+
+// "/ignore TEXT" (Angus, @hyprpi N52): a secret signpost. It is shown as his own message, verbatim
+// with the "/ignore" prefix, and goes into the context exactly like that (the prefix tells the
+// model to ignore it), but it starts no turn and gets no answer. Mid-turn it is held until the turn
+// ends (never steered in). Not a registered command, so it isn't in pi's command list. Saved in the
+// session as a custom message "hyprpi-ignore" (hyprpi's search finds it; topics and did lines skip it).
+const IGNORE = /^\/ignore(?:\s|$)/;
+function ignoreNotes(pi: ExtensionAPI) {
+  const held: string[] = [];
+  let idle = () => true;
+  const add = (text: string) => pi.sendMessage({ customType: "hyprpi-ignore", content: text, display: true }, { triggerTurn: false });
+  const flush = () => { while (held.length) add(held.shift()!); };
+  pi.registerMessageRenderer("hyprpi-ignore", (m: any) => new UserMessageComponent(typeof m.content === "string" ? m.content : (m.content || []).map((c: any) => c.text || "").join(""), getMarkdownTheme()));
+  pi.on("input", (e: any, ctx: any) => {
+    const text = String(e?.text ?? "").trim();
+    if (!IGNORE.test(text)) return { action: "continue" };
+    idle = () => { try { return ctx?.isIdle?.() ?? true; } catch { return true; } };
+    if (idle() && !e.streamingBehavior) add(text); else held.push(text);
+    return { action: "handled" };
+  });
+  pi.on("agent_settled", async () => flush());
+}
