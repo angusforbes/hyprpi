@@ -167,6 +167,9 @@ async function cmdNew() {
   // --silent (restore-all): open the window straight on --workspace via Hyprland's exec_cmd
   // 'N silent', so Angus's focus and workspace never change. Implies --no-focus.
   const silent = flag("--silent");
+  // --here: stay on this workspace even in panel mode. A plain flag (it used to be read with opt(),
+  // which took the next argument as its value: `--here --no-focus` lost --no-focus, a final --here was ignored).
+  const here = flag("--here");
   const dd = args.indexOf("--");
   const piArgs = dd >= 0 ? args.slice(dd + 1) : [];
   await ensureDaemon();
@@ -192,7 +195,7 @@ async function cmdNew() {
   if (!workspace && active && Number.isInteger(active.id) && active.id > 0) workspace = active.id;
   // Panel mode (mockups/panels): that workspace is the three floating panels, so a new
   // agent would open behind them. Put it on the next free workspace of the same world.
-  if (workspace && !silent && !opt("--here")) workspace = await awayFromPanels(workspace, cfg);
+  if (workspace && !silent && !here) workspace = await awayFromPanels(workspace, cfg);
 
   const id = wantId || newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");
