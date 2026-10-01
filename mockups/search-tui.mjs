@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
@@ -244,6 +244,7 @@ function toggleMode() { note = "one window now: type to Thoughts · /keyword WOR
 
 function enter() {
   const raw = query.trim();
+  if (raw) box.remember(raw); // ↑ brings it back, /commands included (N51)
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !attach.length) { note = "type to Thoughts (or /keyword WORDS, /ask QUESTION), then ⏎"; return render(); }
@@ -341,9 +342,19 @@ let pasting = false;    // inside a bracketed paste
 function boxSel() { if (selA == null || selA === qc) return null; return selA < qc ? [selA, qc] : [qc, selA]; }
 // The editing itself is the shared message box (lib/tui/input-box.mjs), one line here: the panel
 // keeps query / qc / selA and loads them into the box before each edit, then reads them back.
+const thoughtsHistory = createHistory("thoughts");
 const box = createInputBox({
   onChange: () => {}, copy: (t) => copy(t), multiline: false,
-  history: { list: () => TH.entries.filter((e) => e.role === "you" && e.text).map((e) => e.text) },
+  // Everything typed here, /commands too (Angus: recall /ask, /keyword …), like every panel's box:
+  // STATE/input-history/thoughts.json, seeded once from this thread's earlier messages.
+  history: {
+    list: () => {
+      const l = thoughtsHistory.list();
+      if (!l.length && TH.entries.length) for (const e of TH.entries) if (e.role === "you" && e.text) thoughtsHistory.add(e.text);
+      return thoughtsHistory.list();
+    },
+    add: (t) => thoughtsHistory.add(t),
+  },
   historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
   tint: atTint((name) => { const r = resolveAt([name], hereKnown()), a = r.found[0]; return a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => x, bold, nameFg: (_n, color, g) => hexFg(color || "", bold(g)) }),
