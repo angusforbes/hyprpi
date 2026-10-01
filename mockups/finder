@@ -19,6 +19,7 @@ import { request } from "../lib/client.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib/paths.mjs";
 import { worldHex, unnamed } from "../lib/tui/term.mjs";
+import { isAppWindow, appLabel } from "../lib/apps.mjs";
 
 // Which pop-up (Angus, @hyprpi D8): "plugin" (default) is our own copy of the Omarchy menu, the
 // omarchy-shell plugin agf.hyprpi-finder (shell-plugin/; the same look, plus colour: names in the
@@ -162,13 +163,27 @@ async function rows() {
     out.push({ kind: "panel", id: c.address, room: S.room, sort: nm, recent: 0, mark: "▫", glyph: "▫", label: `${icon} ${nm} · ${loc}`,
       rich: esc(icon) + " " + esc(nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "", worlds: S.room, ws, subtitle: ws === S.workspace ? "already here" : "" });
   }
+  // Summon: this world's app windows (Angus, J28: "apply this summon logic to all apps"), two lines each:
+  // app + a stable tag (profile, vault, folder, cwd) · workspace · last used; below, what it shows now.
+  if (SUMMON) {
+    const agentAddr = new Set((l.agents || []).map((a) => a.address).filter(Boolean));
+    let used = {}; try { used = (await request("window.recent", {})).used || {}; } catch { /* an older daemon: no ages */ }
+    for (const c of clients) {
+      const ws = c.workspace?.id;
+      if (!isAppWindow(c, { agentAt: (addr) => agentAddr.has(addr) }) || WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] !== S.room) continue;
+      const L = appLabel(c), loc = wsLabel(ws, WORLD_SIZE), nm = [L.app, L.tag].filter(Boolean).join(" "), t = used[c.address] || 0, age = t ? since(t, "") : "";
+      out.push({ kind: "app", id: c.address, room: S.room, sort: nm, recent: t, mark: "▫", glyph: "▫", label: `${L.icon} ${nm} · ${loc}${age ? " · " + age : ""}`,
+        rich: esc(L.icon) + " " + esc(L.app) + (L.tag ? " " + font("dim", L.tag) : "") + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""),
+        sub: "", worlds: S.room, ws, subtitle: L.line2 + (ws === S.workspace ? " · already here" : "") });
+    }
+  }
   // Agents first, then projects (summon: agents, panels, projects). Within each, by category, then most recent first (Angus,
   // 2026-09-30): × needs you (blocked, a decision, a bonk) · ✓ finished, not seen yet · ● working ·
   // ○ idle (a finished one already seen shows ○ too) · ◌ parked / nobody live. "Recent": agents
   // their last turn event, projects their card's last change. Ties A–Z.
   const CAT = { "×": 0, "✓": 1, "●": 2, "○": 3, "◌": 4 };
   const cat = (r) => CAT[r.mark] ?? 3;
-  const KIND = { agent: 0, panel: 1, project: 2 };
+  const KIND = { agent: 0, panel: 1, app: 2, project: 3 };
   out.sort((x, y) => KIND[x.kind] - KIND[y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
@@ -248,7 +263,7 @@ const main = async () => {
     if (code !== 0 || !pick) return;
     if (SUMMON) { // one value per line (several when marked with Tab)
       const ps = pick.split("\n").map((k) => rs.find((x) => x.key === k)).filter(Boolean);
-      try { await request("guest.summon", { auto: true, workspace: S.workspace, agents: ps.filter((x) => x.kind === "agent").map((x) => x.id), projects: ps.filter((x) => x.kind === "project").map((x) => x.id), panels: ps.filter((x) => x.kind === "panel").map((x) => x.id) }, { timeoutMs: 20000 }); }
+      try { await request("guest.summon", { auto: true, workspace: S.workspace, agents: ps.filter((x) => x.kind === "agent").map((x) => x.id), projects: ps.filter((x) => x.kind === "project").map((x) => x.id), panels: ps.filter((x) => x.kind === "panel").map((x) => x.id), windows: ps.filter((x) => x.kind === "app").map((x) => x.id) }, { timeoutMs: 20000 }); }
       catch (e) { console.error("summon: " + e.message); execFile("notify-send", ["hyprpi summon", e.message], () => {}); }
       return;
     }

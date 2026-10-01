@@ -11,10 +11,10 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | click the current world in the bar | Agents panel for the current world: jump to it wherever it is, or open it here in the top-left slot (`hyprpi room --toggle` → `mockups/agents-here`) |
 | SUPER+ALT+/ | Toggle the search window for the current world's room |
 | SUPER+SHIFT+A | Claude (moved here from SUPER+A; a personal binding in `~/.config/hypr/bindings.lua`, not part of hyprpi) |
-| SUPER+S | Summon: a pop-up of this world's agents and projects; Enter brings them to the workspace you're on (its unpinned windows are dismissed first) |
-| SUPER+D | Dismiss the focused agent (to its home, or the emptiest workspace of the world); a hyprpi panel is closed |
-| SUPER+ALT+D | Dismiss all: every hyprpi agent and panel on this workspace except pinned ones and the focused window (panels go together to the nearest emptiest workspace) |
-| SUPER+ALT+S | Pin / unpin the focused agent or panel (light blue border while pinned; pinned windows are never dismissed) |
+| SUPER+S | Summon: a pop-up of this world's agents, panels, app windows (two lines: app + profile / vault / folder / cwd, then the page / note / file / command) and projects; Tab marks several, Enter brings them to the workspace you're on. Every unpinned window there, apps included and the focused one too, is dismissed first |
+| SUPER+D | Dismiss the focused agent or app window (to its home, or the nearest workspace with room); a hyprpi panel is closed. App windows are only ever moved, never closed. Refused when pinned |
+| SUPER+ALT+D | Dismiss all: every agent, panel and app window on this workspace except pinned ones and the focused window |
+| SUPER+ALT+S | Pin / unpin the focused agent, panel or app window (a light-blue 1 px border while pinned, the same for all; pinned windows are never dismissed). Floating windows, dialogs, fullscreen and parked windows are never summoned, dismissed or pinned |
 
 SUPER+SHIFT+ALT+S ("keep this window, clear the rest", J18) is gone: SUPER+ALT+D now keeps the focused window.
 
