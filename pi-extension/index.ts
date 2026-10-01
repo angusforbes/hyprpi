@@ -49,7 +49,11 @@ export default function hyprpi(pi: ExtensionAPI) {
     held.push(message);
     if (idle()) setTimeout(releaseHeld, 0);
   };
-  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "custom") steered.delete(keyOf(m)); });
+  // Thoughts' work that landed in this session (ever) and in the current run (@hyprpi N57 cancel_work).
+  const landed = new Set<string>(), inRun = new Set<string>();
+  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); if (k) { landed.add(k); inRun.add(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
+  // Sent when a run that cancel_work aborted has settled (the stop / the replacement starts a turn).
+  let afterAbort: any = null, afterAbortTimer: ReturnType<typeof setTimeout> | null = null;
   function releaseHeld() { if (held.length && idle()) send(held.shift(), { triggerTurn: true }); }
   // After Esc (Angus stopped the agent): keep the held messages in the context without starting a
   // turn, so the stop stays a stop; they are answered with his next message.
@@ -127,6 +131,37 @@ export default function hyprpi(pi: ExtensionAPI) {
           reply({ ok: true, model: m ? `${m.provider}/${m.id}` : ctxRef?.model?.id || "", thinking: (() => { try { return pi.getThinkingLevel(); } catch { return ""; } })() });
         } catch (e) { reply({ ok: false, error: (e as Error).message }); }
       })();
+    } else if (event === "cancel") {
+      // Thoughts withdraws work it handed out (Angus changed his mind, @hyprpi N57): drop what is still
+      // held here (it never starts), abort the run it started (like Esc), then deliver the stop or the
+      // replacement as a turn of its own once the run has settled.
+      const reply = (r: any) => conn?.call("agent.cancelResult", { token: d.token, ...r }).catch(() => {});
+      try {
+        const ids = new Set<string>((d.ids || []).map(String));
+        let dropped = 0;
+        for (let i = held.length - 1; i >= 0; i--) if (ids.has(keyOf(held[i]))) { held.splice(i, 1); dropped++; }
+        for (const k of [...steered.keys()]) if (ids.has(k)) { steered.delete(k); dropped++; }
+        const started = [...ids].some((k) => landed.has(k));
+        const running = !idle() && [...ids].some((k) => inRun.has(k));
+        const t = d.talk;
+        const message = t ? {
+          customType: "hyprpi-talk", display: true,
+          content: `[hyprpi ${t.mode} from ${t.from.name} · id ${t.request_id}]\n${t.text}\n\n${t.from.name} is waiting for your answer. Reply once with talk_reply(request_id="${t.request_id}", text=...).`,
+          details: t,
+        } : null;
+        // Nothing started and nothing replaces it: a plain stop has nothing to say.
+        const deliver = !!message && (started || !!d.replace);
+        if (running) {
+          if (deliver) {
+            afterAbort = message;
+            if (afterAbortTimer) clearTimeout(afterAbortTimer);
+            afterAbortTimer = setTimeout(() => { afterAbortTimer = null; if (afterAbort) { const m = afterAbort; afterAbort = null; inject(m); } }, 20000); // the run never settled: queue it normally
+          }
+          ctxRef?.abort?.();
+          ctxRef?.ui?.notify?.(`hyprpi: ${t?.from?.name || "Thoughts"} stopped this work (Angus changed his mind)`, "warning");
+        } else if (deliver) inject(message);
+        reply({ ok: true, started, aborted: running, dropped, delivered: deliver });
+      } catch (e) { reply({ ok: false, error: (e as Error).message }); }
     } else if (event === "talk") {
       const how = d.mode === "demand"
         ? `${d.from.name} is waiting for your answer. Reply once with talk_reply(request_id="${d.request_id}", text=...). A refusal is a valid answer.`
@@ -244,8 +279,17 @@ export default function hyprpi(pi: ExtensionAPI) {
     flushActivity();
     ctxRef = ctx; watchTyping(ctx);
     reclaimSteered(); // steered but never landed (an Esc cleared pi's queue)
-    if (aborted) { aborted = false; unseen = false; update({ status: "idle" }); setTimeout(keepHeld, 50); return; }
+    inRun.clear();
+    if (aborted) {
+      aborted = false; unseen = false; update({ status: "idle" });
+      setTimeout(() => {
+        keepHeld();
+        if (afterAbort) { const m = afterAbort; afterAbort = null; if (afterAbortTimer) { clearTimeout(afterAbortTimer); afterAbortTimer = null; } send(m, { triggerTurn: true }); }
+      }, 50);
+      return;
+    }
     unseen = true; update({ status: "done" });
+    if (afterAbort) { held.unshift(afterAbort); afterAbort = null; if (afterAbortTimer) { clearTimeout(afterAbortTimer); afterAbortTimer = null; } } // the abort came too late to stop the run
     setTimeout(releaseHeld, 50); // a held message starts the next turn
   });
   // ---- activity: one short line per tool call for the room's stream (never anyone's context).

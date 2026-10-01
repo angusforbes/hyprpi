@@ -160,6 +160,24 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "cancel_work",
+    label: "Cancel work",
+    description: "Stop work you handed out (give_work / open_agent) because Angus withdrew or changed it. Use it AS SOON AS he does, before saying anything else. The agent's run on that work is stopped at once (like Esc), a still-queued task is dropped so it never starts, and the agent gets the stop (it replies with the state it left things in) or, with replace_with, the new instruction to carry on with. Its reply comes back to you like any. The card item is marked withdrawn and a ✋ line goes to the room. If the work was already done, you're told so (with the commit hash when its reply names one): offer Angus a revert, don't do one unasked.",
+    promptSnippet: "Stop work you handed out when Angus changes his mind",
+    parameters: Type.Object({
+      agent: Type.String({ description: "the agent doing the work, e.g. Blink or pi·k3vg" }),
+      reason: Type.String({ description: "why, in Angus's words (short)" }),
+      replace_with: Type.Optional(Type.String({ description: "the changed task, when Angus changed it rather than dropping it; with the context the agent needs" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.cancel", p);
+      if (r.state === "done" || r.state === "already cancelled")
+        return out(`${r.agent}: that work is ${r.state}${r.hash ? ` (${r.hash})` : ""}: "${r.task}". Its reply: ${r.reply || "(none)"}`);
+      return out(`${r.agent}: ${r.state} ("${r.task}")${r.dropped ? `, ${r.dropped} queued message${r.dropped === 1 ? "" : "s"} dropped` : ""}${r.items?.length ? `; marked withdrawn: ${r.items.join(", ")}` : ""}. ${r.delivered ? (r.replaced ? "It got the new instruction; its reply comes to you." : "It was told to stop; its reply (the state it left things in) comes to you.") : "Nothing more was sent (it never started)."}`, { action: `stopped @${r.agent}` });
+    },
+  });
+
+  pi.registerTool({
     name: "set_topic",
     label: "Set topic",
     description: "Set your topic in the world's room stream (2–5 words, e.g. \"NIM research\"). Only when the subject of the conversation with Angus clearly changes, not per message.",
