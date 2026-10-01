@@ -68,10 +68,16 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "give_work",
     label: "Give work",
-    description: "Hand a task to an agent (agent) or to a project (project: its best free member), with the context it needs from this conversation. Only when Angus asks or agrees. With a project, the task also goes on its board card as a Next item. The agent reports back to you (a \"[reply from\" message).",
-    promptSnippet: "Hand a task to an agent or a project",
+    description: "Hand a deliverable to an agent (agent) or to a project (project: its best free member) as a BRIEF (job J<n>, version 1): Angus's words verbatim, a one-sentence goal, context, limits, what to ask first, and the done-when checks its report must answer. Only when Angus asks or agrees, and only when there's a deliverable (not for questions or exploring: use ask_agent). With a project it goes on the card as a Next item showing ⟦J<n> v1 · running⟧. The report comes back to you (a \"[reply from\" message) with a line saying whether the job is done.",
+    promptSnippet: "Hand a deliverable to an agent or a project, as a brief",
     parameters: Type.Object({
-      task: Type.String({ description: "what to do, with the context from the conversation" }),
+      angus: Type.String({ description: "Angus's own words for this, VERBATIM (quoted to the agent next to your summary)" }),
+      goal: Type.String({ description: "the deliverable, in one sentence" }),
+      context: Type.Optional(Type.String({ description: "what the agent needs to know from this conversation (prose)" })),
+      limits: Type.Optional(Type.String({ description: "what not to touch / scope limits" })),
+      ask_first: Type.Optional(Type.String({ description: "what the agent must ask before doing (e.g. anything that takes Angus's focus)" })),
+      done_when: Type.Array(Type.String(), { description: "checks that count as proof it's done, one per line (W1, W2, …); its report must answer each" }),
+      task: Type.Optional(Type.String({ description: "(old form) the task as prose; becomes the context" })),
       agent: Type.Optional(Type.String()),
       project: Type.Optional(Type.String({ description: "@name of a project on the board" })),
       urgent: Type.Optional(Type.Boolean({ description: "also if the agent is working (queued after its turn)" })),
@@ -79,7 +85,7 @@ export default function thoughts(pi: ExtensionAPI) {
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.work", p);
-      return out(`Gave it to ${r.agent}${r.project ? ` (@${r.project}, card ${r.item || ""})` : ""}.`, { action: `gave @${r.agent}${r.project ? ` (@${r.project})` : ""}: ${String(p.task).replace(/\s+/g, " ").slice(0, 140)}` });
+      return out(`Gave ${r.job} v1 to ${r.agent}${r.project ? ` (@${r.project}, card ${r.item || ""})` : ""}.`, { action: `gave @${r.agent}${r.project ? ` (@${r.project})` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 140)}` });
     },
   });
 
@@ -167,7 +173,8 @@ export default function thoughts(pi: ExtensionAPI) {
     parameters: Type.Object({
       agent: Type.String({ description: "the agent doing the work, e.g. Blink or pi·k3vg" }),
       reason: Type.String({ description: "why, in Angus's words (short)" }),
-      replace_with: Type.Optional(Type.String({ description: "the changed task, when Angus changed it rather than dropping it; with the context the agent needs" })),
+      replace_with: Type.Optional(Type.String({ description: "(not for briefs: use revise_work) the changed task, when Angus changed it rather than dropping it" })),
+      final: Type.Optional(Type.Boolean({ description: "a brief's job is CANCELLED for good (default: STOPPED, which revise_work can resume as a new version)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.cancel", p);
@@ -175,6 +182,33 @@ export default function thoughts(pi: ExtensionAPI) {
         return out(`${r.agent}: that work is ${r.state}${r.hash ? ` (${r.hash})` : ""}: "${r.task}". Its reply: ${r.reply || "(none)"}`);
       return out(`${r.agent}: ${r.state} ("${r.task}")${r.dropped ? `, ${r.dropped} queued message${r.dropped === 1 ? "" : "s"} dropped` : ""}${r.items?.length ? `; marked withdrawn: ${r.items.join(", ")}` : ""}. ${r.delivered ? (r.replaced ? "It got the new instruction; its reply comes to you." : "It was told to stop; its reply (the state it left things in) comes to you.") : "Nothing more was sent (it never started)."}`, { action: `stopped @${r.agent}` });
     },
+  });
+
+  pi.registerTool({
+    name: "revise_work",
+    label: "Revise a brief",
+    description: "Issue a NEW VERSION of a brief (job J<n>) when Angus changes a deliverable or says to continue a stopped one. Give only what changes (the rest is kept) plus the reason in his words. The old version's run is stopped and anything still queued for it (including an earlier stop) is dropped; the agent gets the new version with the changed lines marked + / −. Versions only go up, so an older one can never arrive after a newer one. To just stop, use cancel_work (a state change).",
+    promptSnippet: "Give a brief a new version",
+    parameters: Type.Object({
+      job: Type.String({ description: "the job id, e.g. J7" }),
+      reason: Type.String({ description: "why, in Angus's words" }),
+      angus: Type.Optional(Type.String({ description: "Angus's new words, verbatim" })),
+      goal: Type.Optional(Type.String()), context: Type.Optional(Type.String()), limits: Type.Optional(Type.String()), ask_first: Type.Optional(Type.String()),
+      done_when: Type.Optional(Type.Array(Type.String(), { description: "the FULL new list of done-when checks" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.revise", p, 30000);
+      return out(`${r.job} is now v${r.version} for ${r.agent} (the previous run: ${r.previous}).`, { action: `${r.job} → v${r.version} (@${r.agent}): ${String(p.reason).replace(/\s+/g, " ").slice(0, 120)}` });
+    },
+  });
+
+  pi.registerTool({
+    name: "verify_work",
+    label: "Verify a job",
+    description: "Mark a DONE job (its report answered every done-when line) as VERIFIED, once Angus or a second agent has confirmed the proof (not the agent that did it). Ask a second agent with ask_agent first when Angus wants it checked.",
+    promptSnippet: "Mark a done job verified",
+    parameters: Type.Object({ job: Type.String(), by: Type.String({ description: "Angus, or the confirming agent's name" }), note: Type.Optional(Type.String()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.verify", p); return out(`${r.job} verified by ${r.by}.`, { action: `${r.job} verified by ${r.by}` }); },
   });
 
   pi.registerTool({
@@ -201,10 +235,16 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "open_agent",
     label: "Open an agent",
-    description: "Open a NEW hyprpi agent in this world for a task, when no suitable agent is free. At most one per request of Angus's; tell him you did. It reports back to you.",
-    promptSnippet: "Open a new agent for a task",
+    description: "Open a NEW hyprpi agent in this world for a deliverable, when no suitable agent is free; it gets a BRIEF (job J<n> v1, same fields as give_work) as its first prompt. At most one per request of Angus's; tell him you did. It reports back to you.",
+    promptSnippet: "Open a new agent for a deliverable (a brief)",
     parameters: Type.Object({
-      task: Type.String(),
+      angus: Type.String({ description: "Angus's own words for this, VERBATIM (quoted to the agent next to your summary)" }),
+      goal: Type.String({ description: "the deliverable, in one sentence" }),
+      context: Type.Optional(Type.String({ description: "what the agent needs to know from this conversation (prose)" })),
+      limits: Type.Optional(Type.String({ description: "what not to touch / scope limits" })),
+      ask_first: Type.Optional(Type.String({ description: "what the agent must ask before doing (e.g. anything that takes Angus's focus)" })),
+      done_when: Type.Array(Type.String(), { description: "checks that count as proof it's done, one per line (W1, W2, …); its report must answer each" }),
+      task: Type.Optional(Type.String({ description: "(old form) the task as prose; becomes the context" })),
       project: Type.Optional(Type.String({ description: "@name: the new agent joins it" })),
       cwd: Type.Optional(Type.String({ description: "working folder (default ~/Work)" })),
       images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
@@ -216,7 +256,7 @@ export default function thoughts(pi: ExtensionAPI) {
       checkThinking(p.thinking); // pi·wpzt's N48 test: "banana" used to be dropped silently
       if (p.model) { const m = findModel(ctx, String(p.model).trim()); if (!m) throw new Error(`no model "${p.model}" here (list_models shows the ids)`); model = `${m.provider}/${m.id}`; }
       const r: any = await call("thoughts.open", { ...p, model });
-      return out(`Opened ${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""}.`, { action: `opened a new agent, ${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""}: ${String(p.task).replace(/\s+/g, " ").slice(0, 120)}` });
+      return out(`Opened ${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""} with ${r.job} v1.`, { action: `opened a new agent, ${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 120)}` });
     },
   });
 }
