@@ -551,9 +551,9 @@ function render() {
       if (e.role === "you" || e.role === "thoughts") {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
-        // Thoughts' "↩ from pi·wpzt" lead line (whose reply it is summing up): light grey like the other
+        // Thoughts' "↩ from pi·wpzt" / "↪ to Blink" lead line (a direct message it is summing up): light grey like the other
         // indicator lines, and the summary right under it, no blank line between (Angus).
-        const lead = e.role === "thoughts" && /^↩ from [^\n]+/.exec(e.text || "");
+        const lead = e.role === "thoughts" && /^(?:↩ from|↪ to) [^\n]+/.exec(e.text || "");
         if (lead) add(md(lead[0], tw, "   ", dim), 4);
         add(md(lead ? e.text.slice(lead[0].length).replace(/^\s*\n/, "") : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
         const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
