@@ -17,8 +17,8 @@
 // copies · Shift+click copies a whole item · double-click a word · Ctrl+click an @agent jumps to
 // its window (a link opens).
 // ^F (or /decisions): the Decisions view (@hyprpi N68, lib/tui/decisions-view.mjs): every open Decide
-// item on this world's cards; ^↑↓ step, and with an empty box 1…9 pick an option, ⏎ takes the
-// recommendation, L puts one off (end of the list), Esc back; typed words + ⏎ answer in your words.
+// item on this world's cards; ^↑↓ step; "2⏎" picks option 2 (Alt+2 at once), ⏎ alone takes the
+// recommendation, "L⏎" (Alt+L) puts one off (end of the list), Esc back; other words + ⏎ answer in his words.
 // What is typed goes to the board: "@p text" (to its members: update the card), "@p" alone (the
 // card, who, changes), "D1 b", "N2 ?", /todo /note /done /drop /fold /split /merge /spinout …
 // (/help lists them).
@@ -170,7 +170,7 @@ function draw() {
   const slash = /^\/[^\s/]*$/.test(text) && !note.startsWith("✗") && cmds.hint(text) !== null ? boardCompletions(text) : null; // a hidden command like /ignore: no hint at all (N52)
   const busy = mode === "decisions" ? "" : bv.status(c, false);
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : (busy ? "  " + busy : "") + (note ? dim("  " + note) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "1–9 picks · ⏎ ★ · type an answer · L later · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
+    : (busy ? "  " + busy : "") + (note ? dim("  " + note) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
       ? `text → @${open.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · ⏎ or Esc: all projects`
       : "@project text · @project alone opens it · D1 b answers · ^F decisions · ^↑↓ highlight · /help")));
   // A hint that doesn't fit after the text (a narrow panel, e.g. in the 2x2 grid) goes on the
@@ -251,8 +251,10 @@ async function send() {
     resendAsk = 0;
   }
   if (/^\/decisions?$/i.test(raw)) { box.remember(raw); box.clear(); return setMode(mode === "decisions" ? "cards" : "decisions"); }
-  if (mode === "decisions" && !raw.startsWith("/")) { // a typed answer to the current decision
-    try { const r = await dv.answer(api, room, { text: raw }); box.remember(raw); box.clear(); note = r.note; }
+  if (mode === "decisions" && !raw.startsWith("/")) { // the answer box: "2⏎" picks option 2, "L⏎" later, other words answer
+    if (/^l$/i.test(raw)) { const x = dv.later(); box.clear(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; return render(); }
+    const how = /^[1-9]$/.test(raw) ? { option: Number(raw) - 1 } : { text: raw };
+    try { const r = await dv.answer(api, room, how); if (how.text) box.remember(raw); box.clear(); note = r.note; }
     catch (e) { note = "✗ " + e.message; }
     return render();
   }
@@ -280,7 +282,7 @@ function applyKey(r) {
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 // Chunks → single keys (Alt+1..9 and Alt+letters whole, SGR mouse, CSI, SS3, bracketed paste).
-const KEY = /\x1b[bfsS\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bfsSlL\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) render(); } });
 const CTRL_TAB = new Set(["\x1b[9;5u", "\x1b[27;5;9~"]), CTRL_SHIFT_TAB = new Set(["\x1b[9;6u", "\x1b[27;6;9~", "\x1b[1;5Z"]);
 let pasting = false; // inside a bracketed paste: everything goes to the box (a pasted line break doesn't send)
@@ -320,16 +322,18 @@ function onKey(d) {
   if (d !== "\x1b[A" && d !== "\x1b[B" && mode !== "decisions" && applyKey(bv.key(d, ctx()))) return;
   if (box.key(d)) { hcycle = null; if (box.note) { note = box.note; render(); } return; }
 }
-// The Decisions view's keys (N68). ^↑↓ step; with an empty box 1…9 pick, L puts it off, ⏎ takes the
-// recommendation; Esc (empty box) goes back to the cards. Everything else is the box's.
+// The Decisions view's keys (N68). ^↑↓ step; Alt+1…9 pick at once, Alt+L puts it off; with an empty
+// box ⏎ takes the recommendation and Esc goes back to the cards. Typing is always the box's: "2⏎"
+// picks option 2 and "L⏎" puts it off (send()), so an answer may start with any letter or digit
+// (pi·wpzt's test: "let's wait" / "2 weeks is fine" were taken as keys).
 function decisionKey(d) {
   const answer = (how) => { dv.answer(api, room, how).then((r) => { note = r.note; render(); }).catch((e) => { note = "✗ " + e.message; render(); }); };
   if (d === "\x1b[1;5A" || d === "\x1b[1;5B") { dv.step(d.endsWith("A") ? -1 : 1); note = ""; render(); return true; }
   const sc = { "\x1b[5~": dv.page(), "\x1b[6~": -dv.page() }[d];
   if (sc !== undefined) { dv.scroll(sc); render(); return true; }
+  if (/^\x1b[1-9]$/.test(d)) { if (!api) { note = "✗ daemon offline"; render(); return true; } answer({ option: Number(d[1]) - 1 }); return true; }
+  if (d === "\x1bl" || d === "\x1bL") { const x = dv.later(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; render(); return true; }
   if (box.text) return false;
-  if (/^[1-9]$/.test(d)) { if (!api) { note = "✗ daemon offline"; render(); return true; } answer({ option: Number(d) - 1 }); return true; }
-  if (d === "l" || d === "L") { const x = dv.later(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; render(); return true; }
   if (d === "\r") { if (!api) { note = "✗ daemon offline"; render(); return true; } answer({ recommend: true }); return true; }
   if (d === "\x1b") { if (box.dropSelection()) return true; setMode("cards"); return true; }
   return false;
