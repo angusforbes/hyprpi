@@ -16,6 +16,9 @@
 // Mouse: click the −/+ on a card header to fold · click a row to highlight it · drag selects and
 // copies · Shift+click copies a whole item · double-click a word · Ctrl+click an @agent jumps to
 // its window (a link opens).
+// ^F (or /decisions): the Decisions view (@hyprpi N68, lib/tui/decisions-view.mjs): every open Decide
+// item on this world's cards; ^↑↓ step, and with an empty box 1…9 pick an option, ⏎ takes the
+// recommendation, L puts one off (end of the list), Esc back; typed words + ⏎ answer in your words.
 // What is typed goes to the board: "@p text" (to its members: update the card), "@p" alone (the
 // card, who, changes), "D1 b", "N2 ?", /todo /note /done /drop /fold /split /merge /spinout …
 // (/help lists them).
@@ -30,12 +33,18 @@ let worldBar = null;
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
+import { createDecisionsView } from "../lib/tui/decisions-view.mjs";
 import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 
 let room = (process.argv[2] || "").toUpperCase(), rooms = [], agents = [], online = false, api = null, note = "";
 let board = { room: "", projects: [], names: {}, live: {} };
 const bv = createBoardView({ render: () => render() });
+// The Decisions view (@hyprpi N68): ^F (or /decisions) switches cards ⇄ decisions, like the Stream's ^F
+// cycles its views. In it the box is the answer box: 1…9 / L / ⏎ act while it is empty.
+const dv = createDecisionsView();
+let mode = "cards";
+const setMode = (m) => { mode = m; note = m === "decisions" ? "" : note; render(); };
 const hereAgents = () => agents.filter((a) => a.room === room);
 const hereProjects = () => (board.room === room ? board.projects : []).filter((p) => p.status !== "archived");
 const boardHere = () => (board.room === room ? board : null);
@@ -142,12 +151,14 @@ function draw() {
   const rows = [];
   const open = hereProjects().find((p) => p.id === bv.focused);
   // The box first (its height decides the pane's).
-  const prompt = fg(c, bold(`${room} projects${open ? " @" + open.name : ""} ❯ `)), pw = width(prompt);
+  if (mode === "decisions") dv.sync(boardHere(), agents);
+  const dcur = mode === "decisions" ? dv.current() : null;
+  const prompt = fg(c, bold(mode === "decisions" ? `${room} decisions${dcur ? ` @${dcur.p.name} ${dcur.it.h}` : ""} ❯ ` : `${room} projects${open ? " @" + open.name : ""} ❯ `)), pw = width(prompt);
   const L = box.layout(Math.max(10, W - pw)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
   const avail = Math.max(1, H - 1 - 2 - inRows.length); // pane rule + input rule + status bar
-  const b = bv.frame({ board: boardHere(), room, W, avail, c, agents, standalone: true });
+  const b = mode === "decisions" ? dv.frame({ board: boardHere(), room, W, avail, c, agents }) : bv.frame({ board: boardHere(), room, W, avail, c, agents, standalone: true });
   rows.push(rule(b.label));
   rowMeta = {}; items = b.items;
   b.rows.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
@@ -157,11 +168,11 @@ function draw() {
   // keys, or what the box takes.
   const text = box.text;
   const slash = /^\/[^\s/]*$/.test(text) && !note.startsWith("✗") && cmds.hint(text) !== null ? boardCompletions(text) : null; // a hidden command like /ignore: no hint at all (N52)
-  const busy = bv.status(c, false);
+  const busy = mode === "decisions" ? "" : bv.status(c, false);
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : (busy ? "  " + busy : "") + (note ? dim("  " + note) : text ? "" : dim(bv.cursorHint() || (open
+    : (busy ? "  " + busy : "") + (note ? dim("  " + note) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "1–9 picks · ⏎ ★ · type an answer · L later · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
       ? `text → @${open.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · ⏎ or Esc: all projects`
-      : "@project text · @project alone opens it · D1 b answers · N2 ? asks · ^↑↓ highlight · /help")));
+      : "@project text · @project alone opens it · D1 b answers · ^F decisions · ^↑↓ highlight · /help")));
   // A hint that doesn't fit after the text (a narrow panel, e.g. in the 2x2 grid) goes on the
   // rule above the box instead of off the edge (Angus: "/assign … doesn't work": it had, but the
   // confirmation was past the right edge).
@@ -226,7 +237,7 @@ function cycle(dir) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + dir + rooms.length) % rooms.length].id;
-  note = ""; bv.focus(null); bv.st.cur = null; bv.st.top = 0; board = { room: "", projects: [], names: {}, live: {} };
+  note = ""; bv.focus(null); bv.st.cur = null; bv.st.top = 0; dv.st.cur = null; dv.st.top = 0; board = { room: "", projects: [], names: {}, live: {} };
   render(); loadBoard();
 }
 
@@ -238,6 +249,12 @@ async function send() {
   if (box.sent) {
     if (Date.now() - resendAsk > 4000) { resendAsk = Date.now(); note = "already sent · ⏎ again to send it again · type to change it"; return render(); }
     resendAsk = 0;
+  }
+  if (/^\/decisions?$/i.test(raw)) { box.remember(raw); box.clear(); return setMode(mode === "decisions" ? "cards" : "decisions"); }
+  if (mode === "decisions" && !raw.startsWith("/")) { // a typed answer to the current decision
+    try { const r = await dv.answer(api, room, { text: raw }); box.remember(raw); box.clear(); note = r.note; }
+    catch (e) { note = "✗ " + e.message; }
+    return render();
   }
   try {
     const r = await bv.input(raw, { api, room, board: boardHere() || { projects: [] } });
@@ -279,15 +296,18 @@ function onKey(d) {
   // (No Ctrl+B here: it pulled the room panel onto this workspace. Angus: removed.)
   if (CTRL_TAB.has(d)) return cycle(1);
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
+  if (d === "\x06") return setMode(mode === "decisions" ? "cards" : "decisions"); // ^F: cards ⇄ decisions (N68)
+  if (mode === "decisions" && decisionKey(d)) return;
   const ctx = () => ({ empty: !box.text, api, room, board: boardHere() });
   // Enter: the box's text is sent; with an empty box (or Ctrl+Enter, whatever is typed) it is the
   // board's ⏎: open the highlighted card, back to all projects, or an item's handle into the box.
+  if (d === "\x1b[13;5u" && mode === "decisions") return send();
   if (d === "\x1b[13;5u") { if (applyKey(bv.key("\r", { ...ctx(), empty: true }))) return; note = "^⏎: highlight a card or item first (^↑↓)"; return render(); }
   if (d === "\r") { if (!box.text && applyKey(bv.key("\r", ctx()))) return; return send(); }
   // Esc: the box's selection, then the highlight, then the open card / help; never quits.
   if (d === "\x1b") {
     if (box.dropSelection()) return;
-    if (applyKey(bv.key("\x1b", ctx()))) return;
+    if (mode !== "decisions" && applyKey(bv.key("\x1b", ctx()))) return;
     if (bv.focused || bv.st.help) { if (bv.st.help) bv.st.help = false; else bv.focus(null); note = ""; return render(); }
     note = ""; return render();
   }
@@ -297,8 +317,22 @@ function onKey(d) {
   const sc = { "\x1b[5~": bv.page(), "\x1b[6~": -bv.page(), "\x1b[1;5H": Infinity, "\x1b[1;5F": -Infinity }[d];
   if (sc !== undefined) { bv.scroll(sc); return render(); }
   // The board's keys (all behind a modifier): ^↑↓ ^Space/^O ^D ^T ^Z Alt+1..9. Plain ↑↓ are the box's.
-  if (d !== "\x1b[A" && d !== "\x1b[B" && applyKey(bv.key(d, ctx()))) return;
+  if (d !== "\x1b[A" && d !== "\x1b[B" && mode !== "decisions" && applyKey(bv.key(d, ctx()))) return;
   if (box.key(d)) { hcycle = null; if (box.note) { note = box.note; render(); } return; }
+}
+// The Decisions view's keys (N68). ^↑↓ step; with an empty box 1…9 pick, L puts it off, ⏎ takes the
+// recommendation; Esc (empty box) goes back to the cards. Everything else is the box's.
+function decisionKey(d) {
+  const answer = (how) => { dv.answer(api, room, how).then((r) => { note = r.note; render(); }).catch((e) => { note = "✗ " + e.message; render(); }); };
+  if (d === "\x1b[1;5A" || d === "\x1b[1;5B") { dv.step(d.endsWith("A") ? -1 : 1); note = ""; render(); return true; }
+  const sc = { "\x1b[5~": dv.page(), "\x1b[6~": -dv.page() }[d];
+  if (sc !== undefined) { dv.scroll(sc); render(); return true; }
+  if (box.text) return false;
+  if (/^[1-9]$/.test(d)) { if (!api) { note = "✗ daemon offline"; render(); return true; } answer({ option: Number(d) - 1 }); return true; }
+  if (d === "l" || d === "L") { const x = dv.later(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; render(); return true; }
+  if (d === "\r") { if (!api) { note = "✗ daemon offline"; render(); return true; } answer({ recommend: true }); return true; }
+  if (d === "\x1b") { if (box.dropSelection()) return true; setMode("cards"); return true; }
+  return false;
 }
 function tab(fwd) {
   const text = box.text, at = graphemes(text.slice(0)).slice(0, box.cursor).join("").length;
@@ -325,12 +359,13 @@ function mouse(d) {
     const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]), press = m[4] === "M";
     const tab = b === 0 && press ? worldTabAt(worldBar, x, y, rooms.map((r) => r.id)) : null;
     if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycle(s); continue; } // a world tab: like Ctrl+Tab
-    if (b === 64 || b === 65) { bv.scroll(b === 64 ? 3 : -3); continue; } // wheel
+    if (b === 64 || b === 65) { (mode === "decisions" ? dv : bv).scroll(b === 64 ? 3 : -3); continue; } // wheel
     if (b === 16) { if (press) ctrlClick(x, y); continue; }            // Ctrl+click: @agent / link
     if (b === 4 && press) { const r = rowMeta[y]; if (r?.msg != null && items[r.msg]) copy(items[r.msg].copy); continue; } // Shift+click: the whole item
     if (b === 0 && press) {
-      if (bv.click(rowMeta[y], x)) { sel = null; continue; }           // a card's −/+ marker
-      bv.pick(rowMeta[y], items);                                       // the highlight goes there
+      if (mode === "decisions") dv.pick(rowMeta[y], items);              // that decision becomes the current one
+      else if (bv.click(rowMeta[y], x)) { sel = null; continue; }      // a card's −/+ marker
+      else bv.pick(rowMeta[y], items);                                  // the highlight goes there
       const now = Date.now();
       clicks = now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
       lastPress = { x, y, t: now };
@@ -348,7 +383,7 @@ process.on("SIGTERM", quit);
 
 // ---- restart onto new code (the launcher loops on exit 75; the state rides along) ------
 const CODE = [new URL("./board-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/decisions-view.mjs", "decisions.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
@@ -356,7 +391,7 @@ setInterval(() => {
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
-  const keep = JSON.stringify({ room, focus: bv.focused || null, top: bv.st.top, anchor: bv.st.anchor, cur: bv.st.cur, help: bv.st.help, input: box.text, cursor: box.cursor, sent: box.sent });
+  const keep = JSON.stringify({ room, focus: bv.focused || null, top: bv.st.top, anchor: bv.st.anchor, cur: bv.st.cur, help: bv.st.help, mode, later: dv.st.later, dcur: dv.st.cur, input: box.text, cursor: box.cursor, sent: box.sent });
   const sf = process.env.HYPRPI_BOARD_TUI_STATEFILE;
   if (sf) { try { fs.writeFileSync(sf, keep); } catch { /* start fresh */ } process.exit(75); }
   spawn(process.execPath, [CODE[0], room], { stdio: "inherit", env: { ...process.env, HYPRPI_BOARD_TUI_STATE: keep } }).on("exit", (code) => process.exit(code ?? 0));
@@ -371,6 +406,9 @@ try { // back where we were after a restart
   if (k) {
     if (!process.argv[2] && k.room) room = k.room;
     if (k.focus) bv.focus(k.focus);
+    if (k.mode === "decisions") mode = "decisions";
+    if (Array.isArray(k.later)) dv.st.later = k.later;
+    if (k.dcur) dv.st.cur = k.dcur;
     bv.st.top = Number(k.top) || 0; bv.st.anchor = k.anchor || null; bv.st.cur = k.cur || null; bv.st.help = !!k.help;
     if (typeof k.input === "string" && k.input) { box.set(k.input, k.cursor); if (k.sent) box.markSent(); }
   }
