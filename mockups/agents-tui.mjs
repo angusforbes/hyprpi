@@ -8,7 +8,7 @@
 // model. Greyed ◌ rows are agents that are not open: "closed" (lost to a reboot, or
 // closed/killed while hyprpi ran) and "parked" (Reprieve, SUPER+W: still running, out
 // of every room). Ctrl+O cycles: live · + parked.
-//   Ctrl+↑↓ / click / wheel   move the cursor · PgUp PgDn · Home End / Ctrl+Home End
+//   Ctrl+↑↓ / click / wheel   move the cursor · PgUp PgDn · Ctrl+Home End (plain Home End are the box's, N55)
 //   ↑↓                   the box (N51, as in every panel): its start / end, then your earlier commands
 //   Enter / Ctrl+click   live: jump to its window · parked: revive it here · closed: resume it
 //   (The ▸ marks are retired, Angus 2026-09-30: messages go to @Name / @project; Space is unbound.)
@@ -493,11 +493,16 @@ function onKey(d) {
   }
   if (d === "\t") { if (cmds.tab(box)) return render(); note = typing ? "Tab completes a /command" : "Ctrl+Tab switches world"; return render(); }
   if (typing && d === "\x1b") { if (!box.dropSelection()) box.clear(); return; } // Esc: the box's selection, else clear it
-  if (!typing && (d === "/" )) { showHelp = false; box.insert(d); return; }      // a command starts
-  if (typing && (d === " " || d === "\x17" || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x18" || d === "\x16"
-    || /^\x1b\[(1;[2356])?[CDHF]$/.test(d) || d === "\x1b[3~" || d === "\x1b\x7f" || d === "\x1b[200~" || d === "\x1b[201~"
-    || !/[\x00-\x1f]/.test(d))) { if (box.key(d)) return; }                        // editing keys while typing
-  if (!typing && d.length && !/[\x00-\x1f\x7f]/.test(d) && d !== " ") { showHelp = false; box.insert(d); return; } // typing starts
+  // Every box key goes to the shared box first, exactly as in the other panels (Angus, N55): typing,
+  // ←→ and ↑↓ (by visual row, then history) with Shift selecting, Home/End, word moves, Backspace /
+  // Delete, Ctrl+U/W/E, Ctrl+X/V, Shift+Enter. The panel keeps what the box doesn't take: Ctrl+↑↓,
+  // Ctrl+Home/End and PgUp/PgDn (the list), Ctrl+W on an empty box (close the agent), Ctrl+O/N/K,
+  // Ctrl+Tab, Esc and the mouse.
+  if (!d.startsWith("\x1b[<") && !(d === "\x17" && !typing) && box.key(d)) {
+    if (!/^[\x00-\x1f]/.test(d)) showHelp = false;
+    if (box.note) { note = box.note; render(); }
+    return;
+  }
   if (d === "\x1b") { if (showHelp) { showHelp = false; return render(); } confirm = null; note = ""; return render(); } // Esc: close help, clear the note
   if (d === "\x0f") { showMode = (showMode + 1) % SHOW_LABEL.length; note = `agents: ${SHOW_LABEL[showMode]}`; return render(); }
   if (d === "\x17") return act("close");
@@ -508,16 +513,12 @@ function onKey(d) {
   if (d === "\x1b[9;5u" || d === "\x1b[27;5;9~") return cycleRoom(1);
   if (d === "\x1b[9;6u" || d === "\x1b[27;6;9~" || d === "\x1b[1;5Z") return cycleRoom(-1);
   if (d === "\x1b[Z") { note = "Ctrl+Tab switches world"; return render(); }
-  // ↑↓: the box (its start / end, then earlier commands; N51); the list cursor is Ctrl+↑↓.
-  if (d === "\x1b[A" || d === "\x1b[B") { box.key(d); if (box.note) { note = box.note; render(); } return; }
   if (d === "\x1b[1;5A") return moveCursor(-1);   // Ctrl+↑
   if (d === "\x1b[1;5B") return moveCursor(1);    // Ctrl+↓
   if (d === "\x1b[1;5H") return moveCursor(-1e6);
   if (d === "\x1b[1;5F") return moveCursor(1e6);
   if (d === "\x1b[5~") return moveCursor(-5);
   if (d === "\x1b[6~") return moveCursor(5);
-  if (d === "\x1b[H" || d === "\x1b[1~") return moveCursor(-1e6);
-  if (d === "\x1b[F" || d === "\x1b[4~") return moveCursor(1e6);
   const m = d.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/);       // SGR mouse
   if (m) {
     const b = Number(m[1]), y = Number(m[3]), press = m[4] === "M";

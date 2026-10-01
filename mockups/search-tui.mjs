@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, createHistory, clipboardPaste, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
@@ -367,8 +367,11 @@ function seedThoughtsHistory(r) {
     fs.writeFileSync(markFile + ".tmp", JSON.stringify([...marks, r])); fs.renameSync(markFile + ".tmp", markFile);
   } catch { /* best effort: tried again next time */ }
 }
+// The box keeps its state in this panel's variables (query, qc, selA) through bind: every box
+// operation reads them first and writes them back after (Angus, N55: no glue here).
 const box = createInputBox({
-  onChange: () => {}, copy: (t) => copy(t), multiline: false,
+  onChange: () => render(), copy: (t) => copy(t), multiline: false,
+  bind: { read: () => ({ text: query, cursor: qc, anchor: selA }), write: (st) => { query = st.text; qc = st.cursor; selA = st.anchor; } },
   // Everything typed here, /commands too (Angus: recall /ask, /keyword …), like every panel's box:
   // STATE/input-history/thoughts.json, one list for every world's Thoughts window; each world's
   // earlier thread messages are put in front of it once, when its thread loads (seedThoughtsHistory).
@@ -377,13 +380,8 @@ const box = createInputBox({
   tint: atTint((name) => { const r = resolveAt([name], hereKnown()), a = r.found[0]; return a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => x, bold, nameFg: (_n, color, g) => hexFg(color || "", bold(g)) }),
 });
-const boxIn = () => box.load({ text: query, cursor: qc, anchor: selA });
-const boxOut = () => { const st = box.state(); query = st.text; qc = st.cursor; selA = st.anchor; };
-function insertText(t) { boxIn(); box.insert(t); boxOut(); note = ""; render(); }
-function copyBoxSel(cut) { boxIn(); const ok = box.copySel(cut); boxOut(); render(); return ok; }
-function pasteClipboard() { // text, or a screenshot's path at the cursor (lib/tui/input-box.mjs, N54)
-  clipboardPaste((t, o) => { if (!o?.image) return insertText(t); boxIn(); box.insertPath(t); boxOut(); note = ""; render(); });
-}
+function insertText(t) { box.insert(t); note = ""; render(); }
+function copyBoxSel(cut) { const ok = box.copySel(cut); render(); return ok; }
 function copy(text) {
   if (!text) return;
   // OSC 52 (kitty puts it on the clipboard) and wl-copy as a fallback.
@@ -501,7 +499,6 @@ function render() {
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
   const hint = slash ? dim("  " + slash) : query ? "" : dim(`talk to Thoughts-${room} · /keyword WORDS · /ask QUESTION · /help`);
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;
-  boxIn();
   // The bottom block, like an agent window (Angus: the box at the bottom): the status line
   // ("thinking…"), a rule, the box (wrapped, up to a third of the height, scrolled to the cursor),
   // (pasted images are paths in the text now, N54). Built first: its height decides the thread's.
@@ -745,7 +742,7 @@ function onKey(d) {
   if (d === "\x03") { if (copyBoxSel(false)) return; if (query) { copy(query); note = "copied the search"; } return render(); }
   if (d === "\x1b[2;5~") { copyBoxSel(false); return; } // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
   if (d === "\x18") { copyBoxSel(true); return; } // Ctrl+X: cut
-  if (d === "\x16" || d === "\x1b[2;2~") return pasteClipboard(); // Ctrl+V / Shift+Insert: paste
+  if (d === "\x16" || d === "\x1b[2;2~") { box.paste(); return; } // Ctrl+V / Shift+Insert: text, or a screenshot's path at the cursor (the shared box)
   if (d === "\x1f" || d === "\x14") return toggleMode(); // Ctrl+/ or Ctrl+T: keyword ⇄ AI
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world:
   // it completes a /command or an @name (again: next match; Shift+Tab: back).
@@ -766,7 +763,7 @@ function onKey(d) {
   // ↑↓ like a Pi window (Angus; shared by every panel since N51): within the box first (↑ to its
   // start, ↓ to its end); then ↑ steps back through your earlier messages in this thread, ↓ forward
   // again, to what you were typing.
-  if (d === "\x1b[A" || d === "\x1b[B") { selA = null; boxIn(); box.key(d); boxOut(); note = box.note || ""; return render(); }
+  if (d === "\x1b[A" || d === "\x1b[B") { box.key(d); note = box.note || ""; return render(); }
   if (d === "\x1b[13;5u") { showHelp = false; selA = null; return enter(); } // Ctrl+Enter: the same as ⏎ here
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);
@@ -775,8 +772,7 @@ function onKey(d) {
   // Backspace / Delete / Alt+Backspace / Ctrl+W, Ctrl+U clear. Ctrl+A = Home here.
   if (d === "\x01") { qc = 0; selA = null; return render(); }
   if (d.startsWith("\x1b") || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x05" || d === "\x17") {
-    boxIn();
-    if (box.key(d)) { boxOut(); note = ""; return render(); }
+    if (box.key(d)) { note = ""; return render(); }
   }
   if (d.startsWith("\x1b[<")) {
     const m = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(d); if (!m) return;

@@ -29,7 +29,7 @@
 
 import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, createHistory, clipboardPaste, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT } from "../lib/stream.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
@@ -69,29 +69,28 @@ function inputSel() { if (selA == null || selA === ic) return null; return selA 
 // The editing itself is the shared message box (lib/tui/input-box.mjs, like the board panel):
 // this panel keeps its own variables (input, ic, selA, sentText, sentTouched) and loads them
 // into the box before each edit, then reads them back.
+// The box keeps its state in this panel's variables (input, ic, selA, sentText, sentTouched) through
+// bind: every box operation reads them first and writes them back after (Angus, N55: no glue here).
 const box = createInputBox({
-  onChange: () => {}, copy: (t) => copy(t), multiline: true,
+  onChange: () => render(), copy: (t) => copy(t), multiline: true,
+  bind: {
+    read: () => ({ text: input, cursor: ic, anchor: selA, sent: view === "board" ? sentText : null, touched: sentTouched }),
+    write: (st) => {
+      input = st.text; ic = st.cursor; selA = st.anchor; sentTouched = st.touched;
+      if (view === "board" && sentText != null && st.sent == null) sentText = null; // typed over: no longer the sent text
+    },
+  },
   // ↑↓ as in every panel (Angus, N51): lines, then the start / end, then your earlier messages.
   history: createHistory("stream"), historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
   sentStyle: (g) => fg(worldFg(room), g), // sent text (board view only) in the world colour
   tint: atTint((name) => { const r = resolveAt([name], atPool()), a = r.found[0]; return a?.project ? { project: true } : a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => fg(worldFg(room), x), bold, nameFg }),
 });
-const boxIn = () => box.load({ text: input, cursor: ic, anchor: selA, sent: view === "board" ? sentText : null, touched: sentTouched });
-function boxOut() {
-  const st = box.state();
-  input = st.text; ic = st.cursor; selA = st.anchor; sentTouched = st.touched;
-  if (view === "board" && sentText != null && st.sent == null) sentText = null; // typed over: no longer the sent text
-}
 // Rows of the input (styled, selection highlighted) and the cursor's row / column.
-function inputLayout(n) { boxIn(); return box.layout(n); }
 // Insert text at the cursor, replacing the selection (paste keeps its line breaks). In the board
 // view the sent text is replaced by what you type or paste; ←→ / Backspace first edit it.
-function insertText(t) { boxIn(); box.insert(t); boxOut(); note = ""; focusArea = "input"; render(); }
-function copyInputSel(cut) { boxIn(); box.copySel(cut); boxOut(); render(); }
-function pasteClipboard() { // text, or a screenshot's path at the cursor (lib/tui/input-box.mjs, N54)
-  clipboardPaste((t, o) => { if (!o?.image) return insertText(t); boxIn(); box.insertPath(t); boxOut(); note = ""; focusArea = "input"; render(); });
-}
+function insertText(t) { box.insert(t); note = ""; focusArea = "input"; render(); }
+function copyInputSel(cut) { box.copySel(cut); render(); }
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
 
@@ -299,7 +298,7 @@ function draw() {
     : fg(c, bold(`${room} ❯ `));
   const promptW = width(prompt);
   ic = Math.max(0, Math.min(ic, graphemes(input).length));
-  const IL = inputLayout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
+  const IL = box.layout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
   const inTop = IL.rows.length > MAXI ? Math.max(0, Math.min(IL.cRow - MAXI + 1, IL.rows.length - MAXI)) : 0;
   const inputLines = IL.rows.slice(inTop, inTop + MAXI);
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
@@ -745,7 +744,7 @@ function onKey(d) {
   if (d === "\x11") return quit(); // Ctrl+Q
   if (d === "\x1b[2;5~") return copyInputSel(false); // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
   if (d === "\x18") return copyInputSel(true); // Ctrl+X: cut
-  if (d === "\x16" || d === "\x1b[2;2~") return pasteClipboard(); // Ctrl+V / Shift+Insert (SUPER+V outside kitty's map): paste
+  if (d === "\x16" || d === "\x1b[2;2~") { box.paste(); note = ""; focusArea = "input"; return render(); } // Ctrl+V / Shift+Insert: text, or a screenshot's path at the cursor (the shared box)
   // Shift+Space (the launcher maps it to CSI 32;2u) or Ctrl+Space: toggle the cursor
   // agent's mark in every view, even while typing (plain Space is text then).
   if (d === "\t" && /^\/[^\s/]*$/.test(input)) { // complete a command
@@ -858,8 +857,7 @@ function onKey(d) {
   // Shift+arrows / Shift+Home End select, Backspace / Delete / Alt+Backspace / Ctrl+W, Ctrl+U clear.
   // (Typing, paste, Shift+Enter and Ctrl+C/X/V are handled above and below, through insertText.)
   if (d.startsWith("\x1b") || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x05" || d === "\x17") {
-    boxIn();
-    if (box.key(d)) { boxOut(); note = box.note || ""; focusArea = "input"; return render(); }
+    if (box.key(d)) { note = box.note || ""; focusArea = "input"; return render(); }
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
   if (d === "\x06") { if (view !== "stream") setView("stream"); sview = SVIEWS[(SVIEWS.indexOf(sview) + 1) % SVIEWS.length]; scroll = 0; lastConvoLen = 0; streamSel = null;
