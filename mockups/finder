@@ -33,6 +33,15 @@ const TIMEOUT_S = Number(process.env.HYPRPI_FINDER_TIMEOUT) || 600; // env only 
 // back the grey line under each name (workspace · status · topic / world · members · where).
 const DETAIL = loadConfig().finderDetail === true;
 const here = new URL(".", import.meta.url).pathname;
+// --summon (SUPER+S; Angus): the same pop-up, as the summon menu: THIS world's agents, hyprpi panels
+// (TUIs) and projects (a project = its live members in this world). Tab toggles a light-grey mark
+// (several come together); ⏎ summons the marked rows, or the one under the cursor if none is marked,
+// to the workspace you're on. No search yet (typing does nothing). A summoned panel isn't a guest:
+// SUPER+D on it closes it, and the next summon / SUPER+ALT+D moves it on unless it is pinned.
+const SUMMON = process.argv.includes("--summon");
+let S = null; // --summon: { room, workspace } (room.current)
+// The hyprpi panels by their title's kind (lib/daemon.mjs PANEL_TITLE).
+const PANEL_KIND = { router: ["👥", "agents panel"], room: ["💬", "Stream panel"], search: ["💭", "Thoughts panel"], thoughts: ["💭", "Thoughts panel"], board: ["📋", "projects panel"] };
 const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
 // The agents panel's marks (Angus): ● working · × needs you · ✓ finished (unseen) · ○ idle; ◌ parked.
@@ -96,6 +105,7 @@ async function rows() {
   const l = await request("list");
   const out = [];
   for (const a of l.agents || []) {
+    if (SUMMON && (a.room !== S.room || a.parked)) continue; // summon: this world's, not parked
     const where = a.parked ? `parked${a.parked_from ? " (from " + a.parked_from + ")" : ""}`
       : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
     const sub = [where, a.parked ? "" : STATUS[a.status] || a.status, a.topic].map(clean).filter(Boolean).join(" · ");
@@ -115,8 +125,8 @@ async function rows() {
   // A project's place: its writer's workspace (Angus: "wherever the main writer agent is"); with no
   // live writer, the workspace of that world's projects panel (where Enter takes you; Angus), else
   // just the world.
-  const boardWs = {};
-  for (const c of await hypr.clients().catch(() => [])) {
+  const boardWs = {}, clients = await hypr.clients().catch(() => []);
+  for (const c of clients) {
     const m = /^hyprpi-board ([A-Z])$/.exec(c.title || "");
     if (m && c.workspace?.id > 0 && !boardWs[m[1]]) boardWs[m[1]] = c.workspace.id;
   }
@@ -127,10 +137,12 @@ async function rows() {
   };
   const projLoc = (p, room) => { const ws = projWs(p, room); return ws ? wsLabel(ws, WORLD_SIZE) : room; };
   for (const room of WORLD_LETTERS) {
+    if (SUMMON && room !== S.room) continue;
     let b; try { b = await request("board.get", { room }); } catch { continue; }
     if (b?.room !== room) continue;
     for (const p of b.projects || []) {
       if (p.status === "archived") continue;
+      if (SUMMON && !(p.members || []).some((id) => byId[id] && byId[id].room === S.room && !byId[id].parked)) continue; // summon: only with someone to bring
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
       const pl = projLoc(p, room), pt = p.updated || p.created;
@@ -141,13 +153,22 @@ async function rows() {
         subtitle: clean(p.short || p.where?.text || p.title || "") }); // its "where" summarised (the agents panel's projects line), else where / title
     }
   }
-  // Agents first, then projects. Within each, by category, then most recent first (Angus,
+  // Summon: this world's hyprpi panels (by the workspace they are on), after the agents.
+  if (SUMMON) for (const c of clients) {
+    const m = /^hyprpi-(router|room|search|board|thoughts) (\S+)/.exec(c.title || ""), ws = c.workspace?.id;
+    if (!m || !(ws > 0) || WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] !== S.room) continue;
+    const [icon, what] = PANEL_KIND[m[1]], loc = wsLabel(ws, WORLD_SIZE), nm = `${what} ${m[2]}`;
+    out.push({ kind: "panel", id: c.address, room: S.room, sort: nm, recent: 0, mark: "▫", glyph: "▫", label: `${icon} ${nm} · ${loc}`,
+      rich: esc(icon) + " " + esc(nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "", worlds: S.room, ws, subtitle: ws === S.workspace ? "already here" : "" });
+  }
+  // Agents first, then projects (summon: agents, panels, projects). Within each, by category, then most recent first (Angus,
   // 2026-09-30): × needs you (blocked, a decision, a bonk) · ✓ finished, not seen yet · ● working ·
   // ○ idle (a finished one already seen shows ○ too) · ◌ parked / nobody live. "Recent": agents
   // their last turn event, projects their card's last change. Ties A–Z.
   const CAT = { "×": 0, "✓": 1, "●": 2, "○": 3, "◌": 4 };
   const cat = (r) => CAT[r.mark] ?? 3;
-  out.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "agent" ? -1 : 1) || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
+  const KIND = { agent: 0, panel: 1, project: 2 };
+  out.sort((x, y) => KIND[x.kind] - KIND[y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
   const seen = new Set();
@@ -195,7 +216,7 @@ function menuWidth(rs) {
 }
 
 // One finder at a time: a second press closes the open one.
-const LOCK = path.join(runtimeDir(), "finder.pid");
+const LOCK = path.join(runtimeDir(), SUMMON ? "summon.pid" : "finder.pid");
 function toggleOff() {
   try {
     const pid = Number(fs.readFileSync(LOCK, "utf8"));
@@ -207,7 +228,7 @@ function toggleOff() {
 const main = async () => {
   const list = process.argv.includes("--list");
   let rs;
-  try { rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
+  try { if (SUMMON) S = await request("room.current", {}); rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
   const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`; // "" glyph → a row without an icon
   if (list) {
     const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
@@ -224,11 +245,23 @@ const main = async () => {
     unlock();
     const pick = out.replace(/\n$/, "");
     if (code !== 0 || !pick) return;
+    if (SUMMON) { // one value per line (several when marked with Tab)
+      const ps = pick.split("\n").map((k) => rs.find((x) => x.key === k)).filter(Boolean);
+      try { await request("guest.summon", { auto: true, workspace: S.workspace, agents: ps.filter((x) => x.kind === "agent").map((x) => x.id), projects: ps.filter((x) => x.kind === "project").map((x) => x.id), panels: ps.filter((x) => x.kind === "panel").map((x) => x.id) }, { timeoutMs: 20000 }); }
+      catch (e) { console.error("summon: " + e.message); execFile("notify-send", ["hyprpi summon", e.message], () => {}); }
+      return;
+    }
     const r = rs.find((x) => x.key === pick) || rs.find((x) => x.label === pick) || rs.find((x) => pick.startsWith(x.label + "\t") && x.key.trimEnd() === pick.trimEnd());
     if (!r) { console.error("finder: no row for " + JSON.stringify(pick)); return; }
     try { await act(r); } catch (e) { console.error("finder: " + e.message); }
   };
   if (STYLE === "plugin" && await pluginSelect(rs, onPick)) return;
+  if (SUMMON) { // the plain menu can't multi-select: the old summon pop-up (a small kitty) instead
+    unlock();
+    const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+    spawn("kitty", ["--class", "hyprpi.summon", "--title", "hyprpi summon", "-o", "confirm_os_window_close=0", "-o", "remember_window_size=no", "node", here + "summon.mjs"], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref();
+    return;
+  }
   const child = spawn("omarchy-menu-select", ["Agents", ...rs.map(row), "--", "--width", String(menuWidth(rs))], { stdio: ["ignore", "pipe", "ignore"] });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
@@ -243,7 +276,7 @@ const main = async () => {
 function pluginSelect(rs, onPick) {
   const dir = fs.mkdtempSync(path.join(runtimeDir(), "finder-")), sel = path.join(dir, "pick"), done = path.join(dir, "done");
   const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0, subtitle: r.subtitle || "" })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
-  const payload = JSON.stringify({ mode: "select", prompt: "Agents", options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
+  const payload = JSON.stringify({ mode: "select", prompt: SUMMON ? `Summon to ${wsLabel(S.workspace, WORLD_SIZE)}` : "Agents", ...(SUMMON ? { multi: true, noFilter: true } : {}), options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
   const clean = () => fs.rmSync(dir, { recursive: true, force: true });
   return new Promise((resolve) => {
     execFile("omarchy-shell", ["shell", "summon", PLUGIN, payload], (err, stdout) => {

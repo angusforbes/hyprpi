@@ -47,7 +47,7 @@ Item {
     // hyprpi: a dry open (tests) only proves the plugin loads and answers; nothing is shown.
     // "dry N rank-d K rank-1 M": N options, K / M of them for the queries "d" / "1" (FinderRank, J17: proves the loaded QML is current).
     if (payload.dry) {
-      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d").length + " rank-1 " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "1").length + " sub slot") + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
+      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d").length + " rank-1 " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "1").length + " sub slot multi") + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
       return
     }
 
@@ -82,6 +82,21 @@ Item {
   property string mode: "menu"
   readonly property bool dmenuActive: mode === "select" || mode === "input"
   property string dmenuPrompt: ""
+  // hyprpi: the summon pop-up (SUPER+S): multi = Tab / Shift+Tab mark rows (light grey) and ⏎ returns
+  // every marked value, one per line (none marked: the row under the cursor, as usual); noFilter =
+  // typing does nothing (no search yet). The finder sets neither, so its path is unchanged.
+  property bool dmenuMulti: false
+  property bool dmenuNoFilter: false
+  property var dmenuMarked: ({})
+  property int dmenuMarkSerial: 0
+  property color markBackground: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.10)
+  function toggleDmenuMark(delta) { // hyprpi
+    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return
+    var row = displayModel.get(root.selectedIndex), key = row.path || row.label, m = Object.assign({}, root.dmenuMarked)
+    if (m[key]) delete m[key]; else m[key] = true
+    root.dmenuMarked = m; root.dmenuMarkSerial += 1
+    root.select(delta)
+  }
   property var dmenuOptions: []
   property string selectionFile: ""
   property string doneFile: ""
@@ -770,6 +785,11 @@ Item {
         return
       }
       if (index < 0 || index >= displayModel.count) return
+      if (root.dmenuMulti) { // hyprpi: the marked rows, in list order (none: the row under the cursor, below)
+        var ks = []
+        for (var mi = 0; mi < displayModel.count; mi++) { var mr = displayModel.get(mi), mk = mr.path || mr.label; if (root.dmenuMarked[mk]) ks.push(mk) }
+        if (ks.length) { root.applyDmenuSelection(ks.join("\n")); return }
+      }
       var picked = displayModel.get(index)
       root.applyDmenuSelection(picked.path ? picked.path : picked.detail ? picked.label + "\t" + picked.detail : picked.label) // hyprpi: value
       return
@@ -868,6 +888,7 @@ Item {
     requestSerial += 1
     mode = payload.mode === "input" ? "input" : "select"
     dmenuPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
+    dmenuMulti = !!payload.multi; dmenuNoFilter = !!payload.noFilter; dmenuMarked = ({}); dmenuMarkSerial += 1 // hyprpi
     dmenuOptions = Array.isArray(payload.options) ? payload.options : []
     selectionFile = String(payload.selectionFile || "")
     doneFile = String(payload.doneFile || "")
@@ -1133,6 +1154,11 @@ Item {
             if (root.filterText) root.setFilter("")
             else root.cancel()
             event.accepted = true
+          } else if (root.dmenuActive && root.dmenuMulti && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) { // hyprpi: mark / unmark, then move
+            root.toggleDmenuMark(event.key === Qt.Key_Backtab ? -1 : 1)
+            event.accepted = true
+          } else if (root.dmenuActive && root.dmenuNoFilter && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32) { // hyprpi: no search yet
+            event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
@@ -1268,7 +1294,7 @@ Item {
               width: ListView.view.width
               height: root.rowHeightForDetail(row.detail)
               radius: root.cornerRadius
-              color: row.hasCursor ? root.selectedBackground : "transparent"
+              color: row.hasCursor ? root.selectedBackground : (root.dmenuMulti && root.dmenuMarkSerial >= 0 && root.dmenuMarked[row.path || row.label] ? root.markBackground : "transparent") // hyprpi: a Tab-marked row is light grey
               borderSpec: row.hasCursor ? root.selectedBorderSpec : Border.none()
 
               Rectangle {
