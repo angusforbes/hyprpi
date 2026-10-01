@@ -199,7 +199,8 @@ export default function hyprpi(pi: ExtensionAPI) {
     return conn!.call("agent.hello", {
       agent_id: AGENT_ID, pid: process.pid, session, cwd: ctx?.cwd || process.cwd(),
       model: ctx?.model?.id || "", thinking: safe(() => pi.getThinkingLevel()) || "",
-      name: safe(() => pi.getSessionName()) || "",
+      name: safe(() => pi.getSessionName()) || process.env.HYPRPI_NAME || "",
+      icon: process.env.HYPRPI_ICON || undefined, // open_agent's icon (J15); used only by a new agent
       want_workspace: Number.isInteger(ws) && ws > 0 ? ws : undefined,
       container: process.env.HYPRPI_CONTAINER || undefined,
       twin_of: process.env.HYPRPI_TWIN_OF || undefined,

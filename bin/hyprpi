@@ -69,7 +69,10 @@ function codeMtime() {
 async function ensureDaemon() {
   let info = null;
   try { info = await request("ping", {}, { timeout: 800 }); } catch { /* not running */ }
-  if (info && (!info.started || info.started < codeMtime())) {
+  // A `hyprpi new` the daemon itself spawned (open_agent, tinker "new", /move, restore) never restarts
+  // it (J15): it would kill the daemon that holds the new agent's pending name and first prompt, and the
+  // daemon is up anyway. Only a user-run command restarts a daemon older than lib/.
+  if (info && process.env.HYPRPI_FROM_DAEMON !== "1" && (!info.started || info.started < codeMtime())) {
     // Code changed since it started: restart it (agents reconnect by themselves).
     try { await request("shutdown"); } catch { /* already gone */ }
     for (let i = 0; i < 20 && (await alive()); i++) await new Promise((r) => setTimeout(r, 100));
@@ -91,7 +94,7 @@ async function ensureDaemon() {
 function childEnv(extra) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (/^(HERDR_|PI_SESSION|HYPRPI_AGENT_ID|HYPRPI_WORKSPACE|HYPRPI_TWIN_OF)/.test(k)) continue;
+    if (/^(HERDR_|PI_SESSION|HYPRPI_AGENT_ID|HYPRPI_WORKSPACE|HYPRPI_TWIN_OF|HYPRPI_FROM_DAEMON|HYPRPI_NAME|HYPRPI_ICON)/.test(k)) continue; // never inherited: an agent's own `hyprpi new` is a user one
     env[k] = v;
   }
   return { ...env, ...extra };
@@ -158,6 +161,9 @@ async function cmdNew() {
   const twinOf = opt("--twin-of") || "";
   // --id: reuse a known agent id (resuming a closed agent keeps its name, room and twins).
   const wantId = opt("--id") || "";
+  // --name / --icon (open_agent, J15): the agent says them in its hello, so it is named even if the
+  // daemon that opened it restarted before it came up.
+  const wantName = String(opt("--name") || "").slice(0, 60), wantIcon = String(opt("--icon") || "").slice(0, 16);
   if (wantId && !/^[A-Za-z0-9_.-]{3,64}$/.test(wantId)) die("bad --id");
   // --silent (restore-all): open the window straight on --workspace via Hyprland's exec_cmd
   // 'N silent', so Angus's focus and workspace never change. Implies --no-focus.
@@ -191,7 +197,7 @@ async function cmdNew() {
 
   const id = wantId || newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");
-  const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}) });
+  const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}), ...(wantName ? { HYPRPI_NAME: wantName } : {}), ...(wantIcon ? { HYPRPI_ICON: wantIcon } : {}) });
   const piCmd = cfg.pi;
   const piArgv = ["-e", ext, ...(cfg.piArgs || []), ...piArgs];
   if (directTerminal) {
