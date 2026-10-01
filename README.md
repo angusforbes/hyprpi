@@ -11,6 +11,10 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | click the current world in the bar | Agents panel for the current world: jump to it wherever it is, or open it here in the top-left slot (`hyprpi room --toggle` → `mockups/agents-here`) |
 | SUPER+ALT+/ | Toggle the search window for the current world's room |
 | SUPER+SHIFT+A | Claude (moved here from SUPER+A; a personal binding in `~/.config/hypr/bindings.lua`, not part of hyprpi) |
+| SUPER+S | Summon: a pop-up of this world's agents and projects; Enter brings them to the workspace you're on (its unpinned windows are dismissed first) |
+| SUPER+D | Dismiss the focused agent (to its home, or the emptiest workspace of the world); a hyprpi panel is closed |
+| SUPER+ALT+D | Dismiss all: every hyprpi agent and panel on this workspace except pinned ones and the focused window (panels go together to the nearest emptiest workspace) |
+| SUPER+ALT+S | Pin / unpin the focused agent or panel (orange border while pinned; pinned windows are never dismissed) |
 
 These keys, the rule that tags agent windows as terminals (so Omarchy's SUPER+C/V copy and
 paste instead of sending Ctrl+C, which Pi treats as clear/interrupt) and the click-to-mark-seen

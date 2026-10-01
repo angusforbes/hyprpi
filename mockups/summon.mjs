@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Summon pop-up (SUPER+S; Angus, 2026-09-30, "summon & dismiss" v1): THIS world's agents and projects,
 // needs-you first, then most recent. Enter summons the row (or the Tab-marked rows) to the workspace
-// you're on; this workspace's earlier unpinned guests go home first. A project brings its live members.
-// SUPER+D sends the focused guest home, SUPER+ALT+D all unpinned guests, SUPER+ALT+S pins / unpins.
+// you're on; this workspace's earlier unpinned guests are dismissed first. A project brings its live members.
+// SUPER+D dismisses the focused agent, SUPER+ALT+D dismisses all but pinned and focused, SUPER+ALT+S pins / unpins.
 //   type to filter · ↑↓ / ^P ^N move · Tab mark (several come together) · Enter summon · Esc close
 // Launched by mockups/summon (a small floating kitty, class hyprpi.summon).
 import { request } from "../lib/client.mjs";

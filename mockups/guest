@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // Summon & dismiss keys (hypr/hyprpi.lua): guest dismiss · guest dismiss --all · guest pin
-//   SUPER+D      send the focused summoned agent home (a hyprpi panel: closed, like its toggle key)
-//   SUPER+ALT+D  send every unpinned guest on this workspace home
-//   SUPER+ALT+S  pin / unpin the focused guest or hyprpi panel (pinned ones stay; orange border)
-//   SUPER+SHIFT+ALT+S  keep the focused window and the pinned ones, clear the rest of the workspace
+//   SUPER+D      dismiss the focused agent (a hyprpi panel: closed, like its toggle key)
+//   SUPER+ALT+D  dismiss all: every hyprpi window on this workspace except pinned ones and the focused one
+//   SUPER+ALT+S  pin / unpin the focused agent or hyprpi panel (pinned ones stay; orange border)
 // A short notification says what happened when there's something to say.
 import { execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
@@ -13,12 +12,12 @@ try {
   if (cmd === "dismiss") {
     const r = await request("guest.dismiss", { all: rest.includes("--all") });
     if (r.pinned) toast(`📌 ${r.agent} is pinned (SUPER+ALT+S unpins)`);
-    else if (rest.includes("--all") && !r.dismissed?.length) toast("no unpinned guests here");
+    else if (rest.includes("--all") && !r.dismissed?.length) toast("nothing to dismiss here");
   } else if (cmd === "pin") {
     const r = await request("guest.pin", {});
     toast(`${r.pinned ? "📌 pinned" : "unpinned"}: ${r.agent}`);
   } else if (cmd === "keep") {
     const r = await request("guest.keep", {});
-    toast(r.dismissed?.length ? `kept ${r.kept}; cleared ${r.dismissed.length}: ${r.dismissed.join(", ")}` : `kept ${r.kept}; nothing else to clear`);
+    toast(r.dismissed?.length ? `kept ${r.kept}; dismissed ${r.dismissed.length}: ${r.dismissed.join(", ")}` : `kept ${r.kept}; nothing else to dismiss`);
   } else { console.error("usage: guest dismiss [--all] | guest pin | guest keep"); process.exit(2); }
 } catch (e) { toast("✗ " + e.message); process.exit(1); }
