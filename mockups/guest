@@ -3,6 +3,7 @@
 //   SUPER+D      send the focused summoned agent home (a hyprpi panel: closed, like its toggle key)
 //   SUPER+ALT+D  send every unpinned guest on this workspace home
 //   SUPER+ALT+S  pin / unpin the focused guest or hyprpi panel (pinned ones stay; orange border)
+//   SUPER+SHIFT+ALT+S  keep the focused window and the pinned ones, clear the rest of the workspace
 // A short notification says what happened when there's something to say.
 import { execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
@@ -16,5 +17,8 @@ try {
   } else if (cmd === "pin") {
     const r = await request("guest.pin", {});
     toast(`${r.pinned ? "📌 pinned" : "unpinned"}: ${r.agent}`);
-  } else { console.error("usage: guest dismiss [--all] | guest pin"); process.exit(2); }
+  } else if (cmd === "keep") {
+    const r = await request("guest.keep", {});
+    toast(r.dismissed?.length ? `kept ${r.kept}; cleared ${r.dismissed.length}: ${r.dismissed.join(", ")}` : `kept ${r.kept}; nothing else to clear`);
+  } else { console.error("usage: guest dismiss [--all] | guest pin | guest keep"); process.exit(2); }
 } catch (e) { toast("✗ " + e.message); process.exit(1); }

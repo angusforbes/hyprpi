@@ -7,6 +7,7 @@ import path from "node:path";
 import { request, connect } from "../lib/client.mjs";
 import { ROOT, socketPath, runtimeDir, loadConfig, instanceKey } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
+import { emptiestWs } from "../lib/placement.mjs";
 import { terminalCommand } from "../lib/terminal.mjs";
 
 const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
@@ -101,16 +102,14 @@ function childEnv(extra) {
 }
 
 // "Panel mode" = at least two floating hyprpi-router/-room/-search windows on that
-// workspace. A new agent goes to the NEIGHBOUR: the workspace right after it, or the one
-// before when the panels are on the world's last workspace.
+// workspace. A new agent goes to the nearest, emptiest workspace of the same world (Angus, J18:
+// the same rule as panels leaving on a summon; lib/placement.mjs).
 async function awayFromPanels(ws, cfg) {
   let list;
   try { list = await hypr.clients(); } catch { return ws; }
   const panels = list.filter((c) => c.workspace?.id === ws && c.floating && /^hyprpi-(router|room|search) /.test(c.title || ""));
   if (panels.length < 2) return ws;
-  const size = Number(cfg.worldSize) || 10;
-  const first = Math.floor((ws - 1) / size) * size + 1, last = first + size - 1;
-  return ws < last ? ws + 1 : ws - 1;
+  return emptiestWs(list, ws, Number(cfg.worldSize) || 10, true) || ws;
 }
 
 function newId() { return "hp-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }

@@ -55,12 +55,14 @@ end
 --   SUPER+D          send the focused summoned agent home (a hyprpi panel: closed)
 --   SUPER+ALT+D      send every unpinned guest on this workspace home
 --   SUPER+ALT+S      pin / unpin the focused guest (orange border while pinned)
+--   SUPER+SHIFT+ALT+S keep the focused window and the pinned ones; clear the rest of the workspace
 -- SUPER+S was Reprieve's show/hide parked; that moved to SUPER+SHIFT+CTRL+S (~/.config/hypr/bindings.lua).
 hl.unbind("SUPER + S")
 o.bind("SUPER + S", "hyprpi: summon agents here", HYPRPI_ROOT .. "/mockups/summon")
 o.bind("SUPER + D", "hyprpi: send the focused guest home", HYPRPI_ROOT .. "/mockups/guest dismiss")
 o.bind("SUPER + ALT + D", "hyprpi: send all unpinned guests home", HYPRPI_ROOT .. "/mockups/guest dismiss --all")
 o.bind("SUPER + ALT + S", "hyprpi: pin / unpin the focused guest", HYPRPI_ROOT .. "/mockups/guest pin")
+o.bind("SUPER + SHIFT + ALT + S", "hyprpi: keep the focused window, clear the rest", HYPRPI_ROOT .. "/mockups/guest keep")
 o.window("hyprpi.summon", { float = true, center = true, size = "560 460" })
 -- Colour only (Angus, J3 / N69): a different border size would resize the window's content, so
 -- terminals re-wrap and the layout shifts. Pinned = the same 1 px border, orange.
