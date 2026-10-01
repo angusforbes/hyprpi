@@ -19,7 +19,7 @@ import { request } from "../lib/client.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib/paths.mjs";
 import { worldHex, unnamed } from "../lib/tui/term.mjs";
-import { isAppWindow, appLabel } from "../lib/apps.mjs";
+import { isAppWindow, appLabel, stateNote } from "../lib/apps.mjs";
 
 // Which pop-up (Angus, @hyprpi D8): "plugin" (default) is our own copy of the Omarchy menu, the
 // omarchy-shell plugin agf.hyprpi-finder (shell-plugin/; the same look, plus colour: names in the
@@ -174,7 +174,7 @@ async function rows() {
       const L = appLabel(c), loc = wsLabel(ws, WORLD_SIZE), nm = [L.app, L.tag].filter(Boolean).join(" "), t = used[c.address] || 0, age = t ? since(t, "") : "";
       out.push({ kind: "app", id: c.address, room: S.room, sort: nm, recent: t, mark: "▫", glyph: "▫", label: `${L.icon} ${nm} · ${loc}${age ? " · " + age : ""}`,
         rich: esc(L.icon) + " " + esc(L.app) + (L.tag ? " " + font("dim", L.tag) : "") + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""),
-        sub: "", worlds: S.room, ws, subtitle: L.line2 + (ws === S.workspace ? " · already here" : "") });
+        sub: "", worlds: S.room, ws, subtitle: [L.line2, stateNote(c), ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
     }
   }
   // Agents first, then projects (summon: agents, panels, projects). Within each, by category, then most recent first (Angus,
