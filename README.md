@@ -129,8 +129,8 @@ panels' `/agents`-style commands) shows one menu, once per daemon start: *Restor
 world X only* · *Not now* · *No* (let them go). `hyprpi restore [all|X]` does the same any time
 (`--list` only shows it, `--no` lets it go). Each agent comes back with its own id (name, icon,
 twins), on **its own workspace** (a parked one parked), on the **model and thinking level** of its
-session's last `model_change` (not the config's `--model`), one at a time, twins after their
-originals, opened with Hyprland's `exec_cmd … 'N silent'` so your focus never moves
+session's last `model_change` (not the config's `--model`), all at once (twins in a second wave, after their
+originals), with a notification counting up, opened with Hyprland's `exec_cmd … 'N silent'` so your focus never moves
 (`hyprpi new --silent`). Panels come last, the same way. Missing session files are listed and let
 go. One `♻️ restored …` line goes to the current world's room. Agents still running (a plain daemon
 restart) are skipped. Nothing is restored automatically at login.
