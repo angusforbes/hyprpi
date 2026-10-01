@@ -3,7 +3,7 @@
 // and tile them as a 2 x 2 dwindle grid: A, B right of A, C below A, D below B. Other windows
 // there stay; on an empty workspace the grid is clean:
 //
-//   agents (panel 1) │ room / stream (panel 2)
+//   agents (panel 1) │ Stream (panel 2; file room-tui, title "hyprpi-room C")
 //   board (panel 4)  │ search (panel 3)
 //
 // --columns: the old side-by-side floating columns instead. --tile: the old dwindle columns.

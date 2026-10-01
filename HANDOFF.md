@@ -164,6 +164,16 @@ Then use `kitty @ --to unix:/tmp/kt-test send-text|send-key|get-text --extent sc
 - Restarting the daemon after lib changes: `hyprpi ensure` (not every command checks code mtime).
 - Not done: drag-select on activity rows; activity in the QML room window; a per-agent "now doing"
   line in the agent list.
+- **The Stream (Blink, 2026-09-30; @hyprpi N40, Angus via Thoughts-C).** Panel 2 is the Stream
+  (README "The Stream"): `lib/stream.mjs` builds one timeline (posts, did lines deduped against
+  posts, topics, events, talk, board changes from `boards/<W>.log.jsonl`, Thoughts' lines; project per
+  line) and parses the filter (`@names` union of agents + projects, `3h`/`today`/`since 9am`, words,
+  `raw`). Ctrl+F = full ⇄ compact. `history.read` takes `since` and returns `changes`; board
+  `onChange` broadcasts the change. `/digest` = daemon `thoughts.digest` (same filter) →
+  `thoughts.digest()` in lib/thoughts.mjs (evidence entry + prompt for a summary by project);
+  `thoughts.seen` on the Thoughts window's focus-out. Angus kept the box sending (his correction
+  to point 4). Not renamed (risky): the file room-tui.mjs, the title "hyprpi-room C", `/room`
+  (`/stream` from other panels now goes there too).
 - **▸ marks retired (Blink, 2026-09-30; Angus answered @hyprpi D4 with c).** Gone: the agents
   panel's ▸ column (kept blank so names don't move), Space / Ctrl+A / Esc marking and
   second-click marking; the room panel's "to:" selection (the prompt is just `C ❯`; `@Names` alone

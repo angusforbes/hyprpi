@@ -253,17 +253,34 @@ Angus's names (2026-09-28), kept clearly distinct:
   and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
   `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.
 
-## Who a message goes to (room panel)
+## The Stream (panel 2, SUPER+ALT+R)
+
+The room panel is now **the Stream** (Angus 2026-09-30, @hyprpi N40; `lib/stream.mjs`): one
+read-only timeline of the world. Header `— stream C`, status bar `hyprpi stream`. (Internal names
+stay: the file is `mockups/room-tui.mjs` and the window title `hyprpi-room C`, because the launchers
+and the daemon find the window by it.)
+
+- **What it shows**, oldest first: agents' posts, per-turn **did** lines, topic changes, agent
+  events (joined, moved, …), agent-to-agent talk and Angus's prompts, **board changes** (📋 @project
+  · who op handle: text; "update where / next step" bookkeeping is left out), project moves,
+  Thoughts' 💭 lines. **Dedupe:** an agent that posted during a turn doesn't also get that turn's
+  did line (the post says it). Each line shows its **project** when known: its own tag, else the one
+  @project its text names, else the agent's only project. `● Name working…` stays at the bottom.
+- **Ctrl+F**: full text ⇄ compact (one line each: time · who · @project · text).
+- **Filters**, all combinable, typed as `/stream …`: `@Blink @Sankey @hyprpi` (a union of agents and
+  projects; a project = lines tagged with it or naming it, its board changes, and its members'
+  untagged lines) · `3h` `90m` `2d` `today` `yesterday` `since 9am` `since 14:30` (a time window
+  loads history from then) · other words narrow (every word) · `raw` adds the tool lines. The
+  header shows the filter; `/stream` alone or **Esc** clears it. e.g. `/stream @hyprpi 3h commit`.
+- **The box** still sends (Angus): plain text is a room post (every agent in the room gets it),
+  `@Name text` goes just to them, `@project text` to the project (its owner answers).
+- **`/digest [filter]`** (Thoughts window, or from any panel): the matching Stream lines go to
+  Thoughts as evidence (the newest 30 shown, up to 400 to the model) and it writes a summary by
+  project: done, decided, waiting on Angus. Follow-ups work. Alone: since Angus last looked at that
+  Thoughts window (it reports focus-out; `STATE/thoughts/looked.json`), else the last 12 h; with a
+  filter but no time window, the same default.
 
 The ▸ marks (a shared per-room selection of agents) are **retired** (Angus, 2026-09-30, @hyprpi D4).
-In the room panel (prompt `C ❯`):
-
-- plain text: a **room post**, every agent in the room gets it;
-- `@Name text`: just those agents; `@project text`: that project's owner answers (one voice per
-  project); Tab / Shift+Tab complete @projects / @agents;
-- the stream: `/stream @Name` shows only that agent's rows (its posts, did lines, messages to and
-  from it), `/stream WORDS` only rows with those words, `/stream` alone clears;
-- searches (the Thoughts window): `@Name` in the words (`/keyword @Sankey poetry`), else everyone.
 
 ## Activity stream
 

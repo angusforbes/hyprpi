@@ -1,21 +1,23 @@
 #!/usr/bin/env node
-// Panel 2 of three (docs/panels-plan.md): the hyprpi ROOM / STREAM panel, SUPER+ALT+R.
-// One world's room: messages plus agent activity (tools, topics, talk between agents,
-// joins/moves/renames), and the box to write in it. The agents themselves live in
-// panel 1 (SUPER+ALT+A) and search in panel 3 (SUPER+ALT+/).
+// Panel 2 (docs/panels-plan.md): the hyprpi STREAM panel, SUPER+ALT+R (the file keeps its old
+// name, room-tui, and its window title "hyprpi-room C": the launchers and the daemon find it by that).
+// One world's timeline, read-only (Angus 2026-09-30, @hyprpi N40; lib/stream.mjs): agents' posts,
+// per-turn did lines (one line when the turn also posted: the post), topics, agent events,
+// agent-to-agent talk, Angus's prompts, board changes and project moves, Thoughts' 💭 lines; each
+// with its project when known. Ctrl+F: full text ⇄ compact (one line each).
+// Filters (combinable): /stream @Blink @Sankey @hyprpi (a union of agents and projects) · 3h ·
+// today · since 9am · words (narrow) · raw (also tool lines); the header shows it, Esc or /stream clears.
 //
 //   ~/Work/hyprpi/mockups/room-tui [ROOM]   (kitty launcher with the mouse settings)
 //
-// Typing + Enter posts to the room as Angus (every agent in it gets it); "@Name text" goes just to
-// them, "@project text" to a project's members (the ▸ marks are retired, Angus 2026-09-30).
-// Ctrl+F cycles what the stream shows: room · all activity / stream · all activity /
-// room + stream / room + stream · topics / stream · topics only (just topic changes).
+// The box still sends, as before (Angus): typing + Enter posts to the room as Angus (every agent in
+// it gets it); "@Name text" goes just to them, "@project text" to a project's owner.
 // The project board has its own panel (SUPER+ALT+P, mockups/board-tui.mjs). Ctrl+B used to show it in here (lib/tui/board-view.mjs): Needs-you strip + one card per
 // project; in board mode the box takes @project … and board commands (/help there lists them).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
 // Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · Ctrl+/ opens the search panel on this room ·
 // Esc drops a selection · Ctrl+Q quits (Ctrl+C copies).
-// Commands: /messages · /stream [WORDS] (live word filter) · /history N|all · /help ·
+// Commands: /stream [FILTER] · /history N|all · /help ·
 // "//text" is only for saying something that starts with a slash (it would otherwise be
 // read as a command): "//stream is down" posts "/stream is down". Ordinary messages need nothing.
 // "@Name text" goes just to them; "/stream @Name" shows only their rows; Tab
@@ -28,6 +30,7 @@ import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
+import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT } from "../lib/stream.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
 // Commands: the room's own (below, in `command`) plus the ones every panel has (/help, /tinker,
 // /quit), all through lib/tui/command-line.mjs. In board view the board's commands come first.
@@ -44,10 +47,11 @@ const helpRows = () => {
     ...list.map(([c, d]) => `   ${bold(c.padEnd(w))}  ${d}`),
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
-    `   ${bold("/stream @Name".padEnd(w))}  ${dim("only that agent's rows (its posts, did lines, messages to and from it); /stream alone clears")}`,
+    `   ${bold("/stream FILTER".padEnd(w))}  ${dim("@Blink @Sankey @hyprpi (agents or projects, any of them) · 3h · today · since 9am · words (all of them) · raw (tool lines too); combinable")}`,
+    `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F full text ⇄ compact (one line each)")}`,
     `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
-    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F what the stream shows")}`,
+    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F full ⇄ compact")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A · projects: SUPER+ALT+P · thoughts: SUPER+ALT+/")}`,
     `   ${dim("the projects panel (the board) is its own panel: SUPER+ALT+P")}`,
@@ -103,28 +107,22 @@ const hereAgents = () => agents.filter((a) => a.room === room);
 // this workspace. ^W twice on a closed one drops it from the list (its session stays).
 let dormant = [];
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
-// The room is a stream: messages plus agent activity (tools, topics, talk between agents,
-// finishes) from the daemon. Ctrl+F cycles what it shows.
-let activity = {}; // room -> events
-// Ctrl+F modes. "done" and "blocked" are logged but never shown (the agent list shows ✓ / ×).
-const DIRECT = new Set(["talk", "demand", "reply", "prompt"]);
-// Stream views (Angus 2026-09-30): what agents DID, one line per finished turn ("turn", written by
-// the daemon's small model), plus topics, agent-to-agent messages and events; raw tool lines
-// ("$ …", "reading a.ts") are in no view any more, only in the hidden "/stream raw".
-const noTools = (e) => e.kind !== "tool";
-const MODES = {
-  all:    { label: "room + stream", msgs: true, act: noTools },                                   // everything but tool lines (the default)
-  room:   { label: "room", msgs: true, act: (e) => DIRECT.has(e.kind) },                        // room messages + agent-to-agent
-  stream: { label: "stream", msgs: false, act: noTools },                                          // did lines, topics, agent events; no room messages
-  topiclines: { label: "topics", msgs: false, act: (e) => e.kind === "topic" },                   // just the agents' topic changes
-  raw:    { label: "stream · raw tool lines", msgs: false, act: () => true },                      // hidden: /stream raw
-};
-const FILTERS = ["all", "room", "stream", "topiclines"]; // ^F cycles these (raw only via /stream raw)
-const FILTER_LABEL = Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label]));
-const HIDDEN = new Set(["done", "blocked"]);
-let filter = "all"; // default view
+// The Stream: room messages, agent activity and board changes (lib/stream.mjs builds the timeline).
+let activity = {}, changes = {}; // room -> activity events · board changes
+let compact = false;   // Ctrl+F: one line per item
+let streamArg = "";    // the /stream filter as typed ("" = everything)
+let sfCache = { k: null, f: null };
+const streamFilter = (a, minute) => { const k = a + "|" + minute; if (sfCache.k !== k) sfCache = { k, f: parseStreamFilter(a) }; return sfCache.f; }; // (re-parsed each minute: "3h" slides)
+// The timeline, rebuilt only when something arrived (typing must stay fast).
+let streamCache = { key: "", items: [] };
+function streamItems(raw) {
+  const msgs = messages[room] || [], acts = activity[room] || [], ch = changes[room] || [], ps = board.room === room ? board.projects : [];
+  const key = `${room}|${msgs.length}|${acts.length}|${ch.length}|${raw}|${ps.map((p) => p.id + p.status + p.members.join()).join()}`;
+  if (streamCache.key !== key) streamCache = { key, items: buildStream({ msgs, events: acts, changes: ch, projects: ps, raw }) };
+  return streamCache.items;
+}
 // What the pane shows: "stream" | "help".
-let view = "stream", words = []; // words: /stream WORDS live filter (lower case)
+let view = "stream";
 let resultRowMap = {}; // screen row -> search result index (clicks)
 let tabCycle = null; // Tab through several matching commands
 let atCycle = null;  // Tab through several matching @names (completeAt's state)
@@ -133,9 +131,6 @@ const CTRL_TAB = new Set(["\x1b[9;5u", "\x1b[27;5;9~"]), CTRL_SHIFT_TAB = new Se
 // /history: how far back the stream and /ask go, in interactions (a room message or one
 // agent turn, however many tool calls); "all" = everything. Default 200.
 let historyN = 200;
-function onlyLabel() {
-  return "";
-}
 const italic = (s) => `${ESC}3m${s}${ESC}23m`;
 let ic = 0; // cursor position in the message being typed, in graphemes
 let api = null;
@@ -315,34 +310,18 @@ function draw() {
     rows.push(...b.rows.map((r) => r.line));
   } else if (view !== "stream") drawPane(rows, ruleAt, avail, W, c, rule);
   else {
-  // Every message: the author on its own line, the text on the next (no name column).
-  const narrow = true, textX = 4, textW = Math.max(10, W - textX + 1 - 1);
-  // Each row: { line, msg (index into the room's messages), textX (1-based
-  // column where message text starts), hard (last row of a paragraph) }.
+  // Full: the author (time · @project) on its own line, the text below. Compact: one line each.
+  const textX = 4, textW = Math.max(10, W - textX + 1 - 1);
+  // Each row: { line, msg (index into sItems), textX (1-based column where the text starts), hard (last row of a paragraph) }.
   const convo = [];
-  // Stream items in time order: messages (mi = index into msgs, for selection) and activity.
-  const mode = MODES[filter];
-  const acts = (activity[room] || []).filter((x) => !HIDDEN.has(x.kind) && mode.act(x));
-  const items = mode.msgs ? msgs.map((m, mi) => ({ ts: m.ts, m, mi })) : [];
-  for (const e of acts) items.push({ ts: e.ts, e });
-  items.sort((x, y) => x.ts - y.ts);
-  // /stream @Name [@Name …]: only those agents' rows: their posts and activity, messages to or from
-  // them, and Angus's prompts to them (replaces the ▸ marks filter, Angus 2026-09-30).
-  const atWords = words.filter((w) => w.startsWith("@")), plainWords = words.filter((w) => !w.startsWith("@"));
-  if (atWords.length) {
-    const who = resolveAt(atWords.map((w) => w.slice(1)), [...hereAgents(), ...dormant.filter((a) => a.room === room)]);
-    const ids = new Set(who.ids), names = new Set(who.found.map((a) => (a.display || a.name).toLowerCase()));
-    const keep = ({ m, e }) => m ? ids.has(m.author?.id) || [...names].some((n) => String(m.text).toLowerCase().includes("@" + n))
-      : ids.has(e.agent?.id) || (Array.isArray(e.to) && e.to.some((n) => names.has(String(n).toLowerCase())));
-    for (let k = items.length - 1; k >= 0; k--) if (!keep(items[k])) items.splice(k, 1);
-  }
-  // /stream WORDS: only rows containing every word (text, author, recipients).
-  if (plainWords.length) {
-    const hay = ({ m, e }) => (m ? `${m.text} ${authorLabel(m.author)}` : `${e.text} ${e.agent?.name || ""} ${(Array.isArray(e.to) ? e.to : []).join(" ")}`).toLowerCase();
-    for (let k = items.length - 1; k >= 0; k--) { const h = hay(items[k]); if (!plainWords.every((w) => h.includes(w))) items.splice(k, 1); }
-  }
-  // Activity rows: no indent, no glyphs; names (with their icons) in their own colours.
-  // "done" (finished) is logged but not shown here.
+  const sf = streamFilter(streamArg, Math.floor(Date.now() / 60000));
+  const projAll = board.room === room ? board.projects : [];
+  const all = streamItems(sf.raw);
+  const res = sf.names.length ? resolveFilterNames(sf.names, { agents: [...hereAgents(), ...dormant.filter((a) => a.room === room)], projects: projAll, items: all }) : null;
+  const items = filterStream(all, sf, res);
+  const pname = (id) => projAll.find((p) => p.id === id)?.name || "";
+  const tagOf = (it) => { const n = it.kind === "board" ? "" : pname(it.project); return n ? dim(" · @" + n) : ""; };
+  const tm = (ts) => dim(" · " + hhmm(ts));
   const agentByName = (n) => agents.find((x) => x.display === n || x.name === n);
   const styledName = (n) => {
     if (n === "Angus") return fg(c, bold("Angus"));
@@ -350,70 +329,79 @@ function draw() {
     return x ? (x.icon ? x.icon + " " : "") + nameFg(x.name, x.color, x.display || n) : bold(n);
   };
   const afterColon = (t) => { const i = String(t).indexOf(": "); return i >= 0 ? String(t).slice(i + 2) : String(t); };
+  const MID = new Set(["joined", "left", "renamed", "moved", "model", "resumed"]);
+  const sender = (au) => (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
+  const postWho = (au) => au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
+    : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
+    : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
+  // A direct message's text: after "…: ", without a leading repeat of the sender's own name.
+  const directBody = (it) => {
+    const self = it.kind === "prompt" ? "Angus" : (it.who.name || "");
+    const lead = new RegExp(`^\\s*(?:\\S+\\s+)?${self.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:,—-]\\s*`, "u");
+    return self ? afterColon(it.text).replace(lead, "") : afterColon(it.text);
+  };
+  const actStyle = (it) => it.kind === "blocked" ? "needs you" : it.kind === "error" || it.kind === "turn" ? it.text
+    : it.kind === "topic" ? midFg(`${ESC}3mtopic: ${it.text}${ESC}23m`) : MID.has(it.kind) ? midFg(it.text) : dim(it.text);
   let lastAct = null;
-  // Every stream item (message or activity) is selectable: its rows carry msg = its
-  // index in sItems, and sItems[i].copy is what a Shift-selection copies.
+  // Every stream item is selectable: its rows carry msg = its index in sItems; sItems[i].copy is
+  // what a Shift-selection copies; m / e let Ctrl+click find the row's agent.
   const sItems = [];
-  items.forEach(({ m, e }) => {
-    const mi = sItems.push({ copy: "", key: m ? `m${m.seq}` : `e${e.ts}|${e.agent?.id || ""}|${e.kind}`, m, e }) - 1; // m / e: Ctrl+click finds the row's agent
-    if (e) {
-      const au = e.agent || {};
-      // In the stream: icon + full name (only the prompt line uses icons alone).
-      const sender = (au.icon ? au.icon + " " : "") + nameFg(au.name, au.color, au.name || "agent");
-      const tos = (Array.isArray(e.to) ? e.to : []).map(styledName).join(", ");
+  items.forEach((it) => {
+    const mi = sItems.push({ copy: streamLine(it, { projectName: pname }), key: it.key, m: it.m, e: it.e }) - 1;
+    if (compact) { // one line: time · who [· @project]  text
+      const one = (t) => String(t).replace(/\s+/g, " ").trim();
+      let head, body;
+      if (it.kind === "board") { head = fg(c, "📋 @" + (it.pname || "?")); body = midFg(one(`${it.who.name} ${it.text}`)); }
+      else if (DIRECT[it.kind]) {
+        head = it.kind === "prompt" ? `${fg(c, bold("Angus"))} to ${sender(it.e.agent || {})}` : `${sender(it.e.agent || {})} ${DIRECT[it.kind]} ${it.to.map(styledName).join(", ")}`;
+        body = one(directBody(it));
+      } else if (it.m) { head = postWho(it.m.author || {}); body = one(it.text); }
+      else { head = sender(it.e.agent || {}); body = actStyle({ ...it, text: one(it.text) }); }
+      const pre = `   ${dim(hhmm(it.ts))} ${head}${tagOf(it)}  `;
+      convo.push({ line: pre + body, msg: mi, textX: width(pre) + 1, hard: true, act: !it.m });
+      return;
+    }
+    // Full text.
+    const push = (text, loud) => {
+      const parts = wrap(strip(text), textW);
+      if (parts.length <= 1) return convo.push({ line: "   " + text, msg: mi, textX, hard: true, act: true });
+      convo.push({ line: "   " + clip(text, width(parts[0])), msg: mi, textX, act: true });
+      parts.slice(1).forEach((l, k) => convo.push({ line: "   " + (loud ? l : dim(l)), msg: mi, textX, hard: k === parts.length - 2, act: true }));
+    };
+    if (it.kind === "board") { // board changes: one block per project run, "Tinker done D4: …"
+      const runKey = "board:" + it.project;
+      if (lastAct !== runKey) { if (convo.length) convo.push({ line: "", msg: null }); convo.push({ line: `   ${fg(c, bold("📋 @" + (it.pname || "?")))}${tm(it.ts)}`, msg: mi, header: true, act: true }); }
+      push(midFg(`${it.who.name} ${it.text}`), true);
+      lastAct = runKey; return;
+    }
+    if (it.e) {
+      const au = it.e.agent || {};
       // Direct messages (agent to agent(s), Angus to an agent): their own block, a header
-      // "🗃️ Quartermaster to 📊 Sankey, …" with every name in its colour, then the message
-      // (a leading repeat of the sender's own name dropped).
-      // Other activity: a run from one agent shows its name once, then the rows (no indent).
-      const direct = { talk: "to", demand: "asks", reply: "replies to", prompt: "to" }[e.kind];
-      // Indented like messages: names and text at column 4.
-      const push = (text, loud) => {
-        const parts = wrap(strip(text), textW);
-        if (parts.length <= 1) return convo.push({ line: "   " + text, msg: mi, textX, hard: true, act: true });
-        convo.push({ line: "   " + clip(text, width(parts[0])), msg: mi, textX, act: true });
-        parts.slice(1).forEach((l, k) => convo.push({ line: "   " + (loud ? l : dim(l)), msg: mi, textX, hard: k === parts.length - 2, act: true }));
-      };
-      if (direct) {
-        const from = e.kind === "prompt" ? fg(c, bold("Angus")) : sender;
-        const to = e.kind === "prompt" ? sender : tos;
-        const self = e.kind === "prompt" ? "Angus" : (au.name || "");
-        let body = afterColon(e.text);
-        const lead = new RegExp(`^\\s*(?:\\S+\\s+)?${self.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:,—-]\\s*`, "u");
-        if (self) body = body.replace(lead, "");
+      // "🗃️ Quartermaster to 📊 Sankey, …" with every name in its colour, then the message.
+      if (DIRECT[it.kind]) {
+        const from = it.kind === "prompt" ? fg(c, bold("Angus")) : sender(au);
+        const to = it.kind === "prompt" ? sender(au) : it.to.map(styledName).join(", ");
         if (convo.length) convo.push({ line: "", msg: null });
-        convo.push({ line: `   ${from} ${direct} ${to}`, msg: mi, header: true, act: true });
-        sItems[mi].copy = `${strip(from)} ${direct} ${strip(to)}: ${body}`;
-        push(body, true);
+        convo.push({ line: `   ${from} ${DIRECT[it.kind]} ${to}${tagOf(it)}${tm(it.ts)}`, msg: mi, header: true, act: true });
+        push(directBody(it), true);
         lastAct = "direct:" + au.id; // the next activity starts a new block
         return;
       }
-      // Topics: mid tone, italic. Agent events (joined, left, renamed, moved, model): mid tone.
-      // Errors and "needs you": normal text. Tool lines and Esc stops: dim.
-      const MID = new Set(["joined", "left", "renamed", "moved", "model"]);
-      const line = e.kind === "blocked" ? "needs you" : e.kind === "error" || e.kind === "turn" ? e.text
-        : e.kind === "topic" ? midFg(`${ESC}3mtopic: ${e.text}${ESC}23m`) : MID.has(e.kind) ? midFg(e.text) : dim(e.text);
-      if (lastAct !== au.id) {
+      // Other activity: a run from one agent (on one project) shows its name once, then the rows.
+      const runKey = au.id + "|" + (it.project || "");
+      if (lastAct !== runKey) {
         if (convo.length) convo.push({ line: "", msg: null });
-        convo.push({ line: "   " + sender, msg: mi, header: true, act: true });
+        convo.push({ line: "   " + sender(au) + tagOf(it) + tm(it.ts), msg: mi, header: true, act: true });
       }
-      sItems[mi].copy = `${au.name || "agent"}: ${strip(line)}`;
-      push(line, e.kind === "blocked" || e.kind === "error" || e.kind === "topic" || e.kind === "turn" || MID.has(e.kind));
-      lastAct = au.id;
+      push(actStyle(it), it.kind === "blocked" || it.kind === "error" || it.kind === "topic" || it.kind === "turn" || MID.has(it.kind));
+      lastAct = runKey;
       return;
     }
     lastAct = null;
-    const au = m.author || {};
-    sItems[mi].copy = `${authorLabel(au)}: ${m.text}`;
-    const who = au.kind === "human" ? fg(c, bold(cut(authorLabel(au), nameW)))
-      : au.markup && width(authorLabel(au)) <= nameW ? (au.icon ? au.icon + " " : "") + bold(markupFg(au.markup, au.color))
-      : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
-    const body = [];
-    for (const para of String(m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => body.push({ l, hard: i === ls.length - 1 })); }
-    if (narrow) {
-      if (convo.length) convo.push({ line: "", msg: null });
-      convo.push({ line: `   ${who}`, msg: mi, header: true });
-      for (const b of body) convo.push({ line: `   ${b.l}`, msg: mi, textX, hard: b.hard });
-    } else body.forEach((b, i) => convo.push({ line: i === 0 ? `   ${pad(who, nameW)}  ${b.l}` : " ".repeat(textX - 1) + b.l, msg: mi, textX, hard: b.hard }));
+    const au = it.m.author || {};
+    if (convo.length) convo.push({ line: "", msg: null });
+    convo.push({ line: `   ${postWho(au)}${tagOf(it)}${tm(it.ts)}`, msg: mi, header: true });
+    for (const para of String(it.m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => convo.push({ line: `   ${l}`, msg: mi, textX, hard: i === ls.length - 1 })); }
   });
   // Scrolled up: stay on the same lines when new ones arrive below.
   if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
@@ -439,15 +427,16 @@ function draw() {
     }
   }
   // Liveness: agents mid-turn, one dim line each at the bottom (their "did" line comes when they finish).
-  if (mode.act({ kind: "turn" })) {
-    const busy = hereAgents().filter((a) => a.status === "working");
+  {
+    const inFilter = (a) => !res || res.agentIds.has(a.id) || res.projects.some((p) => p.members?.includes(a.id));
+    const busy = hereAgents().filter((a) => a.status === "working" && inFilter(a));
     if (busy.length) { convo.push({ line: "", msg: null }); convo.push({ line: "   " + dim(busy.map((a) => `● ${a.display} working…`).join("   ")), msg: null }); }
   }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
-  const streamLabel = FILTER_LABEL[filter];
-  rows[ruleAt] = rule(`room ${room} · ${streamLabel} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "") + onlyLabel() + (words.length ? ` · filter: ${words.join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
+  rows[ruleAt] = rule(`stream ${room} · ${compact ? "compact" : "full"} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "")
+    + (sf.text ? ` · ${sf.text} (Esc clears)` : "") + (res?.unknown.length ? ` · ✗ no ${res.unknown.map((n) => "@" + n).join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
-  if (!convo.length) shown.push({ line: dim(words.length ? `  (nothing matches "${words.join(" ")}" · /stream alone clears)` : MODES[filter].msgs ? "  (no messages yet)" : "  (no activity yet)"), msg: null });
+  if (!convo.length) shown.push({ line: dim(sf.text ? `  (nothing matches "${sf.text}" · Esc or /stream alone clears)` : "  (nothing yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
   rowMeta = {}; convoMsgs = sItems;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
@@ -464,12 +453,12 @@ function draw() {
     : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : input ? (bs ? "  " + bs : "") + (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
-    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · ⇧←→↑↓ select · ^F filter · / commands · ^Tab world")));
+    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full ⇄ compact · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
   const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
-  const left = ` hyprpi room ${online ? "" : "· daemon offline "}`; // the same label form in every panel (Angus)
+  const left = ` hyprpi stream ${online ? "" : "· daemon offline "}`; // the same label form in every panel (Angus)
   const right = `history ${historyN} `; // no clock (Angus)
   const mid = W - width(left) - width(strip(tabs)) - width(right);
   worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
@@ -502,7 +491,7 @@ function draw() {
 let askTop = 0;
 function drawPane(rows, ruleAt, avail, W, c, rule) {
   const pane = ["", ...helpRows()];
-  rows[ruleAt] = rule(`room ${room} · commands (Esc back)`);
+  rows[ruleAt] = rule(`stream ${room} · commands (Esc back)`);
   rowMeta = {}; resultRowMap = {}; lastAvail = avail;
   rows.push(...pane.slice(0, avail));
   for (let k = pane.length; k < avail; k++) rows.push("");
@@ -517,8 +506,10 @@ function setView(v) {
 async function loadRoom(r) {
   if (!api || !r) return;
   try {
-    const res = await api.call("history.read", { room: r, interactions: historyN });
-    messages[r] = res.messages || []; activity[r] = res.events || [];
+    // A time filter ("3h", "since 9am") loads from then; otherwise the last N interactions (/history).
+    const since = parseStreamFilter(streamArg).since;
+    const res = await api.call("history.read", { room: r, ...(since ? { since } : { interactions: historyN }) });
+    messages[r] = res.messages || []; activity[r] = res.events || []; changes[r] = res.changes || [];
   } catch { // older daemon
     try { const res = await api.call("room.read", { room: r, tail: true, limit: 200 }); messages[r] = res.messages || []; } catch { /* keep old */ }
     try { const res = await api.call("activity.read", { room: r, limit: 300 }); activity[r] = res.events || []; } catch { /* none */ }
@@ -569,7 +560,7 @@ async function start() {
     api = await connect({
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
-        else if (ev === "board" && data?.room === room) loadBoard();
+        else if (ev === "board" && data?.room) { if (data.change) (changes[data.room] ||= []).push(data.change); if (data.room === room) loadBoard(); }
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
         else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 50000) t.splice(0, t.length - 40000); if (data.room === room) render(); }
       },
@@ -611,18 +602,21 @@ let focusArea = "input";
 // The room's commands; /help, /tinker and /quit come from lib/tui/command-line.mjs.
 const cmds = createCommands({
   commands: [
-    { name: "/messages", help: "show room messages + agent-to-agent (was /room; /room now goes to this panel)", run: () => { filter = "room"; words = []; scroll = 0; lastConvoLen = 0; setView("stream"); } },
-    { name: "/stream", usage: "/stream [WORDS]", help: "only rows with those words; /stream alone clears the filter",
+    { name: "/stream", usage: "/stream [@names…] [3h|today|since 9am] [words] [raw]", help: "filter the Stream: agents and projects (any of them), a time window, words (all of them), raw = tool lines too; alone clears",
       run: (arg) => {
-        if (/^raw$/i.test(arg || "")) { filter = filter === "raw" ? "all" : "raw"; words = []; scroll = 0; lastConvoLen = 0; note = filter === "raw" ? "raw tool lines (/stream raw again, or ^F, leaves)" : ""; return setView("stream"); }
-        words = arg ? arg.toLowerCase().split(/\s+/) : []; scroll = 0; lastConvoLen = 0; setView("stream"); if (!arg) { note = "stream filter cleared"; render(); } } },
+        const had = parseStreamFilter(streamArg).since;
+        streamArg = arg || ""; scroll = 0; lastConvoLen = 0; streamSel = null;
+        note = arg ? "" : "stream filter cleared";
+        setView("stream");
+        if (had || parseStreamFilter(streamArg).since) loadRoom(room); // a time window loads from then
+      } },
     { name: "/history", usage: "/history N | all", help: "how far back the stream goes (N interactions; default 200)",
       run: (arg) => {
         if (!arg) { note = `history: ${historyN === "all" ? "everything" : "last " + historyN + " interactions"} · /history N or /history all`; render(); return; }
         const n = /^all$/i.test(arg) ? "all" : Number.parseInt(arg, 10);
         if (n !== "all" && !(n > 0)) { note = "✗ /history takes a number or all"; render(); return; }
         historyN = n; scroll = 0; lastConvoLen = 0;
-        note = `history: ${n === "all" ? "everything" : "last " + n + " interactions"} (stream and /ask)`;
+        note = `history: ${n === "all" ? "everything" : "last " + n + " interactions"}`;
         setView("stream"); loadRoom(room);
       } },
   ],
@@ -859,7 +853,7 @@ function onKey(d) {
     if (box.key(d)) { boxOut(); note = ""; focusArea = "input"; return render(); }
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
-  if (d === "\x06") { if (view !== "stream") setView("stream"); filter = FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]; scroll = 0; lastConvoLen = 0; note = `showing ${FILTER_LABEL[filter]}`; return render(); } // Ctrl+F
+  if (d === "\x06") { if (view !== "stream") setView("stream"); compact = !compact; scroll = 0; lastConvoLen = 0; note = compact ? "compact: one line each (^F: full text)" : "full text (^F: compact)"; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
@@ -900,7 +894,12 @@ function onKey(d) {
     }
     return render();
   }
-  if (d === "\x1b") { if (inputSel()) { selA = null; return render(); } if (streamSel != null) { streamSel = null; return render(); } confirm = null; note = ""; return render(); } // Esc: text selection, else the picked row, else the note
+  if (d === "\x1b") { // Esc: text selection, else the picked row, else the stream filter, else the note
+    if (inputSel()) { selA = null; return render(); }
+    if (streamSel != null) { streamSel = null; return render(); }
+    if (streamArg) { const had = parseStreamFilter(streamArg).since; streamArg = ""; scroll = 0; lastConvoLen = 0; note = "stream filter cleared"; if (had) loadRoom(room); return render(); }
+    confirm = null; note = ""; return render();
+  }
   if (d.startsWith("\x1b")) return; // other keys: ignore in the mockup
   if (!d.replace(/[\x00-\x1f]/g, "")) return;
   insertText(d); // typing replaces the selection
@@ -929,7 +928,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/board-view.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
@@ -938,7 +937,7 @@ setInterval(() => {
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
   // Keep what Angus was looking at: board or stream, the open card, the stream filter.
-  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, filter, words, input, ic, sent: sentText != null && input === sentText, bvTop: bv.st.top, bvAnchor: bv.st.anchor, bvCur: bv.st.cur });
+  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, streamArg, compact, input, ic, sent: sentText != null && input === sentText, bvTop: bv.st.top, bvAnchor: bv.st.anchor, bvCur: bv.st.cur });
   // The launcher (mockups/room-tui) loops on exit code 75: hand it the state in a file and
   // exit, so restarts don't pile up processes. Older windows (no loop): a child, as before.
   if (process.env.HYPRPI_ROOM_TUI_STATEFILE) {
@@ -959,8 +958,9 @@ try {
   const k = raw ? JSON.parse(raw) : null;
   delete process.env.HYPRPI_ROOM_TUI_STATE;
   if (k) {
-    if (FILTERS.includes(k.filter) || k.filter === "raw") filter = k.filter; // (old "topics" → the default)
-    if (Array.isArray(k.words)) words = k.words;
+    if (typeof k.streamArg === "string") streamArg = k.streamArg; else if (Array.isArray(k.words)) streamArg = k.words.join(" "); // (older: words)
+    if (k.filter === "raw" && !/\braw\b/.test(streamArg)) streamArg = (streamArg + " raw").trim();
+    compact = !!k.compact;
     if (k.view === "board") { view = "board"; if (k.focus) bv.focus(k.focus); bv.st.top = Number(k.bvTop) || 0; bv.st.anchor = k.bvAnchor || null; bv.st.cur = k.bvCur || null; }
     if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); if (k.sent) sentText = input; }
   }

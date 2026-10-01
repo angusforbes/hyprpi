@@ -123,6 +123,15 @@ function evFilter(text) {
   if (sc.unknown.length) throw new Error(`no agent ${sc.unknown.map((n) => "@" + n).join(" ")} in room ${room} (Tab completes names)`);
   return { words: sc.rest, ids: sc.ids, how: sc.ids.length ? "@names" : "" };
 }
+// /digest [@names…] [time] [words]: the matching Stream lines go to Thoughts, which writes a summary
+// by project (the daemon's thoughts.digest; the Stream panel's filter syntax, lib/stream.mjs).
+function digest(text) {
+  if (!api) { note = "✗ daemon offline"; return render(); }
+  note = ""; TH.scroll = 0; render();
+  api.call("thoughts.digest", { room, filter: String(text || "").trim() }, { timeoutMs: 60000 })
+    .then((r) => { note = r.total ? "" : `no Stream lines for "${r.label}"`; render(); })
+    .catch((e) => { note = "✗ " + e.message; render(); });
+}
 function evidence(kind, text, n = 10) {
   let f; try { f = evFilter(text); } catch (e) { note = "✗ " + e.message; return render(); }
   if (!f.words) { note = kind === "ask" ? "/ask QUESTION" : "/keyword WORDS"; return render(); }
@@ -201,6 +210,7 @@ const cmds = createCommands({
     { name: "/search", usage: "/search WORDS", help: "the same as /keyword", run: (a) => evidence("keyword", a) },
     { name: "/ask", usage: "/ask QUESTION", help: "a small model answers from the history and cites the turns (answer last)", run: (a) => evidence("ask", a) },
     { name: "/ai", usage: "/ai QUESTION", help: "the same as /ask", run: (a) => evidence("ask", a) },
+    { name: "/digest", usage: "/digest [@names…] [3h|today|since 9am] [words]", help: "a summary by project (done · decided · waiting on you) of the Stream lines; alone: since you last looked here", run: (a) => digest(a) },
     { name: "/more", usage: "/more [N]", help: "the last /keyword again with N (default 20) more of the older matches", run: (a) => {
       if (!EV.last) { note = "nothing to show more of yet (/keyword WORDS first)"; return render(); }
       const add = Math.max(1, Number(a) || 20); evidence(EV.last.kind, EV.last.text, EV.last.n + add);
@@ -257,6 +267,7 @@ function setBox(text) { query = text; qc = graphemes(text).length; }
 // ui.searchRun, or --mode / --query when that opened this panel): switch mode and run it.
 function runFrom(mode, query) {
   showHelp = false; note = "";
+  if (mode === "digest") return digest(query); // (alone: since you last looked)
   if (!query) return render();
   if (mode === "ai" || mode === "ask") return evidence("ask", query);
   if (mode === "keyword") return evidence("keyword", query);
@@ -308,6 +319,7 @@ function helpLines() {
     k("text + ⏎", `talk to Thoughts-${room} (it remembers; it can ask agents and hand them work)`),
     k("/keyword WORDS", "exact-word search of the history: the 10 newest matching turns, oldest first (+N older · /more)"),
     k("/ask QUESTION", "an answer from the history, with the turns it cites; the answer prints last"),
+    k("/digest [filter]", "a summary by project (done · decided · waiting on you) of the Stream; the Stream's filters (@Name @project 3h today since 9am words); alone: since you last looked here"),
     k("@Name in the words", "only those agents' history (\"/keyword @Sankey poetry\"); else everyone's"),
     k("follow-ups", "results go to Thoughts with your next message: \"tell me more about the second one\""),
     k("Tab · Ctrl+Tab", "complete an @name or a /command · next world"),
@@ -537,7 +549,17 @@ function render() {
       } else if (e.role === "action") add(md((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
       else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 8), 6); }
       else if (e.role === "evidence") {
-        items[k].copy = `${e.kind === "ask" ? "/ask" : "/keyword"} ${e.query}${e.answer ? "\n" + e.answer : ""}`;
+        items[k].copy = `${e.kind === "ask" ? "/ask" : e.kind === "digest" ? "/digest" : "/keyword"} ${e.query}${e.answer ? "\n" + e.answer : ""}`;
+        if (e.kind === "digest") { // /digest: one line per Stream item (time · who · text [@project]), newest at the bottom
+          flat.push({ l: "" });
+          flat.push({ l: `  ${fg(c, bold("≡ digest"))} ${italic(e.query)}${dim(` · ${e.total} stream line${e.total === 1 ? "" : "s"}${e.older > 0 ? ` (the newest ${e.items.length} shown)` : ""} · ${when(e.ts)}`)}`, meta: { item: k, textX: 3, header: true } });
+          for (const it of e.items || []) {
+            const ki = items.push({ copy: `${when(it.ts)} ${it.text}` }) - 1;
+            const lead = `   ${dim(when(it.ts))} `, room0 = Math.max(10, tw - 3 - width(strip(lead)));
+            flat.push({ l: lead + clip(String(it.text).replace(/\s+/g, " "), room0), meta: { item: ki, textX: 4 + width(strip(lead)) - 3 } });
+          }
+          continue;
+        }
         // /keyword · /ask (by you) or the Thoughts agent's own search: numbered, oldest first; the
         // answer (ask) last. Each line keeps its turn's reference (items[k].ref, for Ctrl+click).
         flat.push({ l: "" });
@@ -709,6 +731,8 @@ function onKey(d) {
   if (d === "\x1b[200~") { pasting = true; return; }
   if (d === "\x1b[201~") { pasting = false; return render(); }
   if (pasting) return insertText(d);
+  if (d === "\x1b[O") return seen(); // focus out (DECSET 1004)
+  if (d === "\x1b[I") return;        // focus in
   if (d === "\x11") return quit(); // Ctrl+Q
   if (d === "\x1b" || d === "\x1b\x1b") { // Esc: interrupt, else close help, else drop images; never the box
     // Esc (Angus): interrupt what's running; else close help, else drop pasted images. It never
@@ -790,8 +814,10 @@ function onKey(d) {
   if (!d.replace(/[\x00-\x1f]/g, "")) return;
   return insertText(d);
 }
-const MODES_OFF = `${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`;
-function quit() { out(MODES_OFF); process.exit(0); }
+const MODES_OFF = `${ESC}?1004l${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`;
+function quit() { seen(); out(MODES_OFF); process.exit(0); }
+// Focus out (or quitting): tell the daemon Angus last looked at this world's Thoughts window now.
+function seen() { try { api?.call("thoughts.seen", { room }).catch(() => {}); } catch { /* offline */ } }
 process.on("SIGTERM", quit);
 process.stdout.on("resize", render);
 
@@ -813,7 +839,7 @@ setInterval(() => {
   spawnChild(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env }).on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
-out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
+out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h${ESC}?1004h`); // + focus in/out reports (/digest: since you last looked) // alt screen + mouse (wheel, click, drag-select) + bracketed paste
 { // after a restart onto new code: the same words in the box, the same mode
   const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
   try { const k = sf && JSON.parse(fs.readFileSync(sf, "utf8") || "null"); if (sf) fs.writeFileSync(sf, "");

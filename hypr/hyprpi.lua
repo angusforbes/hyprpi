@@ -23,14 +23,14 @@ end
 --   SUPER + ALT + A / R / /: one panel for the current world, brought HERE (moved from
 --                      another workspace if open there, opened here if not), then focused
 --   SUPER + ALT + A    agent panel (kitty) for the current world
---   SUPER + ALT + R    room / stream panel (kitty) for the current world
+--   SUPER + ALT + R    the Stream panel (kitty) for the current world
 --   SUPER + ALT + P    projects panel (the project board) for the current world
 --   SUPER + SHIFT + SPACE  find an agent or project (the finder add-on; the bar toggle then moves to SUPER + ALT + B)
 --   SUPER + CTRL + ALT + P  all four panels here (opened if needed), tiled as a 2x2 grid
 --   SUPER + ALT + /    search TUI (kitty) for the current world's room
 o.bind("SUPER + A", "Pi agent (hyprpi)", HYPRPI_BIN .. " new")
 o.bind("SUPER + ALT + A", "hyprpi agent panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 1")
-o.bind("SUPER + ALT + R", "hyprpi room / stream panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 2")
+o.bind("SUPER + ALT + R", "hyprpi Stream panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 2")
 o.bind("SUPER + CTRL + ALT + P", "hyprpi panels here as a 2x2 grid", "/home/agf/Work/hyprpi/mockups/panels")
 -- Omarchy binds SUPER + ALT + / to "Monitor scaling down"; both fired on one press. Take the key
 -- for search and move scaling down to SUPER + SHIFT + / (scaling up stays on SUPER + /).
