@@ -132,7 +132,7 @@ twins), on **its own workspace** (a parked one parked), on the **model and think
 session's last `model_change` (not the config's `--model`), all at once (twins in a second wave, after their
 originals), with one notification counting up and a "hyprpi restore complete" one that stays until dismissed, opened with Hyprland's `exec_cmd … 'N silent'` so your focus never moves
 (`hyprpi new --silent`). Panels come last, the same way. Missing session files are listed and let
-go. One `♻️ restored …` line goes to the current world's room. Agents still running (a plain daemon
+go. One `restored …` line goes to the current world's room. Agents still running (a plain daemon
 restart) are skipped. Nothing is restored automatically at login.
 
 ### Resuming agents after a restart (and parked / closed agents)
