@@ -30,10 +30,36 @@ export default function hyprpi(pi: ExtensionAPI) {
   const idle = () => { try { return ctxRef?.isIdle?.() ?? true; } catch { return true; } };
   // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
   // coordination; a "followUp" talk once arrived only after the work it asked about was done, @hyprpi N44).
-  const inject = (message: any, steer = false) => {
-    try { pi.sendMessage(message, idle() ? { triggerTurn: true } : { triggerTurn: true, deliverAs: steer ? "steer" : "followUp" }); }
+  // Not steered (Thoughts' tasks, room questions): held HERE while the agent works and started as
+  // the next turn when it settles, one per turn. Pi's own "followUp" queue lost one (Thoughts-C's
+  // 00:58 question to pi·wpzt: delivered to the window, never in the session; @hyprpi N44 follow-up).
+  const held: any[] = [];
+  const send = (message: any, opts: any) => {
+    try { pi.sendMessage(message, opts); }
     catch (e) { ctxRef?.ui?.notify?.(`hyprpi: could not deliver message (${(e as Error).message})`, "warning"); }
   };
+  // Steered ones are tracked until they show up in the session (message_end): Esc clears pi's queues
+  // and drops queued custom messages without a trace (pi·wpzt's diagnosis), so whatever didn't land
+  // is held again when the run ends.
+  const steered = new Map<string, any>(); // key (request_id / delivery_id) -> message
+  const keyOf = (m: any) => String(m?.details?.request_id || m?.details?.delivery_id || "");
+  const inject = (message: any, steer = false) => {
+    if (idle() && !held.length) return send(message, { triggerTurn: true });
+    if (steer && !idle()) { const k = keyOf(message); if (k) steered.set(k, message); return send(message, { triggerTurn: true, deliverAs: "steer" }); }
+    held.push(message);
+    if (idle()) setTimeout(releaseHeld, 0);
+  };
+  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "custom") steered.delete(keyOf(m)); });
+  function releaseHeld() { if (held.length && idle()) send(held.shift(), { triggerTurn: true }); }
+  // After Esc (Angus stopped the agent): keep the held messages in the context without starting a
+  // turn, so the stop stays a stop; they are answered with his next message.
+  function keepHeld() {
+    if (!held.length) return;
+    const n = held.length;
+    while (held.length) send(held.shift(), { triggerTurn: false });
+    ctxRef?.ui?.notify?.(`hyprpi: ${n} request${n === 1 ? "" : "s"} kept after Esc; ${n === 1 ? "it is" : "they are"} answered with your next message`, "info");
+  }
+  const reclaimSteered = () => { if (steered.size) { held.unshift(...steered.values()); steered.clear(); } };
 
   // Show this agent's hyprpi identity in its own window: a footer line
   // ("🧵 Loom · room C", the name in its colours) and the window title.
@@ -110,7 +136,7 @@ export default function hyprpi(pi: ExtensionAPI) {
         display: true,
         content: `[hyprpi ${d.mode} from ${d.from.name} · id ${d.request_id}]\n${d.text}\n\n${how}`,
         details: d,
-      }, !String(d.from?.id || "").startsWith("thoughts:")); // agents' talk steers; Thoughts' tasks wait for the turn to end
+      }, !String(d.from?.id || "").startsWith("thoughts:") || !!d.urgent); // agents' talk (and urgent asks) steer; Thoughts' tasks wait for the turn to end
     } else if (event === "talk.reply") {
       const w = demands.get(d.request_id);
       if (w) {
@@ -215,8 +241,10 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.on("agent_settled", async (_e: any, ctx: any) => {
     flushActivity();
     ctxRef = ctx; watchTyping(ctx);
-    if (aborted) { aborted = false; unseen = false; update({ status: "idle" }); return; }
+    reclaimSteered(); // steered but never landed (an Esc cleared pi's queue)
+    if (aborted) { aborted = false; unseen = false; update({ status: "idle" }); setTimeout(keepHeld, 50); return; }
     unseen = true; update({ status: "done" });
+    setTimeout(releaseHeld, 50); // a held message starts the next turn
   });
   // ---- activity: one short line per tool call for the room's stream (never anyone's context).
   // Batched: sent 2 s after the last call (at most every 6 s while busy); consecutive calls with
