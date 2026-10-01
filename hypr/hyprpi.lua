@@ -50,6 +50,20 @@ if hyprpi_flag("finder", true) then
   o.bind_toggle("SUPER + ALT + B", "Toggle top bar", "bar")
 end
 
+-- Summon & dismiss (Angus, 2026-09-30, v1; mockups/summon.mjs, mockups/guest, daemon guest.*):
+--   SUPER+S          summon pop-up: this world's agents / projects to the workspace you're on
+--   SUPER+D          send the focused summoned agent home (a hyprpi panel: closed)
+--   SUPER+ALT+D      send every unpinned guest on this workspace home
+--   SUPER+ALT+S      pin / unpin the focused guest (orange border while pinned)
+-- SUPER+S was Reprieve's show/hide parked; that moved to SUPER+SHIFT+CTRL+S (~/.config/hypr/bindings.lua).
+hl.unbind("SUPER + S")
+o.bind("SUPER + S", "hyprpi: summon agents here", HYPRPI_ROOT .. "/mockups/summon")
+o.bind("SUPER + D", "hyprpi: send the focused guest home", HYPRPI_ROOT .. "/mockups/guest dismiss")
+o.bind("SUPER + ALT + D", "hyprpi: send all unpinned guests home", HYPRPI_ROOT .. "/mockups/guest dismiss --all")
+o.bind("SUPER + ALT + S", "hyprpi: pin / unpin the focused guest", HYPRPI_ROOT .. "/mockups/guest pin")
+o.window("hyprpi.summon", { float = true, center = true, size = "560 460" })
+o.window({ tag = "guestpin" }, { border_color = "rgb(ff8800) rgb(ff8800)" })
+
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send
 -- Ctrl+Insert/Shift+Insert instead of Ctrl+C (which Pi treats as clear/interrupt).
 o.window("hyprpi\\..*", { tag = "+terminal" })

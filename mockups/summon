@@ -1,0 +1,8 @@
+#!/bin/sh
+# SUPER+S: the summon pop-up (mockups/summon.mjs) in a small floating kitty (class hyprpi.summon;
+# the float / size / centre rule is in hypr/hyprpi.lua). Pressing it again closes the open one.
+a=$(hyprctl clients -j | jq -r '.[] | select(.class=="hyprpi.summon") | .address' | head -1)
+if [ -n "$a" ]; then hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null; exit 0; fi
+unset HYPRPI_AGENT_ID
+exec kitty --class hyprpi.summon --title "hyprpi summon" -o confirm_os_window_close=0 -o remember_window_size=no \
+  node "$(dirname "$(readlink -f "$0")")/summon.mjs"

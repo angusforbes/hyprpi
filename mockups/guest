@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+// Summon & dismiss keys (hypr/hyprpi.lua): guest dismiss · guest dismiss --all · guest pin
+//   SUPER+D      send the focused summoned agent home (a hyprpi panel: closed, like its toggle key)
+//   SUPER+ALT+D  send every unpinned guest on this workspace home
+//   SUPER+ALT+S  pin / unpin the focused guest (pinned guests stay; orange border)
+// A short notification says what happened when there's something to say.
+import { execFile } from "node:child_process";
+import { request } from "../lib/client.mjs";
+const [cmd, ...rest] = process.argv.slice(2);
+const toast = (t) => execFile("notify-send", ["-a", "hyprpi", "-t", "2500", t], () => {});
+try {
+  if (cmd === "dismiss") {
+    const r = await request("guest.dismiss", { all: rest.includes("--all") });
+    if (r.pinned) toast(`📌 ${r.agent} is pinned (SUPER+ALT+S unpins)`);
+    else if (rest.includes("--all") && !r.dismissed?.length) toast("no unpinned guests here");
+  } else if (cmd === "pin") {
+    const r = await request("guest.pin", {});
+    toast(`${r.pinned ? "📌 pinned" : "unpinned"}: ${r.agent}`);
+  } else { console.error("usage: guest dismiss [--all] | guest pin"); process.exit(2); }
+} catch (e) { toast("✗ " + e.message); process.exit(1); }
