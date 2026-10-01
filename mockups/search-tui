@@ -4,7 +4,8 @@
 # its own selection even when a program has the mouse; unmap those (only while grabbed)
 # so they reach the TUI (Shift = whole items), and give kitty's own selection to
 # Ctrl+Shift. SUPER+C (Ctrl+Insert) copies kitty's selection, else reaches the TUI (copies
-# the search box's selection); SUPER+V (Shift+Insert) pastes.
+# the search box's selection); SUPER+V (Shift+Insert) reaches the TUI (no_op: kitty stops intercepting
+# it), which pastes text, or a screenshot's path at the cursor (kitty's own paste can't paste an image; N54).
 exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=shift+left click grabbed" \
   -o "mouse_map=shift+left press grabbed" \
@@ -19,5 +20,5 @@ exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=ctrl+left release grabbed" \
   -o 'map ctrl+tab send_text all \x1b[9;5u' \
   -o 'map ctrl+shift+tab send_text all \x1b[9;6u' \
-  -o 'map shift+insert paste_from_clipboard' \
+  -o 'map shift+insert no_op' \
   sh -c 'f=$(mktemp -t hyprpi-search.XXXXXX); trap "rm -f $f" EXIT; while :; do HYPRPI_SEARCH_TUI_STATEFILE=$f node "$0" "$@"; [ $? -eq 75 ] || break; done' "$(dirname "$(readlink -f "$0")")/search-tui.mjs" "$@"

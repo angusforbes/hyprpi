@@ -13,7 +13,7 @@
 // Whose history: @Names in the words ("/keyword @Sankey kafka"), else everyone's; the evidence
 // header says so. (The ▸ marks are retired, Angus 2026-09-30.)
 // Keys: ⏎ send · Tab completes @names and /commands · Ctrl+Tab world · Ctrl+↑↓ PgUp PgDn wheel
-// scroll · Ctrl+V pastes text or a screenshot · Ctrl+click an agent's name (or an evidence line)
+// scroll · Ctrl+V / SUPER+V paste text, or a screenshot's path at the cursor · Ctrl+click an agent's name (or an evidence line)
 // jumps to its window · links and file paths open on click · Esc clears · Ctrl+Q quits.
 // Select & copy as in the room panel (drag, Shift+click whole items, double / triple click).
 import fs from "node:fs";
@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, clipboardPaste, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
@@ -165,19 +165,17 @@ function loadThoughts() {
   api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; seedThoughtsHistory(r); bumpThread(); render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function setThoughts(on) { thoughtsOn = on; TH.scroll = 0; note = ""; if (on) loadThoughts(); render(); }
-// Pasted screenshots for the next thought (Ctrl+V with an image on the clipboard, Thoughts mode):
-// saved like pi's own, /tmp/pi-clipboard-<id>.png, shown as 📎 chips under the box (click: open).
-let attach = [];
-function pasteImage(type) {
-  const f = `/tmp/pi-clipboard-${randomUUID()}.${type.split("/")[1] === "jpeg" ? "jpg" : type.split("/")[1] || "png"}`;
-  try {
-    const out = fs.openSync(f, "w");
-    const p = spawnChild("wl-paste", ["--type", type], { stdio: ["ignore", out, "ignore"] });
-    p.on("error", () => { note = "✗ wl-paste failed"; render(); });
-    p.on("close", (code) => { fs.closeSync(out); let n = 0; try { n = fs.statSync(f).size; } catch { /* gone */ }
-      if (code || !n) { note = "✗ couldn't read the image from the clipboard"; return render(); }
-      attach.push(f); note = `📎 image attached (${Math.round(n / 1024)} KB) · ⏎ sends it with your text · Esc drops it`; render(); });
-  } catch (e) { note = "✗ " + e.message; render(); }
+// Pasted screenshots (Angus, N54: like pi's own windows): Ctrl+V / SUPER+V with an image on the
+// clipboard saves it as /tmp/pi-clipboard-<id>.png and puts its PATH in the box at the cursor, next
+// to what it's about. On ⏎ every image path in the text that exists goes to Thoughts as an image,
+// in order (it sees them and can pass the paths on); the path stays in the message, clickable.
+function imagePaths(text) {
+  const out = [];
+  for (const m of String(text).matchAll(/(?:^|[\s("'`<\[])((?:~|\/)[^\s"'`<>()\[\]]*\.(?:png|jpe?g|webp|gif))(?=$|[\s)"'`>\].,;:!?])/gi)) {
+    const f = m[1].replace(/^~(?=\/)/, process.env.HOME || "~");
+    if (!out.includes(f) && fs.existsSync(f)) out.push(f);
+  }
+  return out;
 }
 // Input history (↑↓): the shared box's (lib/tui/input-box.mjs, N51), fed by your earlier messages
 // in this thread ("you" entries); sending stops browsing.
@@ -255,8 +253,8 @@ function enter() {
   }
   if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
-  if (!text && !attach.length) { note = "type to Thoughts (or /keyword WORDS, /ask QUESTION), then ⏎"; return render(); }
-  const imgs = attach; attach = []; setBox(""); return sendThought(text, imgs);
+  if (!text) { note = "type to Thoughts (or /keyword WORDS, /ask QUESTION), then ⏎"; return render(); }
+  setBox(""); return sendThought(text, imagePaths(text));
 }
 function setBox(text) { query = text; qc = graphemes(text).length; }
 // A search sent from another panel (/search WORDS, /ai Q: mockups/panel-here → the daemon's
@@ -321,7 +319,7 @@ function helpLines() {
     k("Tab · Ctrl+Tab", "complete an @name or a /command · next world"),
     k("^↑↓ PgUp PgDn wheel", "scroll back through the thread (plain ↑↓ are the box's: your earlier messages)"),
     k("^End · ^Home", "back to the newest · the oldest (the header counts the lines ↑ above and ↓ below)"),
-    k("Ctrl+V", "paste text, or a screenshot to send with your message"),
+    k("Ctrl+V · SUPER+V", "paste text, or a screenshot: its path goes in at the cursor, and it is sent with the message"),
     k("click · ^click", "open a link / file path · ^click an agent's name or an evidence line: that agent's window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
     k("Esc · Ctrl+U · Ctrl+Q", "clear the box · clear the box · quit"),
@@ -383,25 +381,8 @@ const boxIn = () => box.load({ text: query, cursor: qc, anchor: selA });
 const boxOut = () => { const st = box.state(); query = st.text; qc = st.cursor; selA = st.anchor; };
 function insertText(t) { boxIn(); box.insert(t); boxOut(); note = ""; render(); }
 function copyBoxSel(cut) { boxIn(); const ok = box.copySel(cut); boxOut(); render(); return ok; }
-function pasteClipboard() {
-  // An image on the clipboard (a screenshot): attached in Thoughts mode (Angus), else a note.
-  try {
-    const lt = spawnChild("wl-paste", ["--list-types"], { stdio: ["ignore", "pipe", "ignore"] });
-    let types = ""; lt.stdout.on("data", (b) => { types += b; }); lt.on("error", () => pasteText());
-    lt.on("close", () => {
-      const img = types.split("\n").map((x) => x.trim()).find((x) => /^image\/(png|jpeg|webp|gif)$/.test(x));
-      const hasText = /^text\/plain/m.test(types);
-      if (img && thoughtsOn) return pasteImage(img);
-      if (img && !hasText) { note = "images can be pasted in 💭 Thoughts mode (Ctrl+/)"; return render(); }
-      pasteText();
-    });
-  } catch { pasteText(); }
-}
-function pasteText() {
-  try {
-    const p = spawnChild("wl-paste", ["--no-newline", "--type", "text/plain"], { stdio: ["ignore", "pipe", "ignore"] });
-    let buf = ""; p.stdout.on("data", (b) => { buf += b; }); p.on("error", () => {}); p.on("close", () => { if (buf) insertText(buf); });
-  } catch { /* no wl-paste */ }
+function pasteClipboard() { // text, or a screenshot's path at the cursor (lib/tui/input-box.mjs, N54)
+  clipboardPaste((t, o) => { if (!o?.image) return insertText(t); boxIn(); box.insertPath(t); boxOut(); note = ""; render(); });
 }
 function copy(text) {
   if (!text) return;
@@ -523,7 +504,7 @@ function render() {
   boxIn();
   // The bottom block, like an agent window (Angus: the box at the bottom): the status line
   // ("thinking…"), a rule, the box (wrapped, up to a third of the height, scrolled to the cursor),
-  // the 📎 chips of pasted images. Built first: its height decides the thread's.
+  // (pasted images are paths in the text now, N54). Built first: its height decides the thread's.
   const pw = width(prompt), L = box.layout(Math.max(10, W - pw)), MAXI = Math.max(2, Math.min(8, Math.floor(H / 3)));
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
@@ -535,11 +516,6 @@ function render() {
   bottom.push(fg(c, "─".repeat(W)));
   const boxAt = bottom.length;
   inRows.forEach((l, i) => bottom.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
-  let chipMd = null, chipAt = -1;
-  if (attach.length) { // 📎 chips: the pasted images going with the next message
-    chipMd = mdRows(attach.map((f, i) => `📎 image ${i + 1}: ${f}`).join("   "), Math.max(10, W - pw), wrap, gw)[0];
-    chipAt = bottom.length; bottom.push(" ".repeat(pw) + dim(chipMd.line));
-  }
   // No second rule (Angus: no "thread" line): the conversation starts right under the header, and
   // the header itself says so when you've scrolled back or opened /help.
   const ruleAt = 0;
@@ -565,7 +541,8 @@ function render() {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         add(md(e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
-        if (e.images?.length) add(md(e.images.map((f) => `📎 ${f}`).join("\n"), tw, "   ", dim), 4); // pasted screenshots (click opens)
+        const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
+        if (extra.length) add(md(extra.map((f) => `📎 ${f}`).join("\n"), tw, "   ", dim), 4); // images not already in the text as a (clickable) path
       } else if (e.role === "action") add(md((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
       else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 8), 6); }
       else if (e.role === "evidence") {
@@ -665,7 +642,6 @@ function render() {
   const bottomY = rows.length + 1;
   rows.push(...bottom);
   const cursorRow = bottomY + boxAt + (L.cRow - inTop), cursorCol = Math.min(W, pw + L.cCol + 1);
-  if (chipMd) linkRows[bottomY + chipAt] = chipMd.links.map((q) => ({ ...q, x0: q.x0 + pw, x1: q.x1 + pw }));
   while (rows.length < H - 1) rows.push("");
 
   // status bar: rooms as tabs (like the room TUI)
@@ -757,12 +733,11 @@ function onKey(d) {
   if (d === "\x1b[O") return seen(); // focus out (DECSET 1004)
   if (d === "\x1b[I") return;        // focus in
   if (d === "\x11") return quit(); // Ctrl+Q
-  if (d === "\x1b" || d === "\x1b\x1b") { // Esc: interrupt, else close help, else drop images; never the box
-    // Esc (Angus): interrupt what's running; else close help, else drop pasted images. It never
+  if (d === "\x1b" || d === "\x1b\x1b") { // Esc: interrupt, else close help; never the box
+    // Esc (Angus): interrupt what's running; else close help (pasted images are paths in the text now). It never
     // touches the text box (its text, cursor or selection).
     if (interrupt()) return;
     if (showHelp) { showHelp = false; return render(); }
-    if (attach.length) { attach = []; note = ""; return render(); }
     return;
   }
   // Ctrl+C: copy the box's selection, else the whole box; it never deletes it (Angus) and never

@@ -29,7 +29,7 @@
 
 import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, clipboardPaste, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT } from "../lib/stream.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
@@ -89,11 +89,8 @@ function inputLayout(n) { boxIn(); return box.layout(n); }
 // view the sent text is replaced by what you type or paste; ←→ / Backspace first edit it.
 function insertText(t) { boxIn(); box.insert(t); boxOut(); note = ""; focusArea = "input"; render(); }
 function copyInputSel(cut) { boxIn(); box.copySel(cut); boxOut(); render(); }
-function pasteClipboard() {
-  try {
-    const p = spawn("wl-paste", ["--no-newline", "--type", "text/plain"], { stdio: ["ignore", "pipe", "ignore"] });
-    let buf = ""; p.stdout.on("data", (b) => { buf += b; }); p.on("error", () => {}); p.on("close", () => { if (buf) insertText(buf); });
-  } catch { /* no wl-paste */ }
+function pasteClipboard() { // text, or a screenshot's path at the cursor (lib/tui/input-box.mjs, N54)
+  clipboardPaste((t, o) => { if (!o?.image) return insertText(t); boxIn(); box.insertPath(t); boxOut(); note = ""; focusArea = "input"; render(); });
 }
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
