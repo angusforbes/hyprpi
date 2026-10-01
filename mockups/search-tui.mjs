@@ -162,7 +162,7 @@ const wrapP = (t, n) => String(t || "").split(/\r?\n/).flatMap((q) => q.trim() ?
 function loadThoughts() {
   if (!api) return;
   const r = room;
-  api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; bumpThread(); render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; seedThoughtsHistory(r); bumpThread(); render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function setThoughts(on) { thoughtsOn = on; TH.scroll = 0; note = ""; if (on) loadThoughts(); render(); }
 // Pasted screenshots for the next thought (Ctrl+V with an image on the clipboard, Thoughts mode):
@@ -343,18 +343,30 @@ function boxSel() { if (selA == null || selA === qc) return null; return selA < 
 // The editing itself is the shared message box (lib/tui/input-box.mjs), one line here: the panel
 // keeps query / qc / selA and loads them into the box before each edit, then reads them back.
 const thoughtsHistory = createHistory("thoughts");
+// Seed once per world (Blink's test of 32720d3: a lazy "seed when empty" never ran if something was
+// typed first, and lost the earlier messages): the first time a world's thread loads here, its
+// earlier messages ("you" entries, oldest first) go IN FRONT of whatever the list already holds
+// (entries already in it are not repeated), and the world is marked in thoughts.seeded.json.
+function seedThoughtsHistory(r) {
+  const markFile = thoughtsHistory.file.replace(/\.json$/, ".seeded.json");
+  let marks = []; try { marks = JSON.parse(fs.readFileSync(markFile, "utf8")); } catch { /* none yet */ }
+  if (!Array.isArray(marks)) marks = [];
+  if (marks.includes(r)) return;
+  const cur = thoughtsHistory.list(), have = new Set(cur), merged = [];
+  for (const t of [...TH.entries.filter((e) => e.role === "you" && e.text && !have.has(e.text)).map((e) => e.text), ...cur])
+    if (merged[merged.length - 1] !== t) merged.push(t);
+  try {
+    fs.mkdirSync(thoughtsHistory.file.replace(/\/[^/]*$/, ""), { recursive: true });
+    fs.writeFileSync(thoughtsHistory.file + ".tmp", JSON.stringify(merged.slice(-300))); fs.renameSync(thoughtsHistory.file + ".tmp", thoughtsHistory.file);
+    fs.writeFileSync(markFile + ".tmp", JSON.stringify([...marks, r])); fs.renameSync(markFile + ".tmp", markFile);
+  } catch { /* best effort: tried again next time */ }
+}
 const box = createInputBox({
   onChange: () => {}, copy: (t) => copy(t), multiline: false,
   // Everything typed here, /commands too (Angus: recall /ask, /keyword …), like every panel's box:
-  // STATE/input-history/thoughts.json, seeded once from this thread's earlier messages.
-  history: {
-    list: () => {
-      const l = thoughtsHistory.list();
-      if (!l.length && TH.entries.length) for (const e of TH.entries) if (e.role === "you" && e.text) thoughtsHistory.add(e.text);
-      return thoughtsHistory.list();
-    },
-    add: (t) => thoughtsHistory.add(t),
-  },
+  // STATE/input-history/thoughts.json, one list for every world's Thoughts window; each world's
+  // earlier thread messages are put in front of it once, when its thread loads (seedThoughtsHistory).
+  history: thoughtsHistory,
   historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
   tint: atTint((name) => { const r = resolveAt([name], hereKnown()), a = r.found[0]; return a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => x, bold, nameFg: (_n, color, g) => hexFg(color || "", bold(g)) }),
