@@ -267,8 +267,9 @@ and the daemon find the window by it.)
   did line (the post says it). Each line shows its **project** when known: its own tag, else the one
   @project its text names, else the agent's only project. `● Name working…` stays at the bottom.
 - **Ctrl+F** cycles the views (the header says which): **full** text → **compact** (one line each:
-  time · who · @project · text) → **topics** (topic changes only, one line each: time · agent ·
-  @project · topic). The `/stream` filters apply in every view.
+  time · who · @project · text) → **topics** (topic changes only, drawn as before the Stream: the
+  agent's name on its own line, its consecutive topics under it, a blank line before the next
+  agent; no times). The `/stream` filters apply in every view.
 - **Filters**, all combinable, typed as `/stream …`: `@Blink @Sankey @hyprpi` (a union of agents and
   projects; a project = lines tagged with it or naming it, its board changes, and its members'
   untagged lines) · `3h` `90m` `2d` `today` `yesterday` `since 9am` `since 14:30` (a time window

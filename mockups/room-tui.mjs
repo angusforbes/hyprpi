@@ -5,7 +5,7 @@
 // per-turn did lines (one line when the turn also posted: the post), topics, agent events,
 // agent-to-agent talk, Angus's prompts, board changes and project moves, Thoughts' 💭 lines; each
 // with its project when known. Ctrl+F cycles the views: full text → compact (one line each) →
-// topics (topic changes only: time · agent · @project · topic; Angus wanted it back).
+// topics (topic changes only, drawn as before the Stream: the agent's name, its topics under it; no times).
 // Filters (combinable): /stream @Blink @Sankey @hyprpi (a union of agents and projects) · 3h ·
 // today · since 9am · words (narrow) · raw (also tool lines); the header shows it, Esc or /stream clears.
 //
@@ -323,10 +323,11 @@ function draw() {
   const res = sf.names.length ? resolveFilterNames(sf.names, { agents: [...hereAgents(), ...dormant.filter((a) => a.room === room)], projects: projAll, items: all }) : null;
   const filtered = filterStream(all, sf, res); // the /stream filters apply in every view
   const items = sview === "topics" ? filtered.filter((it) => it.kind === "topic") : filtered;
-  const compact = sview !== "full";
+  const compact = sview === "compact";
+  const topicsView = sview === "topics"; // drawn like the pre-Stream topics view (Angus, N46): name, then its topics; no times
   const pname = (id) => projAll.find((p) => p.id === id)?.name || "";
-  const tagOf = (it) => { const n = it.kind === "board" ? "" : pname(it.project); return n ? dim(" · @" + n) : ""; };
-  const tm = (ts) => dim(" · " + hhmm(ts));
+  const tagOf = (it) => { const n = it.kind === "board" || topicsView ? "" : pname(it.project); return n ? dim(" · @" + n) : ""; };
+  const tm = (ts) => topicsView ? "" : dim(" · " + hhmm(ts));
   const agentByName = (n) => agents.find((x) => x.display === n || x.name === n);
   const styledName = (n) => {
     if (n === "Angus") return fg(c, bold("Angus"));
@@ -361,7 +362,6 @@ function draw() {
         head = it.kind === "prompt" ? `${fg(c, bold("Angus"))} to ${sender(it.e.agent || {})}` : `${sender(it.e.agent || {})} ${DIRECT[it.kind]} ${it.to.map(styledName).join(", ")}`;
         body = one(directBody(it));
       } else if (it.m) { head = postWho(it.m.author || {}); body = one(it.text); }
-      else if (it.kind === "topic" && sview === "topics") { head = sender(it.e.agent || {}); body = midFg(italic(one(it.text))); } // time · agent · @project · topic
       else { head = sender(it.e.agent || {}); body = actStyle({ ...it, text: one(it.text) }); }
       const pre = `   ${dim(hhmm(it.ts))} ${head}${tagOf(it)}  `;
       convo.push({ line: pre + body, msg: mi, textX: width(pre) + 1, hard: true, act: !it.m });
@@ -394,7 +394,7 @@ function draw() {
         return;
       }
       // Other activity: a run from one agent (on one project) shows its name once, then the rows.
-      const runKey = au.id + "|" + (it.project || "");
+      const runKey = au.id + "|" + (topicsView ? "" : it.project || ""); // topics: one run per agent
       if (lastAct !== runKey) {
         if (convo.length) convo.push({ line: "", msg: null });
         convo.push({ line: "   " + sender(au) + tagOf(it) + tm(it.ts), msg: mi, header: true, act: true });
