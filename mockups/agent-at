@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// Ctrl+click on an agent's name in a pi AGENT window (kitty; @hyprpi N56): the kitten
+// terminal-helpers/kitty/agentclick.py hands us the clicked screen line and column, and we do what
+// the panels do (lib/tui/agent-click.mjs): the agent named by the word under the pointer ("pi·wpzt",
+// "@Blink", "Sankey[e]", an icon in front) → its window (agent.focus: its workspace, focused).
+// Any world's agents. Nothing named → exit 1 quietly (links were handled by kitty before us).
+//
+//   mockups/agent-at --line TEXT --x COLUMN      (COLUMN 1-based, in cells)
+//   mockups/agent-at --word WORD                 (a test / the CLI)
+import { connect } from "../lib/client.mjs";
+import { wordAt, agentIn } from "../lib/tui/agent-click.mjs";
+import { gw } from "../lib/tui/term.mjs";
+
+const args = process.argv.slice(2), opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] ?? "" : null; };
+const word = opt("--word") ?? wordAt(opt("--line") || "", Number(opt("--x")) || 0, gw);
+if (!word) process.exit(1);
+let api;
+try { api = await connect({}); } catch { process.exit(2); }
+try {
+  const list = await api.call("ui.subscribe", { windows: false });
+  const hit = agentIn(word, list.agents || []);
+  if (!hit) process.exit(1);
+  if (args.includes("--dry")) { console.log(hit.display || hit.name); process.exit(0); }
+  await api.call("agent.focus", { agent: hit.id });
+  process.exit(0);
+} catch { process.exit(3); }
