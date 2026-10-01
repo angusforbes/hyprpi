@@ -41,7 +41,8 @@ const here = new URL(".", import.meta.url).pathname;
 const SUMMON = process.argv.includes("--summon");
 let S = null; // --summon: { room, workspace } (room.current)
 // The hyprpi panels by their title's kind (lib/daemon.mjs PANEL_TITLE).
-const PANEL_KIND = { router: ["👥", "agents panel"], room: ["💬", "Stream panel"], search: ["💭", "Thoughts panel"], thoughts: ["💭", "Thoughts panel"], board: ["📋", "projects panel"] };
+// Short names (Angus, J24: "Agents D", not "agents panel D").
+const PANEL_KIND = { router: ["👥", "Agents"], room: ["💬", "Stream"], search: ["💭", "Thoughts"], thoughts: ["💭", "Thoughts"], board: ["📋", "Projects"] };
 const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
 // The agents panel's marks (Angus): ● working · × needs you · ✓ finished (unseen) · ○ idle; ◌ parked.
