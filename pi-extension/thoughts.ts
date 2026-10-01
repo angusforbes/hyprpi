@@ -176,7 +176,7 @@ export default function thoughts(pi: ExtensionAPI) {
     parameters: Type.Object({ request_id: Type.String(), text: Type.String() }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.answer", p);
-      return out(`Answered ${r.agent}.`, { action: `answered @${r.agent}: ${String(p.text).replace(/\s+/g, " ").slice(0, 140)}` });
+      return out(`Answered ${r.agent}.`, { action: `answered @${r.agent}: ${((t) => t.length > 2000 ? t.slice(0, 1999) + "…" : t)(String(p.text).replace(/\s+/g, " "))}` }); // whole answer: the Thoughts window clips it to 2 rows with … and Shift-click copies all (N53, pi·wpzt's test)
     },
   });
 

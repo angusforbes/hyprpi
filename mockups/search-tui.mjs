@@ -540,7 +540,9 @@ function render() {
       if (isAnswer(e)) {
         const m = /^answered @([^:]+):\s*([\s\S]*)$/.exec(e.text) || [null, "?", ""];
         const k2 = items.push({ copy: `to ${m[1]}: ${m[2]}` }) - 1;
-        const rows = wrap(`↩ to ${m[1]}: ${String(m[2]).replace(/\s+/g, " ")}`, tw - 2);
+        // (Answers stored before the N53 fix were cut at 140 characters at the source: mark those too.)
+        const said = String(m[2]).replace(/\s+/g, " "), cutOld = said.length === 140 && !said.endsWith("…");
+        const rows = wrap(`↩ to ${m[1]}: ${said}${cutOld ? "…" : ""}`, tw - 2);
         rows.slice(0, 2).forEach((r, n) => flat.push({ l: "   " + dim(n === 1 && rows.length > 2 ? r.replace(/.?$/, "…") : r), meta: { item: k2, textX: 4 } }));
         continue;
       }
