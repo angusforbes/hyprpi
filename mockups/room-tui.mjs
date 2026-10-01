@@ -727,6 +727,9 @@ process.stdin.setEncoding("utf8");
 const KEY = /\x1b[bfsS\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) render(); } });
 function onKey(d) {
+  // SUPER+C (Omarchy's universal copy = Ctrl+Insert; kitty passes it on when it has no selection of its
+  // own): the pane's highlighted selection, if there is one, else the box's (below). @hyprpi N49
+  if (d === "\x1b[2;5~" && sel && selRange()) { copy(selectedText()); note = "copied"; return render(); }
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   // Key model: TOP agent list = Shift (⇧↑↓ cursor, ⇧Space mark) · MIDDLE pane = Ctrl (^↑↓, PgUp/PgDn,
   // ^Home/End) · BOTTOM message box = plain keys (multi-line: ↑↓ lines, ⇧⏎ newline, ⇧←→ select).

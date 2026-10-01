@@ -478,6 +478,10 @@ function onKey(d) {
   if (d === "\x1b[200~") { pasting = true; showHelp = false; box.key(d); return; }
   if (d === "\x1b[201~") { pasting = false; box.key(d); return; }
   if (pasting) { box.key(d); return; }
+  // SUPER+C / SUPER+V (Ctrl+Insert / Shift+Insert; the launcher has kitty copy its own selection and
+  // paste the clipboard itself, so these arrive only without a kitty selection / in an older window):
+  // the box copies its selection, or pastes. @hyprpi N49
+  if (d === "\x1b[2;5~" || d === "\x1b[2;2~") { showHelp = false; box.key(d); return; }
   const typing = box.text.length > 0;
   if (d === "\x11") return quit();                            // Ctrl+Q
   if (d === "\x03") { if (box.key(d)) return; return quit(); } // Ctrl+C: the box's copy / clear, else quit

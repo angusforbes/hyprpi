@@ -715,6 +715,9 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); });
 function move(d) { if (showHelp) return; TH.scroll = Math.max(0, TH.scroll - d * (Math.abs(d) >= 5 ? 1 : 3)); render(); }
 function onKey(d) {
+  // SUPER+C (Omarchy's universal copy = Ctrl+Insert; kitty passes it on when it has no selection of its
+  // own): the pane's highlighted selection, if there is one, else the box's (below). @hyprpi N49
+  if (d === "\x1b[2;5~" && sel && selRange()) { copy(selectedText()); note = "copied"; return render(); }
   if (sel && !d.startsWith("\x1b[<")) sel = null; // a pane selection lasts until the next key
   // Bracketed paste (SUPER+V / Ctrl+Shift+V): inserted as text (line breaks become spaces).
   if (d === "\x1b[200~") { pasting = true; return; }

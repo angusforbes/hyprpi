@@ -270,6 +270,9 @@ let pasting = false; // inside a bracketed paste: everything goes to the box (a 
 function onKey(d) {
   if (d === "\x1b[200~") pasting = true;
   if (pasting) { if (d === "\x1b[201~") pasting = false; box.key(d); return; }
+  // SUPER+C (Omarchy's universal copy = Ctrl+Insert; kitty passes it on when it has no selection of its
+  // own): the pane's highlighted selection, if there is one, else the box's (below). @hyprpi N49
+  if (d === "\x1b[2;5~" && sel && selRange()) { copy(selectedText()); note = "copied"; return render(); }
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x11") return quit(); // Ctrl+Q
   if (d.startsWith("\x1b[<")) return mouse(d);

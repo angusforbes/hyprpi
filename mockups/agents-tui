@@ -3,7 +3,12 @@
 # The loop: the panel exits with 75 to restart onto new code, in place (no stacked processes).
 # Ctrl+click reaches the panel (it jumps to that agent): kitty's own Ctrl+click (links.conf opens
 # links, and discards the press even when a program has the mouse) is unmapped while grabbed.
-exec kitty --class hyprpi.agents -o confirm_os_window_close=0 \
+# SUPER+C / SUPER+V (Omarchy's universal copy / paste send Ctrl+Insert / Shift+Insert): copy kitty's
+# selection (else the key reaches the panel: the box's selection), paste the CLIPBOARD (kitty's
+# default Shift+Insert pastes the primary selection), as in the other panels (@hyprpi N49).
+exec kitty --class hyprpi.agents -o confirm_os_window_close=0 -o copy_on_select=clipboard \
+  -o 'map ctrl+insert copy_or_noop' \
+  -o 'map shift+insert paste_from_clipboard' \
   -o "mouse_map=ctrl+left press grabbed" \
   -o "mouse_map=ctrl+left release grabbed" \
   -o 'map ctrl+tab send_text all \x1b[9;5u' \
