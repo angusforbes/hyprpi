@@ -4,7 +4,8 @@
 // One world's timeline, read-only (Angus 2026-09-30, @hyprpi N40; lib/stream.mjs): agents' posts,
 // per-turn did lines (one line when the turn also posted: the post), topics, agent events,
 // agent-to-agent talk, Angus's prompts, board changes and project moves, Thoughts' 💭 lines; each
-// with its project when known. Ctrl+F: full text ⇄ compact (one line each).
+// with its project when known. Ctrl+F cycles the views: full text → compact (one line each) →
+// topics (topic changes only: time · agent · @project · topic; Angus wanted it back).
 // Filters (combinable): /stream @Blink @Sankey @hyprpi (a union of agents and projects) · 3h ·
 // today · since 9am · words (narrow) · raw (also tool lines); the header shows it, Esc or /stream clears.
 //
@@ -48,10 +49,10 @@ const helpRows = () => {
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
     `   ${bold("/stream FILTER".padEnd(w))}  ${dim("@Blink @Sankey @hyprpi (agents or projects, any of them) · 3h · today · since 9am · words (all of them) · raw (tool lines too); combinable")}`,
-    `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F full text ⇄ compact (one line each)")}`,
+    `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F cycles full → compact → topics")}`,
     `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
-    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F full ⇄ compact")}`,
+    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F views: full → compact (one line each) → topics (topic changes only)")}`,
     `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A · projects: SUPER+ALT+P · thoughts: SUPER+ALT+/")}`,
     `   ${dim("the projects panel (the board) is its own panel: SUPER+ALT+P")}`,
@@ -109,7 +110,9 @@ let dormant = [];
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The Stream: room messages, agent activity and board changes (lib/stream.mjs builds the timeline).
 let activity = {}, changes = {}; // room -> activity events · board changes
-let compact = false;   // Ctrl+F: one line per item
+// Ctrl+F cycles the views: full text, compact (one line per item), topics (topic changes only).
+const SVIEWS = ["full", "compact", "topics"];
+let sview = "full";
 let streamArg = "";    // the /stream filter as typed ("" = everything)
 let sfCache = { k: null, f: null };
 const streamFilter = (a, minute) => { const k = a + "|" + minute; if (sfCache.k !== k) sfCache = { k, f: parseStreamFilter(a) }; return sfCache.f; }; // (re-parsed each minute: "3h" slides)
@@ -318,7 +321,9 @@ function draw() {
   const projAll = board.room === room ? board.projects : [];
   const all = streamItems(sf.raw);
   const res = sf.names.length ? resolveFilterNames(sf.names, { agents: [...hereAgents(), ...dormant.filter((a) => a.room === room)], projects: projAll, items: all }) : null;
-  const items = filterStream(all, sf, res);
+  const filtered = filterStream(all, sf, res); // the /stream filters apply in every view
+  const items = sview === "topics" ? filtered.filter((it) => it.kind === "topic") : filtered;
+  const compact = sview !== "full";
   const pname = (id) => projAll.find((p) => p.id === id)?.name || "";
   const tagOf = (it) => { const n = it.kind === "board" ? "" : pname(it.project); return n ? dim(" · @" + n) : ""; };
   const tm = (ts) => dim(" · " + hhmm(ts));
@@ -356,6 +361,7 @@ function draw() {
         head = it.kind === "prompt" ? `${fg(c, bold("Angus"))} to ${sender(it.e.agent || {})}` : `${sender(it.e.agent || {})} ${DIRECT[it.kind]} ${it.to.map(styledName).join(", ")}`;
         body = one(directBody(it));
       } else if (it.m) { head = postWho(it.m.author || {}); body = one(it.text); }
+      else if (it.kind === "topic" && sview === "topics") { head = sender(it.e.agent || {}); body = midFg(italic(one(it.text))); } // time · agent · @project · topic
       else { head = sender(it.e.agent || {}); body = actStyle({ ...it, text: one(it.text) }); }
       const pre = `   ${dim(hhmm(it.ts))} ${head}${tagOf(it)}  `;
       convo.push({ line: pre + body, msg: mi, textX: width(pre) + 1, hard: true, act: !it.m });
@@ -433,10 +439,10 @@ function draw() {
     if (busy.length) { convo.push({ line: "", msg: null }); convo.push({ line: "   " + dim(busy.map((a) => `● ${a.display} working…`).join("   ")), msg: null }); }
   }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
-  rows[ruleAt] = rule(`stream ${room} · ${compact ? "compact" : "full"} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "")
+  rows[ruleAt] = rule(`stream ${room} · ${sview} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "")
     + (sf.text ? ` · ${sf.text} (Esc clears)` : "") + (res?.unknown.length ? ` · ✗ no ${res.unknown.map((n) => "@" + n).join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
-  if (!convo.length) shown.push({ line: dim(sf.text ? `  (nothing matches "${sf.text}" · Esc or /stream alone clears)` : "  (nothing yet)"), msg: null });
+  if (!convo.length) shown.push({ line: dim(sf.text ? `  (nothing matches "${sf.text}" · Esc or /stream alone clears)` : sview === "topics" ? "  (no topic changes yet)" : "  (nothing yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
   rowMeta = {}; convoMsgs = sItems;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
@@ -453,7 +459,7 @@ function draw() {
     : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : input ? (bs ? "  " + bs : "") + (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
-    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full ⇄ compact · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
+    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full / compact / topics · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -853,7 +859,8 @@ function onKey(d) {
     if (box.key(d)) { boxOut(); note = ""; focusArea = "input"; return render(); }
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
-  if (d === "\x06") { if (view !== "stream") setView("stream"); compact = !compact; scroll = 0; lastConvoLen = 0; note = compact ? "compact: one line each (^F: full text)" : "full text (^F: compact)"; return render(); } // Ctrl+F
+  if (d === "\x06") { if (view !== "stream") setView("stream"); sview = SVIEWS[(SVIEWS.indexOf(sview) + 1) % SVIEWS.length]; scroll = 0; lastConvoLen = 0; streamSel = null;
+    note = { full: "full text (^F: compact)", compact: "compact: one line each (^F: topics)", topics: "topics: topic changes only (^F: full text)" }[sview]; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
@@ -937,7 +944,7 @@ setInterval(() => {
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
   // Keep what Angus was looking at: board or stream, the open card, the stream filter.
-  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, streamArg, compact, input, ic, sent: sentText != null && input === sentText, bvTop: bv.st.top, bvAnchor: bv.st.anchor, bvCur: bv.st.cur });
+  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, streamArg, sview, input, ic, sent: sentText != null && input === sentText, bvTop: bv.st.top, bvAnchor: bv.st.anchor, bvCur: bv.st.cur });
   // The launcher (mockups/room-tui) loops on exit code 75: hand it the state in a file and
   // exit, so restarts don't pile up processes. Older windows (no loop): a child, as before.
   if (process.env.HYPRPI_ROOM_TUI_STATEFILE) {
@@ -960,7 +967,7 @@ try {
   if (k) {
     if (typeof k.streamArg === "string") streamArg = k.streamArg; else if (Array.isArray(k.words)) streamArg = k.words.join(" "); // (older: words)
     if (k.filter === "raw" && !/\braw\b/.test(streamArg)) streamArg = (streamArg + " raw").trim();
-    compact = !!k.compact;
+    sview = SVIEWS.includes(k.sview) ? k.sview : k.compact ? "compact" : "full"; // (older: compact)
     if (k.view === "board") { view = "board"; if (k.focus) bv.focus(k.focus); bv.st.top = Number(k.bvTop) || 0; bv.st.anchor = k.bvAnchor || null; bv.st.cur = k.bvCur || null; }
     if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); if (k.sent) sentText = input; }
   }
