@@ -14,6 +14,10 @@ import "FinderRank.js" as FinderRank // hyprpi: one world letter ranks that worl
 // label/detail are plain text (shown when rich is empty, and always what the filter matches), rich
 // is the label as Qt StyledText (<font color="#rrggbb">…</font>; the colour "dim" means the menu's
 // text colour at half strength), and value is what comes back when it is picked (else label).
+// Optional keys: worlds / ws / slot / name / recent rank a one-letter or one-digit query
+// (FinderRank.js, J17), and subtitle is a small dim line under the name (J23), never searched.
+// Repurposed model roles for dmenu rows: target = the rich label, path = the value, appId = the
+// subtitle (none of them is used by a dmenu row otherwise).
 // Every hyprpi change is marked "hyprpi:"; the rest is upstream, so a diff against the upstream
 // file shows exactly what we changed (mockups/finder --diff-shell-plugin).
 Item {
@@ -43,7 +47,7 @@ Item {
     // hyprpi: a dry open (tests) only proves the plugin loads and answers; nothing is shown.
     // "dry N rank-d K rank-1 M": N options, K / M of them for the queries "d" / "1" (FinderRank, J17: proves the loaded QML is current).
     if (payload.dry) {
-      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(payload.options || [], "d").length + " rank-1 " + FinderRank.rank(payload.options || [], "1").length) + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
+      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(payload.options || [], "d").length + " rank-1 " + FinderRank.rank(payload.options || [], "1").length + " sub") + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
       return
     }
 
@@ -552,14 +556,15 @@ Item {
         var icon = String(opt.icon || ""), label = String(opt.label || ""), detail = String(opt.detail || "")
         rich = String(opt.rich || ""); value = String(opt.value || "")
         var worlds = String(opt.worlds || ""), ws = Number(opt.ws || 0), name = String(opt.name || "") // hyprpi: FinderRank's keys
+        var subtitle = String(opt.subtitle || "") // hyprpi: the small line under the name (J23)
       } else {
-      var worlds = "", ws = 0, name = "" // hyprpi
+      var worlds = "", ws = 0, name = "", subtitle = "" // hyprpi
       var parts = String(opt || "").split("\t")
       var icon = parts.length > 1 ? parts.shift() : ""
       var label = parts.shift() || ""
       var detail = parts.join("\t")
       }
-      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, name: name }) // hyprpi
+      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, name: name, subtitle: subtitle }) // hyprpi
     }
     var order = FinderRank.rank(parsed, query) // hyprpi: the usual substring filter; one world letter → that world first
     for (var o = 0; o < order.length; o++) {
@@ -570,7 +575,7 @@ Item {
         icon: icon,
         iconFont: "",
         appIcon: "",
-        appId: "",
+        appId: row.subtitle, // hyprpi: dmenu rows carry their subtitle in appId (unused by them; J23)
         label: label,
         target: rich,   // hyprpi: the StyledText label (target/path are unused by dmenu rows)
         detail: detail,
@@ -1310,7 +1315,7 @@ Item {
                 anchors.right: trail.left
                 anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(3)
+                spacing: subtitleText.visible ? 0 : Style.space(3) // hyprpi: the subtitle sits tight under the name (J23)
 
                 Text {
                   id: labelText
@@ -1334,6 +1339,19 @@ Item {
                   opacity: 0.52
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+
+                Text { // hyprpi: an agent's "<topic> · active …" line, small and dim, inside the same row height (J23)
+                  id: subtitleText
+                  textFormat: Text.PlainText
+                  width: parent.width
+                  text: row.kind === "dmenu" ? row.appId : ""
+                  visible: text.length > 0
+                  color: row.hasCursor ? root.selectedText : root.foreground
+                  opacity: 0.5
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
                 }
               }

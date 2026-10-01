@@ -65,6 +65,18 @@ function lastTurns() {
   return last;
 }
 
+// The small line under an agent's name (J23, Angus): "<topic> · active now" while it works, else
+// "· active N min ago" (h / d for longer).
+function activeLine(a, recent) {
+  let when = "";
+  if (a.status === "working") when = "active now";
+  else if (recent) {
+    const m = Math.max(1, Math.floor((Date.now() - recent) / 60000)), h = Math.floor(m / 60), d = Math.floor(h / 24);
+    when = `active ${m < 60 ? m + " min" : h < 24 ? h + " h" : d + " d"} ago`;
+  }
+  return [clean(a.topic || ""), when].filter(Boolean).join(" · ");
+}
+
 // How long ago, for the end of each row (Angus): 1 min · 2–59 mins · 1 hr · 2–23 hrs · 1 day · N days.
 function since(ts) {
   if (!ts) return "";
@@ -99,6 +111,7 @@ async function rows() {
     const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (recent ? font("dim", " · " + since(recent)) : "");
     out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (recent ? " · " + since(recent) : ""), rich, sub, parked: !!a.parked, world: a.room || "",
       // J17: where it is, for "D" (one world letter) in the plugin: its workspace's world; parked: none.
+      subtitle: activeLine(a, recent), // J23
       worlds: a.parked ? "" : String(loc || "")[0] || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? a.workspace : 0 });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
@@ -232,7 +245,7 @@ const main = async () => {
 // the plugin isn't there or not enabled (the caller falls back to the plain menu).
 function pluginSelect(rs, onPick) {
   const dir = fs.mkdtempSync(path.join(runtimeDir(), "finder-")), sel = path.join(dir, "pick"), done = path.join(dir, "done");
-  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0 })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
+  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0, subtitle: r.subtitle || "" })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
   const payload = JSON.stringify({ mode: "select", prompt: "Agents", options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
   const clean = () => fs.rmSync(dir, { recursive: true, force: true });
   return new Promise((resolve) => {
