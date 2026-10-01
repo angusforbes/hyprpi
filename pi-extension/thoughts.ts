@@ -235,7 +235,7 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "open_agent",
     label: "Open an agent",
-    description: "Open a NEW hyprpi agent in this world for a deliverable, when no suitable agent is free; it gets a BRIEF (job J<n> v1, same fields as give_work) as its first prompt. At most one per request of Angus's; tell him you did. It reports back to you.",
+    description: "Open a NEW hyprpi agent in this world for a deliverable, when no suitable agent is free; it gets a BRIEF (job J<n> v1, same fields as give_work) as its first prompt. At most one per request of Angus's; tell him you did. It reports back to you. ALWAYS give it a name and an icon that reflect its purpose (Angus): a short, distinctive one-word name (e.g. Namesmith, Phoenix) and one fitting emoji (e.g. 🏷️, 🐦‍🔥); it starts with them in its window, the room, the panels and the board (without them it is an unnamed pi·xxxx). The name must be free: not a live agent's or a project's.",
     promptSnippet: "Open a new agent for a deliverable (a brief)",
     parameters: Type.Object({
       angus: Type.String({ description: "Angus's own words for this, VERBATIM (quoted to the agent next to your summary)" }),
@@ -250,13 +250,15 @@ export default function thoughts(pi: ExtensionAPI) {
       images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
       model: Type.Optional(Type.String({ description: "start it on this model: provider/id as list_models shows it (default: the usual one). Same standing permission as set_model" })),
       thinking: Type.Optional(Type.String({ description: "its thinking level: off, minimal, low, medium, high, xhigh, max" })),
+      name: Type.Optional(Type.String({ description: "its name, reflecting its purpose: short, usually one word (e.g. Namesmith); must not be taken" })),
+      icon: Type.Optional(Type.String({ description: "one emoji reflecting its purpose (e.g. 🏷️)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any, _s: any, _u: any, ctx: any) => {
       let model = "";
       checkThinking(p.thinking); // pi·wpzt's N48 test: "banana" used to be dropped silently
       if (p.model) { const m = findModel(ctx, String(p.model).trim()); if (!m) throw new Error(`no model "${p.model}" here (list_models shows the ids)`); model = `${m.provider}/${m.id}`; }
       const r: any = await call("thoughts.open", { ...p, model });
-      return out(`Opened ${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""} with ${r.job} v1.`, { action: `opened a new agent, ${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 120)}` });
+      return out(`Opened ${r.icon ? r.icon + " " : ""}${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""} with ${r.job} v1.`, { action: `opened a new agent, ${r.icon ? r.icon + " " : ""}${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 120)}` });
     },
   });
 }
