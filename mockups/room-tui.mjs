@@ -453,7 +453,7 @@ function draw() {
 
   // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
-  const slash = /^\/[^\s/]*$/.test(input) && !note.startsWith("✗") ? completions(input) : null; // typing a command: show the matches (an error about it wins)
+  const slash = /^\/[^\s/]*$/.test(input) && !note.startsWith("✗") && (view === "board" || cmds.hint(input) !== null) ? completions(input) : null; // typing a command: show the matches (an error about it wins; a hidden command like /ignore: none)
   // Board: "working…" while a quick command is in flight. "thinking…" (agents working on a
   // request) shows only on the project's header; what was sent stays in the box (world colour).
   const bs = view === "board" ? bv.status(c, false) : "";
