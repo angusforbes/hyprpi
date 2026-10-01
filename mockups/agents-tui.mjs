@@ -27,7 +27,7 @@ import { loadConfig, wsLabel } from "../lib/paths.mjs";
 const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C2" labels)
 import * as hypr from "../lib/hypr.mjs";
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold, fg,
-  markupFg, unnamed, nameFg, width, cut, clip } from "../lib/tui/term.mjs";
+  markupFg, unnamed, nameFg, width, cut, clip, graphemes, gw } from "../lib/tui/term.mjs";
 import { createInputBox } from "../lib/tui/input-box.mjs";
 import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
@@ -35,7 +35,7 @@ let worldBar = null;
 
 // ---- state -----------------------------------------------------------------
 let agents = [], dormant = [], rooms = [], room = (process.argv[2] || "").toUpperCase();
-let cursorId = "", listTop = 0, listRows = 0, listRowY = 0, lastCursorIdx = 0;
+let cursorId = "", listTop = 0, listRowAgent = {}, lastCursorIdx = 0; // listRowAgent: screen row -> agent id (a wrapped row's lines all map to it)
 let note = "", online = false, confirm = null, api = null, restarting = false;
 let showMode = 0;                            // 0 = live (+ lost to a restart), 1 = + parked/closed
 const SHOW_LABEL = ["live", "+ parked"];
@@ -105,6 +105,61 @@ function mark(a) { // same marks as the room window
   return "○";
 }
 
+// Word-wrap a styled row (Angus via Thoughts-C, N42: long project/agent rows wrap instead of
+// being clipped). Continuation lines repeat the SGR state active at the break and are indented
+// under the text by indentW columns, so a row's lines stay one visual item.
+function wrapStyled(s, n, indentW = 0) {
+  const lines = [];
+  let line = "", lw = 0, word = "", ww = 0, sgr = "", lineHasText = false;
+  const act = []; // active SGR state: { code, kind } — kind: "FG" / "BG" / the code itself
+  const drop = (k) => { const j = act.findIndex((e) => e.code === k || e.kind === k); if (j >= 0) act.splice(j, 1); };
+  const applySgr = (params) => {
+    for (let i = 0; i < params.length; i++) {
+      const q = params[i] || "0";
+      if (q === "0") { act.length = 0; continue; }
+      if (q === "22") { drop("1"); drop("2"); continue; }
+      if (q === "23" || q === "24" || q === "27" || q === "29") { drop(q); continue; }
+      if (q === "39") { let j; while ((j = act.findIndex((e) => e.kind === "FG")) >= 0) act.splice(j, 1); continue; }
+      if (q === "49") { let j; while ((j = act.findIndex((e) => e.kind === "BG")) >= 0) act.splice(j, 1); continue; }
+      if (q === "38" || q === "48") {
+        if (params[i + 1] === "2") { act.push({ code: `${q};2;${params[i + 2] || 0};${params[i + 3] || 0};${params[i + 4] || 0}`, kind: q }); i += 4; continue; }
+        if (params[i + 1] === "5") { act.push({ code: `${q};5;${params[i + 2] || 0}`, kind: q }); i += 2; continue; }
+        act.push({ code: q, kind: q }); continue;
+      }
+      act.push({ code: q, kind: (q >= "30" && q <= "39") || (q >= "90" && q <= "97") ? "FG" : (q >= "40" && q <= "49") || (q >= "100" && q <= "107") ? "BG" : q });
+    }
+    sgr = act.length ? `${ESC}${act.map((e) => e.code).join(";")}m` : "";
+  };
+  const flushWord = () => {
+    if (!word) return;
+    if (lw + ww > n && lw > 0) { lines.push(line.trimEnd()); line = " ".repeat(indentW) + sgr; lw = indentW; lineHasText = false; }
+    if (ww > n - lw) { // a single word longer than what is left: hard-break it
+      for (const g of graphemes(word)) {
+        const c = gw(g);
+        if (lw + c > n) { lines.push(line); line = " ".repeat(indentW) + sgr; lw = indentW; lineHasText = false; }
+        line += g; lw += c; lineHasText = true;
+      }
+    } else { line += word; lw += ww; lineHasText = true; }
+    word = ""; ww = 0;
+  };
+  for (const part of String(s).split(/(\x1b\[[0-9;?]*[A-Za-z])/)) {
+    if (!part) continue;
+    if (part.charCodeAt(0) === 27) {
+      flushWord();
+      if (/^\x1b\[[0-9;]*m$/.test(part)) applySgr(part.slice(2, -1).split(";"));
+      line += part; // the token stays in the row: it carries this spot's style
+      continue; // non-SGR escapes have no business in a row, but pass through untouched
+    }
+    for (const g of graphemes(part)) {
+      if (/\s/.test(g)) { flushWord(); if (lineHasText && lw + 1 <= n) { line += g; lw += 1; } continue; }
+      word += g; ww += gw(g);
+    }
+  }
+  flushWord();
+  if (line.trim() || !lines.length) lines.push(line.trimEnd());
+  return lines.length ? lines : [""];
+}
+
 // ---- drawing ---------------------------------------------------------------
 let batching = false, dirty = false;
 function render() { if (restarting) return; if (batching) { dirty = true; return; } draw(); }
@@ -131,24 +186,107 @@ function draw() {
     : "/help · ^↑↓ move · ⏎ open · ^O views · ^N new · ^W close · ^Tab world · ^Q quit"));
   const IR = inputRows(box, { W, H, prompt, promptW, hint: hintText ? dim("  " + hintText) : "", width, clip,
     rule: (h) => fg(c, "─ ") + h + " " + fg(c, "─".repeat(Math.max(0, W - 3 - width(h)))) });
-  // The projects section takes at most about half the height (header rule + one row each).
-  const projShow = projs.length ? Math.min(projs.length, Math.max(1, Math.floor((H - 4 - IR.rows.length) / 2))) : 0;
-  const projRows = projShow ? projShow + 2 : 0; // a blank row, the rule, the projects
-  listRows = Math.max(1, Math.min(here.length, H - 3 - IR.rows.length - projRows));
-  if (cur < listTop) listTop = cur;
-  if (cur >= listTop + listRows) listTop = cur - listRows + 1;
-  listTop = Math.max(0, Math.min(listTop, Math.max(0, here.length - listRows)));
-  const hidden = here.length - listTop - listRows;
-  rows.push(rule(`agents ${room} · ${SHOW_LABEL[showMode]} (^O)`
-    + (here.length > listRows ? ` · ${listTop ? "↑" + listTop + " " : ""}${hidden > 0 ? "↓" + hidden : ""}` : "")));
-  listRowY = rows.length + 1;
-
+  // Wrapping (Angus via Thoughts-C, N42): a row longer than the pane wraps onto further lines,
+  // indented under the text, instead of being clipped. All lines of one row are the same item for
+  // the cursor, the clicks (listRowAgent / projRowY) and the scroll counts (still per agent).
+  const contentRows = Math.max(1, H - 3 - IR.rows.length); // the list + [blank + rule + projects]
   const nameW = Math.min(24, Math.max(6, ...here.map((a) => width(a.display))));
   // A fixed icon column (Angus: the names in the agent list and the project list line up): the
   // icon padded to 2 cells + a space, or 3 spaces for an agent without one; projects skip it too.
   const ICON_W = 3;
   const iconCol = (a) => a.icon ? a.icon + " ".repeat(Math.max(1, ICON_W - width(a.icon))) : " ".repeat(ICON_W);
   const nameBg = theme.muted || theme.selection;
+
+  // One agent as its row text (+ the wrap style and the column the text starts at).
+  const agentRow = (a) => {
+    const name = cut(a.display, nameW);
+    const bare = name;
+    const model = (a.model || "").replace(/^claude-/, "");
+    const dot = " · ";
+    const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
+    const boxed = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
+    const rest = boxed + ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    if (a.dormant || a.parked) { // greyed, same columns as a live row
+      const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
+      const what = a.parked ? "parked" : "closed";
+      const how = a.parked ? " · ⏎ revive" : " · ⏎ resume · ^W^W forget";
+      return { text: ` ◌ ${iconCol(a)}${nm}${rest}${dot}${what}${a.id === cursorId ? how : ""}`, prefixW: 3 + ICON_W, style: midFg };
+    }
+    let styled = a.name_markup && !name.endsWith("…") && !unnamed(a.name) ? bold(markupFg(a.name_markup, a.color)) : nameFg(a.name, a.color, bare);
+    if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
+    else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
+    styled = iconCol(a) + styled;
+    if (closing.has(a.id)) return { text: `  ${mark(a)} ${iconCol(a)}${name} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`, prefixW: 2 + width(mark(a)) + 1 + ICON_W, style: dim };
+    return { text: ` ${fg(c, bold(mark(a)))} ${styled}${rest}`, prefixW: 1 + width(mark(a)) + 1 + ICON_W, style: (l) => l };
+  };
+  const agentLines = (a) => {
+    const r = agentRow(a);
+    return wrapStyled(r.text, W, r.prefixW).slice(0, 3).map(r.style); // at most 3 lines per agent
+  };
+
+  // One project as its row text + the @member spans of its first line (for the clicks).
+  const projRow = (p) => {
+    const on = cursorId === "p:" + p.id;
+    let nm = bold("@" + p.name);
+    if (on) nm = nameBg ? `${ESC}48;2;${rgb(nameBg)}m${nm}${ESC}49m` : `${ESC}4m${nm}${ESC}24m`;
+    const dot = " · ";
+    // Members as the projects panel writes them (lib/tui/board-view.mjs who()): "@Name" in the
+    // agent's colour, no icon; bold when it isn't live; space-separated; the writer first (Angus).
+    const ids = [...(p.writer && (p.members || []).includes(p.writer) ? [p.writer] : []), ...(p.members || []).filter((id) => id !== p.writer)];
+    let x = 4 + ICON_W + width("@" + p.name);
+    const spans = [];
+    const members = ids.map((id, k) => {
+      const a = agents.find((q) => q.id === id);
+      const n = "@" + (board.names?.[id] || a?.display || "pi·" + id.slice(-4));
+      x += k === 0 ? width(dot) : 1;
+      spans.push({ x0: x, x1: x + width(n) - 1, id });
+      x += width(n);
+      return a ? nameFg(a.name, a.color, n) : bold(n);
+    });
+    const w0 = String(p.where?.text || "").trim(); // until the daemon's summary is ready: its start
+    const short = p.short || (w0.length > 40 ? w0.slice(0, 39).replace(/\s+\S*$/, "") + "…" : w0);
+    const text = `${nm}${members.length ? dot + members.join(" ") : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
+    const badge = openDecides(p) ? fg(c, bold("D")) : " ";
+    const pm = projMark(p), pmark = pm === "◌" ? midFg(pm) : fg(c, bold(pm));
+    // The project's icon in the agents' icon column (📋 until one is set), so @name lines up.
+    const pic = p.icon || "📋", skip = pic + " ".repeat(Math.max(1, ICON_W - width(pic)));
+    const paused = p.status === "paused" || p.status === "archived";
+    const row = paused ? `${badge}${pm} ${skip}${text}${dot}${p.status}` : `${badge}${pmark} ${skip}${text}`;
+    const lines = wrapStyled(row, W, 6).slice(0, 3).map(paused ? midFg : (l) => l); // prefix: D · mark · icon
+    return { p, lines, spans };
+  };
+
+  // The projects section: at most about half the pane (Angus), counted in wrapped lines now.
+  const projBudget = projs.length ? Math.max(1, Math.floor((contentRows - 2) / 2)) : 0;
+  const projBuilt = [];
+  let projLines = 0, projCount = 0;
+  for (const p of projs) {
+    const r = projRow(p);
+    if (projLines + r.lines.length > projBudget && projCount > 0) break;
+    projBuilt.push(r); projLines += r.lines.length; projCount++;
+  }
+  const listBudget = Math.max(1, contentRows - (projCount ? projLines + 2 : 0));
+
+  // The list: whole agents from listTop until the budget is out; the cursor's agent stays in view.
+  const buildList = (fromTop) => {
+    const ls = []; let used = 0, count = 0;
+    for (let i = fromTop; i < here.length; i++) {
+      const L = agentLines(here[i]);
+      if (used + L.length > listBudget && count > 0) break;
+      for (const l of L) ls.push({ l, id: here[i].id });
+      used += L.length; count++;
+    }
+    return { ls, count };
+  };
+  let fill = buildList(listTop);
+  if (cur >= listTop + fill.count) { listTop = Math.min(cur, Math.max(0, here.length - 1)); fill = buildList(listTop); }
+  if (cur < listTop) { listTop = Math.max(0, cur); fill = buildList(listTop); }
+  listTop = Math.max(0, Math.min(listTop, Math.max(0, here.length - 1)));
+  const hidden = here.length - listTop - fill.count;
+
+  rows.push(rule(`agents ${room} · ${SHOW_LABEL[showMode]} (^O)`
+    + (listTop || hidden > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${hidden > 0 ? "↓" + hidden : ""}` : "")));
+  listRowAgent = {};
   if (showHelp) {
     for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ ↑↓ · click", "move the cursor · wheel scrolls"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
       ["^O", "views: live · + parked / closed (and archived projects)"],
@@ -156,73 +294,27 @@ function draw() {
       ["^W ^W · ^K ^K", "close / kill (on a closed agent: forget it)"], ["^N · ^Tab ^⇧Tab · ^Q", "new agent here · switch world · quit"],
       ["box", "Tab completes a /command · //text is not a command · Esc clears the box"]])
       rows.push(k ? `   ${bold(k.padEnd(22))} ${dim(d)}` : "");
-  }
-  if (!showHelp && !here.length) rows.push(dim("  no agents here · ^N opens one"));
-  for (const a of showHelp ? [] : here.slice(listTop, listTop + listRows)) {
-    const name = cut(a.display, nameW);
-    const iconPart = iconCol(a);
-    const bare = name;
-    const model = (a.model || "").replace(/^claude-/, "");
-    const dot = " · ";
-    // Where it is, as hyprpi list says it (Angus): "pi·k3vg · C2 · topic · opus-5-5". Parked rows say "parked" instead.
-    const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
-    // Runs in a container (Angus): " (🐳 docker)" right after the name, then the usual " · …".
-    const box = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
-    const rest = box + ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
-    if (a.dormant || a.parked) { // greyed, same columns as a live row
-      const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
-      const what = a.parked ? "parked" : "closed";
-      const how = a.parked ? " · ⏎ revive" : " · ⏎ resume · ^W^W forget";
-      rows.push(midFg(` ◌ ${iconPart}${nm}${rest}${dot}${what}${a.id === cursorId ? how : ""}`));
-      continue;
-    }
-    let styled = a.name_markup && !name.endsWith("…") && !unnamed(a.name) ? bold(markupFg(a.name_markup, a.color)) : nameFg(a.name, a.color, bare);
-    if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
-    else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
-    styled = iconPart + styled;
-    const sel = " "; // (the ▸ column: kept blank so the names don't move)
-    if (closing.has(a.id)) { rows.push(dim(`  ${mark(a)} ${iconPart}${name} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`)); continue; }
-    rows.push(`${sel}${fg(c, bold(mark(a)))} ${styled}${rest}`);
+  } else if (!here.length) {
+    rows.push(dim("  no agents here · ^N opens one"));
+  } else {
+    for (const { l, id } of fill.ls) { if (id) listRowAgent[rows.length + 1] = id; rows.push(l); }
   }
   pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
   if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ ${" ".repeat(ICON_W)}starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
   projRowY = {}; projMemberX = {};
-  if (projShow && rows.length < H - 2 - IR.rows.length - 2) {
-    const more = projs.length - projShow;
+  if (projCount) {
+    const more = projs.length - projCount;
     // What ^O does here too (Angus): the "+ parked" view also shows archived projects.
     const view = showMode >= 1 ? "+ archived (^O)" : "open (^O)"; // no archived count (Angus)
     rows.push(""); // a line of space between the agents and the projects (Angus)
     rows.push(rule(`projects ${room} · ${view}${more > 0 ? ` · +${more} more (SUPER+ALT+P)` : ""}`));
-    const dot = " · ";
-    for (const p of projs.slice(0, projShow)) {
-      const cur = cursorId === "p:" + p.id;
-      let nm = bold("@" + p.name);
-      if (cur) nm = nameBg ? `${ESC}48;2;${rgb(nameBg)}m${nm}${ESC}49m` : `${ESC}4m${nm}${ESC}24m`;
-      // Members as the projects panel writes them (lib/tui/board-view.mjs who()): "@Name" in the
-      // agent's colour, no icon; bold when it isn't live; space-separated; the writer first (Angus).
-      const ids = [...(p.writer && (p.members || []).includes(p.writer) ? [p.writer] : []), ...(p.members || []).filter((id) => id !== p.writer)];
-      const w0 = String(p.where?.text || "").trim(); // until the daemon's summary is ready: its start
-      const short = p.short || (w0.length > 40 ? w0.slice(0, 39).replace(/\s+\S*$/, "") + "…" : w0);
-      const d = openDecides(p);
-      const badge = d ? fg(c, bold("D")) : " ";
-      // Columns as an agent row (▸ · mark · space · name), so the names line up: D badge · the
-      // project's mark · space · @name. Each @member's columns are kept for clicks.
-      let x = 4 + ICON_W + width("@" + p.name);
-      const spans = [];
-      const members = ids.map((id, k) => {
-        const a = agents.find((q) => q.id === id);
-        const n = "@" + (board.names?.[id] || a?.display || "pi·" + id.slice(-4));
-        x += k === 0 ? width(dot) : 1;
-        spans.push({ x0: x, x1: x + width(n) - 1, id });
-        x += width(n);
-        return a ? nameFg(a.name, a.color, n) : bold(n);
+    for (const { p, lines, spans } of projBuilt) {
+      lines.forEach((l, i) => {
+        const y = rows.length + 1;
+        projRowY[y] = p.id; // every line of the row: the whole wrapped row is the project (clicks)
+        if (i === 0) projMemberX[y] = spans;
+        rows.push(l);
       });
-      const text = `${nm}${members.length ? dot + members.join(" ") : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
-      projRowY[rows.length + 1] = p.id; projMemberX[rows.length + 1] = spans;
-      const pm = projMark(p), pmark = pm === "◌" ? midFg(pm) : fg(c, bold(pm));
-      // The project's icon in the agents' icon column (📋 until one is set), so @name lines up.
-      const pic = p.icon || "📋", skip = pic + " ".repeat(Math.max(1, ICON_W - width(pic)));
-      rows.push(p.status === "paused" || p.status === "archived" ? midFg(`${badge}${pm} ${skip}${text}${dot}${p.status}`) : `${badge}${pmark} ${skip}${text}`);
     }
   }
 
@@ -439,12 +531,12 @@ function onKey(d) {
       cursorId = "p:" + pid; confirm = null; return render();
     }
     if (b === 16) { // Ctrl+click: that agent, as Enter would (live: jump to it · parked: revive · closed: resume)
-      const a = press && listHere()[listTop + y - listRowY];
+      const a = press && byId(listRowAgent[y]);
       if (a) { cursorId = a.id; confirm = null; enter(); render(); }
       return;
     }
     if (!press || b !== 0) return;
-    const a = listHere()[listTop + y - listRowY];
+    const a = byId(listRowAgent[y]);
     if (!a) return;
     cursorId = a.id; confirm = null; return render();
   }
