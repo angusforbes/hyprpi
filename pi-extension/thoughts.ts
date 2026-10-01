@@ -7,6 +7,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { request } from "../lib/client.mjs";
 
+const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const checkThinking = (t: any) => { if (t != null && t !== "" && !THINKING.includes(String(t))) throw new Error(`thinking "${t}" isn't a level: ${THINKING.join(", ")}`); };
 // A model as list_models shows it ("provider/id", or a bare id) -> the registry's model, or null.
 function findModel(ctx: any, s: string) {
   const reg = ctx?.modelRegistry, all: any[] = reg?.getAvailable?.() || [], i = s.indexOf("/");
@@ -151,6 +153,7 @@ export default function thoughts(pi: ExtensionAPI) {
       reason: Type.Optional(Type.String({ description: "a few words: why (shown in the room line)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
+      checkThinking(p.thinking);
       const r: any = await call("thoughts.setModel", p);
       return out(`${r.agent}: ${r.before || "?"} → ${r.model}${r.thinking ? ` (thinking ${r.thinking})` : ""}.`, { action: `set @${r.agent}'s model to ${r.model}` });
     },
@@ -192,6 +195,7 @@ export default function thoughts(pi: ExtensionAPI) {
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any, _s: any, _u: any, ctx: any) => {
       let model = "";
+      checkThinking(p.thinking); // pi·wpzt's N48 test: "banana" used to be dropped silently
       if (p.model) { const m = findModel(ctx, String(p.model).trim()); if (!m) throw new Error(`no model "${p.model}" here (list_models shows the ids)`); model = `${m.provider}/${m.id}`; }
       const r: any = await call("thoughts.open", { ...p, model });
       return out(`Opened ${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""}.`, { action: `opened a new agent, ${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""}: ${String(p.task).replace(/\s+/g, " ").slice(0, 120)}` });

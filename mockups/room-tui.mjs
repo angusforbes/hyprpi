@@ -748,7 +748,7 @@ function onKey(d) {
   if (d === "\x11") return quit(); // Ctrl+Q
   if (d === "\x1b[2;5~") return copyInputSel(false); // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
   if (d === "\x18") return copyInputSel(true); // Ctrl+X: cut
-  if (d === "\x16") return pasteClipboard();   // Ctrl+V: paste
+  if (d === "\x16" || d === "\x1b[2;2~") return pasteClipboard(); // Ctrl+V / Shift+Insert (SUPER+V outside kitty's map): paste
   // Shift+Space (the launcher maps it to CSI 32;2u) or Ctrl+Space: toggle the cursor
   // agent's mark in every view, even while typing (plain Space is text then).
   if (d === "\t" && /^\/[^\s/]*$/.test(input)) { // complete a command
