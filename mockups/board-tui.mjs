@@ -170,7 +170,7 @@ function draw() {
   const slash = /^\/[^\s/]*$/.test(text) && !note.startsWith("✗") && cmds.hint(text) !== null ? boardCompletions(text) : null; // a hidden command like /ignore: no hint at all (N52)
   const busy = mode === "decisions" ? "" : bv.status(c, false);
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : (busy ? "  " + busy : "") + (note ? dim("  " + note) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
+    : (busy ? "  " + busy : "") + (note ? (note.startsWith("✗") ? `  ${ESC}31m${note}${ESC}39m` : dim("  " + note)) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
       ? `text → @${open.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · ⏎ or Esc: all projects`
       : "@project text · @project alone opens it · D1 b answers · ^F decisions · ^↑↓ highlight · /help")));
   // A hint that doesn't fit after the text (a narrow panel, e.g. in the 2x2 grid) goes on the
