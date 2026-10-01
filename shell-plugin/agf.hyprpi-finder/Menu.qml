@@ -41,8 +41,9 @@ Item {
 
     if (payload.fontFamily) root.fontFamily = payload.fontFamily
     // hyprpi: a dry open (tests) only proves the plugin loads and answers; nothing is shown.
+    // "dry N rank-d K": N options, K of them for the query "d" (FinderRank, J17: proves the loaded QML is current).
     if (payload.dry) {
-      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length)) + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
+      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(payload.options || [], "d").length) + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
       return
     }
 
