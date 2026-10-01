@@ -108,6 +108,33 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
   voice picker, the bar widget and `voice-agent set/add`; "room" / "me" inside
   a hyprpi agent resolve to its own room / itself.
 
+### Restore-all: everything that was open comes back (J8)
+
+The daemon keeps a live map of what is open: agents in the registry (`agents.json`, field
+`open`), panels in `~/.local/state/hyprpi/panels.json` (kind, world, workspace, tiled or floating,
+geometry). Both are written atomically (tmp + rename) with the previous version kept as `.bak`, and
+the panels map is never replaced by an empty one except by a deliberate close.
+
+**The one rule** (Angus, 2026-10-01): something that goes away *on its own* was closed on purpose
+(a window closed by hand, `/quit`, `/handoff`, ^W / ^K) and is dropped from the map after 6 s.
+Something that goes away *together* with others (3+ hyprpi windows within 3 s: a logout, Hyprland
+going down), while the daemon is shutting down, or in a power cut, stays. `hyprpi stop`, SIGTERM
+and SIGHUP save the map and then freeze it, so the windows a shutdown closes don't count; a
+removal within 5 s of the daemon's last beat is undone at the next start. A pi that crashes alone
+counts as closed (it is still in the room panel's closed list).
+
+**Restoring.** When a fresh daemon finds open agents or panels that aren't live, the first
+deliberate entry point (SUPER+A / `hyprpi new`, the panel keys SUPER+ALT+A / R / P / slash, the
+panels' `/agents`-style commands) shows one menu, once per daemon start: *Restore all* · *Restore
+world X only* · *Not now* · *No* (let them go). `hyprpi restore [all|X]` does the same any time
+(`--list` only shows it, `--no` lets it go). Each agent comes back with its own id (name, icon,
+twins), on **its own workspace** (a parked one parked), on the **model and thinking level** of its
+session's last `model_change` (not the config's `--model`), one at a time, twins after their
+originals, opened with Hyprland's `exec_cmd … 'N silent'` so your focus never moves
+(`hyprpi new --silent`). Panels come last, the same way. Missing session files are listed and let
+go. One `♻️ restored …` line goes to the current world's room. Agents still running (a plain daemon
+restart) are skipped. Nothing is restored automatically at login.
+
 ### Resuming agents after a restart (and parked / closed agents)
 
 The room TUI's **Ctrl+O** cycles which greyed (`◌`) agents are listed under the live ones:

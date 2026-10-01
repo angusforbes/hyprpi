@@ -190,7 +190,20 @@ async function evenTiles(addrs) {
   await sleep(200);
 }
 
+// Restore-all (J8): the panel keys are a deliberate entry point. Make sure the daemon runs (after a
+// crash or shutdown nothing else may have started it), then let it offer, once per daemon start,
+// to restore the agents and panels that were open (a menu; it does nothing if there's nothing).
+async function offerRestore() {
+  const ping = () => request("ping", {}, { timeout: 800 }).then(() => true, () => false);
+  if (!(await ping())) {
+    const { execFile } = await import("node:child_process");
+    await new Promise((r) => execFile(new URL("../bin/hyprpi", import.meta.url).pathname, ["ensure"], { timeout: 8000 }, () => r()));
+  }
+  await request("restore.offer", { from: "panels" }, { timeout: 1500, timeoutMs: 4000 }).catch(() => {});
+}
+
 const main = async () => {
+  await offerRestore();
   const room = (args[0] || "").toUpperCase() || await currentRoom();
   // Always where you are (Angus): other windows there are left alone and dwindle fits the grid
   // around them; for a clean grid, go to an empty workspace and press SUPER+CTRL+ALT+P again.

@@ -34,7 +34,10 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
-  hyprpi stop                 stop the daemon
+  hyprpi stop                 stop the daemon (it saves what is open first: hyprpi restore brings it back)
+  hyprpi restore [all|X] [--list] [--no]   reopen the agents and panels that were open when hyprpi
+                              last went down (own workspaces, model and thinking; panels silently);
+                              --list only shows them, --no lets them go
 
 Config: ~/.config/hyprpi/config.json   Socket: ${socketPath()}`;
 
@@ -156,9 +159,15 @@ async function cmdNew() {
   // --id: reuse a known agent id (resuming a closed agent keeps its name, room and twins).
   const wantId = opt("--id") || "";
   if (wantId && !/^[A-Za-z0-9_.-]{3,64}$/.test(wantId)) die("bad --id");
+  // --silent (restore-all): open the window straight on --workspace via Hyprland's exec_cmd
+  // 'N silent', so Angus's focus and workspace never change. Implies --no-focus.
+  const silent = flag("--silent");
   const dd = args.indexOf("--");
   const piArgs = dd >= 0 ? args.slice(dd + 1) : [];
   await ensureDaemon();
+  // The first deliberate entry point after a fresh daemon start offers to restore what was open
+  // (once per daemon start; a resume / restore itself passes --id and doesn't ask).
+  if (!wantId) await request("restore.offer", { from: "new" }, { timeout: 1500, timeoutMs: 4000 }).catch(() => {});
 
   const active = await hypr.activeWorkspace().catch(() => null);
   if (beside) {
@@ -178,7 +187,7 @@ async function cmdNew() {
   if (!workspace && active && Number.isInteger(active.id) && active.id > 0) workspace = active.id;
   // Panel mode (mockups/panels): that workspace is the three floating panels, so a new
   // agent would open behind them. Put it on the next free workspace of the same world.
-  if (workspace && !opt("--here")) workspace = await awayFromPanels(workspace, cfg);
+  if (workspace && !silent && !opt("--here")) workspace = await awayFromPanels(workspace, cfg);
 
   const id = wantId || newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");
@@ -198,6 +207,15 @@ async function cmdNew() {
   let termPrefix;
   try { termPrefix = terminalCommand(cfg, { title: "pi", cwd }); } catch (e) { die(e.message); }
   const term = [...termPrefix, piCmd, ...piArgv];
+  if (silent && workspace) {
+    const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
+    const pass = Object.entries(env).filter(([k]) => /^(HYPRPI_|XDG_RUNTIME_DIR$|XDG_STATE_HOME$|XDG_CONFIG_HOME$)/.test(k));
+    const cmd = ["cd", q(cwd), "&&", "exec", "env", "-u", "PI_SESSION_FILE", "-u", "PI_SESSION_ID", ...pass.map(([k, v]) => `${k}=${q(v)}`), ...term.map(q)].join(" ");
+    if (cmd.includes("]]")) die("can't open silently: the command contains ]]");
+    await hypr.dispatch(`hl.dsp.exec_cmd([[${cmd}]], { workspace = "${workspace} silent" })`);
+    console.log(id);
+    return;
+  }
   // A visible special workspace (Reprieve's parked view) swallows new windows: hide it first.
   try {
     const mons = await hypr.hyprJson("monitors");
@@ -299,6 +317,25 @@ async function cmdFind() {
   }
 }
 
+// hyprpi restore [all|X] [--list] [--no]: bring back what was open when hyprpi last went down
+// (agents on their own workspaces, model and thinking; panels silently), or with --list only
+// show it; --no lets it go (the agents stay in the room panel's closed list).
+async function cmdRestore() {
+  const list = flag("--list"), no = flag("--no");
+  const scope = (args[0] || "all").toUpperCase() === "ALL" ? "all" : String(args[0]).toUpperCase();
+  await ensureDaemon();
+  if (no) return console.log(JSON.stringify(await request("restore.decline", {}), null, 1));
+  const st = await request("restore.status", { scope });
+  const show = (r) => `  ${r.world}\t${r.parked ? "parked" : r.workspace ?? "?"}\t${r.icon ? r.icon + " " : ""}${r.name}${r.twinOf ? " (twin)" : ""}`;
+  console.log(`To restore (${scope}): ${st.text}`);
+  for (const r of st.agents) console.log(show(r));
+  for (const p of st.panels) console.log(`  ${p.world}\t${p.workspace ?? p.wsName}\t${p.kind} panel${p.floating ? " (floating)" : ""}`);
+  for (const m of st.missing) console.log(`  ${m.world}\t-\t${m.name}: session file missing, can't restore`);
+  if (list || (!st.agents.length && !st.panels.length)) return;
+  const r = await request("restore.run", { scope, by: "hyprpi restore" }, { timeoutMs: 15 * 60000 });
+  console.log(r.text);
+}
+
 async function cmdList() {
   const json = flag("--json");
   const r = await request("list");
@@ -337,6 +374,7 @@ const commands = {
   daemon: async () => { const { runDaemon } = await import("../lib/daemon.mjs"); await runDaemon(); },
   ensure: async () => { await ensureDaemon(); console.log(socketPath()); },
   stop: async () => { if (await alive()) await request("shutdown"); },
+  restore: cmdRestore,
   new: cmdNew,
   room: cmdRoom,
   search: cmdSearch,
