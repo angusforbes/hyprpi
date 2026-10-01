@@ -27,8 +27,10 @@ export default function hyprpi(pi: ExtensionAPI) {
   const demands = new Map<string, { expect: number; replies: { name: string; text: string }[]; done: () => void }>();
 
   const idle = () => { try { return ctxRef?.isIdle?.() ?? true; } catch { return true; } };
-  const inject = (message: any) => {
-    try { pi.sendMessage(message, idle() ? { triggerTurn: true } : { triggerTurn: true, deliverAs: "followUp" }); }
+  // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
+  // coordination; a "followUp" talk once arrived only after the work it asked about was done, @hyprpi N44).
+  const inject = (message: any, steer = false) => {
+    try { pi.sendMessage(message, idle() ? { triggerTurn: true } : { triggerTurn: true, deliverAs: steer ? "steer" : "followUp" }); }
     catch (e) { ctxRef?.ui?.notify?.(`hyprpi: could not deliver message (${(e as Error).message})`, "warning"); }
   };
 
@@ -90,7 +92,7 @@ export default function hyprpi(pi: ExtensionAPI) {
         display: true,
         content: `[hyprpi ${d.mode} from ${d.from.name} · id ${d.request_id}]\n${d.text}\n\n${how}`,
         details: d,
-      });
+      }, !String(d.from?.id || "").startsWith("thoughts:")); // agents' talk steers; Thoughts' tasks wait for the turn to end
     } else if (event === "talk.reply") {
       const w = demands.get(d.request_id);
       if (w) {
@@ -103,7 +105,7 @@ export default function hyprpi(pi: ExtensionAPI) {
         display: true,
         content: `[hyprpi reply from ${d.from.name} · re ${d.request_id}]\n${d.text}`,
         details: d,
-      });
+      }, true);
     }
   }
 

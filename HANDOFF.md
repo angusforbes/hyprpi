@@ -5,6 +5,21 @@ Goal (Angus): replace Herdr's "all agents in one app" with Pi agents in **their 
 anywhere in any workspace of any hyprwrld, grouped into **rooms** (default one per world).
 Herdr and hyprpi run side by side for now; hyprpi is meant to replace Herdr eventually.
 
+## The panels pair: Blink (lead) + pi·wpzt (Angus, 2026-09-30, @hyprpi N44)
+
+- **Roles.** 👁️ Blink leads the panels: it owns the panel files (`mockups/*-tui.mjs`, `lib/tui/`,
+  `lib/stream.mjs`) and the daemon side, splits the work, and has the last word on design. pi·wpzt is
+  co-developer and the independent tester.
+- **Card first.** Every panel task goes on the @hyprpi card FIRST, with its owner's name ("Blink" or
+  "pi·wpzt"), whether it comes from Thoughts, from Angus in either window, or from the board. Check
+  the card before starting anything; if it's already there with the other's name, hand it over
+  instead of building it twice (say so to Angus).
+- **Whoever didn't build a change tests it** (hidden pty / spare workspace), then says so on the card.
+- **Acknowledge every message** between the two (a one-line talk_reply is enough), so a lost or late
+  one shows up at once.
+- **Safety, both:** file swaps keep the mode (`git show --summary HEAD | grep mode`; mockups/panels is
+  755), the daemon is restarted only when nobody is mid-turn, and only your own files are committed.
+
 ## Current state (all committed and pushed)
 
 - **Daemon** `lib/daemon.mjs` — one per Hyprland instance, socket
