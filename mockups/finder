@@ -66,24 +66,24 @@ function lastTurns() {
 }
 
 // The small line under an agent's name (J23, Angus): its current or last topic. (The time is on the
-// top line: "2 mins ago", or "now" while it works.)
+// top line: "2 mins", or "now" while it works.) A project's: what it is doing now / did last.
 function activeLine(a) {
   return clean(a.topic || "");
 }
 
 // How long ago, at the end of each row's top line (Angus): "now" while it works (the solid ●), else
-// "1 min ago" · "N mins ago" · "1 hour ago" · "N hours ago" · "1 day ago" · "N days ago".
+// "1 min" · "N mins" · "1 hour" · "N hours" · "1 day" · "N days" (no "ago": Angus).
 function since(ts, mark = "") {
   if (mark === "●") return "now";
   if (!ts) return "";
   const m = Math.floor((Date.now() - ts) / 60000);
-  if (m < 2) return "1 min ago";
-  if (m < 60) return `${m} mins ago`;
+  if (m < 2) return "1 min";
+  if (m < 60) return `${m} mins`;
   const h = Math.floor(m / 60);
-  if (h < 2) return "1 hour ago";
-  if (h < 24) return `${h} hours ago`;
+  if (h < 2) return "1 hour";
+  if (h < 24) return `${h} hours`;
   const d = Math.floor(h / 24);
-  return d < 2 ? "1 day ago" : `${d} days ago`;
+  return d < 2 ? "1 day" : `${d} days`;
 }
 
 // Qt StyledText for the plugin's coloured labels ("dim" = the menu's grey, resolved in the plugin).
@@ -137,7 +137,8 @@ async function rows() {
       const rich = esc(p.icon || "📋") + " @" + esc(clean(p.name)) + font("dim", " · ") + font(worldColor(/^[A-Z]\d/.test(pl) ? pl[0] : room), pl) + (since(pt, projMark(p, byId)) ? font("dim", " · " + since(pt, projMark(p, byId))) : "");
       out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + (since(pt, projMark(p, byId)) ? " · " + since(pt, projMark(p, byId)) : ""), sub: sub.slice(0, 160),
         // J17: a project is in its board's world and in the world of the workspace it shows (its writer's).
-        worlds: [...new Set([room, /^[A-Z]\d/.test(pl) ? pl[0] : room])].join(""), ws: projWs(p, room) });
+        worlds: [...new Set([room, /^[A-Z]\d/.test(pl) ? pl[0] : room])].join(""), ws: projWs(p, room),
+        subtitle: clean(p.short || p.where?.text || p.title || "") }); // its "where" summarised (the agents panel's projects line), else where / title
     }
   }
   // Agents first, then projects. Within each, by category, then most recent first (Angus,
