@@ -531,7 +531,19 @@ function render() {
     // Every entry through mdRows: Markdown, and links / file paths clickable (Angus: all links and
     // paths must be clickable). x.links: [{ x0, x1, target }] in the row's own columns.
     const md = (text, n, pre, style = (l) => l) => mdRows(text, n, wrap, gw).map((r) => ({ l: pre + style(r.line), links: r.links.map((q) => ({ ...q, x0: q.x0 + pre.length, x1: q.x1 + pre.length })) }));
-    for (const e of TH.entries) {
+    // N53 (Angus via Thoughts-C): incoming agent replies / messages are not drawn (Thoughts' summary
+    // already covers them; they stay in its context and in /keyword /ask). Thoughts' own answers to
+    // agents show as ONE short grey line with what it said: "↩ to Blink: …", one or two rows.
+    const isAnswer = (e) => e.role === "action" && /^answered @/.test(e.text || "");
+    for (const [ei, e] of TH.entries.entries()) {
+      if (e.role === "agent" || e.role === "reply") continue;
+      if (isAnswer(e)) {
+        const m = /^answered @([^:]+):\s*([\s\S]*)$/.exec(e.text) || [null, "?", ""];
+        const k2 = items.push({ copy: `to ${m[1]}: ${m[2]}` }) - 1;
+        const rows = wrap(`↩ to ${m[1]}: ${String(m[2]).replace(/\s+/g, " ")}`, tw - 2);
+        rows.slice(0, 2).forEach((r, n) => flat.push({ l: "   " + dim(n === 1 && rows.length > 2 ? r.replace(/.?$/, "…") : r), meta: { item: k2, textX: 4 } }));
+        continue;
+      }
       const k = items.push({ copy: e.text }) - 1, red = (l) => `${ESC}31m${l}${ESC}39m`;
       const add = (rs, textX) => { for (const r of rs) flat.push({ ...r, meta: { item: k, textX } }); };
       if (e.role === "you" || e.role === "thoughts") {
