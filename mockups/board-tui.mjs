@@ -156,7 +156,7 @@ function draw() {
   // The hint after the box: typing a /command → its matches; else the note, the highlight's
   // keys, or what the box takes.
   const text = box.text;
-  const slash = /^\/[^\s/]*$/.test(text) && !note.startsWith("✗") ? boardCompletions(text) : null;
+  const slash = /^\/[^\s/]*$/.test(text) && !note.startsWith("✗") && cmds.hint(text) !== null ? boardCompletions(text) : null; // a hidden command like /ignore: no hint at all (N52)
   const busy = bv.status(c, false);
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : (busy ? "  " + busy : "") + (note ? dim("  " + note) : text ? "" : dim(bv.cursorHint() || (open
