@@ -390,6 +390,9 @@ tools and no memory: about 3 s. The room TUI's `/ask` uses it. For real question
   "aiSearchActivityShare": 0.2
 }
 
+- `dismissCap` (default 4): a window you dismiss (SUPER+D, SUPER+ALT+D, the clear when you
+  summon) goes to the nearest workspace of the world that has room for it, up to this many
+  tiled windows (floating ones don't count); every workspace full: the emptiest one.
 - `offLimitsWorkspaces` (default `["special:reprieve"]`): an agent whose window is
   on one of these workspaces (Reprieve) leaves its room: not in any room panel, no
   room messages, can't post to a room. Moving it out puts it back in its world's room.
