@@ -187,14 +187,15 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "revise_work",
     label: "Revise a brief",
-    description: "Issue a NEW VERSION of a brief (job J<n>) when Angus changes a deliverable or says to continue a stopped one. Give only what changes (the rest is kept) plus the reason in his words. The old version's run is stopped and anything still queued for it (including an earlier stop) is dropped; the agent gets the new version with the changed lines marked + / −. Versions only go up, so an older one can never arrive after a newer one. To just stop, use cancel_work (a state change).",
+    description: "Issue a NEW VERSION of a brief (job J<n>) when Angus changes a deliverable or says to continue a stopped one. Give only the fields that change (the rest is kept) plus the reason in his words. done_when REPLACES the whole list: resend every earlier check that still applies, plus the new ones; to drop one on purpose, name it in drop_checks (a revision that silently loses checks is refused). The old version's run is stopped and anything still queued for it (including an earlier stop) is dropped; the agent gets the new version with the changed lines marked + / −. Versions only go up, so an older one can never arrive after a newer one. To just stop, use cancel_work (a state change).",
     promptSnippet: "Give a brief a new version",
     parameters: Type.Object({
       job: Type.String({ description: "the job id, e.g. J7" }),
       reason: Type.String({ description: "why, in Angus's words" }),
       angus: Type.Optional(Type.String({ description: "Angus's new words, verbatim" })),
       goal: Type.Optional(Type.String()), context: Type.Optional(Type.String()), limits: Type.Optional(Type.String()), ask_first: Type.Optional(Type.String()),
-      done_when: Type.Optional(Type.Array(Type.String(), { description: "the FULL new list of done-when checks" })),
+      done_when: Type.Optional(Type.Array(Type.String(), { description: "the FULL new list of done-when checks: every earlier check that still applies, plus the new ones" })),
+      drop_checks: Type.Optional(Type.Array(Type.String(), { description: "earlier checks you drop ON PURPOSE (\"W3\" or the check's text); say why in reason" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.revise", p, 30000);
