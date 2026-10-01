@@ -29,7 +29,7 @@ const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C
 import * as hypr from "../lib/hypr.mjs";
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold, fg,
   markupFg, unnamed, nameFg, width, cut, clip, graphemes, gw } from "../lib/tui/term.mjs";
-import { createInputBox, createHistory } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 let worldBar = null;
@@ -79,6 +79,7 @@ const byId = (id) => listHere().find((a) => a.id === id);
 // Decide items first (a D badge), then the most recently changed. The cursor runs on into them
 // (cursorId "p:<id>"): ⏎ opens the card in the projects panel.
 let board = { room: "", projects: [], names: {} };
+let boxArea = null, clicks = 0, lastPress = { x: 0, y: 0, t: 0 }; // the box on screen + multi-click counting (N79, lib/tui/input-box.mjs boxHit)
 let projRowY = {};                           // screen row -> project id (clicks)
 let projMemberX = {};                        // screen row -> [{ x0, x1, id }] where each @member is (clicks)
 // A project's mark, from its live members, most urgent first (Angus): × one needs you · ● one is
@@ -193,6 +194,7 @@ function draw() {
   // Wrapping (Angus via Thoughts-C, N42): a row longer than the pane wraps onto further lines,
   // indented under the text, instead of being clipped. All lines of one row are the same item for
   // the cursor, the clicks (listRowAgent / projRowY) and the scroll counts (still per agent).
+  boxArea = { y0: H - IR.rows.length, n: IR.rows.length, inTop: IR.inTop, pw: promptW };
   const contentRows = Math.max(1, H - 3 - IR.rows.length); // the list + [blank + rule + projects]
   const nameW = Math.min(24, Math.max(6, ...here.map((a) => width(a.display))));
   // A fixed icon column (Angus: the names in the agent list and the project list line up): the
@@ -525,6 +527,13 @@ function onKey(d) {
     const tab = b === 0 && press ? worldTabAt(worldBar, Number(m[2]), y, rooms.map((r) => r.id)) : null;
     if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycleRoom(s); return; } // a world tab: like Ctrl+Tab
     if (b === 64 || b === 65) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); return render(); }
+    if (b === 0 && press) { // N79: a double / triple click in the box selects a word / the whole line
+      const x = Number(m[2]), now = Date.now();
+      clicks = now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
+      lastPress = { x, y, t: now };
+      const bh = clicks >= 2 ? boxHit(boxArea, x, y) : null;
+      if (bh) { box.selectAt(bh.row, bh.col, clicks); return render(); }
+    }
     const pid = projRowY[y];
     if (pid && press && (b === 0 || b === 16)) {
       const pj = hereProjects().find((p) => p.id === pid);

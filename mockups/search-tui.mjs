@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
@@ -393,6 +393,7 @@ function copy(text) {
 // for pane rows that belong to an item; items[k].copy = what a whole-item copy gives.
 let screen = [], rowMeta = {}, items = [], sel = null; // sel: { x0, y0, x1, y1, dragging, clicks, mode } (1-based cells)
 let clicks = 0, lastPress = { x: 0, y: 0, t: 0 };
+let boxArea = null; // where render() drew the box (N79: clicks in it, lib/tui/input-box.mjs boxHit)
 function selRange() {
   if (!sel || (sel.mode !== "item" && sel.x0 === sel.x1 && sel.y0 === sel.y1)) return null;
   const fwd = sel.y0 < sel.y1 || (sel.y0 === sel.y1 && sel.x0 <= sel.x1);
@@ -655,6 +656,7 @@ function render() {
   while (rows.length < 1 + avail) rows.push(""); // the thread's area, then the bottom block
   rows.length = Math.min(rows.length, 1 + avail);
   const bottomY = rows.length + 1;
+  boxArea = { y0: bottomY + boxAt, n: inRows.length, inTop, pw };
   rows.push(...bottom);
   const cursorRow = bottomY + boxAt + (L.cRow - inTop), cursorCol = Math.min(W, pw + L.cCol + 1);
   while (rows.length < H - 1) rows.push("");
@@ -808,6 +810,8 @@ function onKey(d) {
       const now = Date.now();
       clicks = b === 0 && now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
       lastPress = { x, y, t: now };
+      const bh = clicks >= 2 ? boxHit(boxArea, x, y) : null; // N79: a double / triple click in the box selects a word / the whole line
+      if (bh) { box.selectAt(bh.row, bh.col, clicks); sel = null; return render(); }
       sel = { x0: x, y0: y, x1: x, y1: y, dragging: false, clicks, mode: b === 4 && rowMeta[y] ? "item" : rowMeta[y] ? "text" : "plain" };
       return render();
     }

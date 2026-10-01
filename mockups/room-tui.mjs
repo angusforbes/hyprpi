@@ -29,7 +29,7 @@
 
 import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT } from "../lib/stream.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
@@ -236,6 +236,7 @@ function selectedText() {
 // Triple-click: the whole stream item (message, direct message, topic) under the
 // pointer, or the line elsewhere. Selected on screen and copied, like a drag.
 let clicks = 0, lastPress = { x: 0, y: 0, t: 0 };
+let boxArea = null; // where render() drew the box (N79: clicks in it, lib/tui/input-box.mjs boxHit)
 function multiClick(n, x, y) {
   const line = screen[y - 1] || "";
   const cells = []; // [col, grapheme] per grapheme
@@ -301,6 +302,7 @@ function draw() {
   const IL = box.layout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
   const inTop = IL.rows.length > MAXI ? Math.max(0, Math.min(IL.cRow - MAXI + 1, IL.rows.length - MAXI)) : 0;
   const inputLines = IL.rows.slice(inTop, inTop + MAXI);
+  boxArea = { y0: H - inputLines.length, n: inputLines.length, inTop, pw: promptW };
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
   if (view !== "board") bv.hide(); // the board's shimmer timer runs only while it is shown
@@ -885,6 +887,8 @@ function onKey(d) {
         // Count quick presses on the same spot: 2 = word, 3 = whole message (or line).
         clicks = b === 0 && now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
         lastPress = { x, y, t: now };
+        const bh = clicks >= 2 ? boxHit(boxArea, x, y) : null; // N79: a double / triple click in the box selects a word / the whole line
+        if (bh) { box.selectAt(bh.row, bh.col, clicks); sel = null; focusArea = "input"; continue; }
         sel = { x0: x, y0: y, x1: x, y1: y, dragging: false, clicks, mode: b === 4 && inConvo ? "msg" : inConvo ? "text" : "plain" };
         continue;
       }

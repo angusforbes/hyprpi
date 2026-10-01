@@ -34,7 +34,7 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, n
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
 import { createDecisionsView } from "../lib/tui/decisions-view.mjs";
-import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 
 let room = (process.argv[2] || "").toUpperCase(), rooms = [], agents = [], online = false, api = null, note = "";
@@ -82,6 +82,7 @@ let hcycle = null;   // Tab state for @names
 
 // ---- selection & copy (the TUI owns the mouse) ------------------------------------------
 let screen = [], rowMeta = {}, items = [], sel = null, lastPress = { x: 0, y: 0, t: 0 }, clicks = 0;
+let boxArea = null; // where render() drew the box (N79: clicks in it, lib/tui/input-box.mjs boxHit)
 function copy(text) {
   if (!text) return;
   process.stdout.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
@@ -157,6 +158,7 @@ function draw() {
   const L = box.layout(Math.max(10, W - pw)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
+  boxArea = { y0: H - inRows.length, n: inRows.length, inTop, pw };
   const avail = Math.max(1, H - 1 - 2 - inRows.length); // pane rule + input rule + status bar
   const b = mode === "decisions" ? dv.frame({ board: boardHere(), room, W, avail, c, agents }) : bv.frame({ board: boardHere(), room, W, avail, c, agents, standalone: true });
   rows.push(rule(b.label));
@@ -373,6 +375,8 @@ function mouse(d) {
       const now = Date.now();
       clicks = now - lastPress.t < 400 && y === lastPress.y && Math.abs(x - lastPress.x) <= 1 ? clicks + 1 : 1;
       lastPress = { x, y, t: now };
+      const bh = clicks >= 2 ? boxHit(boxArea, x, y) : null; // N79: a double / triple click in the box selects a word / the whole line
+      if (bh) { box.selectAt(bh.row, bh.col, clicks); sel = null; continue; }
       if (clicks === 2) { const w = wordAt(x, y); if (w) { sel = { x0: w.a, y0: y, x1: w.b, y1: y, done: true }; copy(selectedText()); } continue; }
       sel = { x0: x, y0: y, x1: x, y1: y };
       continue;
