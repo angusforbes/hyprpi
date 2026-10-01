@@ -231,7 +231,9 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.on("agent_end", async (e: any) => {
     const msgs: any[] = Array.isArray(e?.messages) ? e.messages : [];
     aborted = msgs.some((m: any) => m?.stopReason === "aborted" || m?.message?.stopReason === "aborted" ||
-      (m?.role === "toolResult" && m?.isError && /\b(?:Operation|Command) aborted\b/i.test(JSON.stringify(m?.content ?? "")))); // Esc in bash says "Command aborted" (pi·wpzt's test)
+      (m?.role === "toolResult" && ((m?.isError && /\b(?:Operation|Command) aborted\b/i.test(JSON.stringify(m?.content ?? "")))
+        // ~/.pi/agent/extensions/interrupted.ts rewrites an Esc'd tool result to a plain "interrupted" (no error)
+        || (Array.isArray(m?.content) ? m.content.map((c: any) => c?.text || "").join("") : String(m?.content ?? "")).trim() === "interrupted")));
     // Stream: a turn stopped with Esc, or one that ended in an error.
     const err = [...msgs].reverse().find((m: any) => (m?.stopReason ?? m?.message?.stopReason) === "error");
     const report = aborted ? { kind: "aborted", text: "stopped (Esc)" }
