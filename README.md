@@ -16,6 +16,8 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | SUPER+ALT+D | Dismiss all: every hyprpi agent and panel on this workspace except pinned ones and the focused window (panels go together to the nearest emptiest workspace) |
 | SUPER+ALT+S | Pin / unpin the focused agent or panel (orange border while pinned; pinned windows are never dismissed) |
 
+SUPER+SHIFT+ALT+S ("keep this window, clear the rest", J18) is gone: SUPER+ALT+D now keeps the focused window.
+
 These keys, the rule that tags agent windows as terminals (so Omarchy's SUPER+C/V copy and
 paste instead of sending Ctrl+C, which Pi treats as clear/interrupt) and the click-to-mark-seen
 handler are in `hypr/hyprpi.lua`. Install it once:
