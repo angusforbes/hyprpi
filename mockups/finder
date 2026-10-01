@@ -232,7 +232,7 @@ const main = async () => {
 // the plugin isn't there or not enabled (the caller falls back to the plain menu).
 function pluginSelect(rs, onPick) {
   const dir = fs.mkdtempSync(path.join(runtimeDir(), "finder-")), sel = path.join(dir, "pick"), done = path.join(dir, "done");
-  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, name: r.sort || "" })); // worlds / ws / name: FinderRank.js (J17)
+  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0 })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
   const payload = JSON.stringify({ mode: "select", prompt: "Agents", options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
   const clean = () => fs.rmSync(dir, { recursive: true, force: true });
   return new Promise((resolve) => {
