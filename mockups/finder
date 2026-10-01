@@ -65,29 +65,25 @@ function lastTurns() {
   return last;
 }
 
-// The small line under an agent's name (J23, Angus): "<topic> · active now" while it works, else
-// "· active N min ago" (h / d for longer).
-function activeLine(a, recent) {
-  let when = "";
-  if (a.status === "working") when = "active now";
-  else if (recent) {
-    const m = Math.max(1, Math.floor((Date.now() - recent) / 60000)), h = Math.floor(m / 60), d = Math.floor(h / 24);
-    when = `active ${m < 60 ? m + " min" : h < 24 ? h + " h" : d + " d"} ago`;
-  }
-  return [clean(a.topic || ""), when].filter(Boolean).join(" · ");
+// The small line under an agent's name (J23, Angus): its current or last topic. (The time is on the
+// top line: "2 mins ago", or "now" while it works.)
+function activeLine(a) {
+  return clean(a.topic || "");
 }
 
-// How long ago, for the end of each row (Angus): 1 min · 2–59 mins · 1 hr · 2–23 hrs · 1 day · N days.
-function since(ts) {
+// How long ago, at the end of each row's top line (Angus): "now" while it works (the solid ●), else
+// "1 min ago" · "N mins ago" · "1 hour ago" · "N hours ago" · "1 day ago" · "N days ago".
+function since(ts, mark = "") {
+  if (mark === "●") return "now";
   if (!ts) return "";
   const m = Math.floor((Date.now() - ts) / 60000);
-  if (m < 2) return "1 min";
-  if (m < 60) return `${m} mins`;
+  if (m < 2) return "1 min ago";
+  if (m < 60) return `${m} mins ago`;
   const h = Math.floor(m / 60);
-  if (h < 2) return "1 hr";
-  if (h < 24) return `${h} hrs`;
+  if (h < 2) return "1 hour ago";
+  if (h < 24) return `${h} hours ago`;
   const d = Math.floor(h / 24);
-  return d < 2 ? "1 day" : `${d} days`;
+  return d < 2 ? "1 day ago" : `${d} days ago`;
 }
 
 // Qt StyledText for the plugin's coloured labels ("dim" = the menu's grey, resolved in the plugin).
@@ -108,10 +104,10 @@ async function rows() {
     // The mark first (in the menu's icon column), then the agent's own icon in the name (Angus).
     const mk = markOf(a), recent = turns[a.id] || a.since || 0;
     const wsRoom = a.parked ? "" : Number.isInteger(a.workspace) && a.workspace > 0 ? (a.workspace_label || "")[0] || a.room : a.room;
-    const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (recent ? font("dim", " · " + since(recent)) : "");
-    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (recent ? " · " + since(recent) : ""), rich, sub, parked: !!a.parked, world: a.room || "",
+    const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (since(recent, mk) ? font("dim", " · " + since(recent, mk)) : "");
+    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (since(recent, mk) ? " · " + since(recent, mk) : ""), rich, sub, parked: !!a.parked, world: a.room || "",
       // J17: where it is, for "D" (one world letter) in the plugin: its workspace's world; parked: none.
-      subtitle: activeLine(a, recent), // J23
+      subtitle: activeLine(a), // J23: the topic; the time is on the top line
       worlds: a.parked ? "" : String(loc || "")[0] || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? a.workspace : 0 });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
@@ -138,8 +134,8 @@ async function rows() {
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
       const pl = projLoc(p, room), pt = p.updated || p.created;
-      const rich = esc(p.icon || "📋") + " @" + esc(clean(p.name)) + font("dim", " · ") + font(worldColor(/^[A-Z]\d/.test(pl) ? pl[0] : room), pl) + (pt ? font("dim", " · " + since(pt)) : "");
-      out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + ((p.updated || p.created) ? " · " + since(p.updated || p.created) : ""), sub: sub.slice(0, 160),
+      const rich = esc(p.icon || "📋") + " @" + esc(clean(p.name)) + font("dim", " · ") + font(worldColor(/^[A-Z]\d/.test(pl) ? pl[0] : room), pl) + (since(pt, projMark(p, byId)) ? font("dim", " · " + since(pt, projMark(p, byId))) : "");
+      out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + (since(pt, projMark(p, byId)) ? " · " + since(pt, projMark(p, byId)) : ""), sub: sub.slice(0, 160),
         // J17: a project is in its board's world and in the world of the workspace it shows (its writer's).
         worlds: [...new Set([room, /^[A-Z]\d/.test(pl) ? pl[0] : room])].join(""), ws: projWs(p, room) });
     }

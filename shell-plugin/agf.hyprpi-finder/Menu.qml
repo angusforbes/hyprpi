@@ -47,7 +47,7 @@ Item {
     // hyprpi: a dry open (tests) only proves the plugin loads and answers; nothing is shown.
     // "dry N rank-d K rank-1 M": N options, K / M of them for the queries "d" / "1" (FinderRank, J17: proves the loaded QML is current).
     if (payload.dry) {
-      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(payload.options || [], "d").length + " rank-1 " + FinderRank.rank(payload.options || [], "1").length + " sub") + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
+      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d").length + " rank-1 " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "1").length + " sub slot") + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
       return
     }
 
@@ -534,6 +534,34 @@ Item {
     return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, entry, detail, score, section)
   }
 
+  // hyprpi: the options as rows FinderRank can rank (also used by the dry open, so a test sees the real parse).
+  function parseDmenuOptions(options) {
+    var parsed = []
+    for (var i = 0; i < options.length; i++) {
+      // An option is "<label>", "<glyph>\t<label>", or
+      // "<glyph>\t<label>\t<subtext>". The glyph never comes back with the
+      // selection; the subtext renders under the label, filters alongside it,
+      // and returns with the selection as a stable key for same-named rows.
+      // hyprpi: an object option carries a coloured label (rich) and its return value.
+      var opt = options[i], rich = "", value = ""
+      if (opt && typeof opt === "object") {
+        var icon = String(opt.icon || ""), label = String(opt.label || ""), detail = String(opt.detail || "")
+        rich = String(opt.rich || ""); value = String(opt.value || "")
+        var worlds = String(opt.worlds || ""), ws = Number(opt.ws || 0), name = String(opt.name || "") // hyprpi: FinderRank's keys
+        var slot = Number(opt.slot || 0), recent = Number(opt.recent || 0) // hyprpi: the digit ranking and its time tiebreak (they were dropped here, so "1" found nothing)
+        var subtitle = String(opt.subtitle || "") // hyprpi: the small line under the name (J23)
+      } else {
+      var worlds = "", ws = 0, name = "", subtitle = "", slot = 0, recent = 0 // hyprpi
+      var parts = String(opt || "").split("\t")
+      var icon = parts.length > 1 ? parts.shift() : ""
+      var label = parts.shift() || ""
+      var detail = parts.join("\t")
+      }
+      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, slot: slot, recent: recent, name: name, subtitle: subtitle }) // hyprpi
+    }
+    return parsed
+  }
+
   function rebuildDmenuDisplay() {
     displayModel.clear()
     root.searchDivider = false
@@ -544,28 +572,7 @@ Item {
     }
 
     var query = root.filterText.trim().toLowerCase()
-    var parsed = [] // hyprpi: parse every option first, then FinderRank orders them (J17)
-    for (var i = 0; i < root.dmenuOptions.length; i++) {
-      // An option is "<label>", "<glyph>\t<label>", or
-      // "<glyph>\t<label>\t<subtext>". The glyph never comes back with the
-      // selection; the subtext renders under the label, filters alongside it,
-      // and returns with the selection as a stable key for same-named rows.
-      // hyprpi: an object option carries a coloured label (rich) and its return value.
-      var opt = root.dmenuOptions[i], rich = "", value = ""
-      if (opt && typeof opt === "object") {
-        var icon = String(opt.icon || ""), label = String(opt.label || ""), detail = String(opt.detail || "")
-        rich = String(opt.rich || ""); value = String(opt.value || "")
-        var worlds = String(opt.worlds || ""), ws = Number(opt.ws || 0), name = String(opt.name || "") // hyprpi: FinderRank's keys
-        var subtitle = String(opt.subtitle || "") // hyprpi: the small line under the name (J23)
-      } else {
-      var worlds = "", ws = 0, name = "", subtitle = "" // hyprpi
-      var parts = String(opt || "").split("\t")
-      var icon = parts.length > 1 ? parts.shift() : ""
-      var label = parts.shift() || ""
-      var detail = parts.join("\t")
-      }
-      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, name: name, subtitle: subtitle }) // hyprpi
-    }
+    var parsed = root.parseDmenuOptions(root.dmenuOptions) // hyprpi: parse every option first, then FinderRank orders them (J17)
     var order = FinderRank.rank(parsed, query) // hyprpi: the usual substring filter; one world letter → that world first
     for (var o = 0; o < order.length; o++) {
       var row = parsed[order[o]], i = row.i, icon = row.icon, label = row.label, detail = row.detail, rich = row.rich, value = row.value // hyprpi
