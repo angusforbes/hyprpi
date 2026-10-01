@@ -2,7 +2,7 @@
 // Summon & dismiss keys (hypr/hyprpi.lua): guest dismiss · guest dismiss --all · guest pin
 //   SUPER+D      dismiss the focused agent (a hyprpi panel: closed, like its toggle key)
 //   SUPER+ALT+D  dismiss all: every hyprpi window on this workspace except pinned ones and the focused one
-//   SUPER+ALT+S  pin / unpin the focused agent or hyprpi panel (pinned ones stay; orange border)
+//   SUPER+ALT+S  pin / unpin the focused agent or hyprpi panel (pinned ones stay; green border)
 // A short notification says what happened when there's something to say.
 import { execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";

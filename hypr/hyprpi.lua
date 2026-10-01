@@ -54,7 +54,7 @@ end
 --   SUPER+S          summon pop-up: this world's agents / projects to the workspace you're on
 --   SUPER+D          dismiss the focused agent (a hyprpi panel: closed)
 --   SUPER+ALT+D      dismiss all: everything hyprpi on this workspace except pinned windows and the focused one
---   SUPER+ALT+S      pin / unpin the focused agent or panel (orange border while pinned)
+--   SUPER+ALT+S      pin / unpin the focused agent or panel (green border while pinned)
 -- SUPER+S was Reprieve's show/hide parked; that moved to SUPER+SHIFT+CTRL+S (~/.config/hypr/bindings.lua).
 hl.unbind("SUPER + S")
 o.bind("SUPER + S", "hyprpi: summon agents here", HYPRPI_ROOT .. "/mockups/summon")
@@ -63,8 +63,9 @@ o.bind("SUPER + ALT + D", "hyprpi: dismiss all but pinned and focused", HYPRPI_R
 o.bind("SUPER + ALT + S", "hyprpi: pin / unpin the focused agent or panel", HYPRPI_ROOT .. "/mockups/guest pin")
 o.window("hyprpi.summon", { float = true, center = true, size = "560 460" })
 -- Colour only (Angus, J3 / N69): a different border size would resize the window's content, so
--- terminals re-wrap and the layout shifts. Pinned = the same 1 px border, orange.
-o.window({ tag = "guestpin" }, { border_color = "rgb(ff8800) rgb(ff8800)" })
+-- terminals re-wrap and the layout shifts. Pinned = the same 1 px border, bright green (J25: orange
+-- clashed with world D's colour; 22c55e is none of the world colours A–E nor the grey unfocused border).
+o.window({ tag = "guestpin" }, { border_color = "rgb(22c55e) rgb(22c55e)" })
 
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send
 -- Ctrl+Insert/Shift+Insert instead of Ctrl+C (which Pi treats as clear/interrupt).
