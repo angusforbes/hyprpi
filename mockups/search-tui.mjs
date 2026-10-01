@@ -179,23 +179,10 @@ function pasteImage(type) {
       attach.push(f); note = `📎 image attached (${Math.round(n / 1024)} KB) · ⏎ sends it with your text · Esc drops it`; render(); });
   } catch (e) { note = "✗ " + e.message; render(); }
 }
-// Input history: your earlier messages ("you" entries), newest last; hist.i = -1 means the draft.
-const hist = { i: -1, draft: "" };
-function historyKey(dir) {
-  const mine = TH.entries.filter((e) => e.role === "you" && e.text).map((e) => e.text);
-  const n = graphemes(query).length;
-  if (dir < 0) {
-    if (qc > 0 && hist.i < 0) { qc = 0; return render(); } // first: to the start of what you're typing
-    if (hist.i + 1 >= mine.length) { note = mine.length ? "that's your first message here" : "no earlier messages yet"; return render(); }
-    if (hist.i < 0) hist.draft = query;
-    hist.i++; setBox(mine[mine.length - 1 - hist.i]); note = ""; return render();
-  }
-  if (qc < n && hist.i < 0) { qc = n; return render(); } // first: to the end
-  if (hist.i < 0) return render();
-  hist.i--; setBox(hist.i < 0 ? hist.draft : mine[mine.length - 1 - hist.i]); note = ""; return render();
-}
+// Input history (↑↓): the shared box's (lib/tui/input-box.mjs, N51), fed by your earlier messages
+// in this thread ("you" entries); sending stops browsing.
 function sendThought(text, images = []) {
-  hist.i = -1; hist.draft = "";
+  box.remember(""); // the thread keeps the message itself
   const t = String(text || "").trim();
   if ((!t && !images.length) || !api) return;
   api.call("thoughts.send", { room, text: t, images }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
@@ -356,6 +343,8 @@ function boxSel() { if (selA == null || selA === qc) return null; return selA < 
 // keeps query / qc / selA and loads them into the box before each edit, then reads them back.
 const box = createInputBox({
   onChange: () => {}, copy: (t) => copy(t), multiline: false,
+  history: { list: () => TH.entries.filter((e) => e.role === "you" && e.text).map((e) => e.text) },
+  historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
   tint: atTint((name) => { const r = resolveAt([name], hereKnown()), a = r.found[0]; return a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => x, bold, nameFg: (_n, color, g) => hexFg(color || "", bold(g)) }),
 });
@@ -765,9 +754,10 @@ function onKey(d) {
   if (d === "\x1b[1;5H") { TH.scroll = 1e9; return render(); } // Ctrl+Home: the oldest
   if (d === "\x1b[1;5A") return move(-1);
   if (d === "\x1b[1;5B") return move(1);
-  // ↑↓ like a Pi window (Angus): within the box first (↑ to its start, ↓ to its end); then ↑ steps
-  // back through your earlier messages in this thread, ↓ forward again, to what you were typing.
-  if (d === "\x1b[A" || d === "\x1b[B") { selA = null; return historyKey(d === "\x1b[A" ? -1 : 1); }
+  // ↑↓ like a Pi window (Angus; shared by every panel since N51): within the box first (↑ to its
+  // start, ↓ to its end); then ↑ steps back through your earlier messages in this thread, ↓ forward
+  // again, to what you were typing.
+  if (d === "\x1b[A" || d === "\x1b[B") { selA = null; boxIn(); box.key(d); boxOut(); note = box.note || ""; return render(); }
   if (d === "\x1b[13;5u") { showHelp = false; selA = null; return enter(); } // Ctrl+Enter: the same as ⏎ here
   if (d === "\x1b[5~") return move(-5);
   if (d === "\x1b[6~") return move(5);

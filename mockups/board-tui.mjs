@@ -6,7 +6,7 @@
 //
 //   ~/Work/hyprpi/mockups/board-tui [ROOM]   (kitty launcher: key maps + the exit-75 restart loop)
 //
-// Keys: plain keys are the box's (typing, ←→↑↓, Shift+arrows select, ⏎ sends); the board needs a
+// Keys: plain keys are the box's (typing, ←→, ↑↓ start/end then earlier entries, Shift+arrows select, ⏎ sends); the board needs a
 // modifier. ^↑↓ move the highlight · ^⏎ (or ⏎ with an empty box) opens the highlighted card /
 // goes back to all projects / puts an item's handle in the box · ^Space or ^O fold · ^D drop
 // (on a project: archive) · ^T done · ^Z undo · Alt+1…9 answer the highlighted decision ·
@@ -30,7 +30,7 @@ let worldBar = null;
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
-import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 
 let room = (process.argv[2] || "").toUpperCase(), rooms = [], agents = [], online = false, api = null, note = "";
@@ -44,6 +44,8 @@ const boardHere = () => (board.room === room ? board : null);
 // world colour until edited (the first typed key replaces it).
 const box = createInputBox({
   onChange: () => { note = note.startsWith("✗") ? note : ""; render(); },
+  // ↑↓ as in every panel (Angus, N51): the box's start / end, then your earlier entries.
+  history: createHistory("projects"), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
   copy: (t) => copy(t),
   tint: atTint((n) => {
     const k = n.toLowerCase();
@@ -240,11 +242,11 @@ async function send() {
   try {
     const r = await bv.input(raw, { api, room, board: boardHere() || { projects: [] } });
     if (!r) { // not the board's: the commands every panel has (/tinker, /quit; lib/tui/command-line.mjs)
-      if (parseCommand(raw)) { box.clear(); cmds.run(raw); return render(); }
+      if (parseCommand(raw)) { box.remember(raw); box.clear(); cmds.run(raw); return render(); }
       note = "✗ not a board command · /help"; return render();
     }
     if (r.confirm) note = r.note; // a confirm prompt (/spinout, /merge): not sent yet, ⏎ again runs it
-    else { box.markSent(); note = r.note; }
+    else { box.remember(raw); box.clear(); note = r.note; } // Enter clears the box like every panel; ↑ brings it back (Angus, N51)
   } catch (e) { note = "✗ " + e.message; }
   render();
 }
@@ -293,7 +295,7 @@ function onKey(d) {
   if (sc !== undefined) { bv.scroll(sc); return render(); }
   // The board's keys (all behind a modifier): ^↑↓ ^Space/^O ^D ^T ^Z Alt+1..9. Plain ↑↓ are the box's.
   if (d !== "\x1b[A" && d !== "\x1b[B" && applyKey(bv.key(d, ctx()))) return;
-  if (box.key(d)) { hcycle = null; return; }
+  if (box.key(d)) { hcycle = null; if (box.note) { note = box.note; render(); } return; }
 }
 function tab(fwd) {
   const text = box.text, at = graphemes(text.slice(0)).slice(0, box.cursor).join("").length;

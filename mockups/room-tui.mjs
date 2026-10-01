@@ -29,7 +29,7 @@
 
 import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, atTint } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, atTint } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
 import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT } from "../lib/stream.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
@@ -53,7 +53,7 @@ const helpRows = () => {
     `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
     `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F views: full → compact (one line each) → topics (topic changes only)")}`,
-    `   ${dim("message box: ↑↓←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
+    `   ${dim("message box: ↑↓ lines, then the start / end, then your earlier messages · ←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A · projects: SUPER+ALT+P · thoughts: SUPER+ALT+/")}`,
     `   ${dim("the projects panel (the board) is its own panel: SUPER+ALT+P")}`,
   ];
@@ -71,6 +71,8 @@ function inputSel() { if (selA == null || selA === ic) return null; return selA 
 // into the box before each edit, then reads them back.
 const box = createInputBox({
   onChange: () => {}, copy: (t) => copy(t), multiline: true,
+  // ↑↓ as in every panel (Angus, N51): lines, then the start / end, then your earlier messages.
+  history: createHistory("stream"), historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
   sentStyle: (g) => fg(worldFg(room), g), // sent text (board view only) in the world colour
   tint: atTint((name) => { const r = resolveAt([name], atPool()), a = r.found[0]; return a?.project ? { project: true } : a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => fg(worldFg(room), x), bold, nameFg }),
@@ -678,6 +680,7 @@ async function send() {
     if (Date.now() - (resendAsk || 0) > 4000) { resendAsk = Date.now(); note = "already sent · ⏎ again to send it again · type to change it"; return render(); }
     resendAsk = 0;
   }
+  if (raw && !onlyAt(raw.startsWith("//") ? raw.slice(1) : raw)) box.remember(raw); // ↑ brings it back (N51)
   if (view === "board" && raw) return boardSend(raw);
   if (command(raw)) return;
   if (view === "help") view = "stream";
@@ -856,7 +859,7 @@ function onKey(d) {
   // (Typing, paste, Shift+Enter and Ctrl+C/X/V are handled above and below, through insertText.)
   if (d.startsWith("\x1b") || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x05" || d === "\x17") {
     boxIn();
-    if (box.key(d)) { boxOut(); note = ""; focusArea = "input"; return render(); }
+    if (box.key(d)) { boxOut(); note = box.note || ""; focusArea = "input"; return render(); }
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
   if (d === "\x06") { if (view !== "stream") setView("stream"); sview = SVIEWS[(SVIEWS.indexOf(sview) + 1) % SVIEWS.length]; scroll = 0; lastConvoLen = 0; streamSel = null;

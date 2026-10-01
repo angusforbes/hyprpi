@@ -8,7 +8,8 @@
 // model. Greyed ◌ rows are agents that are not open: "closed" (lost to a reboot, or
 // closed/killed while hyprpi ran) and "parked" (Reprieve, SUPER+W: still running, out
 // of every room). Ctrl+O cycles: live · + parked.
-//   Ctrl+↑↓ (or ↑↓) / click / wheel   move the cursor · PgUp PgDn · Home End / Ctrl+Home End
+//   Ctrl+↑↓ / click / wheel   move the cursor · PgUp PgDn · Home End / Ctrl+Home End
+//   ↑↓                   the box (N51, as in every panel): its start / end, then your earlier commands
 //   Enter / Ctrl+click   live: jump to its window · parked: revive it here · closed: resume it
 //   (The ▸ marks are retired, Angus 2026-09-30: messages go to @Name / @project; Space is unbound.)
 //   Ctrl+W / Ctrl+K      close / kill (twice); on a closed agent: forget it
@@ -28,7 +29,7 @@ const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C
 import * as hypr from "../lib/hypr.mjs";
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold, fg,
   markupFg, unnamed, nameFg, width, cut, clip, graphemes, gw } from "../lib/tui/term.mjs";
-import { createInputBox } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory } from "../lib/tui/input-box.mjs";
 import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 let worldBar = null;
@@ -48,7 +49,10 @@ function copy(text) {
   if (!text) return;
   try { const p = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.on("error", () => {}); p.stdin.end(text); note = "copied"; } catch { /* no wl-copy */ }
 }
-const box = createInputBox({ onChange: () => { if (!note.startsWith("✗")) note = ""; render(); }, copy, multiline: false });
+// ↑↓ are the box's, as in every panel (Angus, N51): its start / end first, then your earlier
+// commands (STATE/input-history/agents.json); the list cursor moves with Ctrl+↑↓.
+const box = createInputBox({ onChange: () => { if (!note.startsWith("✗")) note = ""; render(); }, copy, multiline: false,
+  history: createHistory("agents"), historyNotes: { first: "that's your first command here", none: "no earlier commands yet" } });
 const cmds = createCommands({
   commands: [],
   ctx: {
@@ -288,7 +292,7 @@ function draw() {
     + (listTop || hidden > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${hidden > 0 ? "↓" + hidden : ""}` : "")));
   listRowAgent = {};
   if (showHelp) {
-    for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ ↑↓ · click", "move the cursor · wheel scrolls"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
+    for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ · click", "move the cursor · wheel scrolls"], ["↑↓", "the box: its start / end, then your earlier commands"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
       ["^O", "views: live · + parked / closed (and archived projects)"],
       ["⏎ on @project", "its card in the projects panel (SUPER+ALT+P)"],
       ["^W ^W · ^K ^K", "close / kill (on a closed agent: forget it)"], ["^N · ^Tab ^⇧Tab · ^Q", "new agent here · switch world · quit"],
@@ -480,7 +484,7 @@ function onKey(d) {
   if (d === "\r") {                                           // ⏎: run the command, else open the agent
     if (!typing) { if (showHelp) { showHelp = false; return render(); } return enter(); }
     const t = box.text.trim(); box.clear();
-    if (cmds.run(t)) return render();
+    if (cmds.run(t)) { box.remember(t); return render(); }
     box.set(t); note = "✗ commands start with / (Tab completes · /help)"; return render();
   }
   if (d === "\t") { if (cmds.tab(box)) return render(); note = typing ? "Tab completes a /command" : "Ctrl+Tab switches world"; return render(); }
@@ -500,8 +504,10 @@ function onKey(d) {
   if (d === "\x1b[9;5u" || d === "\x1b[27;5;9~") return cycleRoom(1);
   if (d === "\x1b[9;6u" || d === "\x1b[27;6;9~" || d === "\x1b[1;5Z") return cycleRoom(-1);
   if (d === "\x1b[Z") { note = "Ctrl+Tab switches world"; return render(); }
-  if (d === "\x1b[A" || d === "\x1b[1;5A") return moveCursor(-1);   // ↑ / Ctrl+↑
-  if (d === "\x1b[B" || d === "\x1b[1;5B") return moveCursor(1);    // ↓ / Ctrl+↓
+  // ↑↓: the box (its start / end, then earlier commands; N51); the list cursor is Ctrl+↑↓.
+  if (d === "\x1b[A" || d === "\x1b[B") { box.key(d); if (box.note) { note = box.note; render(); } return; }
+  if (d === "\x1b[1;5A") return moveCursor(-1);   // Ctrl+↑
+  if (d === "\x1b[1;5B") return moveCursor(1);    // Ctrl+↓
   if (d === "\x1b[1;5H") return moveCursor(-1e6);
   if (d === "\x1b[1;5F") return moveCursor(1e6);
   if (d === "\x1b[5~") return moveCursor(-5);
