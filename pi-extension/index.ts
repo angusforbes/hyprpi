@@ -54,6 +54,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); if (k) { landed.add(k); inRun.add(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
   // Sent when a run that cancel_work aborted has settled (the stop / the replacement starts a turn).
   let afterAbort: any = null, afterAbortTimer: ReturnType<typeof setTimeout> | null = null;
+  let interrupting = false; // an interrupt_agent abort: held requests stay held (released after the interrupt's turn), not kept
   function releaseHeld() { if (held.length && idle()) send(held.shift(), { triggerTurn: true }); }
   // After Esc (Angus stopped the agent): keep the held messages in the context without starting a
   // turn, so the stop stays a stop; they are answered with his next message.
@@ -142,7 +143,8 @@ export default function hyprpi(pi: ExtensionAPI) {
         for (let i = held.length - 1; i >= 0; i--) if (ids.has(keyOf(held[i]))) { held.splice(i, 1); dropped++; }
         for (const k of [...steered.keys()]) if (ids.has(k)) { steered.delete(k); dropped++; }
         const started = [...ids].some((k) => landed.has(k));
-        const running = !idle() && [...ids].some((k) => inRun.has(k));
+        // interrupt_agent (J12): no work ids; whatever runs is aborted, nothing held is dropped.
+        const running = !idle() && (!!d.interrupt || [...ids].some((k) => inRun.has(k)));
         const t = d.talk;
         const message = t ? {
           customType: "hyprpi-talk", display: true,
@@ -150,7 +152,7 @@ export default function hyprpi(pi: ExtensionAPI) {
           details: t,
         } : null;
         // Nothing started and nothing replaces it: a plain stop has nothing to say.
-        const deliver = !!message && (started || !!d.replace);
+        const deliver = !!message && (started || !!d.replace || !!d.interrupt);
         if (running) {
           if (deliver) {
             afterAbort = message;
@@ -158,7 +160,8 @@ export default function hyprpi(pi: ExtensionAPI) {
             afterAbortTimer = setTimeout(() => { afterAbortTimer = null; if (afterAbort) { const m = afterAbort; afterAbort = null; inject(m); } }, 20000); // the run never settled: queue it normally
           }
           ctxRef?.abort?.();
-          ctxRef?.ui?.notify?.(`hyprpi: ${t?.from?.name || "Thoughts"} stopped this work (Angus changed his mind)`, "warning");
+          if (d.interrupt) interrupting = true;
+          ctxRef?.ui?.notify?.(d.interrupt ? `hyprpi: ${t?.from?.name || "Thoughts"} interrupted this turn` : `hyprpi: ${t?.from?.name || "Thoughts"} stopped this work (Angus changed his mind)`, "warning");
         } else if (deliver) inject(message);
         reply({ ok: true, started, aborted: running, dropped, delivered: deliver });
       } catch (e) { reply({ ok: false, error: (e as Error).message }); }
@@ -282,8 +285,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     inRun.clear();
     if (aborted) {
       aborted = false; unseen = false; update({ status: "idle" });
+      const wasInterrupt = interrupting; interrupting = false;
       setTimeout(() => {
-        keepHeld();
+        if (!wasInterrupt) keepHeld(); // Angus's Esc: kept for his next message; an interrupt: they wait their turn as usual
         if (afterAbort) { const m = afterAbort; afterAbort = null; if (afterAbortTimer) { clearTimeout(afterAbortTimer); afterAbortTimer = null; } send(m, { triggerTurn: true }); }
       }, 50);
       return;

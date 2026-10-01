@@ -220,6 +220,25 @@ export default function thoughts(pi: ExtensionAPI) {
     execute: async (_id: string, p: any) => { const r: any = await call("thoughts.moveJob", p); return out(`${r.job} moved to @${r.project} ${r.item} (from ${r.from}).`, { action: `moved ${r.job} → @${r.project} ${r.item}` }); },
   });
 
+  // interrupt_agent (Angus, brief J12): a real interrupt for ANY live agent.
+  pi.registerTool({
+    name: "interrupt_agent",
+    label: "Interrupt an agent",
+    description: "Interrupt any live agent NOW: its current turn is aborted like Esc, your message arrives as its next turn, it answers (the reply comes back as \"[reply from …\"), and then it carries on with what it was doing (resume, default) or waits (resume: false). Use it at your discretion or when Angus says interrupt; for a question that can wait, use ask_agent. It doesn't cancel work, briefs or card items (that's cancel_work), and the agent's other queued messages stay queued. A room line says so.",
+    promptSnippet: "Interrupt any live agent now",
+    parameters: Type.Object({
+      agent: Type.String({ description: "agent name, e.g. pi·wpzt or Sankey" }),
+      message: Type.String(),
+      resume: Type.Optional(Type.Boolean({ description: "carry on afterwards (default true)" })),
+      from_angus: Type.Optional(Type.Boolean({ description: "Angus asked for this interrupt" })),
+      images: Type.Optional(Type.Array(Type.String())),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.interruptAgent", p);
+      return out(`${r.agent}: ${r.state}.`, { action: `interrupted @${r.agent}: ${String(p.message).replace(/\s+/g, " ").slice(0, 140)}` });
+    },
+  });
+
   pi.registerTool({
     name: "set_topic",
     label: "Set topic",
