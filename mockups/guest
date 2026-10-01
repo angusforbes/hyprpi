@@ -2,8 +2,8 @@
 // Summon & dismiss keys (hypr/hyprpi.lua): guest dismiss · guest dismiss --all · guest pin
 //   SUPER+D      dismiss the focused agent (a hyprpi panel: closed, like its toggle key)
 //   SUPER+ALT+D  dismiss all: every hyprpi window on this workspace except pinned ones and the focused one
-//   SUPER+ALT+S  pin / unpin the focused agent or hyprpi panel (pinned ones stay; green border)
-// A short notification says what happened when there's something to say.
+//   SUPER+ALT+S  pin / unpin the focused agent or hyprpi panel (pinned ones stay; light blue border)
+// A short notification says what happened when there's something to say (not for pin / unpin: the border shows it).
 import { execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
 const [cmd, ...rest] = process.argv.slice(2);
@@ -14,8 +14,7 @@ try {
     if (r.pinned) toast(`📌 ${r.agent} is pinned (SUPER+ALT+S unpins)`);
     else if (rest.includes("--all") && !r.dismissed?.length) toast("nothing to dismiss here");
   } else if (cmd === "pin") {
-    const r = await request("guest.pin", {});
-    toast(`${r.pinned ? "📌 pinned" : "unpinned"}: ${r.agent}`);
+    await request("guest.pin", {}); // no toast (Angus, J27): the light blue border shows the state
   } else if (cmd === "keep") {
     const r = await request("guest.keep", {});
     toast(r.dismissed?.length ? `kept ${r.kept}; dismissed ${r.dismissed.length}: ${r.dismissed.join(", ")}` : `kept ${r.kept}; nothing else to dismiss`);

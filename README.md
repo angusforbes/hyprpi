@@ -14,7 +14,7 @@ default). Meant to replace Herdr eventually; for now the two are separate.
 | SUPER+S | Summon: a pop-up of this world's agents and projects; Enter brings them to the workspace you're on (its unpinned windows are dismissed first) |
 | SUPER+D | Dismiss the focused agent (to its home, or the emptiest workspace of the world); a hyprpi panel is closed |
 | SUPER+ALT+D | Dismiss all: every hyprpi agent and panel on this workspace except pinned ones and the focused window (panels go together to the nearest emptiest workspace) |
-| SUPER+ALT+S | Pin / unpin the focused agent or panel (green border while pinned; pinned windows are never dismissed) |
+| SUPER+ALT+S | Pin / unpin the focused agent or panel (light blue border while pinned; pinned windows are never dismissed) |
 
 SUPER+SHIFT+ALT+S ("keep this window, clear the rest", J18) is gone: SUPER+ALT+D now keeps the focused window.
 
