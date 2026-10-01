@@ -83,6 +83,23 @@ export default function hyprpi(pi: ExtensionAPI) {
       let text = String(d.text ?? "");
       if (d.via === "room-tui") text = `[hyprpi · Angus → you]\n${text}`;
       try { idle() ? pi.sendUserMessage(text) : pi.sendUserMessage(text, { deliverAs: "followUp" }); } catch { /* best effort */ }
+    } else if (event === "set_model") {
+      // Thoughts switches this agent's model (Angus's standing permission, @hyprpi N47).
+      (async () => {
+        const reply = (r: any) => conn?.call("agent.modelResult", { token: d.token, ...r }).catch(() => {});
+        try {
+          const reg = ctxRef?.modelRegistry;
+          let m: any = null;
+          if (d.model) {
+            const s = String(d.model), i = s.indexOf("/");
+            m = (i > 0 ? reg?.find(s.slice(0, i), s.slice(i + 1)) : null) || reg?.getAvailable?.().find((x: any) => x.id === s || `${x.provider}/${x.id}` === s);
+            if (!m) return reply({ ok: false, error: `no model "${s}" here (list_models shows the ids)` });
+            if (!(await pi.setModel(m))) return reply({ ok: false, error: `can't switch to ${m.provider}/${m.id} (no API key for it?)` });
+          }
+          if (d.thinking) pi.setThinkingLevel(d.thinking);
+          reply({ ok: true, model: m ? `${m.provider}/${m.id}` : ctxRef?.model?.id || "", thinking: (() => { try { return pi.getThinkingLevel(); } catch { return ""; } })() });
+        } catch (e) { reply({ ok: false, error: (e as Error).message }); }
+      })();
     } else if (event === "talk") {
       const how = d.mode === "demand"
         ? `${d.from.name} is waiting for your answer. Reply once with talk_reply(request_id="${d.request_id}", text=...). A refusal is a valid answer.`

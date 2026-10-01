@@ -114,6 +114,42 @@ export default function thoughts(pi: ExtensionAPI) {
     },
   });
 
+  // Models (Angus's standing permission: Thoughts may change an agent's model when it judges it right).
+  pi.registerTool({
+    name: "list_models",
+    label: "List models",
+    description: "The models agents can be switched to (those with an API key here), as provider/id with context size and whether they reason. filter: a regex on provider/id (e.g. \"sonnet|haiku\", \"^anthropic/\"); without one, a short summary per provider.",
+    promptSnippet: "List models an agent can be switched to",
+    parameters: Type.Object({ filter: Type.Optional(Type.String()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any, _s: any, _u: any, ctx: any) => {
+      const all: any[] = ctx?.modelRegistry?.getAvailable?.() || [];
+      const key = (m: any) => `${m.provider}/${m.id}`;
+      if (!p.filter) {
+        const by = new Map<string, string[]>(); for (const m of all) (by.get(m.provider) || by.set(m.provider, []).get(m.provider)!).push(m.id);
+        return out(`${all.length} models. By provider (count · a few ids); use filter for exact ids:\n` + [...by].map(([pv, ids]) => `- ${pv} (${ids.length}): ${ids.slice(0, 8).join(", ")}${ids.length > 8 ? ", …" : ""}`).join("\n"));
+      }
+      let re: RegExp; try { re = new RegExp(p.filter, "i"); } catch { return out("✗ filter is not a valid regex"); }
+      const hits = all.filter((m) => re.test(key(m)));
+      return out(hits.length ? hits.slice(0, 60).map((m) => `${key(m)}${m.contextWindow ? ` · ${Math.round(m.contextWindow / 1000)}k` : ""}${m.reasoning ? " · reasoning" : ""}`).join("\n") + (hits.length > 60 ? `\n(+${hits.length - 60} more; narrow the filter)` : "") : "No model matches.");
+    },
+  });
+  pi.registerTool({
+    name: "set_model",
+    label: "Set an agent's model",
+    description: "Switch an agent's model (and/or thinking level: off, minimal, low, medium, high, xhigh, max). Angus's standing permission: whenever you judge it appropriate (a cheaper/faster model for simple jobs, a stronger one for hard ones); tell him in one line when you do. model: provider/id as list_models shows it (or a bare id). A one-line note goes to the room.",
+    promptSnippet: "Change an agent's model",
+    parameters: Type.Object({
+      agent: Type.String({ description: "agent name, e.g. Sankey or pi·k3vg" }),
+      model: Type.Optional(Type.String({ description: "provider/id, e.g. anthropic/claude-sonnet-5" })),
+      thinking: Type.Optional(Type.String({ description: "thinking level" })),
+      reason: Type.Optional(Type.String({ description: "a few words: why (shown in the room line)" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.setModel", p);
+      return out(`${r.agent}: ${r.before || "?"} → ${r.model}${r.thinking ? ` (thinking ${r.thinking})` : ""}.`, { action: `set @${r.agent}'s model to ${r.model}` });
+    },
+  });
+
   pi.registerTool({
     name: "set_topic",
     label: "Set topic",
