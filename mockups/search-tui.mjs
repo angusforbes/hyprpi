@@ -551,7 +551,11 @@ function render() {
       if (e.role === "you" || e.role === "thoughts") {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
-        add(md(e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
+        // Thoughts' "↩ from pi·wpzt" lead line (whose reply it is summing up): light grey like the other
+        // indicator lines, and the summary right under it, no blank line between (Angus).
+        const lead = e.role === "thoughts" && /^↩ from [^\n]+/.exec(e.text || "");
+        if (lead) add(md(lead[0], tw, "   ", dim), 4);
+        add(md(lead ? e.text.slice(lead[0].length).replace(/^\s*\n/, "") : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
         const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
         if (extra.length) add(md(extra.map((f) => `📎 ${f}`).join("\n"), tw, "   ", dim), 4); // images not already in the text as a (clickable) path
       } else if (e.role === "action") add(md((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
