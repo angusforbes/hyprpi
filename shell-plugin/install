@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Install hyprpi's omarchy-shell plugins (today: agf.hyprpi-finder, the coloured agent finder):
+# link each into ~/.config/omarchy/plugins/, rescan, enable. Safe to run again; no shell restart.
+set -euo pipefail
+here=$(dirname "$(readlink -f "$0")")
+dest="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
+mkdir -p "$dest"
+for d in "$here"/*/; do
+  id=$(basename "$d"); [[ -f "$d/manifest.json" ]] || continue
+  ln -sfn "${d%/}" "$dest/$id"
+  echo "linked $dest/$id"
+done
+omarchy-shell shell rescanPlugins >/dev/null; sleep 2
+for d in "$here"/*/; do id=$(basename "$d"); [[ -f "$d/manifest.json" ]] && omarchy-shell shell setPluginEnabled "$id" true >/dev/null && echo "enabled $id"; done

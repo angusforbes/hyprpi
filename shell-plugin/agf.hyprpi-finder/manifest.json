@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "agf.hyprpi-finder",
+  "name": "hyprpi finder",
+  "version": "0.1.0",
+  "author": "hyprpi",
+  "description": "hyprpi's agents and projects finder (SUPER+SHIFT+SPACE): Omarchy's menu with coloured rows",
+  "kinds": ["menu"],
+  "entryPoints": { "menu": "Menu.qml" }
+}

@@ -18,7 +18,15 @@ import { spawn, execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib/paths.mjs";
+import { worldHex, unnamed } from "../lib/tui/term.mjs";
 
+// Which pop-up (Angus, @hyprpi D8): "plugin" (default) is our own copy of the Omarchy menu, the
+// omarchy-shell plugin agf.hyprpi-finder (shell-plugin/; the same look, plus colour: names in the
+// agent's colour, the workspace in its world's colour, times grey). "menu" is the plain Omarchy menu.
+// "finderStyle" in ~/.config/hyprpi/config.json; the menu is also the fallback when the plugin isn't
+// installed or enabled (shell-plugin/install).
+const PLUGIN = "agf.hyprpi-finder";
+const STYLE = loadConfig().finderStyle === "menu" ? "menu" : "plugin";
 const TIMEOUT_S = Number(process.env.HYPRPI_FINDER_TIMEOUT) || 600; // env only for tests
 // Rows show only icon + name (Angus, 2026-09-29: one line each, so far more fit in the menu, which
 // caps itself at 70% of the screen). "finderDetail": true in ~/.config/hyprpi/config.json brings
@@ -70,6 +78,11 @@ function since(ts) {
   return d < 2 ? "1 day" : `${d} days`;
 }
 
+// Qt StyledText for the plugin's coloured labels ("dim" = the menu's grey, resolved in the plugin).
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const font = (color, s) => { const c = color === "dim" ? "dim" : /^#?[0-9a-f]{6}$/i.test(color || "") ? "#" + String(color).replace(/^#/, "") : ""; return c ? `<font color="${c}">${esc(s)}</font>` : esc(s); };
+const worldColor = (room) => { const h = room && worldHex(room); return h ? "#" + h : ""; };
+
 async function rows() {
   const turns = lastTurns();
   const l = await request("list");
@@ -82,7 +95,9 @@ async function rows() {
     const loc = a.parked ? "parked" : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
     // The mark first (in the menu's icon column), then the agent's own icon in the name (Angus).
     const mk = markOf(a), recent = turns[a.id] || a.since || 0;
-    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (recent ? " · " + since(recent) : ""), sub, parked: !!a.parked, world: a.room || "" });
+    const wsRoom = a.parked ? "" : Number.isInteger(a.workspace) && a.workspace > 0 ? (a.workspace_label || "")[0] || a.room : a.room;
+    const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (recent ? font("dim", " · " + since(recent)) : "");
+    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (recent ? " · " + since(recent) : ""), rich, sub, parked: !!a.parked, world: a.room || "" });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
   const byId = Object.fromEntries((l.agents || []).map((a) => [a.id, a]));
@@ -106,7 +121,9 @@ async function rows() {
       if (p.status === "archived") continue;
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
-      out.push({ kind: "project", id: p.id, room, name: p.name, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + ((p.updated || p.created) ? " · " + since(p.updated || p.created) : ""), sub: sub.slice(0, 160) });
+      const pl = projLoc(p, room), pt = p.updated || p.created;
+      const rich = esc(p.icon || "📋") + " @" + esc(clean(p.name)) + font("dim", " · ") + font(worldColor(/^[A-Z]\d/.test(pl) ? pl[0] : room), pl) + (pt ? font("dim", " · " + since(pt)) : "");
+      out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + ((p.updated || p.created) ? " · " + since(p.updated || p.created) : ""), sub: sub.slice(0, 160) });
     }
   }
   // Agents first, then projects. Within each, by category, then most recent first (Angus,
@@ -167,7 +184,7 @@ const LOCK = path.join(runtimeDir(), "finder.pid");
 function toggleOff() {
   try {
     const pid = Number(fs.readFileSync(LOCK, "utf8"));
-    if (pid && pid !== process.pid) { process.kill(pid, 0); execFile("omarchy-menu", ["close"], () => {}); process.kill(pid, "SIGTERM"); return true; }
+    if (pid && pid !== process.pid) { process.kill(pid, 0); execFile("omarchy-menu", ["close"], () => {}); execFile("omarchy-shell", ["shell", "hide", PLUGIN], () => {}); process.kill(pid, "SIGTERM"); return true; }
   } catch { /* none running */ }
   return false;
 }
@@ -179,7 +196,7 @@ const main = async () => {
   const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`; // "" glyph → a row without an icon
   if (list) {
     const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
-    for (const r of rs) console.log(row(r) + (process.argv.includes("--ages") ? `\t(${r.recent ? ago(r.recent) : "?"})` : ""));
+    for (const r of rs) console.log(row(r) + (process.argv.includes("--ages") ? `\t(${r.recent ? ago(r.recent) : "?"})` : "") + (process.argv.includes("--rich") ? `\n    ${r.rich}` : ""));
     if (process.argv.includes("--width")) console.log("width", menuWidth(rs));
     return;
   }
@@ -188,18 +205,42 @@ const main = async () => {
   fs.writeFileSync(LOCK, String(process.pid));
   const unlock = () => { try { if (Number(fs.readFileSync(LOCK, "utf8")) === process.pid) fs.unlinkSync(LOCK); } catch { /* gone */ } };
   if (!rs.length) { unlock(); return; }
-  const child = spawn("omarchy-menu-select", ["Agents", ...rs.map(row), "--", "--width", String(menuWidth(rs))], { stdio: ["ignore", "pipe", "ignore"] });
-  let out = "";
-  child.stdout.on("data", (d) => { out += d; });
-  const t = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_S * 1000);
-  process.on("SIGTERM", () => { child.kill("SIGTERM"); unlock(); process.exit(0); });
-  child.on("close", async (code) => {
-    clearTimeout(t); unlock();
+  const onPick = async (code, out) => {
+    unlock();
     const pick = out.replace(/\n$/, "");
     if (code !== 0 || !pick) return;
     const r = rs.find((x) => x.key === pick) || rs.find((x) => x.label === pick) || rs.find((x) => pick.startsWith(x.label + "\t") && x.key.trimEnd() === pick.trimEnd());
     if (!r) { console.error("finder: no row for " + JSON.stringify(pick)); return; }
     try { await act(r); } catch (e) { console.error("finder: " + e.message); }
-  });
+  };
+  if (STYLE === "plugin" && await pluginSelect(rs, onPick)) return;
+  const child = spawn("omarchy-menu-select", ["Agents", ...rs.map(row), "--", "--width", String(menuWidth(rs))], { stdio: ["ignore", "pipe", "ignore"] });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  const t = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_S * 1000);
+  process.on("SIGTERM", () => { child.kill("SIGTERM"); unlock(); process.exit(0); });
+  child.on("close", (code) => { clearTimeout(t); onPick(code, out); });
 };
+
+// The plugin pop-up: omarchy-menu-select's protocol (a selection file, then a done file), with the
+// rows as objects so the label can be coloured; the pick comes back as the row's key. false when
+// the plugin isn't there or not enabled (the caller falls back to the plain menu).
+function pluginSelect(rs, onPick) {
+  const dir = fs.mkdtempSync(path.join(runtimeDir(), "finder-")), sel = path.join(dir, "pick"), done = path.join(dir, "done");
+  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key }));
+  const payload = JSON.stringify({ mode: "select", prompt: "Agents", options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
+  const clean = () => fs.rmSync(dir, { recursive: true, force: true });
+  return new Promise((resolve) => {
+    execFile("omarchy-shell", ["shell", "summon", PLUGIN, payload], (err, stdout) => {
+      if (err || String(stdout).trim() !== "ok") { clean(); return resolve(false); }
+      resolve(true);
+      const t0 = Date.now();
+      process.on("SIGTERM", () => { execFile("omarchy-shell", ["shell", "hide", PLUGIN], () => { clean(); process.exit(0); }); });
+      const iv = setInterval(() => {
+        if (fs.existsSync(done)) { clearInterval(iv); let out = ""; try { out = fs.readFileSync(sel, "utf8"); } catch { /* cancelled */ } clean(); onPick(out ? 0 : 1, out); }
+        else if (Date.now() - t0 > TIMEOUT_S * 1000) { clearInterval(iv); execFile("omarchy-shell", ["shell", "hide", PLUGIN], () => {}); clean(); onPick(1, ""); }
+      }, 50);
+    });
+  });
+}
 main();
