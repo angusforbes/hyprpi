@@ -51,7 +51,7 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "ask_agent",
     label: "Ask an agent",
-    description: "Ask one agent in hyprpi a question on Angus's behalf. Its reply comes back later as a message starting with \"[reply from\". Refused if the agent is working, unless urgent (only when Angus says so).",
+    description: "Ask one agent in hyprpi a question on Angus's behalf (or another world's Thoughts agent: agent \"Thoughts-D\", for cross-world matters, sparingly). Its reply comes back later as a message starting with \"[reply from\". Refused if the agent is working, unless urgent (only when Angus says so).",
     promptSnippet: "Ask an agent a question",
     parameters: Type.Object({
       agent: Type.String({ description: "agent name, e.g. Sankey or pi·k3vg" }),
