@@ -85,7 +85,7 @@ export default function thoughts(pi: ExtensionAPI) {
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.work", p);
-      return out(`Gave ${r.job} v1 to ${r.agent}${r.project ? ` (@${r.project}, card ${r.item || ""})` : ""}.`, { action: `gave @${r.agent}${r.project ? ` (@${r.project})` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 140)}` });
+      return out(`Gave ${r.job} v1 to ${r.agent}${r.project ? ` (@${r.project}, card ${r.item || ""})` : r.loose ? ` (no project: on the Loose jobs card, ${r.loose}; move_job it into a project once it leads to decisions)` : ""}.`, { action: `gave @${r.agent}${r.project ? ` (@${r.project})` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 140)}` });
     },
   });
 
@@ -209,6 +209,15 @@ export default function thoughts(pi: ExtensionAPI) {
     promptSnippet: "Mark a done job verified",
     parameters: Type.Object({ job: Type.String(), by: Type.String({ description: "Angus, or the confirming agent's name" }), note: Type.Optional(Type.String()) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => { const r: any = await call("thoughts.verify", p); return out(`${r.job} verified by ${r.by}.`, { action: `${r.job} verified by ${r.by}` }); },
+  });
+
+  pi.registerTool({
+    name: "move_job",
+    label: "Move a job",
+    description: "Move a job (J<n>) to a project's card, keeping its id, versions and history. A brief given without a project sits on the world's Loose jobs card (a catch-all); Angus's rule: quick one-offs can stay there, but a job that leads to decisions (or more work) belongs in a project, so move it there yourself, without asking him. The old line is marked done \"moved to @x N12\", the new card gets the job's line, and its agent joins the project. (An agent that creates a project takes its running loose jobs along by itself.)",
+    promptSnippet: "Move a job to a project's card",
+    parameters: Type.Object({ job: Type.String({ description: "J<n>" }), project: Type.String({ description: "@name of the project to move it to" }) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.moveJob", p); return out(`${r.job} moved to @${r.project} ${r.item} (from ${r.from}).`, { action: `moved ${r.job} → @${r.project} ${r.item}` }); },
   });
 
   pi.registerTool({
