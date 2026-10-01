@@ -7,6 +7,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { request } from "../lib/client.mjs";
 
+// A model as list_models shows it ("provider/id", or a bare id) -> the registry's model, or null.
+function findModel(ctx: any, s: string) {
+  const reg = ctx?.modelRegistry, all: any[] = reg?.getAvailable?.() || [], i = s.indexOf("/");
+  return all.find((m) => `${m.provider}/${m.id}` === s) || (i > 0 ? reg?.find?.(s.slice(0, i), s.slice(i + 1)) : null) || all.find((m) => m.id === s) || null;
+}
+
 export default function thoughts(pi: ExtensionAPI) {
   const ROOM = process.env.HYPRPI_THOUGHTS_ROOM;
   if (!ROOM) return;
@@ -181,10 +187,14 @@ export default function thoughts(pi: ExtensionAPI) {
       project: Type.Optional(Type.String({ description: "@name: the new agent joins it" })),
       cwd: Type.Optional(Type.String({ description: "working folder (default ~/Work)" })),
       images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
+      model: Type.Optional(Type.String({ description: "start it on this model: provider/id as list_models shows it (default: the usual one). Same standing permission as set_model" })),
+      thinking: Type.Optional(Type.String({ description: "its thinking level: off, minimal, low, medium, high, xhigh, max" })),
     }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => {
-      const r: any = await call("thoughts.open", p);
-      return out(`Opened ${r.agent} on workspace ${r.workspace}.`, { action: `opened a new agent, ${r.agent}${r.project ? ` (@${r.project})` : ""}: ${String(p.task).replace(/\s+/g, " ").slice(0, 120)}` });
+    execute: async (_id: string, p: any, _s: any, _u: any, ctx: any) => {
+      let model = "";
+      if (p.model) { const m = findModel(ctx, String(p.model).trim()); if (!m) throw new Error(`no model "${p.model}" here (list_models shows the ids)`); model = `${m.provider}/${m.id}`; }
+      const r: any = await call("thoughts.open", { ...p, model });
+      return out(`Opened ${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""}.`, { action: `opened a new agent, ${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""}: ${String(p.task).replace(/\s+/g, " ").slice(0, 120)}` });
     },
   });
 }
