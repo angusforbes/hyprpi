@@ -62,7 +62,7 @@ o.bind("SUPER + D", "hyprpi: send the focused guest home", HYPRPI_ROOT .. "/mock
 o.bind("SUPER + ALT + D", "hyprpi: send all unpinned guests home", HYPRPI_ROOT .. "/mockups/guest dismiss --all")
 o.bind("SUPER + ALT + S", "hyprpi: pin / unpin the focused guest", HYPRPI_ROOT .. "/mockups/guest pin")
 o.window("hyprpi.summon", { float = true, center = true, size = "560 460" })
-o.window({ tag = "guestpin" }, { border_color = "rgb(ff8800) rgb(ff8800)" })
+o.window({ tag = "guestpin" }, { border_color = "rgb(ff8800) rgb(ff8800)", border_size = 3 }) -- thicker: the normal border is 1 px
 
 -- Agent windows (class hyprpi.agent) are tagged as terminals, so Omarchy's SUPER+C/V send
 -- Ctrl+Insert/Shift+Insert instead of Ctrl+C (which Pi treats as clear/interrupt).
