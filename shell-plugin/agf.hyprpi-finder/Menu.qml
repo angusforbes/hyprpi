@@ -5,6 +5,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "MenuModel.js" as MenuModel
+import "FinderRank.js" as FinderRank // hyprpi: one world letter ranks that world first (J17)
 
 // hyprpi's agent finder (SUPER+SHIFT+SPACE; Angus, @hyprpi D8): a copy of Omarchy's menu plugin
 // (/usr/share/omarchy/shell/plugins/menu/Menu.qml, select mode) so it looks exactly like the menu,
@@ -538,6 +539,7 @@ Item {
     }
 
     var query = root.filterText.trim().toLowerCase()
+    var parsed = [] // hyprpi: parse every option first, then FinderRank orders them (J17)
     for (var i = 0; i < root.dmenuOptions.length; i++) {
       // An option is "<label>", "<glyph>\t<label>", or
       // "<glyph>\t<label>\t<subtext>". The glyph never comes back with the
@@ -548,14 +550,19 @@ Item {
       if (opt && typeof opt === "object") {
         var icon = String(opt.icon || ""), label = String(opt.label || ""), detail = String(opt.detail || "")
         rich = String(opt.rich || ""); value = String(opt.value || "")
+        var worlds = String(opt.worlds || ""), ws = Number(opt.ws || 0), name = String(opt.name || "") // hyprpi: FinderRank's keys
       } else {
+      var worlds = "", ws = 0, name = "" // hyprpi
       var parts = String(opt || "").split("\t")
       var icon = parts.length > 1 ? parts.shift() : ""
       var label = parts.shift() || ""
       var detail = parts.join("\t")
       }
-      if (query && label.toLowerCase().indexOf(query) < 0
-          && detail.toLowerCase().indexOf(query) < 0) continue
+      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, name: name }) // hyprpi
+    }
+    var order = FinderRank.rank(parsed, query) // hyprpi: the usual substring filter; one world letter → that world first
+    for (var o = 0; o < order.length; o++) {
+      var row = parsed[order[o]], i = row.i, icon = row.icon, label = row.label, detail = row.detail, rich = row.rich, value = row.value // hyprpi
       displayModel.append({
         itemId: "dmenu." + i,
         kind: "dmenu",
@@ -570,7 +577,7 @@ Item {
         childCount: 0,
         action: "",
         provider: "",
-        score: i,
+        score: o, // hyprpi: the ranked position (was i)
         section: ""
       })
     }

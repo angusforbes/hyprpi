@@ -97,7 +97,9 @@ async function rows() {
     const mk = markOf(a), recent = turns[a.id] || a.since || 0;
     const wsRoom = a.parked ? "" : Number.isInteger(a.workspace) && a.workspace > 0 ? (a.workspace_label || "")[0] || a.room : a.room;
     const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (recent ? font("dim", " · " + since(recent)) : "");
-    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (recent ? " · " + since(recent) : ""), rich, sub, parked: !!a.parked, world: a.room || "" });
+    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (recent ? " · " + since(recent) : ""), rich, sub, parked: !!a.parked, world: a.room || "",
+      // J17: where it is, for "D" (one world letter) in the plugin: its workspace's world; parked: none.
+      worlds: a.parked ? "" : String(loc || "")[0] || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? a.workspace : 0 });
   }
   const names = Object.fromEntries((l.agents || []).map((a) => [a.id, a.display]));
   const byId = Object.fromEntries((l.agents || []).map((a) => [a.id, a]));
@@ -109,11 +111,12 @@ async function rows() {
     const m = /^hyprpi-board ([A-Z])$/.exec(c.title || "");
     if (m && c.workspace?.id > 0 && !boardWs[m[1]]) boardWs[m[1]] = c.workspace.id;
   }
-  const projLoc = (p, room) => {
+  const projWs = (p, room) => { // J17: the workspace number behind projLoc (0: just the world)
     const w = byId[p.writer];
-    if (w && !w.parked && Number.isInteger(w.workspace) && w.workspace > 0) return wsLabel(w.workspace, WORLD_SIZE);
-    return boardWs[room] ? wsLabel(boardWs[room], WORLD_SIZE) : room;
+    if (w && !w.parked && Number.isInteger(w.workspace) && w.workspace > 0) return w.workspace;
+    return boardWs[room] || 0;
   };
+  const projLoc = (p, room) => { const ws = projWs(p, room); return ws ? wsLabel(ws, WORLD_SIZE) : room; };
   for (const room of WORLD_LETTERS) {
     let b; try { b = await request("board.get", { room }); } catch { continue; }
     if (b?.room !== room) continue;
@@ -123,7 +126,9 @@ async function rows() {
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
       const pl = projLoc(p, room), pt = p.updated || p.created;
       const rich = esc(p.icon || "📋") + " @" + esc(clean(p.name)) + font("dim", " · ") + font(worldColor(/^[A-Z]\d/.test(pl) ? pl[0] : room), pl) + (pt ? font("dim", " · " + since(pt)) : "");
-      out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + ((p.updated || p.created) ? " · " + since(p.updated || p.created) : ""), sub: sub.slice(0, 160) });
+      out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + ((p.updated || p.created) ? " · " + since(p.updated || p.created) : ""), sub: sub.slice(0, 160),
+        // J17: a project is in its board's world and in the world of the workspace it shows (its writer's).
+        worlds: [...new Set([room, /^[A-Z]\d/.test(pl) ? pl[0] : room])].join(""), ws: projWs(p, room) });
     }
   }
   // Agents first, then projects. Within each, by category, then most recent first (Angus,
@@ -227,7 +232,7 @@ const main = async () => {
 // the plugin isn't there or not enabled (the caller falls back to the plain menu).
 function pluginSelect(rs, onPick) {
   const dir = fs.mkdtempSync(path.join(runtimeDir(), "finder-")), sel = path.join(dir, "pick"), done = path.join(dir, "done");
-  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key }));
+  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, name: r.sort || "" })); // worlds / ws / name: FinderRank.js (J17)
   const payload = JSON.stringify({ mode: "select", prompt: "Agents", options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
   const clean = () => fs.rmSync(dir, { recursive: true, force: true });
   return new Promise((resolve) => {
