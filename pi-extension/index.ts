@@ -213,7 +213,10 @@ export default function hyprpi(pi: ExtensionAPI) {
     connecting = true;
     try {
       conn = await connect({ onEvent, onClose: () => { conn = null; schedule(); } });
-      await hello();
+      const me: any = await hello();
+      // Footer from the hello reply: after a /reload the daemon doesn't re-send "self" (its pushSelf
+      // skips an unchanged identity), so the reloaded extension's footer stayed empty.
+      if (me) showSelf({ name: me.name || "", display: me.name || `pi\u00b7${String(AGENT_ID).slice(-4)}`, icon: me.icon || "", color: me.color || "", room: me.room || "" });
       // Re-state where this agent is (a turn may have started or ended while the daemon was down).
       if (myStatus !== "idle") conn.call("agent.update", { status: myStatus, resync: true }).catch(() => {});
     } catch {
