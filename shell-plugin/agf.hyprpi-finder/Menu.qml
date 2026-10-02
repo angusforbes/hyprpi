@@ -1384,7 +1384,7 @@ Item {
                   color: row.hasCursor ? root.selectedText : root.foreground
                   opacity: 0.5
                   font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.body // Angus: a bit bigger than caption; the row height (baseRowHeight) doesn't depend on it
                   elide: Text.ElideRight
                 }
               }
