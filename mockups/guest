@@ -7,7 +7,9 @@
 import { execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
 const [cmd, ...rest] = process.argv.slice(2);
-const toast = (t) => execFile("notify-send", ["-a", "hyprpi", "-t", "2500", t], () => {});
+// App name "hyprpi keys", not "hyprpi": a click on a toast focuses the window whose class matches the app
+// name, and "hyprpi" matched the first hyprpi.agent window (Angus landed on Harbor in world B).
+const toast = (t) => execFile("notify-send", ["-a", "hyprpi keys", "-t", "2500", t], () => {});
 try {
   if (cmd === "dismiss") {
     const r = await request("guest.dismiss", { all: rest.includes("--all") });
