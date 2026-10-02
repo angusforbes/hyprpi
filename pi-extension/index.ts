@@ -549,16 +549,13 @@ export default function hyprpi(pi: ExtensionAPI) {
         panels: [...new Map(targets.filter((t) => t.kind === "panel").map((t) => [t.label, t.address])).values()],
       };
       if (opts.toMyWorkspace) { const me = (await call("list")).agents?.find((a: any) => a.id === AGENT_ID); if (me?.workspace > 0) p.workspace = me.workspace; }
-      // Clear first (Angus 2026-10-02): like SUPER+ALT+D (J22), every unpinned window on the workspace
-      // goes except the one he has focused; then the summon (no auto, so the focused one stays).
-      let cleared: string[] = [];
-      // Nothing new arriving (every target is already there): no clear (Knock's fix for the
-      // dismissed-then-summoned-back wrinkle; the mixed case still has it until guest.dismiss gets a keep-list).
-      const dest = p.workspace || (await call("room.current", {})).workspace;
-      const wsOf = (t: Target) => t.kind === "project" ? (t.members || []).map((a) => a.workspace) : [t.ws];
-      const allHere = targets.every((t) => wsOf(t).every((w) => w === dest));
-      if (opts.clear !== false && !allHere) { const d = await call("guest.dismiss", { all: true, ...(p.workspace ? { workspace: p.workspace } : {}) }, { timeoutMs: 20000 }); cleared = d.dismissed || []; }
+      // Clear like SUPER+S (Angus 2026-10-02: "summoning via SUPER+S and hp-summon both dismiss everything
+      // that is not explicitly pinned … the goal of these commands is to give me a way to tell you how to
+      // organize my desktop"): guest.summon's auto-clear keeps only pinned windows and what's summoned,
+      // not the focused one. clear: false summons without clearing.
+      if (opts.clear !== false) p.auto = true;
       const r = await call("guest.summon", p, { timeoutMs: 20000 });
+      const cleared: string[] = r.dismissed || [];
       if (cleared.length) lines.push(`cleared ${cleared.join(", ")}`);
       if (r.summoned?.length) lines.unshift(`summoned ${r.summoned.join(", ")}`);
       if (r.here?.length) lines.push(`already there: ${r.here.join(", ")}`);
@@ -586,7 +583,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   const WIN_HELP: Record<string, string> = {
     pin: "Pin agents, @projects or panels (TUIs) so dismiss / summon's clear leave them (light blue border)",
     unpin: "Unpin agents, @projects or panels (TUIs)",
-    summon: "Bring agents, @projects (live members) or panels (TUIs) of this world to the workspace you're on; first clears it of everything unpinned except the focused window",
+    summon: "Bring agents, @projects (live members) or panels (TUIs) of this world to the workspace you're on; first clears it of everything not explicitly pinned (like SUPER+S)",
     dismiss: "Send agents / @project members home (or to the nearest workspace with room); a panel (TUI) is closed. Pinned ones stay",
     focus: "Jump to an agent's or a panel's (TUI's) window",
   };
@@ -604,13 +601,13 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.registerTool({
     name: "hyprpi_window",
     label: "hyprpi window",
-    description: "Pin, unpin, summon, dismiss or focus hyprpi windows by name, like Angus's /hp-pin /hp-unpin /hp-summon /hp-dismiss /hp-focus and SUPER+ALT+S / SUPER+S / SUPER+D. targets: agent names or ids, @projects (their live members in this world) or panels (TUIs): agents, stream, search, projects, thoughts (this world; \"board:C\" for world C). summon brings them to the workspace Angus is on (to_my_workspace: to yours instead), first clearing it of every unpinned window except the focused one (clear: false skips that); it works within one world. dismiss sends agents home or to the nearest workspace with room, and CLOSES a panel; pinned windows are refused. focus moves Angus's focus (and him) to that window: only when he asked for it.",
+    description: "Pin, unpin, summon, dismiss or focus hyprpi windows by name, like Angus's /hp-pin /hp-unpin /hp-summon /hp-dismiss /hp-focus and SUPER+ALT+S / SUPER+S / SUPER+D. targets: agent names or ids, @projects (their live members in this world) or panels (TUIs): agents, stream, search, projects, thoughts (this world; \"board:C\" for world C). summon brings them to the workspace Angus is on (to_my_workspace: to yours instead), first clearing it of every window that is not explicitly pinned, like SUPER+S (clear: false skips that); it works within one world. dismiss sends agents home or to the nearest workspace with room, and CLOSES a panel; pinned windows are refused. focus moves Angus's focus (and him) to that window: only when he asked for it.",
     promptSnippet: "Pin / unpin / summon / dismiss / focus hyprpi agent and panel windows by name",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("pin"), Type.Literal("unpin"), Type.Literal("summon"), Type.Literal("dismiss"), Type.Literal("focus")]),
       targets: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
       to_my_workspace: Type.Optional(Type.Boolean({ description: "summon: to this agent's workspace instead of Angus's current one" })),
-      clear: Type.Optional(Type.Boolean({ description: "summon: clear the workspace first (default true; pinned and the focused window stay)" })),
+      clear: Type.Optional(Type.Boolean({ description: "summon: clear the workspace first (default true; only pinned windows stay)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r = await windowAction(p.action, p.targets.flatMap(splitNames), { toMyWorkspace: !!p.to_my_workspace, clear: p.clear });
