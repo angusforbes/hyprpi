@@ -15,6 +15,7 @@
 import { spawn } from "node:child_process";
 import * as hypr from "./../lib/hypr.mjs";
 import { request } from "./../lib/client.mjs";
+import { strictClients, withPanelLock } from "./../lib/panel-find.mjs";
 
 const KINDS = {
   agents: { title: "hyprpi-router", launcher: "agents-tui", topLeft: true },
@@ -55,7 +56,11 @@ const main = async () => {
   const title = new RegExp(`^${k.title} ${room}$`);
   const aw = await hypr.activeWorkspace().catch(() => null);
   const ws = aw && Number.isInteger(aw.id) && aw.id > 0 ? aw.id : null;
-  const cs = await clients();
+  // J34: look and open under one lock per panel, and never take "couldn't read the windows" for
+  // "none open" (that opened duplicates).
+  return withPanelLock(`${kind}-${room}`, async () => {
+  let cs;
+  try { cs = await strictClients(); } catch (e) { toast(`hyprpi: ${name}: ${e.message}`); console.error("panel-here: " + e.message); process.exit(1); }
   // Several copies can exist: one here first, then any on a normal workspace, then a parked one.
   const rank = (c) => c.workspace?.id === ws ? 0 : c.workspace?.id > 0 ? 1 : 2;
   const found = cs.filter((c) => title.test(c.title || "")).sort((x, y) => rank(x) - rank(y))[0];
@@ -96,5 +101,7 @@ const main = async () => {
   }
   console.error(`panel-here: the ${name} did not appear`);
   process.exit(1);
+  });
 };
+const toast = (t) => import("node:child_process").then(({ execFile }) => execFile("notify-send", ["-a", "hyprpi", t], () => {}));
 main();

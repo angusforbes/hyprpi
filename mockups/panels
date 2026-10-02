@@ -25,6 +25,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import * as hypr from "./../lib/hypr.mjs";
 import { request } from "./../lib/client.mjs";
+import { strictClients, withPanelLock } from "./../lib/panel-find.mjs";
 
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
@@ -61,9 +62,15 @@ async function targetWorkspace() {
   return w && Number.isInteger(w.id) && w.id > 0 ? w.id : null;
 }
 
-// Bring one panel here: move its window if it exists anywhere, else open it.
+// Bring one panel here: move its window if it exists anywhere, else open it. J34: under one lock per
+// panel, and a failed window lookup opens nothing (it used to read as "none open": duplicates).
+const KIND_OF = { "1": "agents", "2": "room", "4": "board", "3": "search" };
 async function bring(p, ws, room) {
-  const before = await clients();
+  return withPanelLock(`${KIND_OF[p.n]}-${room}`, () => bringLocked(p, ws, room));
+}
+async function bringLocked(p, ws, room) {
+  let before;
+  try { before = await strictClients(); } catch (e) { console.error("panels: " + e.message); return null; }
   // Several copies can exist: prefer one already here, then any on a normal workspace,
   // then a parked one (special: workspace).
   const rank = (c) => c.workspace?.id === ws ? 0 : c.workspace?.id > 0 ? 1 : 2;
