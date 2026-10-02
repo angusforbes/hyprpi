@@ -12,6 +12,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { execFile } from "node:child_process";
 import { connect } from "../lib/client.mjs";
 import { ROOT } from "../lib/paths.mjs";
+import * as hypr from "../lib/hypr.mjs";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
@@ -462,6 +463,151 @@ export default function hyprpi(pi: ExtensionAPI) {
         const r = await call("tinker", { text: t, via: "agent" });
         ctx.ui.notify("🔧 " + (r.set ? `workshop is world ${r.set.workshop} now${r.set.previous ? " (was " + r.set.previous + ")" : ""} · ` : "") + (r.nothing ? "nothing to fix given" : r.queued ? `queued for the workshop (room ${r.room})${r.spawning ? ", opening an agent" : ""}` : `dropped off in the workshop (room ${r.room})`), "info");
       } catch (e: any) { ctx.ui.notify(`/tinker: ${e?.message || e}`, "error"); }
+    },
+  });
+
+  // ---- Windows by name (Angus 2026-10-02): /hp-pin /hp-unpin /hp-summon /hp-dismiss /hp-focus, and the hyprpi_window
+  // tool doing the same for agents. Targets: agent names / ids, @projects (their live members) and
+  // panels (TUIs): agents|router, stream|room, search, projects|board, thoughts; this world by default,
+  // "board:C" / "C:board" / "board-C" for another. Same daemon ops as SUPER+S / SUPER+D / SUPER+ALT+S,
+  // always by address (no address = Angus's focused window) and with an explicit pin (no toggle).
+  const PANEL_KIND: Record<string, string> = { agents: "router", router: "router", stream: "room", room: "room", search: "search", board: "board", projects: "board", thoughts: "thoughts" };
+  const PANEL_LABEL: Record<string, string> = { router: "agents", room: "stream", search: "search", board: "projects", thoughts: "thoughts" };
+  const WORDS = Object.keys(PANEL_KIND).join("|");
+  const PANEL_RE = new RegExp(`^(?:(${WORDS})(?:[:\\-]?([a-z]|w\\d+))?|([a-z]|w\\d+):(${WORDS}))$`, "i");
+  type Target = { kind: "agent" | "panel" | "project"; label: string; address?: string; id?: string; name?: string; members?: any[] };
+  async function resolveTargets(names: string[]): Promise<{ targets: Target[]; errors: string[]; world: string }> {
+    const l = await call("list");
+    const all: any[] = l.agents || [];
+    const world = all.find((a) => a.id === AGENT_ID)?.room || "";
+    const cl: any[] = await hypr.clients().catch(() => []);
+    let projects: any[] | null = null;
+    const getProjects = async () => {
+      if (projects) return projects;
+      projects = [];
+      for (const p of [{ room: world }, {}]) { try { projects.push(...((await call("board.get", p)).projects || [])); } catch { /* no board */ } }
+      return projects;
+    };
+    const targets: Target[] = [], errors: string[] = [];
+    for (const raw of names) {
+      const n = raw.trim().replace(/[,;]+$/, "");
+      if (!n) continue;
+      const bare = n.replace(/^@/, ""), low = bare.toLowerCase();
+      const agent = n.startsWith("@") && n.length > 1 && !all.some((a) => (a.name || "").toLowerCase() === low) ? null
+        : all.find((a) => a.id === bare || (a.name || "").toLowerCase() === low || (a.display || "").toLowerCase() === low);
+      if (agent) { targets.push({ kind: "agent", label: agent.display || agent.name || agent.id, id: agent.id, address: agent.address || undefined }); continue; }
+      const pm = n.startsWith("@") ? null : bare.match(PANEL_RE);
+      if (pm) {
+        const kind = PANEL_KIND[(pm[1] || pm[4]).toLowerCase()], w = (pm[2] || pm[3] || world).toUpperCase();
+        const wins = cl.filter((c) => c.title === `hyprpi-${kind} ${w}`).sort((a, b) => Number(b.workspace?.id > 0) - Number(a.workspace?.id > 0));
+        if (!wins.length) { errors.push(`${PANEL_LABEL[kind]} ${w}: that panel isn't open`); continue; }
+        for (const c of wins) targets.push({ kind: "panel", label: `${PANEL_LABEL[kind]} ${w}`, address: c.address });
+        continue;
+      }
+      const p = (await getProjects()).find((x) => String(x.name).toLowerCase() === low || x.id === bare);
+      if (p) {
+        const ids = new Set([...(p.members || []), p.writer].filter(Boolean));
+        const members = all.filter((a) => ids.has(a.id) && a.address && !a.parked && a.room === world);
+        targets.push({ kind: "project", label: "@" + p.name, name: p.name, members });
+        continue;
+      }
+      errors.push(`${n}: no agent, project or panel by that name`);
+    }
+    return { targets, errors, world };
+  }
+  // Agents (a project = its live members in this world) and panels as [label, address] pairs.
+  const windowsOf = (ts: Target[]) => {
+    const seen = new Set<string>(), out: [string, string][] = [], none: string[] = [];
+    for (const t of ts) {
+      const ws = t.kind === "project" ? (t.members || []).map((a) => [a.display || a.name || a.id, a.address] as [string, string]) : t.address ? [[t.label, t.address] as [string, string]] : [];
+      if (!ws.length) none.push(t.kind === "project" ? `${t.label} (no live member in this world)` : `${t.label} (no window)`);
+      for (const w of ws) if (!seen.has(w[1])) { seen.add(w[1]); out.push(w); }
+    }
+    return { wins: out, none };
+  };
+  async function windowAction(action: string, names: string[], opts: { toMyWorkspace?: boolean; clear?: boolean } = {}): Promise<{ ok: boolean; text: string; details?: any }> {
+    if (!names.length) return { ok: false, text: `${action}: name one or more agents, @projects or panels (agents, stream, search, projects, thoughts; board:C for another world)` };
+    const { targets, errors } = await resolveTargets(names);
+    const lines: string[] = [...errors];
+    if (!targets.length) return { ok: false, text: lines.join("\n") };
+    if (action === "focus") {
+      const t = targets.find((x) => x.kind !== "project");
+      if (!t) return { ok: false, text: [...lines, "focus: give an agent or a panel, not a project"].join("\n") };
+      if (t.kind === "agent") await call("agent.focus", { agent: t.id });
+      else await hypr.focusWindow(t.address);
+      if (targets.length > 1) lines.push("focus takes one window; used the first");
+      return { ok: true, text: [`focused ${t.label}`, ...lines].join("\n") };
+    }
+    if (action === "summon") {
+      const p: any = {
+        agents: targets.filter((t) => t.kind === "agent").map((t) => t.id),
+        projects: targets.filter((t) => t.kind === "project").map((t) => t.name),
+        // one window per panel name (a duplicate stays where it is)
+        panels: [...new Map(targets.filter((t) => t.kind === "panel").map((t) => [t.label, t.address])).values()],
+      };
+      if (opts.toMyWorkspace) { const me = (await call("list")).agents?.find((a: any) => a.id === AGENT_ID); if (me?.workspace > 0) p.workspace = me.workspace; }
+      // Clear first (Angus 2026-10-02): like SUPER+ALT+D (J22), every unpinned window on the workspace
+      // goes except the one he has focused; then the summon (no auto, so the focused one stays).
+      let cleared: string[] = [];
+      if (opts.clear !== false) { const d = await call("guest.dismiss", { all: true, ...(p.workspace ? { workspace: p.workspace } : {}) }, { timeoutMs: 20000 }); cleared = d.dismissed || []; }
+      const r = await call("guest.summon", p, { timeoutMs: 20000 });
+      if (cleared.length) lines.push(`cleared ${cleared.join(", ")}`);
+      if (r.summoned?.length) lines.unshift(`summoned ${r.summoned.join(", ")}`);
+      if (r.here?.length) lines.push(`already there: ${r.here.join(", ")}`);
+      return { ok: true, text: lines.join("\n") || "nothing to summon", details: r };
+    }
+    const { wins, none } = windowsOf(targets);
+    lines.push(...none.map((x) => x + ": skipped"));
+    const done: string[] = [], pinned: string[] = [];
+    for (const [label, address] of wins) {
+      try {
+        if (action === "pin" || action === "unpin") { await call("guest.pin", { address, pinned: action === "pin" }); done.push(label); continue; }
+        const r = await call("guest.dismiss", { address });
+        if (r.pinned) pinned.push(label);
+        else if (r.panel) done.push(`${label} (closed)`);
+        else if (r.dismissed?.length) done.push(label);
+        else lines.push(`${label}: nowhere to send it`);
+      } catch (e: any) { lines.push(`${label}: ${e?.message || e}`); }
+    }
+    const verb = action === "pin" ? "pinned" : action === "unpin" ? "unpinned" : "dismissed";
+    if (done.length) lines.unshift(`${verb} ${done.join(", ")}`);
+    if (pinned.length) lines.push(`pinned, so not dismissed: ${pinned.join(", ")} (/hp-unpin first)`);
+    return { ok: done.length > 0, text: lines.join("\n") || `nothing to ${action}` };
+  }
+  const splitNames = (s: string) => String(s ?? "").split(/[\s,]+/).filter(Boolean);
+  const WIN_HELP: Record<string, string> = {
+    pin: "Pin agents, @projects or panels (TUIs) so dismiss / summon's clear leave them (light blue border)",
+    unpin: "Unpin agents, @projects or panels (TUIs)",
+    summon: "Bring agents, @projects (live members) or panels (TUIs) of this world to the workspace you're on; first clears it of everything unpinned except the focused window",
+    dismiss: "Send agents / @project members home (or to the nearest workspace with room); a panel (TUI) is closed. Pinned ones stay",
+    focus: "Jump to an agent's or a panel's (TUI's) window",
+  };
+  for (const action of Object.keys(WIN_HELP)) {
+    pi.registerCommand("hp-" + action, {
+      description: `hyprpi: ${WIN_HELP[action]}. /hp-${action} ${action === "focus" ? "NAME" : "NAME…"}  (panels: agents, stream, search, projects, thoughts; board:C = another world)`,
+      handler: async (args: any, ctx: any) => {
+        try {
+          const r = await windowAction(action, splitNames(args));
+          ctx.ui.notify(r.text, r.ok ? "info" : "warning");
+        } catch (e: any) { ctx.ui.notify(`/hp-${action}: ${e?.message || e}`, "error"); }
+      },
+    });
+  }
+  pi.registerTool({
+    name: "hyprpi_window",
+    label: "hyprpi window",
+    description: "Pin, unpin, summon, dismiss or focus hyprpi windows by name, like Angus's /hp-pin /hp-unpin /hp-summon /hp-dismiss /hp-focus and SUPER+ALT+S / SUPER+S / SUPER+D. targets: agent names or ids, @projects (their live members in this world) or panels (TUIs): agents, stream, search, projects, thoughts (this world; \"board:C\" for world C). summon brings them to the workspace Angus is on (to_my_workspace: to yours instead), first clearing it of every unpinned window except the focused one (clear: false skips that); it works within one world. dismiss sends agents home or to the nearest workspace with room, and CLOSES a panel; pinned windows are refused. focus moves Angus's focus (and him) to that window: only when he asked for it.",
+    promptSnippet: "Pin / unpin / summon / dismiss / focus hyprpi agent and panel windows by name",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("pin"), Type.Literal("unpin"), Type.Literal("summon"), Type.Literal("dismiss"), Type.Literal("focus")]),
+      targets: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+      to_my_workspace: Type.Optional(Type.Boolean({ description: "summon: to this agent's workspace instead of Angus's current one" })),
+      clear: Type.Optional(Type.Boolean({ description: "summon: clear the workspace first (default true; pinned and the focused window stay)" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r = await windowAction(p.action, p.targets.flatMap(splitNames), { toMyWorkspace: !!p.to_my_workspace, clear: p.clear });
+      if (!r.ok) throw new Error(r.text);
+      return text(r.text, r.details);
     },
   });
 
