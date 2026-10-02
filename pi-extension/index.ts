@@ -475,7 +475,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   const PANEL_LABEL: Record<string, string> = { router: "agents", room: "stream", search: "search", board: "projects", thoughts: "thoughts" };
   const WORDS = Object.keys(PANEL_KIND).join("|");
   const PANEL_RE = new RegExp(`^(?:(${WORDS})(?:[:\\-]?([a-z]|w\\d+))?|([a-z]|w\\d+):(${WORDS}))$`, "i");
-  type Target = { kind: "agent" | "panel" | "project"; label: string; address?: string; id?: string; name?: string; members?: any[] };
+  type Target = { kind: "agent" | "panel" | "project"; label: string; address?: string; id?: string; name?: string; members?: any[]; ws?: number };
   async function resolveTargets(names: string[]): Promise<{ targets: Target[]; errors: string[]; world: string }> {
     const l = await call("list");
     const all: any[] = l.agents || [];
@@ -495,13 +495,13 @@ export default function hyprpi(pi: ExtensionAPI) {
       const bare = n.replace(/^@/, ""), low = bare.toLowerCase();
       const agent = n.startsWith("@") && n.length > 1 && !all.some((a) => (a.name || "").toLowerCase() === low) ? null
         : all.find((a) => a.id === bare || (a.name || "").toLowerCase() === low || (a.display || "").toLowerCase() === low);
-      if (agent) { targets.push({ kind: "agent", label: agent.display || agent.name || agent.id, id: agent.id, address: agent.address || undefined }); continue; }
+      if (agent) { targets.push({ kind: "agent", label: agent.display || agent.name || agent.id, id: agent.id, address: agent.address || undefined, ws: agent.workspace }); continue; }
       const pm = n.startsWith("@") ? null : bare.match(PANEL_RE);
       if (pm) {
         const kind = PANEL_KIND[(pm[1] || pm[4]).toLowerCase()], w = (pm[2] || pm[3] || world).toUpperCase();
         const wins = cl.filter((c) => c.title === `hyprpi-${kind} ${w}`).sort((a, b) => Number(b.workspace?.id > 0) - Number(a.workspace?.id > 0));
         if (!wins.length) { errors.push(`${PANEL_LABEL[kind]} ${w}: that panel isn't open`); continue; }
-        for (const c of wins) targets.push({ kind: "panel", label: `${PANEL_LABEL[kind]} ${w}`, address: c.address });
+        for (const c of wins) targets.push({ kind: "panel", label: `${PANEL_LABEL[kind]} ${w}`, address: c.address, ws: c.workspace?.id });
         continue;
       }
       const p = (await getProjects()).find((x) => String(x.name).toLowerCase() === low || x.id === bare);
@@ -549,7 +549,12 @@ export default function hyprpi(pi: ExtensionAPI) {
       // Clear first (Angus 2026-10-02): like SUPER+ALT+D (J22), every unpinned window on the workspace
       // goes except the one he has focused; then the summon (no auto, so the focused one stays).
       let cleared: string[] = [];
-      if (opts.clear !== false) { const d = await call("guest.dismiss", { all: true, ...(p.workspace ? { workspace: p.workspace } : {}) }, { timeoutMs: 20000 }); cleared = d.dismissed || []; }
+      // Nothing new arriving (every target is already there): no clear (Knock's fix for the
+      // dismissed-then-summoned-back wrinkle; the mixed case still has it until guest.dismiss gets a keep-list).
+      const dest = p.workspace || (await call("room.current", {})).workspace;
+      const wsOf = (t: Target) => t.kind === "project" ? (t.members || []).map((a) => a.workspace) : [t.ws];
+      const allHere = targets.every((t) => wsOf(t).every((w) => w === dest));
+      if (opts.clear !== false && !allHere) { const d = await call("guest.dismiss", { all: true, ...(p.workspace ? { workspace: p.workspace } : {}) }, { timeoutMs: 20000 }); cleared = d.dismissed || []; }
       const r = await call("guest.summon", p, { timeoutMs: 20000 });
       if (cleared.length) lines.push(`cleared ${cleared.join(", ")}`);
       if (r.summoned?.length) lines.unshift(`summoned ${r.summoned.join(", ")}`);
