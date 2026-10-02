@@ -362,3 +362,38 @@ Folds are per machine in `~/.local/state/hyprpi/board-folds.json`. The shimmer l
 - Messages cross with Blink's constantly; check `git log` and the working tree before assuming a talk is current.
 
 **Next (none claimed by me):** multi-project /fold; "since you left" was only ever tested with simulated agent changes; Ctrl+click to jump to an agent in board-tui is untested with a real agent.
+
+## 2026-10-01 21:49 CDT — 📊 Sankey (hp-muil9rkd5ua, room C): the Decisions view (@hyprpi N68), publishing plan, wranglers survey
+
+### What exists now
+- **Decisions view** in the projects panel (mockups/board-tui.mjs): **Ctrl+F** or `/decisions` toggles cards ⇄ Decisions. Live since the daemon restart at b98fbfe.
+  - Keys: ^↑↓ step; "2⏎" or Alt+2 picks option 2; ⏎ with an empty box takes ★; "L⏎" or Alt+L puts it off (to the end of the list, kept in memory per panel and across code restarts); other words + ⏎ answer in Angus's words (`typed: true`, never parsed as an option letter); Esc / ^F back.
+  - Files: `lib/decisions.mjs` (pure: `openDecisions`, `parseDecision`, `sameDecision`, `isCatchAll`; reusable for a later pop-up), `lib/tui/decisions-view.mjs` (the view), `lib/tui/board-view.mjs` (Needs you also lists unfiled ones).
+- **Answering** (daemon `board.item` action decide, humanOnly): the Decide item becomes a **Next** item with the same handle (`boards.decideItem`: sec next, was decide, resolution, decidedBy/At). The asking agent and the writer get one prompt each. The change line reads `decided D1: (question…) answer`. This applies to every answer path ("D1 b", Alt+N on cards too).
+- **autoDecide** (lib/daemon.mjs) turns agents' decisions outside the board into Decide items:
+  - Sources: any agent's "🔧 decide:" room post (tinker jobs via relayTinkerResult, which also dings) and `ding "…"` (helpers/bonk sends `hyprpi status blocked --quiet --decision "…"`).
+  - Placement, **never across worlds**: the agent's project in its world (the one it changed most recently) → that world's catch-all card (name workshop / inbox / inbox-* / misc / general) → **unfiled** on that world's board (`b.unfiled`, U1…; answered → `b.unfiledDone`, the asker told).
+  - Duplicates: `sameDecision` against any open item, or the agent's own hand-added Decide item from the last 2 min. Auto items carry `auto: true`. No new sounds.
+- `hyprpi status blocked --decision TEXT` (bin/hyprpi); `agent.update` takes `decision`. A decision block clears when it's answered (`otherBlock` false for decision blocks).
+
+### How to run / test
+- `/tmp/n68/test_n68.py` (run with `/tmp/pytevenv/bin/python`) is the 44-check suite: isolated daemon on /tmp/n68/{sock,state}, HOME=/tmp/n68/home with a logging stand-in bonk, XDG_CONFIG_HOME=/tmp/n68/cfg (pi=/tmp/n68/fakepi, which prints an emoji so project-icon doesn't break), scripted fake agents (/tmp/n68/fake.mjs), the real board-tui in a pty read with pyte, and the real bonk with stubbed players.
+- Refresh the tree first: `rm -rf /tmp/n68/tree; mkdir -p /tmp/n68/tree; tar cf - $(git ls-files) | tar xf - -C /tmp/n68/tree`; also `rm -f /tmp/n68/sock` and empty state/.
+- pi·wpzt's independent suite: /tmp/n68w/test.py (67 checks).
+
+### Decisions and why
+- Ctrl+F: the panel had no view cycle; the Stream already uses ^F for views. Thoughts-D OK'd it; Angus may override.
+- Digits and L need ⏎ (or Alt). As single keys they ate typed answers ("let's wait", "2 weeks is fine"; found by pi·wpzt).
+- A decision stays in the agent's world (Thoughts-D's correction of the brief). There's no implicit @workshop creation (Blink).
+- Answered → Next, not Done: the decision usually unblocks work, so it belongs in Next with the answer on it.
+
+### Known bugs / traps
+- `~/.local/bin/bonk` is a **copy** of agent-config/helpers/bonk, not a link. I updated it on 2026-10-01 (backup `bonk.bak-2026-10-01`). Future helper edits need copying again, or turn it into a symlink (Angus's PATH, so ask).
+- Not exercised: a real tinker job's "🔧 decide".
+- The "later" order lives in each panel (not the daemon), so two panels can differ.
+- Don't pkill with a pattern that matches your own command line (it killed my shell).
+
+### Next steps
+- Angus to try Ctrl+F, and maybe pick another key.
+- Later: a decisions pop-up (reuse `openDecisions`); the remote-control website (card H9, see ideas-worth-pursuing 2026-10-01).
+- Publishing (N38) waits on decide item D5. The plan is ~/Obsidian/Tinker/2026-09-30 Publishing hyprwrlds and hyprpi.md; the survey is ~/Obsidian/Tinker/2026-09-30 Agent wranglers compared.md.
