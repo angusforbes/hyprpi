@@ -349,8 +349,9 @@ function renderProjects({ keepScroll = false } = {}) {
     const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
     const items = (list, done) => list.length ? `<ul class="items">${list.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}</div>${done && it.verified ? `<div class="small clip">✓ ${inline(it.verified)}</div>` : ""}${it.resolution ? `<div class="small">→ decided: ${inline(it.resolution)}</div>` : ""}</li>`).join("")}</ul>` : "";
     const decide = p.decide.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}</div>${(it.options || []).length ? `<ol class="opts">${it.options.map((o) => `<li><b>${esc(o.key)})</b> ${inline(o.text)}${o.key === it.default ? ` <span class="small">(default)</span>` : ""}${o.key === it.recommend ? ` <span class="rec">★ recommended</span>` : ""}</li>`).join("")}</ol>` : ""}</li>`).join("");
-    html.push(`<div class="psum"><button class="back">‹ Projects</button>`
-      + `<h2>${esc(p.icon)} @${esc(p.name)} ${badge(p.status)}</h2>${p.title ? `<div class="ptitle">${esc(p.title)}</div>` : ""}`
+    html.push(`<div class="psum">` // no back button (J41 v2): the title, or Proj in the top bar, goes back to the list
+      + `<h2 class="ptoggle" title="back to the projects"><span class="pic">${esc(p.icon)}</span><span>@${esc(p.name)} ${badge(p.status)}</span></h2>`
+      + `${p.title ? `<div class="ptitle">${esc(p.title)}</div>` : ""}`
       + sec("Where", p.where ? `<div class="md">${md(p.where)}</div>` : "")
       + (p.decide.length ? `<details class="needs"${needsOpen ? " open" : ""}><summary>Needs you <span class="cnt">${p.decide.length}</span></summary><ul class="items">${decide}</ul></details>` : "")
       + sec("Next", items(p.next)) + sec("Done", items(p.done, true))
@@ -371,7 +372,7 @@ function setView(v) {
 }
 projectsEl.addEventListener("click", (e) => {
   const pr = e.target.closest(".proj"); if (pr) { openProject.set(world, pr.dataset.p); return renderProjects(); }
-  if (e.target.closest(".back")) { openProject.delete(world); return renderProjects(); }
+  if (e.target.closest(".ptoggle") && !e.target.closest("a")) { openProject.delete(world); return renderProjects(); } // the title: back to the list
   const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open");
 });
 projectsEl.addEventListener("toggle", (e) => {
