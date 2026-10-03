@@ -282,7 +282,7 @@ $("#worlds").addEventListener("click", (e) => { const b = e.target.closest(".chi
 //  3. The body's height follows the visual viewport (the part above the keyboard), so the box
 //     sits right above the keyboard and the bar stays at the top. If Safari pans anyway, the
 //     offset is applied at once (no transition).
-//  4. Drags outside the thread and the text box are swallowed (no rubber-banding the bar).
+//  4. Drags outside the scrollable panes and the text box are swallowed (no rubber-banding the bar).
 const vv = window.visualViewport;
 function fitViewport() {
   if (!vv) return;
@@ -297,7 +297,8 @@ input.addEventListener("touchend", (e) => {
   input.focus({ preventScroll: true });
 }, { passive: false });
 input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); if (!cached(world).scroll) thread.scrollTop = thread.scrollHeight; }); });
-document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #input")) e.preventDefault(); }, { passive: false });
+// Scrollable panes (the thread, the Proj tab: J42) and the text box keep their drags.
+document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #input")) e.preventDefault(); }, { passive: false });
 
 // iOS drops the connection when the app goes to the background: catch up on return.
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
