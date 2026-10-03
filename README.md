@@ -286,6 +286,13 @@ Angus's names (2026-09-28), kept clearly distinct:
   and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
   `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.
 
+## Remote control (the phone)
+
+`remote-control/`: a small web app to talk to a world's Thoughts from Angus's iPhone (or any
+browser on his tailnet), with world chips to switch. A `systemd --user` service on 127.0.0.1:8897,
+published tailnet-only with `tailscale serve` on :8443; messages go in with `thoughts.send
+{via: "phone"}` (📱 in the thread). Details: [remote-control/README.md](remote-control/README.md).
+
 ## The Stream (panel 2, SUPER+ALT+R)
 
 The room panel is now **the Stream** (Angus 2026-09-30, @hyprpi N40; `lib/stream.mjs`): one

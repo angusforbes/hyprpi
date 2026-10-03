@@ -1,0 +1,12 @@
+# systemd --user unit: hyprpi remote control (the phone web app). Install: see README.md.
+[Unit]
+Description=hyprpi remote control (web app over Tailscale)
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/env node %h/Work/hyprpi/remote-control/server.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#1a1b26">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="hyprpi">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="stylesheet" href="/style.css">
+<title>hyprpi · Thoughts</title>
+</head>
+<body>
+<header id="top">
+  <div id="title"><span id="dot" title="connection"></span><span id="name">💭 Thoughts</span><span id="busy" hidden>thinking…</span></div>
+  <nav id="worlds" aria-label="worlds"></nav>
+</header>
+<main id="thread" aria-live="polite"></main>
+<div id="note" hidden></div>
+<form id="composer" autocomplete="off">
+  <textarea id="input" rows="1" placeholder="Tell Thoughts…" enterkeyhint="send"></textarea>
+  <button type="button" id="stop" hidden title="stop Thoughts">■</button>
+  <button type="submit" id="send" title="send">➤</button>
+</form>
+<script src="/app.js"></script>
+</body>
+</html>

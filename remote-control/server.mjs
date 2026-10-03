@@ -1,0 +1,188 @@
+// hyprpi remote control: a small web app (phone first) to talk to a world's Thoughts agent from
+// Angus's iPhone over Tailscale (Angus, 2026-10-02; board card @hyprpi-remote-control).
+//
+// Plain Node, no dependencies. Listens on 127.0.0.1 only; `tailscale serve` publishes it to the
+// tailnet with HTTPS (see README.md). One daemon connection (lib/client.mjs) with ui.subscribe,
+// relayed to the page as Server-Sent Events.
+//
+// Who may use it: a request that came through `tailscale serve` carries Tailscale-User-Login; it
+// must be this machine's own Tailscale login (or one in HYPRPI_REMOTE_LOGINS, comma-separated).
+// A request without that header must come from 127.0.0.1 (a browser on this machine).
+//
+//   GET  /                     the page (index.html), manifest, icon
+//   GET  /api/state            worlds (colours, Thoughts busy), the desktop's active world
+//   GET  /api/thoughts?world=C the thread
+//   POST /api/send   {world, text}   to Thoughts, marked via "phone"
+//   POST /api/stop   {world}         interrupt Thoughts
+//   GET  /events               live: thoughts entries / busy, worlds
+//   GET  /file?path=/abs/path  read-only, only under ~/Obsidian and ~/Work (links in replies)
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { execFileSync } from "node:child_process";
+import { connect } from "../lib/client.mjs";
+import { socketPath, runtimeDir } from "../lib/paths.mjs";
+import { worldHex, theme } from "../lib/tui/term.mjs";
+
+const HERE = path.dirname(new URL(import.meta.url).pathname);
+const HOME = os.homedir();
+const PORT = Number(process.env.HYPRPI_REMOTE_PORT) || 8897;
+const FILE_ROOTS = [path.join(HOME, "Obsidian"), path.join(HOME, "Work")];
+const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+
+// ---- who may use it --------------------------------------------------------------------------
+function ownLogins() {
+  const extra = String(process.env.HYPRPI_REMOTE_LOGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  try {
+    const st = JSON.parse(execFileSync("tailscale", ["status", "--json"], { encoding: "utf8", timeout: 5000 }));
+    const me = st.User?.[String(st.Self?.UserID)]?.LoginName;
+    if (me) extra.push(me);
+  } catch (e) { log("tailscale status failed:", e.message); }
+  return new Set(extra);
+}
+const LOGINS = ownLogins();
+log("allowed tailscale logins:", [...LOGINS].join(", ") || "(none: local only)");
+
+function allowed(req) {
+  const login = req.headers["tailscale-user-login"];
+  if (login) return LOGINS.has(String(login));
+  const ip = req.socket.remoteAddress || "";
+  // tailscale serve always adds the login header for a tailnet user; without it, local only.
+  return (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1") && !req.headers["tailscale-headers-info"];
+}
+
+// ---- the daemon ------------------------------------------------------------------------------
+let api = null, listing = null;
+const clients = new Set(); // SSE responses
+
+function broadcast(event, data) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of clients) { try { res.write(msg); } catch { /* gone */ } }
+}
+
+const busy = new Map(); // room -> Thoughts is working (from thoughts.get and the thoughts events)
+function worlds() {
+  const ids = new Set((listing?.rooms || []).map((r) => r.id));
+  return [...ids].filter((id) => /^[A-Z]$/.test(id)).sort().map((id) => ({
+    id,
+    color: "#" + (worldHex(id) || "7aa2f7"),
+    agents: (listing?.agents || []).filter((a) => a.room === id).length,
+    thoughtsBusy: !!busy.get(id),
+  }));
+}
+function state() {
+  return {
+    worlds: worlds(),
+    active: listing?.active_room || "A",
+    online: !!api,
+    theme: { bg: "#" + (theme.background || "1a1b26"), fg: "#" + (theme.foreground || "c0caf5"), accent: "#" + (theme.accent || theme.color4 || "7aa2f7") },
+  };
+}
+
+// The daemon's socket is per Hyprland instance. Run as a systemd service, our environment may be
+// from an older login: then take the newest socket in the runtime dir.
+function daemonSocket() {
+  const p = socketPath();
+  if (fs.existsSync(p)) return p;
+  try {
+    const dir = runtimeDir();
+    const socks = fs.readdirSync(dir).filter((f) => f.endsWith(".sock")).map((f) => path.join(dir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    if (socks[0]) return socks[0];
+  } catch { /* none */ }
+  return p;
+}
+
+async function start() {
+  try {
+    api = await connect({
+      path: daemonSocket(),
+      timeout: 3000,
+      onEvent: (ev, data) => {
+        if (ev === "thoughts") {
+          broadcast("thoughts", data);
+          if (data?.busy !== undefined && !!data.busy !== !!busy.get(data.room)) { busy.set(data.room, !!data.busy); broadcast("state", state()); }
+        }
+        else if (ev === "agents") { listing = { ...listing, ...data }; broadcast("state", state()); }
+      },
+      onClose: () => { api = null; log("daemon connection closed; retrying"); broadcast("state", state()); setTimeout(start, 2000); },
+    });
+    listing = await api.call("ui.subscribe", { windows: false });
+    for (const t of listing.thoughts || []) if (t.running) api.call("thoughts.get", { room: t.room, limit: 1 }).then((g) => { busy.set(t.room, !!g.busy); broadcast("state", state()); }).catch(() => {});
+    log("connected to the hyprpi daemon; worlds", (listing.rooms || []).map((r) => r.id).join(""));
+    broadcast("state", state());
+  } catch (e) { api = null; log("daemon not reachable:", e.message); setTimeout(start, 2000); }
+}
+start();
+
+// ---- http ------------------------------------------------------------------------------------
+const room = (w) => /^[A-Z]$/.test(String(w || "")) ? String(w) : null;
+const json = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
+async function body(req, max = 1e6) {
+  let s = ""; for await (const c of req) { s += c; if (s.length > max) throw new Error("too large"); }
+  return s ? JSON.parse(s) : {};
+}
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8" };
+const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png" };
+
+function serveFile(res, file, type) {
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) return json(res, 404, { error: "not found" });
+    res.writeHead(200, { "content-type": type || TYPES[path.extname(file).toLowerCase()] || "text/plain; charset=utf-8", "content-length": st.size, "cache-control": "no-cache" });
+    fs.createReadStream(file).pipe(res);
+  });
+}
+
+// /file: only real files under the allowed roots (symlinks resolved first).
+function fileAllowed(p) {
+  if (p?.startsWith("~/")) p = path.join(HOME, p.slice(2));
+  if (!p || !path.isAbsolute(p)) return null;
+  let real; try { real = fs.realpathSync(p); } catch { return null; }
+  return FILE_ROOTS.some((r) => real === r || real.startsWith(r + path.sep)) ? real : null;
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, "http://x");
+  if (!allowed(req)) { log("refused", req.headers["tailscale-user-login"] || req.socket.remoteAddress, url.pathname); return json(res, 403, { error: "not allowed" }); }
+  // A POST must come from this page (no cross-site form posts).
+  if (req.method === "POST") {
+    const origin = req.headers.origin;
+    if (origin && new URL(origin).host !== req.headers.host) return json(res, 403, { error: "bad origin" });
+  }
+  try {
+    if (req.method === "GET" && STATIC[url.pathname]) return serveFile(res, path.join(HERE, STATIC[url.pathname]));
+    if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, state());
+    if (req.method === "GET" && url.pathname === "/api/thoughts") {
+      const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      return json(res, 200, await api.call("thoughts.get", { room: r, limit: 300 }));
+    }
+    if (req.method === "POST" && url.pathname === "/api/send") {
+      const b = await body(req), r = room(b.world), text = String(b.text || "").trim();
+      if (!r || !text) return json(res, 400, { error: "world and text needed" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      log("send", r, JSON.stringify(text.slice(0, 80)));
+      return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone" }));
+    }
+    if (req.method === "POST" && url.pathname === "/api/stop") {
+      const b = await body(req), r = room(b.world); if (!r) return json(res, 400, { error: "world?" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      return json(res, 200, await api.call("thoughts.interrupt", { room: r }));
+    }
+    if (req.method === "GET" && url.pathname === "/events") {
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+      res.write(`retry: 2000\nevent: state\ndata: ${JSON.stringify(state())}\n\n`);
+      clients.add(res);
+      const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* gone */ } }, 20000);
+      req.on("close", () => { clearInterval(ping); clients.delete(res); });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/file") {
+      const real = fileAllowed(url.searchParams.get("path"));
+      if (!real) return json(res, 404, { error: "not found or not allowed" });
+      return serveFile(res, real);
+    }
+    json(res, 404, { error: "not found" });
+  } catch (e) { json(res, 500, { error: e.message }); }
+});
+server.listen(PORT, "127.0.0.1", () => log(`hyprpi remote control on http://127.0.0.1:${PORT}/`));
