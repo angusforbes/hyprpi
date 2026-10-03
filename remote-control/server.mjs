@@ -15,7 +15,8 @@
 //   POST /api/send   {world, text}   to Thoughts, marked via "phone"
 //   POST /api/stop   {world, ask?}   interrupt Thoughts (ask: it then says what got cut off)
 //   GET  /lib/thoughts-lines.mjs     the thread's display rule, shared with the desktop
-//   GET  /events               live: thoughts entries / busy, worlds
+//   GET  /api/board?world=C    the Proj tab: each project's summary (open items only)
+//   GET  /events               live: thoughts entries / busy, worlds, board (a card changed)
 //   GET  /file?path=/abs/path  read-only, only under ~/Obsidian and ~/Work (links in replies)
 import http from "node:http";
 import fs from "node:fs";
@@ -149,6 +150,7 @@ async function start() {
       path: daemonSocket(),
       timeout: 3000,
       onEvent: (ev, data) => {
+        if (ev === "board") broadcast("board", { room: data?.room }); // a card changed: the page re-fetches that world
         if (ev === "thoughts") {
           broadcast("thoughts", data);
           if (data?.busy !== undefined && !!data.busy !== !!busy.get(data.room)) { busy.set(data.room, !!data.busy); broadcast("state", state()); }
@@ -164,6 +166,25 @@ async function start() {
   } catch (e) { api = null; log("daemon not reachable:", e.message); setTimeout(start, 2000); }
 }
 start();
+
+// ---- the Proj tab (J39): each project's summary only ----------------------------------------
+// Angus: "just the summary not the full thing, not the entire archive": status, Where, Next items,
+// Done items (current, not archived), the next first step, and the open Decide items ("Needs you").
+// No archived items, no Heard, no history. Archived projects are left out.
+function boardSummary(b) {
+  const open = (p, sec) => (p.items || []).filter((it) => it.sec === sec && !it.archived);
+  const item = (it) => ({ h: it.h, text: it.text, ...(it.verified ? { verified: it.verified } : {}), ...(it.resolution ? { resolution: it.resolution } : {}), ...(it.options ? { options: it.options, recommend: it.recommend || "", default: it.default || "" } : {}), ts: it.updated || it.ts });
+  return {
+    room: b.room,
+    projects: (b.projects || []).filter((p) => p.status !== "archived").map((p) => ({
+      id: p.id, name: p.name, title: p.title || "", icon: p.icon || "📋", status: p.status || "active",
+      where: p.where?.text || "", next_step: p.next_step?.text || "", updated: p.updated || 0,
+      writer: b.names?.[p.writer] || "",
+      decide: open(p, "decide").map(item), next: open(p, "next").map(item),
+      done: open(p, "done").sort((x, y) => (x.updated || x.ts) - (y.updated || y.ts)).map(item),
+    })),
+  };
+}
 
 // ---- http ------------------------------------------------------------------------------------
 const room = (w) => /^[A-Z]$/.test(String(w || "")) ? String(w) : null;
@@ -208,6 +229,11 @@ const server = http.createServer(async (req, res) => {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       return json(res, 200, await api.call("thoughts.get", { room: r, limit: 300 }));
+    }
+    if (req.method === "GET" && url.pathname === "/api/board") {
+      const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      return json(res, 200, boardSummary(await api.call("board.get", { room: r })));
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       const b = await body(req), r = room(b.world), text = String(b.text || "").trim();

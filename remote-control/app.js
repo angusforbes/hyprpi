@@ -30,7 +30,7 @@ function inline(s) {
   s = s.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
   s = esc(s);
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => link(t, u.replace(/&amp;/g, "&")));
-  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?'"])/g, (_, p, u) => p + link(u, u.replace(/&amp;/g, "&")));
+  s = s.replace(/(^|[\s(])((?:https?:\/\/|file:\/\/\/)[^\s<)]+[^\s<).,;:!?'"])/g, (_, p, u) => p + link(u.startsWith("file:") ? esc(decodeURIComponent(u.replace(/&amp;/g, "&")).split("/").pop()) : u, u.replace(/&amp;/g, "&")));
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>").replace(/(^|\W)_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[i])}</code>`);
 }
@@ -137,6 +137,7 @@ function renderTop() {
   stopBtn.hidden = !busy;
   $("#dot").className = online ? "on" : "off";
   document.querySelector('.tab[data-tab="thoughts"]').classList.toggle("busy", busy);
+  for (const t of document.querySelectorAll(".tab")) t.classList.toggle("cur", t.dataset.tab === view);
   // The desktop bar's worlds (server: shown), plus the one open here even if it's hidden there.
   $("#worlds").innerHTML = worlds.filter((w) => w.shown || w.id === world).map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.needsYou ? " needs" : w.working || w.thoughtsBusy ? " working" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)} · ${w.agents} agents${w.working ? ` · ${w.working} working` : ""}${w.needsYou ? ` · ${w.needsYou} need you` : ""}">${esc(w.id)}</button>`).join("");
   fitTop();
@@ -181,7 +182,7 @@ async function fetchWorld(w) {
 const prefetched = new Set();
 function refreshAll() {
   const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
-  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); });
+  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); }), fetchBoard(w).catch(() => {});
 }
 function setWorld(w) {
   if (!w || w === world) return;
@@ -190,8 +191,9 @@ function setWorld(w) {
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
-  renderTop(); render({ keep: "restore" }); // at once, from the cache
+  renderTop(); render({ keep: "restore" }); renderProjects(); // at once, from the cache
   fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
+  fetchBoard(w).catch(() => {});
 }
 function applyState(s) {
   worlds = s.worlds || []; online = !!s.online;
@@ -201,12 +203,13 @@ function applyState(s) {
   renderTop();
   if (first) refreshAll();
   // A world that just appeared (F–I in use): fetch its thread now, so switching to it is instant.
-  for (const x of worlds) if (x.shown && !prefetched.has(x.id)) { prefetched.add(x.id); fetchWorld(x.id).catch(() => prefetched.delete(x.id)); }
+  for (const x of worlds) if (x.shown && !prefetched.has(x.id)) { prefetched.add(x.id); fetchWorld(x.id).catch(() => prefetched.delete(x.id)); fetchBoard(x.id).catch(() => {}); }
 }
 function listen() {
   if (es && es.readyState !== EventSource.CLOSED) return;
   es = new EventSource("/events");
   es.addEventListener("state", (ev) => applyState(JSON.parse(ev.data)));
+  es.addEventListener("board", (ev) => { const d = JSON.parse(ev.data); if (d.room) boardSoon(d.room); });
   es.addEventListener("thoughts", (ev) => {
     const d = JSON.parse(ev.data), c = cached(d.room);
     if (d.entry) { c.entries.push(d.entry); save(d.room); if (d.room === world) append(d.entry); }
@@ -242,6 +245,7 @@ stopBtn.addEventListener("click", async () => {
 thread.addEventListener("click", (e) => { const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open"); });
 $("#tabs").addEventListener("click", (e) => {
   const t = e.target.closest(".tab");
+  if (t && !t.classList.contains("soon")) return setView(t.dataset.tab);
   if (t?.classList.contains("soon")) { note(`${t.title.replace(/ \(.*/, "")}: coming later`); setTimeout(() => note(""), 2500); }
 });
 $("#worlds").addEventListener("click", (e) => { const b = e.target.closest(".chip"); if (b) setWorld(b.dataset.w); });
@@ -275,7 +279,81 @@ document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, 
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
 addEventListener("pageshow", (e) => { if (e.persisted) { listen(); if (world) refreshAll(); } });
 
-window.__rc = { cached, setWorld }; // for tests (CDP)
+// ---- the Proj tab (J39): this world's projects; one open at a time, as a short summary --------
+// Angus: "a list that we can click on … when I click on one it opens it but just the summary not
+// the full thing, not the entire archive, just the active, where, next, done and step". Plus a
+// "Needs you" section (open decisions) he can open or close; the choice is remembered. Read-only.
+// Boards are cached like the threads (memory + localStorage), prefetched for every shown world and
+// re-fetched when the daemon says a card changed.
+let view = "thoughts";
+const boards = new Map(); // world -> { projects, loaded }
+const openProject = new Map(); // world -> project id (one open at a time)
+const projectsEl = $("#projects");
+const LSB = (w) => "hyprpi-rc.board." + w;
+function boardOf(w) {
+  let b = boards.get(w);
+  if (!b) {
+    b = { projects: [], loaded: false };
+    try { const st = JSON.parse(localStorage.getItem(LSB(w)) || "null"); if (Array.isArray(st?.projects)) b.projects = st.projects; } catch { /* none */ }
+    boards.set(w, b);
+  }
+  return b;
+}
+async function fetchBoard(w) {
+  const r = await call("GET", `/api/board?world=${w}`), b = boardOf(w);
+  const changed = !b.loaded || JSON.stringify(r.projects) !== JSON.stringify(b.projects);
+  b.projects = r.projects || []; b.loaded = true;
+  try { localStorage.setItem(LSB(w), JSON.stringify({ projects: b.projects })); } catch { /* memory only */ }
+  if (w === world && view === "projects" && changed) renderProjects({ keepScroll: true });
+}
+const boardTimers = {};
+const boardSoon = (w) => { clearTimeout(boardTimers[w]); boardTimers[w] = setTimeout(() => fetchBoard(w).catch(() => {}), 250); };
+let needsOpen = localStorage.getItem("hyprpi-rc.needsOpen") !== "0"; // open unless he closed it
+const badge = (st) => `<span class="badge ${esc(st)}">${esc(st)}</span>`;
+function renderProjects({ keepScroll = false } = {}) {
+  if (view !== "projects") return;
+  const b = boardOf(world), was = projectsEl.scrollTop;
+  const p = b.projects.find((x) => x.id === openProject.get(world));
+  const html = [];
+  if (!p) {
+    for (const q of b.projects) {
+      const counts = [q.decide.length ? `<b>D${q.decide.length}</b>` : "", q.next.length ? `N${q.next.length}` : ""].filter(Boolean).join(" · ");
+      html.push(`<button class="proj" data-p="${esc(q.id)}"><span class="pic">${esc(q.icon)}</span><span class="pmain"><span class="pname">@${esc(q.name)} ${badge(q.status)}${counts ? ` <span class="cnt">${counts}</span>` : ""}</span><span class="pwhere">${esc(q.where || q.title)}</span></span><span class="chev">›</span></button>`);
+    }
+    if (!b.projects.length && b.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No projects in world ${esc(world)}.</div>`);
+  } else {
+    const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
+    const items = (list, done) => list.length ? `<ul class="items">${list.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}</div>${done && it.verified ? `<div class="small clip">✓ ${inline(it.verified)}</div>` : ""}${it.resolution ? `<div class="small">→ decided: ${inline(it.resolution)}</div>` : ""}</li>`).join("")}</ul>` : "";
+    const decide = p.decide.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}</div>${(it.options || []).length ? `<ol class="opts">${it.options.map((o) => `<li><b>${esc(o.key)})</b> ${inline(o.text)}${o.key === it.default ? ` <span class="small">(default)</span>` : ""}${o.key === it.recommend ? ` <span class="rec">★ recommended</span>` : ""}</li>`).join("")}</ol>` : ""}</li>`).join("");
+    html.push(`<div class="psum"><button class="back">‹ Projects</button>`
+      + `<h2>${esc(p.icon)} @${esc(p.name)} ${badge(p.status)}</h2>${p.title ? `<div class="ptitle">${esc(p.title)}</div>` : ""}`
+      + sec("Where", p.where ? `<div class="md">${md(p.where)}</div>` : "")
+      + (p.decide.length ? `<details class="needs"${needsOpen ? " open" : ""}><summary>Needs you <span class="cnt">${p.decide.length}</span></summary><ul class="items">${decide}</ul></details>` : "")
+      + sec("Next", items(p.next)) + sec("Done", items(p.done, true))
+      + sec("Next first step", p.next_step ? `<div class="md">${md(p.next_step)}</div>` : "")
+      + `</div>`);
+  }
+  projectsEl.innerHTML = html.join("");
+  projectsEl.scrollTop = keepScroll ? was : 0;
+}
+function setView(v) {
+  if (v === view) { if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); } return; } // Proj again: back to the list
+  view = v;
+  $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects";
+  renderTop();
+  if (v === "projects") { renderProjects(); fetchBoard(world).catch(() => {}); }
+  else render({ keep: "restore" });
+}
+projectsEl.addEventListener("click", (e) => {
+  const pr = e.target.closest(".proj"); if (pr) { openProject.set(world, pr.dataset.p); return renderProjects(); }
+  if (e.target.closest(".back")) { openProject.delete(world); return renderProjects(); }
+  const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open");
+});
+projectsEl.addEventListener("toggle", (e) => {
+  if (e.target.matches("details.needs")) { needsOpen = e.target.open; localStorage.setItem("hyprpi-rc.needsOpen", needsOpen ? "1" : "0"); }
+}, true);
+
+window.__rc = { cached, setWorld, boardOf, setView }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }
