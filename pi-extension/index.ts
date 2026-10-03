@@ -273,7 +273,12 @@ export default function hyprpi(pi: ExtensionAPI) {
   let aborted = false;
   pi.on("agent_end", async (e: any) => {
     const msgs: any[] = Array.isArray(e?.messages) ? e.messages : [];
-    aborted = msgs.some((m: any) => m?.stopReason === "aborted" || m?.message?.stopReason === "aborted" ||
+    // Esc while the model's next request is in flight (right after an Esc'd tool): pi 0.87 records
+    // stopReason "error" + "The operation was aborted." (J36; interrupted.ts turns it into an abort,
+    // but without that extension it arrives as an error): that is Angus's stop too, not a failure.
+    const abortErr = (m: any) => (m?.stopReason ?? m?.message?.stopReason) === "error"
+      && /^(?:the )?operation was aborted\.?$/i.test(String(m?.errorMessage ?? m?.message?.errorMessage ?? "").trim());
+    aborted = msgs.some((m: any) => m?.stopReason === "aborted" || m?.message?.stopReason === "aborted" || abortErr(m) ||
       (m?.role === "toolResult" && ((m?.isError && /\b(?:Operation|Command) aborted\b/i.test(JSON.stringify(m?.content ?? "")))
         // ~/.pi/agent/extensions/interrupted.ts rewrites an Esc'd tool result to a plain "interrupted" (no error)
         || (Array.isArray(m?.content) ? m.content.map((c: any) => c?.text || "").join("") : String(m?.content ?? "")).trim() === "interrupted")));
