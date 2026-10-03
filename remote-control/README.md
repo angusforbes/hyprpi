@@ -1,7 +1,9 @@
 # hyprpi remote control
 
 A small web app for Angus's iPhone (and any browser on his tailnet): chat with a world's
-**Thoughts** agent from anywhere, switch worlds with the coloured chips. Board card:
+**Thoughts** agent from anywhere. One top bar, always visible (also with the keyboard open): the
+world chips (the desktop bar's worlds: A–E always, F–I while in use, live) and the tabs
+Thgt · Proj · Agnt (Proj and Agnt come later). Board card:
 `@hyprpi-remote-control` (world D). Phone first; an iPad layout comes later.
 
 - `server.mjs`: plain Node, no dependencies. Listens on **127.0.0.1:8897** only, holds one
@@ -40,7 +42,7 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 
 | | |
 |---|---|
-| `GET /api/state` | worlds (colour, agent count, Thoughts busy), the desktop's active world, theme |
+| `GET /api/state` | worlds (colour, agent count, Thoughts busy, `shown`: the desktop bar's rule, see server.mjs), the desktop's active world, theme |
 | `GET /api/thoughts?world=C` | the thread (`thoughts.get`, last 300 entries) |
 | `POST /api/send {world, text}` | to Thoughts (`thoughts.send`, via phone) |
 | `POST /api/stop {world}` | interrupt Thoughts |

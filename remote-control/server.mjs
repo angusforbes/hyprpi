@@ -22,7 +22,8 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { connect } from "../lib/client.mjs";
-import { socketPath, runtimeDir } from "../lib/paths.mjs";
+import { socketPath, runtimeDir, loadConfig } from "../lib/paths.mjs";
+import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
 import { worldHex, theme } from "../lib/tui/term.mjs";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -62,6 +63,49 @@ function broadcast(event, data) {
 }
 
 const busy = new Map(); // room -> Thoughts is working (from thoughts.get and the thoughts events)
+
+// ---- which worlds to show: the desktop bar's rule (agf.hyprwrlds, BarWidget.qml worldIds()) ----
+// The bar shows worlds 1..n, n = the largest of: its "worlds" setting (shell.json; 5 here, the
+// widget's default 3), the focused world, and the highest world that has a Hyprland workspace
+// (Hyprland keeps a workspace while it has windows or is focused). So A–E always, and F–I while
+// in use; a gap below a used world is shown too (G in use shows F), as on the bar.
+const LETTERS = "ABCDEFGHI";
+const SHELL_JSON = path.join(HOME, ".config/omarchy/shell.json");
+function barMinWorlds() {
+  try {
+    const find = (o) => { if (!o || typeof o !== "object") return null; if (o.id === "agf.hyprwrlds") return o; for (const v of Object.values(o)) { const r = find(v); if (r) return r; } return null; };
+    const n = Number(find(JSON.parse(fs.readFileSync(SHELL_JSON, "utf8")))?.worlds);
+    return n >= 1 ? Math.min(9, n) : 3;
+  } catch { return 3; }
+}
+// Hyprland's instance: as for the daemon socket, ours may be from an older login.
+function hyprEnv() {
+  const base = path.join(process.env.XDG_RUNTIME_DIR || "/tmp", "hypr");
+  if (process.env.HYPRLAND_INSTANCE_SIGNATURE && fs.existsSync(path.join(base, process.env.HYPRLAND_INSTANCE_SIGNATURE))) return process.env;
+  try {
+    const his = fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, ".socket.sock"))).sort((a, b) => fs.statSync(path.join(base, b)).mtimeMs - fs.statSync(path.join(base, a)).mtimeMs)[0];
+    if (his) return { ...process.env, HYPRLAND_INSTANCE_SIGNATURE: his };
+  } catch { /* none */ }
+  return process.env;
+}
+let shownWorlds = LETTERS.slice(0, 5).split(""), hyprStop = null;
+async function refreshShown() {
+  try {
+    const env = hyprEnv(), size = Number(loadConfig()?.worldSize) || 10;
+    const [wss, act] = await Promise.all([hyprJson("workspaces", { env }), hyprJson("activeworkspace", { env })]);
+    const worldOf = (id) => id >= 1 ? Math.floor((id - 1) / size) + 1 : 0;
+    let n = Math.max(barMinWorlds(), worldOf(act?.id || 0));
+    for (const w of wss) { const k = worldOf(w.id); if (k > n && k <= 9) n = k; }
+    const next = LETTERS.slice(0, Math.min(9, n)).split("");
+    if (next.join("") !== shownWorlds.join("")) { shownWorlds = next; log("worlds shown:", next.join("")); broadcast("state", state()); }
+    if (!hyprStop) hyprStop = hyprSubscribe((ev) => { if (/workspace|focusedmon/.test(ev)) refreshSoon(); }, env);
+  } catch (e) { log("hyprland:", e.message); }
+}
+let refreshTimer = null;
+const refreshSoon = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshShown, 150); };
+refreshShown();
+setInterval(refreshShown, 30000); // a safety net (shell.json edits, a new Hyprland login)
+
 function worlds() {
   const ids = new Set((listing?.rooms || []).map((r) => r.id));
   return [...ids].filter((id) => /^[A-Z]$/.test(id)).sort().map((id) => ({
@@ -69,6 +113,7 @@ function worlds() {
     color: "#" + (worldHex(id) || "7aa2f7"),
     agents: (listing?.agents || []).filter((a) => a.room === id).length,
     thoughtsBusy: !!busy.get(id),
+    shown: shownWorlds.includes(id),
   }));
 }
 function state() {

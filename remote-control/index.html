@@ -16,8 +16,13 @@
 </head>
 <body>
 <header id="top">
-  <div id="title"><span id="dot" title="connection"></span><span id="name">💭 Thoughts</span><span id="busy" hidden>thinking…</span></div>
+  <span id="dot" title="connection"></span>
   <nav id="worlds" aria-label="worlds"></nav>
+  <nav id="tabs" aria-label="views">
+    <button class="tab cur" data-tab="thoughts" title="Thoughts">Thgt</button>
+    <button class="tab soon" data-tab="projects" title="Projects (coming later)">Proj</button>
+    <button class="tab soon" data-tab="agents" title="Agents (coming later)">Agnt</button>
+  </nav>
 </header>
 <main id="thread" aria-live="polite"></main>
 <div id="note" hidden></div>

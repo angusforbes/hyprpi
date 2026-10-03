@@ -112,12 +112,12 @@ function append(e) {
 function renderTop() {
   const cur = worlds.find((w) => w.id === world);
   document.documentElement.style.setProperty("--world", cur?.color || "var(--accent)");
-  $("#name").textContent = `💭 Thoughts-${world || "?"}`;
   document.title = `${world || ""} · Thoughts`;
-  $("#busy").hidden = !busy;
   stopBtn.hidden = !busy;
   $("#dot").className = online ? "on" : "off";
-  $("#worlds").innerHTML = worlds.map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.thoughtsBusy ? " busy" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)} · ${w.agents} agents">${esc(w.id)}</button>`).join("");
+  document.querySelector('.tab[data-tab="thoughts"]').classList.toggle("busy", busy);
+  // The desktop bar's worlds (server: shown), plus the one open here even if it's hidden there.
+  $("#worlds").innerHTML = worlds.filter((w) => w.shown || w.id === world).map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.thoughtsBusy ? " busy" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)} · ${w.agents} agents">${esc(w.id)}</button>`).join("");
 }
 
 // ---- data -----------------------------------------------------------------------------------
@@ -173,7 +173,23 @@ $("#composer").addEventListener("submit", async (e) => {
   finally { sendBtn.disabled = false; }
 });
 stopBtn.addEventListener("click", async () => { try { await call("POST", "/api/stop", { world }); } catch (err) { note("✗ " + err.message); } });
+$("#tabs").addEventListener("click", (e) => {
+  const t = e.target.closest(".tab");
+  if (t?.classList.contains("soon")) { note(`${t.title.replace(/ \(.*/, "")}: coming later`); setTimeout(() => note(""), 2500); }
+});
 $("#worlds").addEventListener("click", (e) => { const b = e.target.closest(".chip"); if (b) setWorld(b.dataset.w); });
+
+// iOS keyboard: Safari shrinks only the visual viewport and scrolls the page under it, which would
+// push the top bar off screen. Keep the body exactly on the visual viewport instead, so only the
+// thread scrolls and the bar stays put.
+const vv = window.visualViewport;
+function fitViewport() {
+  if (!vv) return;
+  document.body.style.height = vv.height + "px";
+  document.body.style.transform = `translateY(${vv.offsetTop}px)`;
+}
+if (vv) { vv.addEventListener("resize", fitViewport); vv.addEventListener("scroll", fitViewport); fitViewport(); }
+input.addEventListener("focus", () => setTimeout(() => { fitViewport(); thread.scrollTop = thread.scrollHeight; }, 250));
 
 // iOS drops the connection when the app goes to the background: catch up on return.
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) load(); } });
