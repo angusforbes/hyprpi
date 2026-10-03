@@ -3,7 +3,7 @@
 "use strict";
 const $ = (s) => document.querySelector(s);
 const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), stopBtn = $("#stop");
-let world = null, worlds = [], entries = [], busy = false, online = false, es = null, loadSeq = 0;
+let world = null, worlds = [], busy = false, online = false, es = null, loadSeq = 0;
 
 // ---- helpers --------------------------------------------------------------------------------
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -89,8 +89,11 @@ function entryHtml(e) {
     default: return e.text ? `<div class="msg small">${inline(String(e.text))}</div>` : "";
   }
 }
-function render({ keepScroll = false } = {}) {
-  const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+const nearBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+// keep: "bottom" (stay at the end if we were there), "restore" (the world's saved place), "end"
+function render({ keep = "bottom" } = {}) {
+  const c = cached(world), entries = c.entries;
+  const wasBottom = nearBottom(), was = thread.scrollTop;
   const html = []; let lastDay = "", lastTs = 0;
   for (const e of entries) {
     const d = dayOf(e.ts);
@@ -98,14 +101,16 @@ function render({ keepScroll = false } = {}) {
     if (e.ts) { lastDay = d; lastTs = e.ts; }
     html.push(entryHtml(e));
   }
-  if (!entries.length) html.push(`<div class="small" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(world)}.</div>`);
+  // "Nothing here yet" only once the server has said the thread really is empty.
+  if (!entries.length && c.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(world)}.</div>`);
   thread.innerHTML = html.join("");
-  if (!keepScroll || atBottom) thread.scrollTop = thread.scrollHeight;
+  if (keep === "restore" && c.scroll != null) thread.scrollTop = c.scroll;
+  else if (keep === "bottom" && !wasBottom) thread.scrollTop = was;
+  else thread.scrollTop = thread.scrollHeight;
 }
 function append(e) {
-  const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
-  entries.push(e);
-  if (entries.length === 1) return render();
+  const atBottom = nearBottom();
+  if (cached(world).entries.length === 1) return render({ keep: "end" });
   thread.insertAdjacentHTML("beforeend", entryHtml(e));
   if (atBottom || e.role === "you") thread.scrollTop = thread.scrollHeight;
 }
@@ -130,40 +135,69 @@ function fitTop() {
 }
 addEventListener("resize", fitTop);
 
-// ---- data -----------------------------------------------------------------------------------
-async function load() {
-  const seq = ++loadSeq;
-  try {
-    const t = await call("GET", `/api/thoughts?world=${world}`);
-    if (seq !== loadSeq) return;
-    entries = t.entries || []; busy = !!t.busy; note("");
-    render(); renderTop();
-  } catch (e) { note("✗ " + e.message); }
+// ---- data: every shown world's thread, cached ----------------------------------------------
+// Angus (J37 v4): no "Nothing here yet" flash when switching worlds. Each world's thread is kept in
+// memory and in localStorage (a reload shows it at once), prefetched for every shown world, kept
+// current from the event stream, and refreshed in the background when you switch to it.
+const cache = new Map(); // world -> { entries, busy, loaded (fresh from the server), scroll (null = at the end) }
+const LS = (w) => "hyprpi-rc.thread." + w, KEEP = 150;
+function cached(w) {
+  let c = cache.get(w);
+  if (!c) {
+    c = { entries: [], busy: false, loaded: false, scroll: null };
+    try { const st = JSON.parse(localStorage.getItem(LS(w)) || "null"); if (Array.isArray(st?.entries)) c.entries = st.entries; } catch { /* none */ }
+    cache.set(w, c);
+  }
+  return c;
+}
+const saveTimers = {};
+function save(w) {
+  clearTimeout(saveTimers[w]);
+  saveTimers[w] = setTimeout(() => { try { localStorage.setItem(LS(w), JSON.stringify({ entries: cached(w).entries.slice(-KEEP) })); } catch { /* full: memory only */ } }, 400);
+}
+const sig = (l) => `${l.length}:${l[l.length - 1]?.ts || 0}:${String(l[l.length - 1]?.text || "").length}`;
+async function fetchWorld(w) {
+  const t = await call("GET", `/api/thoughts?world=${w}`);
+  const c = cached(w), next = t.entries || [], changed = !c.loaded || sig(next) !== sig(c.entries);
+  c.entries = next; c.busy = !!t.busy; c.loaded = true; save(w);
+  if (w === world) { busy = c.busy; if (changed) render(); renderTop(); note(""); }
+}
+const prefetched = new Set();
+function refreshAll() {
+  const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
+  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); });
 }
 function setWorld(w) {
   if (!w || w === world) return;
-  world = w; entries = []; busy = !!worlds.find((x) => x.id === w)?.thoughtsBusy;
+  if (world) cached(world).scroll = nearBottom() ? null : thread.scrollTop;
+  world = w;
+  const c = cached(w);
+  busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
-  renderTop(); render(); load();
+  renderTop(); render({ keep: "restore" }); // at once, from the cache
+  fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
 }
 function applyState(s) {
   worlds = s.worlds || []; online = !!s.online;
   if (s.theme) { for (const [k, v] of Object.entries(s.theme)) document.documentElement.style.setProperty("--" + k, v); document.querySelector("meta[name=theme-color]").content = s.theme.bg; }
-  if (!world) { setWorld(new URLSearchParams(location.search).get("world") || s.active); return; }
+  const first = !stateSeen; stateSeen = true;
+  if (!world) setWorld(new URLSearchParams(location.search).get("world") || s.active);
   renderTop();
+  if (first) refreshAll();
+  // A world that just appeared (F–I in use): fetch its thread now, so switching to it is instant.
+  for (const x of worlds) if (x.shown && !prefetched.has(x.id)) { prefetched.add(x.id); fetchWorld(x.id).catch(() => prefetched.delete(x.id)); }
 }
 function listen() {
   if (es && es.readyState !== EventSource.CLOSED) return;
   es = new EventSource("/events");
   es.addEventListener("state", (ev) => applyState(JSON.parse(ev.data)));
   es.addEventListener("thoughts", (ev) => {
-    const d = JSON.parse(ev.data);
-    if (d.room !== world) return;
-    if (d.entry) append(d.entry);
-    if (d.busy !== undefined) { busy = !!d.busy; renderTop(); }
+    const d = JSON.parse(ev.data), c = cached(d.room);
+    if (d.entry) { c.entries.push(d.entry); save(d.room); if (d.room === world) append(d.entry); }
+    if (d.busy !== undefined) { c.busy = !!d.busy; if (d.room === world) { busy = c.busy; renderTop(); } }
   });
   es.onerror = () => { online = false; renderTop(); };
-  es.onopen = () => { online = true; renderTop(); };
+  es.onopen = () => { if (!online && world) refreshAll(); online = true; renderTop(); }; // catch up after a drop
 }
 
 // ---- input ----------------------------------------------------------------------------------
@@ -189,21 +223,37 @@ $("#tabs").addEventListener("click", (e) => {
 });
 $("#worlds").addEventListener("click", (e) => { const b = e.target.closest(".chip"); if (b) setWorld(b.dataset.w); });
 
-// iOS keyboard: Safari shrinks only the visual viewport and scrolls the page under it, which would
-// push the top bar off screen. Keep the body exactly on the visual viewport instead, so only the
-// thread scrolls and the bar stays put.
+// iOS keyboard (J37 v4, Angus: "it kind of animates away and comes back. i'd rather it jsut
+// stayed"). Safari normally pans the page to show the focused box, and correcting that afterwards
+// is the animation he saw. So the page never scrolls in the first place:
+//  1. html and body can't scroll (overflow hidden, body position fixed); only the thread scrolls.
+//  2. A tap on the text box focuses it with preventScroll, so Safari doesn't pan to it.
+//  3. The body's height follows the visual viewport (the part above the keyboard), so the box
+//     sits right above the keyboard and the bar stays at the top. If Safari pans anyway, the
+//     offset is applied at once (no transition).
+//  4. Drags outside the thread and the text box are swallowed (no rubber-banding the bar).
 const vv = window.visualViewport;
 function fitViewport() {
   if (!vv) return;
+  if (window.scrollY) window.scrollTo(0, 0);
   document.body.style.height = vv.height + "px";
-  document.body.style.transform = `translateY(${vv.offsetTop}px)`;
+  document.body.style.transform = vv.offsetTop ? `translateY(${vv.offsetTop}px)` : "";
 }
 if (vv) { vv.addEventListener("resize", fitViewport); vv.addEventListener("scroll", fitViewport); fitViewport(); }
-input.addEventListener("focus", () => setTimeout(() => { fitViewport(); thread.scrollTop = thread.scrollHeight; }, 250));
+input.addEventListener("touchend", (e) => {
+  if (document.activeElement === input) return; // already typing: let taps move the caret
+  e.preventDefault();
+  input.focus({ preventScroll: true });
+}, { passive: false });
+input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); if (!cached(world).scroll) thread.scrollTop = thread.scrollHeight; }); });
+document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #input")) e.preventDefault(); }, { passive: false });
 
 // iOS drops the connection when the app goes to the background: catch up on return.
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) load(); } });
-addEventListener("pageshow", (e) => { if (e.persisted) { listen(); if (world) load(); } });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
+addEventListener("pageshow", (e) => { if (e.persisted) { listen(); if (world) refreshAll(); } });
 
+// A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
+let stateSeen = false;
+{ const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }
 call("GET", "/api/state").then(applyState).catch((e) => note("✗ " + e.message));
 listen();
