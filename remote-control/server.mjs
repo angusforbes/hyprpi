@@ -13,7 +13,8 @@
 //   GET  /api/state            worlds (colours, Thoughts busy), the desktop's active world
 //   GET  /api/thoughts?world=C the thread
 //   POST /api/send   {world, text}   to Thoughts, marked via "phone"
-//   POST /api/stop   {world}         interrupt Thoughts
+//   POST /api/stop   {world, ask?}   interrupt Thoughts (ask: it then says what got cut off)
+//   GET  /lib/thoughts-lines.mjs     the thread's display rule, shared with the desktop
 //   GET  /events               live: thoughts entries / busy, worlds
 //   GET  /file?path=/abs/path  read-only, only under ~/Obsidian and ~/Work (links in replies)
 import http from "node:http";
@@ -200,6 +201,8 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === "GET" && STATIC[url.pathname]) return serveFile(res, path.join(HERE, STATIC[url.pathname]));
+    // The thread's display rule, shared with the desktop Thoughts window (J38).
+    if (req.method === "GET" && url.pathname === "/lib/thoughts-lines.mjs") return serveFile(res, path.join(HERE, "..", "lib", "thoughts-lines.mjs"), "text/javascript; charset=utf-8");
     if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, state());
     if (req.method === "GET" && url.pathname === "/api/thoughts") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
@@ -216,7 +219,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/stop") {
       const b = await body(req), r = room(b.world); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
-      return json(res, 200, await api.call("thoughts.interrupt", { room: r }));
+      return json(res, 200, await api.call("thoughts.interrupt", { room: r, ask: !!b.ask }));
     }
     if (req.method === "GET" && url.pathname === "/events") {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });

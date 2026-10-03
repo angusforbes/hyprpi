@@ -60,14 +60,23 @@ a { color: var(--accent); }
   padding: 10px calc(env(safe-area-inset-right) + 10px) 14px calc(env(safe-area-inset-left) + 10px);
   display: flex; flex-direction: column; gap: 8px;
 }
-.msg { max-width: 100%; overflow-wrap: anywhere; }
+.msg { flex: none; max-width: 100%; overflow-wrap: anywhere; } /* flex: none, or overflow:hidden lines shrink to 0 */
 .you { align-self: flex-end; max-width: 85%; background: var(--faint); border: 1px solid var(--line); border-radius: 16px 16px 4px 16px; padding: 7px 12px; white-space: pre-wrap; }
 .you .via { font-size: 12px; color: var(--dim); margin-left: 6px; }
 .thoughts { align-self: stretch; padding: 2px 2px; }
 .thoughts .lead { color: var(--dim); font-size: 13px; }
 .small { font-size: 13px; color: var(--dim); padding-left: 4px; }
-.small.action::before { content: "↳ "; }
 .note { font-style: italic; }
+.clip { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.clip.open { display: block; }
+.small.error { color: #e64553; }
+details.lead { color: var(--dim); font-size: 13px; }
+details.lead summary { cursor: pointer; list-style: none; }
+details.lead summary::-webkit-details-marker { display: none; }
+details.lead .more { opacity: .7; }
+details.lead[open] summary .more { display: none; }
+details.lead .raw { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; margin: 4px 0 6px; font-size: 14px; }
+details.lead .raw .who { color: var(--fg); font-size: 13px; }
 .time { font-size: 11px; color: var(--dim); text-align: center; margin: 6px 0 0; }
 details.card { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; font-size: 14px; }
 details.card summary { color: var(--dim); cursor: pointer; list-style: none; }

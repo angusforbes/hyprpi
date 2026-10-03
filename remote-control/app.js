@@ -1,6 +1,6 @@
 // hyprpi remote control: the page. A chat with one world's Thoughts agent; world chips switch it.
 // Thread entries (lib/thoughts.mjs): { role: you | thoughts | action | reply | agent | note | evidence, text, from?, ts }
-"use strict";
+import { threadKind, answerLine, actionPrefix, splitLead } from "/lib/thoughts-lines.mjs";
 const $ = (s) => document.querySelector(s);
 const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), stopBtn = $("#stop");
 let world = null, worlds = [], busy = false, online = false, es = null, loadSeq = 0;
@@ -72,21 +72,36 @@ function firstLine(s, n = 90) { const l = String(s || "").split("\n").find((x) =
 function images(e) {
   return (e.images || []).map((p) => /\.(png|jpe?g|gif|webp)$/i.test(p) ? `<a href="${esc(href(p))}" target="_blank"><img class="img" src="${esc(href(p))}" alt=""></a>` : `<div class="small">📎 ${link(esc(p.split("/").pop()), p)}</div>`).join("");
 }
-function entryHtml(e) {
-  switch (e.role) {
-    case "you": return `<div class="msg you">${esc(e.text)}${e.via === "phone" ? `<span class="via">📱</span>` : ""}${images(e)}</div>`;
-    case "thoughts": {
-      let t = String(e.text || ""), lead = "";
-      const m = t.match(/^\s*(↩ from [^\n]+|↪ to [^\n]+)\n/); if (m) { lead = m[1]; t = t.slice(m[0].length); }
-      return `<div class="msg thoughts">${lead ? `<div class="lead">${esc(lead)}</div>` : ""}<div class="md">${md(t)}</div></div>`;
+// Which entries show and how: lib/thoughts-lines.mjs, the same rule as the desktop Thoughts window
+// (J38). Agents' incoming messages are not drawn (Thoughts' summary covers them): the summary's
+// "↩ from Name" lead line opens them (one tap). Action and answer lines show two lines; a tap
+// shows the rest.
+function hiddenBefore(list, i, lead) {
+  // The incoming agent messages since the previous visible exchange, from the lead's names if any.
+  const out = [];
+  for (let j = i - 1; j >= 0 && threadKind(list[j]) !== "full"; j--) if (threadKind(list[j]) === "hidden") out.unshift(list[j]);
+  const names = (/^↩ from (.+)$/.exec(lead) || [])[1]?.split(/,\s*/).map((n) => n.trim()) || [];
+  const mine = out.filter((x) => names.some((n) => String(x.from || "").startsWith(n)));
+  return mine.length ? mine : out;
+}
+function entryHtml(e, i, list) {
+  const kind = threadKind(e);
+  switch (kind) {
+    case "hidden": return "";
+    case "full": {
+      if (e.role === "you") return `<div class="msg you">${esc(e.text)}${e.via === "phone" ? `<span class="via">📱</span>` : ""}${images(e)}</div>`;
+      const { lead, body } = splitLead(e);
+      const raw = lead && list ? hiddenBefore(list, i, lead) : [];
+      const leadHtml = !lead ? "" : raw.length
+        ? `<details class="lead"><summary>${esc(lead)} <span class="more">· the message${raw.length > 1 ? "s" : ""}</span></summary>${raw.map((x) => `<div class="raw"><div class="who">${x.role === "reply" ? "↩" : "✉"} ${esc(x.from || "agent")} · ${hhmm(x.ts)}</div><div class="md">${md(x.text)}</div></div>`).join("")}</details>`
+        : `<div class="lead">${esc(lead)}</div>`;
+      return `<div class="msg thoughts">${leadHtml}<div class="md">${md(body)}</div></div>`;
     }
-    case "action": return `<div class="msg small action">${inline(String(e.text || ""))}</div>`;
-    case "note": return `<div class="msg small note">${inline(String(e.text || ""))}</div>`;
-    case "reply": case "agent":
-      return `<details class="msg card"><summary>${e.role === "reply" ? "↩" : "✉"} <span class="who">${esc(e.from || "agent")}</span> · ${esc(firstLine(e.text))}</summary><div class="md">${md(e.text)}</div></details>`;
+    case "answer": { const a = answerLine(e); return `<div class="msg small clip" title="tap for all of it">${inline(`↩ to ${a.to}: ${a.said}${a.cutOld ? "…" : ""}`)}</div>`; }
+    case "action": case "error": return `<div class="msg small clip${kind === "error" ? " error" : ""}" title="tap for all of it">${inline(actionPrefix(e) + String(e.text || ""))}</div>`;
     case "evidence":
       return `<details class="msg card"><summary>🔎 <span class="who">${esc(e.kind || "evidence")}</span> · ${esc(firstLine(e.query || e.filter || ""))}</summary><div class="md">${md(e.answer || `${e.total ?? e.n ?? 0} lines`)}</div></details>`;
-    default: return e.text ? `<div class="msg small">${inline(String(e.text))}</div>` : "";
+    default: return e.text ? `<div class="msg small note">${inline(String(e.text))}</div>` : "";
   }
 }
 const nearBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
@@ -95,11 +110,11 @@ function render({ keep = "bottom" } = {}) {
   const c = cached(world), entries = c.entries;
   const wasBottom = nearBottom(), was = thread.scrollTop;
   const html = []; let lastDay = "", lastTs = 0;
-  for (const e of entries) {
+  for (const [i, e] of entries.entries()) {
     const d = dayOf(e.ts);
     if (e.role === "you" && e.ts && (d !== lastDay || e.ts - lastTs > 30 * 60e3)) html.push(`<div class="time">${d !== lastDay ? esc(new Date(e.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })) + " · " : ""}${hhmm(e.ts)}</div>`);
     if (e.ts) { lastDay = d; lastTs = e.ts; }
-    html.push(entryHtml(e));
+    html.push(entryHtml(e, i, entries));
   }
   // "Nothing here yet" only once the server has said the thread really is empty.
   if (!entries.length && c.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(world)}.</div>`);
@@ -110,8 +125,9 @@ function render({ keep = "bottom" } = {}) {
 }
 function append(e) {
   const atBottom = nearBottom();
-  if (cached(world).entries.length === 1) return render({ keep: "end" });
-  thread.insertAdjacentHTML("beforeend", entryHtml(e));
+  const list = cached(world).entries;
+  if (list.length === 1) return render({ keep: "end" });
+  thread.insertAdjacentHTML("beforeend", entryHtml(e, list.length - 1, list));
   if (atBottom || e.role === "you") thread.scrollTop = thread.scrollHeight;
 }
 function renderTop() {
@@ -216,7 +232,14 @@ $("#composer").addEventListener("submit", async (e) => {
   catch (err) { note("✗ not sent: " + err.message); }
   finally { sendBtn.disabled = false; }
 });
-stopBtn.addEventListener("click", async () => { try { await call("POST", "/api/stop", { world }); } catch (err) { note("✗ " + err.message); } });
+// ■ (J38, Angus: "I want you to reply after I interrupt you"): stop the reply; Thoughts then says in
+// a line or two what got cut off and asks what's next. The cursor goes to the box.
+stopBtn.addEventListener("click", async () => {
+  input.focus({ preventScroll: true });
+  try { await call("POST", "/api/stop", { world, ask: true }); } catch (err) { note("✗ " + err.message); }
+});
+// A tap on a two-line action / answer line shows all of it (and again folds it).
+thread.addEventListener("click", (e) => { const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open"); });
 $("#tabs").addEventListener("click", (e) => {
   const t = e.target.closest(".tab");
   if (t?.classList.contains("soon")) { note(`${t.title.replace(/ \(.*/, "")}: coming later`); setTimeout(() => note(""), 2500); }
@@ -252,6 +275,7 @@ document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, 
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
 addEventListener("pageshow", (e) => { if (e.persisted) { listen(); if (world) refreshAll(); } });
 
+window.__rc = { cached, setWorld }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }
