@@ -26,6 +26,7 @@ import { createCommands } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
+import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -535,31 +536,31 @@ function render() {
     // N53 (Angus via Thoughts-C): incoming agent replies / messages are not drawn (Thoughts' summary
     // already covers them; they stay in its context and in /keyword /ask). Thoughts' own answers to
     // agents show as ONE short grey line with what it said: "↩ to Blink: …", one or two rows.
-    const isAnswer = (e) => e.role === "action" && /^answered @/.test(e.text || "");
+    // Which entries show and how: lib/thoughts-lines.mjs (the same rule as the phone app).
     for (const [ei, e] of TH.entries.entries()) {
-      if (e.role === "agent" || e.role === "reply") continue;
-      if (isAnswer(e)) {
-        const m = /^answered @([^:]+):\s*([\s\S]*)$/.exec(e.text) || [null, "?", ""];
-        const k2 = items.push({ copy: `to ${m[1]}: ${m[2]}` }) - 1;
-        // (Answers stored before the N53 fix were cut at 140 characters at the source: mark those too.)
-        const said = String(m[2]).replace(/\s+/g, " "), cutOld = said.length === 140 && !said.endsWith("…");
-        const rows = wrap(`↩ to ${m[1]}: ${said}${cutOld ? "…" : ""}`, tw - 2);
+      const kind = threadKind(e);
+      if (kind === "hidden") continue;
+      if (kind === "answer") {
+        const { to, raw, said, cutOld } = answerLine(e);
+        const k2 = items.push({ copy: `to ${to}: ${raw}` }) - 1;
+        // (Answers stored before the N53 fix were cut at 140 characters at the source: cutOld marks those.)
+        const rows = wrap(`↩ to ${to}: ${said}${cutOld ? "…" : ""}`, tw - 2);
         rows.slice(0, 2).forEach((r, n) => flat.push({ l: "   " + dim(n === 1 && rows.length > 2 ? r.replace(/.?$/, "…") : r), meta: { item: k2, textX: 4 } }));
         continue;
       }
       const k = items.push({ copy: e.text }) - 1, red = (l) => `${ESC}31m${l}${ESC}39m`;
       const add = (rs, textX) => { for (const r of rs) flat.push({ ...r, meta: { item: k, textX } }); };
-      if (e.role === "you" || e.role === "thoughts") {
+      if (kind === "full") {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         // Thoughts' "↩ from pi·wpzt" / "↪ to Blink" lead line (a direct message it is summing up): light grey like the other
         // indicator lines, and the summary right under it, no blank line between (Angus).
-        const lead = e.role === "thoughts" && /^(?:↩ from|↪ to) [^\n]+/.exec(e.text || "");
-        if (lead) add(md(lead[0], tw, "   ", dim), 4);
-        add(md(lead ? e.text.slice(lead[0].length).replace(/^\s*\n/, "") : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
+        const { lead, body } = splitLead(e);
+        if (lead) add(md(lead, tw, "   ", dim), 4);
+        add(md(lead ? body : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
         const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
         if (extra.length) add(md(extra.map((f) => `📎 ${f}`).join("\n"), tw, "   ", dim), 4); // images not already in the text as a (clickable) path
-      } else if (e.role === "action") add(md((e.text.startsWith("✗") ? "" : "↳ ") + e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
+      } else if (kind === "action" || kind === "error") add(md(actionPrefix(e) + e.text, tw, "   ", kind === "error" ? red : dim), 4);
       else if (e.role === "agent") { flat.push({ l: `   ${dim(italic(`↪ ${e.from} asked Thoughts-${room}:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 8), 6); }
       else if (e.role === "evidence") {
         items[k].copy = `${e.kind === "ask" ? "/ask" : e.kind === "digest" ? "/digest" : "/keyword"} ${e.query}${e.answer ? "\n" + e.answer : ""}`;
@@ -841,7 +842,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs", "thoughts-lines.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
