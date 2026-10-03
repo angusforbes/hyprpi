@@ -6,7 +6,29 @@ const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), stopBtn 
 let world = null, worlds = [], busy = false, online = false, es = null, loadSeq = 0;
 
 // ---- helpers --------------------------------------------------------------------------------
+// Arrows and symbols that iOS would otherwise draw as colour emoji (J40, Angus: "use the nice text
+// … for the reply sent arrows rather than turning them into bulky icons"): each gets U+FE0E, the
+// text-presentation selector, unless the text already asks for emoji (U+FE0F). Real icons (📱, 🐦‍🔥,
+// project and agent icons) are emoji by default and are left alone.
+const TEXT_STYLE = /([\u2194-\u2199\u21A9\u21AA\u23CF\u23E9-\u23EF\u23F8-\u23FA\u25AA\u25AB\u25B6\u25C0\u25FB-\u25FE\u2611\u2622\u2623\u2660\u2663\u2665\u2666\u267B\u26A0\u2702\u2709\u270B\u270F\u2712\u2714\u2716\u2733\u2734\u2747\u2763\u2764\u27A1\u2934\u2935\u2B05-\u2B07\u203C\u2049\u2122\u2139\u00A9\u00AE])(?![\uFE0E\uFE0F])/g;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// After each render: every such glyph in the text (not in attributes) becomes
+// <span class="tx">↩\uFE0E</span>; .tx puts a font that has it as plain text first (Menlo on iOS).
+// U+FE0E alone isn't enough when Safari's font list reaches the emoji font first.
+function textGlyphs(root) {
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => { TEXT_STYLE.lastIndex = 0; return TEXT_STYLE.test(n.data) && !n.parentElement?.closest(".tx, code, pre, textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP; } });
+  const nodes = []; while (walk.nextNode()) nodes.push(walk.currentNode);
+  for (const n of nodes) {
+    const frag = document.createDocumentFragment(); let last = 0; TEXT_STYLE.lastIndex = 0;
+    for (const m of n.data.matchAll(TEXT_STYLE)) {
+      if (m.index > last) frag.append(n.data.slice(last, m.index));
+      const sp = document.createElement("span"); sp.className = "tx"; sp.textContent = m[1] + "\uFE0E"; frag.append(sp);
+      last = m.index + m[0].length;
+    }
+    if (last < n.data.length) frag.append(n.data.slice(last));
+    n.replaceWith(frag);
+  }
+}
 function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden = !text; }
 async function call(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
@@ -119,6 +141,7 @@ function render({ keep = "bottom" } = {}) {
   // "Nothing here yet" only once the server has said the thread really is empty.
   if (!entries.length && c.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(world)}.</div>`);
   thread.innerHTML = html.join("");
+  textGlyphs(thread);
   if (keep === "restore" && c.scroll != null) thread.scrollTop = c.scroll;
   else if (keep === "bottom" && !wasBottom) thread.scrollTop = was;
   else thread.scrollTop = thread.scrollHeight;
@@ -128,6 +151,7 @@ function append(e) {
   const list = cached(world).entries;
   if (list.length === 1) return render({ keep: "end" });
   thread.insertAdjacentHTML("beforeend", entryHtml(e, list.length - 1, list));
+  if (thread.lastElementChild) textGlyphs(thread.lastElementChild);
   if (atBottom || e.role === "you") thread.scrollTop = thread.scrollHeight;
 }
 function renderTop() {
@@ -334,6 +358,7 @@ function renderProjects({ keepScroll = false } = {}) {
       + `</div>`);
   }
   projectsEl.innerHTML = html.join("");
+  textGlyphs(projectsEl);
   projectsEl.scrollTop = keepScroll ? was : 0;
 }
 function setView(v) {

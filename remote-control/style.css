@@ -66,6 +66,9 @@ a { color: var(--accent); }
 .thoughts { align-self: stretch; padding: 2px 2px; }
 .thoughts .lead { color: var(--dim); font-size: 13px; }
 .small { font-size: 13px; color: var(--dim); padding-left: 4px; }
+/* J40: arrows as light text, never emoji (with U+FE0E from app.js; this covers what it can't) */
+.small, .lead, .thoughts .lead, details.lead summary, .clip { font-variant-emoji: text; }
+.tx { font-family: Menlo, "SF Mono", "DejaVu Sans Mono", "Noto Sans Symbols 2", "Noto Sans Symbols", monospace; font-variant-emoji: text; font-style: normal; }
 .note { font-style: italic; }
 .clip { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
 .clip.open { display: block; }
