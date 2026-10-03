@@ -117,8 +117,18 @@ function renderTop() {
   $("#dot").className = online ? "on" : "off";
   document.querySelector('.tab[data-tab="thoughts"]').classList.toggle("busy", busy);
   // The desktop bar's worlds (server: shown), plus the one open here even if it's hidden there.
-  $("#worlds").innerHTML = worlds.filter((w) => w.shown || w.id === world).map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.thoughtsBusy ? " busy" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)} · ${w.agents} agents">${esc(w.id)}</button>`).join("");
+  $("#worlds").innerHTML = worlds.filter((w) => w.shown || w.id === world).map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.needsYou ? " needs" : w.working || w.thoughtsBusy ? " working" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)} · ${w.agents} agents${w.working ? ` · ${w.working} working` : ""}${w.needsYou ? ` · ${w.needsYou} need you` : ""}">${esc(w.id)}</button>`).join("");
+  fitTop();
 }
+
+// The top bar is as big as fits on one line: start large, shrink in small steps only while
+// it overflows (more worlds showing, a narrow phone).
+function fitTop() {
+  const top = $("#top"); let s = 0.99; // Angus: bigger, then smaller, then "smaller by 10%": 33.7 px chips at most; shrink to fit
+  top.style.setProperty("--s", s);
+  while (s > 0.5 && top.scrollWidth > top.clientWidth) { s -= 0.03; top.style.setProperty("--s", s.toFixed(2)); }
+}
+addEventListener("resize", fitTop);
 
 // ---- data -----------------------------------------------------------------------------------
 async function load() {

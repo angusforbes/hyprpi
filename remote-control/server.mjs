@@ -113,6 +113,10 @@ function worlds() {
     color: "#" + (worldHex(id) || "7aa2f7"),
     agents: (listing?.agents || []).filter((a) => a.room === id).length,
     thoughtsBusy: !!busy.get(id),
+    // Activity dot (like the agents panel's ● and ×): an agent working, or one blocked on Angus
+    // (a bonk or a ding: status "blocked" until it works again).
+    working: (listing?.agents || []).filter((a) => a.room === id && !a.parked && a.status === "working").length,
+    needsYou: (listing?.agents || []).filter((a) => a.room === id && !a.parked && a.status === "blocked").length,
     shown: shownWorlds.includes(id),
   }));
 }

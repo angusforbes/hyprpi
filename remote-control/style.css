@@ -17,29 +17,38 @@ a { color: var(--accent); }
 
 /* ---- header: one line, always visible: connection dot, world chips, view tabs ---- */
 #top {
-  flex: none; display: flex; align-items: center; gap: 5px; white-space: nowrap;
-  padding: calc(env(safe-area-inset-top) + 5px) calc(env(safe-area-inset-right) + 8px) 5px calc(env(safe-area-inset-left) + 8px);
+  flex: none; display: flex; align-items: center; gap: 4px; white-space: nowrap;
+  padding: calc(env(safe-area-inset-top) + 5px) calc(env(safe-area-inset-right) + 6px) 6px calc(env(safe-area-inset-left) + 6px);
   border-bottom: 1px solid var(--line); background: var(--bg);
 }
-#dot { width: 6px; height: 6px; border-radius: 50%; background: #e0af68; flex: none; }
+#dot { width: 5px; height: 5px; border-radius: 50%; background: #e0af68; flex: none; }
 #dot.on { background: #9ece6a; } #dot.off { background: #f7768e; }
 @keyframes pulse { 50% { opacity: .35; } }
-#worlds { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-#worlds::-webkit-scrollbar { display: none; }
+/* Sizes scale with --s (app.js fitTop(): 1 = as big as A–E allows; shrinks only to stay on one line). */
+#top { --s: 1; }
+#worlds { display: flex; gap: calc(var(--s) * 3px); min-width: 0; flex: none; padding-top: 3px; }
 .chip {
-  position: relative; flex: none; width: 22px; height: 22px; padding: 0; border-radius: 50%;
-  border: 1.5px solid var(--c); background: transparent; color: var(--c);
-  font-family: inherit; font-size: 11.5px; font-weight: 700; line-height: 1; cursor: pointer;
+  position: relative; flex: none; width: calc(var(--s) * 34px); height: calc(var(--s) * 34px); padding: 0; border-radius: 50%;
+  border: 2px solid var(--c); background: transparent; color: var(--c);
+  font-family: inherit; font-size: calc(var(--s) * 19px); font-weight: 700; line-height: 1; cursor: pointer;
 }
 .chip.cur { background: var(--c); color: var(--bg); }
-.chip.busy::after {
-  content: ""; position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--c); border: 1.5px solid var(--bg); animation: pulse 1.6s ease-in-out infinite;
+/* activity dot over the chip: ● an agent (or Thoughts) working · red when one needs Angus */
+.chip.working::after, .chip.needs::after {
+  content: ""; position: absolute; top: -3px; right: -3px; width: calc(var(--s) * 11px); height: calc(var(--s) * 11px); border-radius: 50%;
+  background: var(--c); border: 2px solid var(--bg);
 }
-#tabs { display: flex; gap: 2px; margin-left: auto; flex: none; }
+.chip.working::after { animation: pulse 1.6s ease-in-out infinite; }
+.chip.cur.working::after { background: var(--bg); border-color: var(--c); } /* visible on the filled chip */
+.chip.needs::after {
+  content: "!"; background: #e64553; color: #fff; animation: none;
+  width: calc(var(--s) * 14px); height: calc(var(--s) * 14px); top: -4px; right: -4px;
+  font-size: calc(var(--s) * 11px); font-weight: 800; line-height: calc(var(--s) * 14px); text-align: center;
+}
+#tabs { display: flex; gap: calc(var(--s) * 1px); margin-left: auto; flex: none; }
 .tab {
-  height: 22px; padding: 0 4px; border-radius: 6px; border: 1.5px solid transparent; background: transparent;
-  color: var(--dim); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  height: calc(var(--s) * 34px); padding: 0 calc(var(--s) * 5px); border-radius: 9px; border: none; background: transparent;
+  color: var(--dim); font-family: inherit; font-size: calc(var(--s) * 18px); font-weight: 650; letter-spacing: -0.02em; cursor: pointer;
 }
 .tab.cur { background: var(--world); color: var(--bg); }
 .tab.cur.busy { animation: pulse 1.6s ease-in-out infinite; }
