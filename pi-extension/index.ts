@@ -13,6 +13,7 @@ import { execFile } from "node:child_process";
 import { connect } from "../lib/client.mjs";
 import { ROOT } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
+import { laterModes } from "./later.ts";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
@@ -20,6 +21,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   ignoreNotes(pi); // /ignore works in any window that loads this extension
   const AGENT_ID = process.env.HYPRPI_AGENT_ID;
   if (!AGENT_ID) return;
+  laterModes(pi); // /notnow and /discuss (J46): hyprpi agent windows only (they file on the board)
 
   let conn: Conn | null = null;
   let ctxRef: any = null;
