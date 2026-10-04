@@ -206,7 +206,7 @@ async function fetchWorld(w) {
 const prefetched = new Set();
 function refreshAll() {
   const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
-  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); }), fetchBoard(w).catch(() => {});
+  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {});
 }
 function setWorld(w) {
   if (!w || w === world) return;
@@ -215,9 +215,9 @@ function setWorld(w) {
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
-  renderTop(); render({ keep: "restore" }); renderProjects(); // at once, from the cache
+  renderTop(); render({ keep: "restore" }); renderProjects(); renderAgents(); // at once, from the cache
   fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
-  fetchBoard(w).catch(() => {});
+  fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {});
 }
 function applyState(s) {
   worlds = s.worlds || []; online = !!s.online;
@@ -227,12 +227,13 @@ function applyState(s) {
   renderTop();
   if (first) refreshAll();
   // A world that just appeared (F–I in use): fetch its thread now, so switching to it is instant.
-  for (const x of worlds) if (x.shown && !prefetched.has(x.id)) { prefetched.add(x.id); fetchWorld(x.id).catch(() => prefetched.delete(x.id)); fetchBoard(x.id).catch(() => {}); }
+  for (const x of worlds) if (x.shown && !prefetched.has(x.id)) { prefetched.add(x.id); fetchWorld(x.id).catch(() => prefetched.delete(x.id)); fetchBoard(x.id).catch(() => {}); fetchAgents(x.id).catch(() => {}); }
 }
 function listen() {
   if (es && es.readyState !== EventSource.CLOSED) return;
   es = new EventSource("/events");
   es.addEventListener("state", (ev) => applyState(JSON.parse(ev.data)));
+  es.addEventListener("agents", () => agentsSoon()); // statuses changed: refresh the shown worlds' lists
   es.addEventListener("board", (ev) => { const d = JSON.parse(ev.data); if (d.room) boardSoon(d.room); });
   es.addEventListener("thoughts", (ev) => {
     const d = JSON.parse(ev.data), c = cached(d.room);
@@ -298,7 +299,7 @@ input.addEventListener("touchend", (e) => {
 }, { passive: false });
 input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); if (!cached(world).scroll) thread.scrollTop = thread.scrollHeight; }); });
 // Scrollable panes (the thread, the Proj tab: J42) and the text box keep their drags.
-document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #input")) e.preventDefault(); }, { passive: false });
+document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #input")) e.preventDefault(); }, { passive: false });
 
 // iOS drops the connection when the app goes to the background: catch up on return.
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
@@ -332,7 +333,7 @@ async function fetchBoard(w) {
   if (w === world && view === "projects" && changed) renderProjects({ keepScroll: true });
 }
 const boardTimers = {};
-const boardSoon = (w) => { clearTimeout(boardTimers[w]); boardTimers[w] = setTimeout(() => fetchBoard(w).catch(() => {}), 250); };
+const boardSoon = (w) => { clearTimeout(boardTimers[w]); boardTimers[w] = setTimeout(() => { fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); }, 250); }; // agents show their projects too
 let needsOpen = localStorage.getItem("hyprpi-rc.needsOpen") !== "0"; // open unless he closed it
 const badge = (st) => `<span class="badge ${esc(st)}">${esc(st)}</span>`;
 function renderProjects({ keepScroll = false } = {}) {
@@ -364,11 +365,16 @@ function renderProjects({ keepScroll = false } = {}) {
   projectsEl.scrollTop = keepScroll ? was : 0;
 }
 function setView(v) {
-  if (v === view) { if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); } return; } // Proj again: back to the list
+  if (v === view) { // Proj / Agnt again: back to the list
+    if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); }
+    if (v === "agents" && openAgent.get(world)) { openAgent.delete(world); renderAgents(); }
+    return;
+  }
   view = v;
-  $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects";
+  $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects"; agentsEl.hidden = v !== "agents";
   renderTop();
   if (v === "projects") { renderProjects(); fetchBoard(world).catch(() => {}); }
+  else if (v === "agents") { renderAgents(); fetchAgents(world).catch(() => {}); }
   else render({ keep: "restore" });
 }
 projectsEl.addEventListener("click", (e) => {
@@ -380,7 +386,78 @@ projectsEl.addEventListener("toggle", (e) => {
   if (e.target.matches("details.needs")) { needsOpen = e.target.open; localStorage.setItem("hyprpi-rc.needsOpen", needsOpen ? "1" : "0"); }
 }, true);
 
-window.__rc = { cached, setWorld, boardOf, setView }; // for tests (CDP)
+// ---- the Agnt tab (J43): this world's agents, as the desktop agents panel lists them -----------
+// Angus: "lets make the agents panel for remote-control". The list: mark (● working · × needs you ·
+// ✓ finished · ○ idle · ◌ not open), icon, name, workspace, topic, how long ago. Tap one: a short
+// read-only summary (status, topic, current job, projects, model, last room posts); the title (its
+// row) or Agnt goes back. Cached, prefetched and refreshed live like the boards. Read-only.
+const agentLists = new Map(); // world -> { agents, loaded }
+const openAgent = new Map(); // world -> agent id
+const agentsEl = $("#agents");
+const LSA = (w) => "hyprpi-rc.agents." + w;
+function agentsOf(w) {
+  let l = agentLists.get(w);
+  if (!l) {
+    l = { agents: [], loaded: false };
+    try { const st = JSON.parse(localStorage.getItem(LSA(w)) || "null"); if (Array.isArray(st?.agents)) l.agents = st.agents; } catch { /* none */ }
+    agentLists.set(w, l);
+  }
+  return l;
+}
+async function fetchAgents(w) {
+  const r = await call("GET", `/api/agents?world=${w}`), l = agentsOf(w);
+  const changed = !l.loaded || JSON.stringify(r.agents) !== JSON.stringify(l.agents);
+  l.agents = r.agents || []; l.loaded = true;
+  try { localStorage.setItem(LSA(w), JSON.stringify({ agents: l.agents })); } catch { /* memory only */ }
+  if (w === world && view === "agents" && changed) renderAgents({ keepScroll: true });
+}
+let agentsTimer = null;
+function agentsSoon() {
+  clearTimeout(agentsTimer);
+  agentsTimer = setTimeout(() => { for (const w of new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)])) fetchAgents(w).catch(() => {}); }, 300);
+}
+function ago(ts) {
+  if (!ts) return "";
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  return m < 1 ? "now" : m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+}
+const agentName = (a) => `<span class="aname"${a.color ? ` style="color:${esc(a.color)}"` : ""}>${esc(a.name)}</span>`;
+function agentRow(a, cls = "agent") {
+  const meta = [a.ws, a.topic ? `<i>${esc(a.topic)}</i>` : "", a.active ? ago(a.active) : ""].filter(Boolean).join(" · ");
+  return `<button class="${cls}${a.mark === "◌" ? " gone" : ""}" data-a="${esc(a.id)}"><span class="amark m${a.mark === "●" ? "w" : a.mark === "×" ? "x" : a.mark === "✓" ? "d" : "i"}">${esc(a.mark)}</span><span class="pic">${esc(a.icon || "")}</span><span class="pmain"><span class="pname">${agentName(a)}</span><span class="pwhere">${meta}</span></span>${cls === "agent" ? `<span class="chev">›</span>` : ""}</button>`;
+}
+function renderAgents({ keepScroll = false } = {}) {
+  if (view !== "agents") return;
+  const l = agentsOf(world), was = agentsEl.scrollTop;
+  const a = l.agents.find((x) => x.id === openAgent.get(world));
+  const html = [];
+  if (!a) {
+    for (const x of l.agents) html.push(agentRow(x));
+    if (!l.agents.length && l.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
+  } else {
+    const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
+    const status = { "●": "working", "×": "needs you", "✓": "finished (not seen yet)", "○": "idle", "◌": a.status }[a.mark] || a.status;
+    html.push(`<div class="psum">` + agentRow(a, "agent ptoggle") // its row is the title: a tap goes back (as in Proj)
+      + sec("Status", `<div>${esc(a.mark)} ${esc(status)}${a.active ? ` <span class="small">· last turn ${ago(a.active)} ago</span>` : ""}</div>${a.topic ? `<div class="md"><i>${esc(a.topic)}</i></div>` : ""}${a.did ? `<div class="small clip">${inline(a.did)}</div>` : ""}`)
+      + sec("Current job", a.job ? `<div>⟦${esc(a.job.id)} v${esc(a.job.version)} · ${esc(a.job.state)}⟧${a.job.project ? ` <span class="small">@${esc(a.job.project)}</span>` : ""}</div><div class="md">${md(a.job.goal)}</div>` : "")
+      + sec("Projects", a.projects.length ? `<div>${a.projects.map((p) => `${esc(p.icon)} @${esc(p.name)}${p.writer ? ` <span class="small">(owner)</span>` : ""}`).join("<br>")}</div>` : "")
+      + sec("Model", a.model ? `<div>${esc(a.model)}${a.thinking ? ` <span class="small">· thinking ${esc(a.thinking)}</span>` : ""}</div>` : "")
+      + sec("Last room posts", a.posts.length ? `<ul class="items">${a.posts.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : "")
+      + `</div>`);
+  }
+  agentsEl.innerHTML = html.join("");
+  textGlyphs(agentsEl);
+  agentsEl.scrollTop = keepScroll ? was : 0;
+}
+agentsEl.addEventListener("click", (e) => {
+  if (e.target.closest("a")) return;
+  const t = e.target.closest(".agent");
+  if (t && t.classList.contains("ptoggle")) { openAgent.delete(world); return renderAgents(); } // the open one's row: back to the list
+  if (t) { openAgent.set(world, t.dataset.a); return renderAgents(); }
+  const c = e.target.closest(".clip"); if (c) c.classList.toggle("open");
+});
+
+window.__rc = { cached, setWorld, boardOf, setView, agentsOf }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }

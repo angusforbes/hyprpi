@@ -100,10 +100,16 @@ details.card[open] summary { margin-bottom: 4px; }
 .md table { border-collapse: collapse; font-size: 14px; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--line); padding: 3px 7px; text-align: left; }
 
-/* ---- the Proj tab ---- */
-#projects { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 8px calc(env(safe-area-inset-right) + 10px) 14px calc(env(safe-area-inset-left) + 10px); }
+/* ---- the Proj and Agnt tabs ---- */
+.amark { flex: none; width: 14px; text-align: center; font-weight: 700; color: var(--world); }
+.amark.mx { color: #e64553; } .amark.mi { color: var(--dim); font-weight: 400; }
+.agent .pic { width: 26px; text-align: center; }
+.agent.gone { opacity: .55; }
+.aname { color: var(--fg); }
+.agent .pname .aname { font-weight: 650; }
+#projects, #agents { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 8px calc(env(safe-area-inset-right) + 10px) 14px calc(env(safe-area-inset-left) + 10px); }
 [hidden] { display: none !important; }
-.proj { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--line); padding: 10px 2px; color: var(--fg); font-family: inherit; cursor: pointer; }
+.proj, .agent { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--line); padding: 10px 2px; color: var(--fg); font-family: inherit; cursor: pointer; }
 .pic { font-size: 22px; flex: none; }
 .pmain { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .pname { font-weight: 650; font-size: 16px; color: var(--world); }

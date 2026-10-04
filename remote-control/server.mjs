@@ -16,7 +16,8 @@
 //   POST /api/stop   {world, ask?}   interrupt Thoughts (ask: it then says what got cut off)
 //   GET  /lib/thoughts-lines.mjs     the thread's display rule, shared with the desktop
 //   GET  /api/board?world=C    the Proj tab: each project's summary (open items only)
-//   GET  /events               live: thoughts entries / busy, worlds, board (a card changed)
+//   GET  /api/agents?world=C   the Agnt tab: the world's agents as the desktop agents panel lists them
+//   GET  /events               live: thoughts entries / busy, worlds, board (a card changed), agents
 //   GET  /file?path=/abs/path  read-only, only under ~/Obsidian and ~/Work (links in replies)
 import http from "node:http";
 import fs from "node:fs";
@@ -24,7 +25,7 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { connect } from "../lib/client.mjs";
-import { socketPath, runtimeDir, loadConfig } from "../lib/paths.mjs";
+import { socketPath, runtimeDir, loadConfig, wsLabel } from "../lib/paths.mjs";
 import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
 import { worldHex, theme } from "../lib/tui/term.mjs";
 
@@ -150,7 +151,8 @@ async function start() {
       path: daemonSocket(),
       timeout: 3000,
       onEvent: (ev, data) => {
-        if (ev === "board") broadcast("board", { room: data?.room }); // a card changed: the page re-fetches that world
+        if (ev === "board") broadcast("board", { room: data?.room });
+        if (ev === "agents") broadcast("agents", {}); // statuses changed: the page re-fetches its Agnt lists // a card changed: the page re-fetches that world
         if (ev === "thoughts") {
           broadcast("thoughts", data);
           if (data?.busy !== undefined && !!data.busy !== !!busy.get(data.room)) { busy.set(data.room, !!data.busy); broadcast("state", state()); }
@@ -183,6 +185,42 @@ function boardSummary(b) {
       decide: open(p, "decide").map(item), next: open(p, "next").map(item),
       done: open(p, "done").sort((x, y) => (x.updated || x.ts) - (y.updated || y.ts)).map(item),
     })),
+  };
+}
+
+// ---- the Agnt tab (J43): the world's agents as the desktop agents panel lists them -----------
+// Same data and order as mockups/agents-tui.mjs (its default view): the daemon's live agents of the
+// world in list order, then the ones lost to a restart (dormant, kind != "closed"); parked and
+// closed ones are its ^O view, left out here. Mark: as agents-tui mark() (● working · × blocked
+// = needs Angus · ✓ done, unseen · ○ idle) and ◌ for one that isn't open.
+// Each agent's summary (read-only): status, topic, current job, projects, model, last room posts.
+const agentMark = (a) => a.dormant || a.parked ? "◌" : a.status === "working" ? "●" : a.status === "blocked" ? "×" : a.status === "done" && !a.seen ? "✓" : "○";
+async function agentsSummary(r) {
+  const l = await api.call("list");
+  const here = [...(l.agents || []).filter((a) => a.room === r && !a.parked), ...(l.dormant || []).filter((a) => a.room === r && a.kind !== "closed").map((a) => ({ ...a, dormant: true }))];
+  const [board, briefs, log] = await Promise.all([
+    api.call("board.get", { room: r }).catch(() => ({ projects: [] })),
+    api.call("thoughts.briefs", { room: r }).catch(() => ({ briefs: [] })),
+    api.call("room.read", { room: r, limit: 200 }).catch(() => ({ messages: [] })),
+  ]);
+  const size = Number(loadConfig()?.worldSize) || 10;
+  return {
+    room: r,
+    agents: here.map((a) => {
+      const name = a.display || a.name || a.id;
+      const job = [...(briefs.briefs || [])].reverse().find((b) => b.agent === name && /^(running|queued|stopped)$/.test(b.state || ""));
+      return {
+        id: a.id, name, icon: a.icon || "", color: a.color || "", mark: agentMark(a),
+        status: a.dormant ? (a.kind === "restart" ? "lost to a restart" : "closed") : a.status || "idle",
+        topic: a.topic || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, size) : "",
+        active: a.last_did?.ts || a.left || null, // its last finished turn (since resets on a daemon restart)
+        did: a.last_did?.text || "",
+        model: (a.model || "").replace(/^claude-/, ""), thinking: a.thinking || "",
+        job: job ? { id: job.job, version: job.version, state: job.state, goal: job.goal || "", project: job.project || "" } : null,
+        projects: (board.projects || []).filter((p) => p.status !== "archived" && (p.members || []).includes(a.id)).map((p) => ({ name: p.name, icon: p.icon || "📋", writer: p.writer === a.id })),
+        posts: (log.messages || []).filter((m) => m.author?.id === a.id).slice(-4).map((m) => ({ ts: m.ts, text: String(m.text || "").slice(0, 400) })),
+      };
+    }),
   };
 }
 
@@ -234,6 +272,11 @@ const server = http.createServer(async (req, res) => {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       return json(res, 200, boardSummary(await api.call("board.get", { room: r })));
+    }
+    if (req.method === "GET" && url.pathname === "/api/agents") {
+      const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      return json(res, 200, await agentsSummary(r));
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       const b = await body(req), r = room(b.world), text = String(b.text || "").trim();
