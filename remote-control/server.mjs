@@ -273,8 +273,10 @@ async function buildStreamFor(r) {
     const who = it.kind === "board" ? { name: "📋 " + it.who.name, color: "" } : { name: (it.who.icon ? it.who.icon + " " : "") + it.who.name, color: it.who.color || "", human: !!it.who.human };
     // The body without the "who" lead (the row shows who in its colour); DIRECT / did / topic keep their verb.
     const body = DIRECT[it.kind] ? full.replace(/^.*?(?= (to|asks|replies to) )/, "").trim() : it.kind === "turn" ? "did: " + it.text : it.kind === "topic" ? "topic: " + it.text : it.text;
-    // by: the agent the line is by (for "only X" in the open view), not for Angus or board lines.
-    return { k: it.key, ts: it.ts, kind: it.kind, who, by: it.kind !== "board" && !it.who.human && it.who.name ? it.who.name : "", project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body };
+    // by: whose line it is, for "only X" in the open view: an agent, a Thoughts agent, "Angus" (his
+    // messages, and prompts he sent), or whoever made a board change.
+    const by = it.who.human || it.kind === "prompt" ? "Angus" : it.who.name || "";
+    return { k: it.key, ts: it.ts, kind: it.kind, who, by, project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body };
   });
   const sig = `${items.length}|${items.at(-1)?.k || ""}|${items.at(-1)?.text?.length || 0}`;
   const old = streams.get(r);
@@ -285,11 +287,16 @@ async function buildStreamFor(r) {
 // One agent's lines: the desktop Stream panel's "/stream @Name" rule (lib/stream.mjs): lines by
 // that agent, to it, and Angus's / prompts naming it. (Angus, room D #304: filter Strm on an agent.)
 function streamFor(st, name) {
+  // Angus isn't an agent, so the @Name rule can't resolve him: his lines are his room messages, the
+  // prompts he sent (Angus → X) and his board changes (Angus, after J53: "stream only Angus").
+  if (name === "Angus") { const keep = new Set((st.raw || []).filter((it) => it.who?.human || it.kind === "prompt").map((it) => it.key)); return st.items.filter((it) => keep.has(it.k)); }
+  // Board changes carry the name of who made them, not an id: count those too (e.g. Thoughts-D's).
+  const byName = new Set((st.raw || []).filter((it) => it.kind === "board" && it.who?.name === name).map((it) => it.key));
   const f = parseStreamFilter("@" + name);
   const pool = [...(listing?.agents || []), ...(listing?.dormant || [])].map((a) => ({ id: a.id, name: a.name || "", display: a.display || a.name || "" }));
   const r = resolveFilterNames(f.names, { agents: pool, projects: st.projects || [], items: st.raw || [] });
   const keep = new Set(filterStream(st.raw || [], f, r).map((it) => it.key));
-  return st.items.filter((it) => keep.has(it.k));
+  return st.items.filter((it) => keep.has(it.k) || byName.has(it.k));
 }
 const streamTimers = new Map();
 function streamSoon(r) {
