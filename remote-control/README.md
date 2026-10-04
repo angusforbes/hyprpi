@@ -3,7 +3,7 @@
 A small web app for Angus's iPhone (and any browser on his tailnet): chat with a world's
 **Thoughts** agent from anywhere. One top bar, always visible (also with the keyboard open): the
 world chips (the desktop bar's worlds: A–E always, F–I while in use, live) and the tabs
-Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short summary; Agnt: its agents as the desktop agents panel lists them, one open at a time as a short read-only summary). Board card:
+Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short summary; Agnt: its agents as the desktop agents panel lists them, one open at a time as a short read-only summary; Strm: the world's Stream, one line per event, a tap opens an event in place and closes it again). Board card:
 `@hyprpi-remote-control` (world D). Phone first; an iPad layout comes later.
 
 - `server.mjs`: plain Node, no dependencies. Listens on **127.0.0.1:8897** only, holds one
@@ -48,6 +48,7 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 | `GET /api/thoughts?world=C` | the thread (`thoughts.get`, last 300 entries) |
 | `GET /api/board?world=C` | the Proj tab: each project's summary (status, where, open decide/next/done items, next step; no archive, no Heard) |
 | `GET /api/agents?world=C` | the Agnt tab: the world's agents in the desktop panel's order, each with mark, topic, workspace, last turn, model, current job, projects, last room posts |
+| `GET /api/stream?world=C` | the Strm tab: the world's Stream as the desktop Stream panel builds it (lib/stream.mjs, last 200 interactions) |
 | `GET /lib/tui/agent-click.mjs` | the desktop panels' Ctrl+click name matcher, as-is: names in the page become links (agent → Agnt, @project → Proj, Thoughts-X → Thgt, switching world) |
 | `GET /lib/thoughts-lines.mjs` | the thread's display rule, the same module the desktop Thoughts window uses |
 | `POST /api/send {world, text}` | to Thoughts (`thoughts.send`, via phone) |

@@ -255,19 +255,20 @@ async function fetchWorld(w) {
 const prefetched = new Set();
 function refreshAll() {
   const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
-  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {});
+  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {}), fetchStream(w).catch(() => {});
 }
 function setWorld(w) {
   if (!w || w === world) return;
   if (world && view === "thoughts") cached(world).scroll = nearBottom() ? null : thread.scrollTop; // only while it's on screen
+  if (world && view === "stream") streamOf(world).scroll = streamNearEnd() ? null : streamEl.scrollTop;
   world = w;
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
-  if (view === "thoughts") render({ keep: "restore" }); else if (view === "projects") renderProjects(); else renderAgents();
+  if (view === "thoughts") render({ keep: "restore" }); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
   fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
-  fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {});
+  fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); fetchStream(w).catch(() => {});
 }
 function applyState(s) {
   worlds = s.worlds || []; online = !!s.online;
@@ -278,13 +279,14 @@ function applyState(s) {
   renderTop();
   if (first) refreshAll();
   // A world that just appeared (F–I in use): fetch its thread now, so switching to it is instant.
-  for (const x of worlds) if (x.shown && !prefetched.has(x.id)) { prefetched.add(x.id); fetchWorld(x.id).catch(() => prefetched.delete(x.id)); fetchBoard(x.id).catch(() => {}); fetchAgents(x.id).catch(() => {}); }
+  for (const x of worlds) if (x.shown && !prefetched.has(x.id)) { prefetched.add(x.id); fetchWorld(x.id).catch(() => prefetched.delete(x.id)); fetchBoard(x.id).catch(() => {}); fetchAgents(x.id).catch(() => {}); fetchStream(x.id).catch(() => {}); }
 }
 function listen() {
   if (es && es.readyState !== EventSource.CLOSED) return;
   es = new EventSource("/events");
   es.addEventListener("state", (ev) => applyState(JSON.parse(ev.data)));
-  es.addEventListener("agents", () => agentsSoon()); // statuses changed: refresh the shown worlds' lists
+  es.addEventListener("agents", () => agentsSoon());
+  es.addEventListener("stream", (ev) => { const d = JSON.parse(ev.data); if (d.room) fetchStream(d.room).catch(() => {}); }); // the timeline changed // statuses changed: refresh the shown worlds' lists
   es.addEventListener("board", (ev) => { const d = JSON.parse(ev.data); if (d.room) boardSoon(d.room); });
   es.addEventListener("thoughts", (ev) => {
     const d = JSON.parse(ev.data), c = cached(d.room);
@@ -350,7 +352,7 @@ input.addEventListener("touchend", (e) => {
 }, { passive: false });
 input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); if (!cached(world).scroll) thread.scrollTop = thread.scrollHeight; }); });
 // Scrollable panes (the thread, the Proj tab: J42) and the text box keep their drags.
-document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #input")) e.preventDefault(); }, { passive: false });
+document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #stream, #input")) e.preventDefault(); }, { passive: false });
 
 // iOS drops the connection when the app goes to the background: catch up on return.
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
@@ -428,10 +430,12 @@ function setView(v) {
     return;
   }
   view = v;
-  $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects"; agentsEl.hidden = v !== "agents";
+  if (view === "stream" && world) streamOf(world).scroll = streamNearEnd() ? null : streamEl.scrollTop; // leaving Strm: keep its place
+  $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects"; agentsEl.hidden = v !== "agents"; streamEl.hidden = v !== "stream";
   renderTop();
   if (v === "projects") { renderProjects(); fetchBoard(world).catch(() => {}); }
   else if (v === "agents") { renderAgents(); fetchAgents(world).catch(() => {}); }
+  else if (v === "stream") { renderStream({ restore: true }); fetchStream(world).catch(() => {}); }
   else render({ keep: "restore" });
 }
 projectsEl.addEventListener("click", (e) => {
@@ -524,7 +528,7 @@ agentsEl.addEventListener("click", (e) => {
 // "@" must match its name's capitalisation (so "remote control" isn't Remote, "knock" isn't Knock).
 let dirAgents = [], dirProjects = [], namesRe = null, dirSig = "", dirVer = 0;
 // The directory changed (an agent came or went, a project was added): redraw what's on screen.
-function rerenderAll() { if (view === "thoughts") render(); else if (view === "projects") renderProjects({ keepScroll: true }); else renderAgents({ keepScroll: true }); }
+function rerenderAll() { if (view === "thoughts") render(); else if (view === "projects") renderProjects({ keepScroll: true }); else if (view === "agents") renderAgents({ keepScroll: true }); else renderStream(); }
 function setDirectory(d) {
   dirAgents = d.agents || []; dirProjects = d.projects || [];
   const names = [...dirAgents.flatMap((a) => [a.display, a.name]), ...dirProjects.map((p) => p.name)].filter((n) => n && n.length > 1);
@@ -579,7 +583,65 @@ document.addEventListener("click", (e) => {
   jumpTo(l.dataset.kind, l.dataset.id, l.dataset.room);
 }, true);
 
-window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs }; // for tests (CDP)
+// ---- the Strm tab (J49, Angus: "we might as well add Strm … a compact mode by default, but then
+// make it easy to open up events fully, and close them again … multiple events open fully at the
+// same time, they stay within the scrollable stream"). The world's Stream as the desktop panel
+// builds it (server: lib/stream.mjs); one line per event (time, who in its colour, the first
+// line); a tap opens it in place (full text, Markdown, links, name links) and a tap closes it.
+// Open events are remembered per world (in memory) across tabs and worlds. Read-only; cached,
+// prefetched and live like the other tabs.
+const streamEl = $("#stream");
+const streams = new Map(); // world -> { items, loaded, open: Set(key), scroll }
+const LSS = (w) => "hyprpi-rc.stream." + w;
+function streamOf(w) {
+  let st = streams.get(w);
+  if (!st) {
+    st = { items: [], loaded: false, open: new Set(), scroll: null };
+    try { const x = JSON.parse(localStorage.getItem(LSS(w)) || "null"); if (Array.isArray(x?.items)) st.items = x.items; } catch { /* none */ }
+    streams.set(w, st);
+  }
+  return st;
+}
+const streamNearEnd = () => streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 60;
+async function fetchStream(w) {
+  const r = await call("GET", `/api/stream?world=${w}`), st = streamOf(w);
+  const next = r.items || [], changed = !st.loaded || next.length !== st.items.length || next.at(-1)?.k !== st.items.at(-1)?.k || next.at(-1)?.text !== st.items.at(-1)?.text;
+  st.items = next; st.loaded = true;
+  try { localStorage.setItem(LSS(w), JSON.stringify({ items: next.slice(-250) })); } catch { /* memory only */ }
+  if (w === world && view === "stream" && changed) renderStream();
+}
+const evFirst = (t) => String(t || "").split("\n").find((x) => x.trim()) || "";
+function streamRow(it, open) {
+  const day = new Date(it.ts).toDateString() !== new Date().toDateString();
+  const when = new Date(it.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const tag = it.project ? ` <span class="sproj">@${esc(it.project)}</span>` : "";
+  const who = `<span class="swho"${it.who.color ? ` style="color:${esc(it.who.color)}"` : ""}>${esc(it.who.name)}</span>`;
+  return `<div class="ev k-${esc(it.kind)}${open ? " open" : ""}" data-k="${esc(it.k)}"><div class="sline"><span class="st">${day ? esc(new Date(it.ts).toLocaleDateString([], { month: "numeric", day: "numeric" })) + " " : ""}${esc(when)}</span> ${who} <span class="sone">${esc(evFirst(it.text))}</span></div>`
+    + (open ? `<div class="sfull md">${md(it.text)}${tag}</div>` : "") + `</div>`;
+}
+function renderStream({ restore = false } = {}) {
+  if (view !== "stream") return;
+  const st = streamOf(world), atEnd = streamNearEnd(), was = streamEl.scrollTop;
+  streamEl.innerHTML = st.items.map((it) => streamRow(it, st.open.has(it.k))).join("")
+    + (!st.items.length && st.loaded ? `<div class="small empty" style="text-align:center;margin-top:30vh">Nothing in world ${esc(world)}'s stream yet.</div>` : "");
+  for (const el of streamEl.querySelectorAll(".ev.open .sfull")) { linkNames(el); textGlyphs(el); }
+  textGlyphs(streamEl);
+  if (restore) streamEl.scrollTop = st.scroll == null ? streamEl.scrollHeight : st.scroll;
+  else streamEl.scrollTop = atEnd ? streamEl.scrollHeight : was; // at the end: follow new events
+}
+// A tap on an event opens / closes it in place (not when the tap is on a link inside it).
+streamEl.addEventListener("click", (e) => {
+  if (e.target.closest("a, .nl")) return;
+  const ev = e.target.closest(".ev"); if (!ev) return;
+  const st = streamOf(world), k = ev.dataset.k, it = st.items.find((x) => x.k === k); if (!it) return;
+  if (st.open.has(k)) st.open.delete(k); else st.open.add(k);
+  const tmp = document.createElement("div"); tmp.innerHTML = streamRow(it, st.open.has(k));
+  const row = tmp.firstElementChild; ev.replaceWith(row);
+  const full = row.querySelector(".sfull"); if (full) linkNames(full);
+  textGlyphs(row);
+});
+
+window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }

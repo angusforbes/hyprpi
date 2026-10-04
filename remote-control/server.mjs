@@ -17,6 +17,7 @@
 //   GET  /lib/thoughts-lines.mjs     the thread's display rule, shared with the desktop
 //   GET  /api/board?world=C    the Proj tab: each project's summary (open items only)
 //   GET  /api/agents?world=C   the Agnt tab: the world's agents as the desktop agents panel lists them
+//   GET  /api/stream?world=C   the Strm tab: the world's Stream (lib/stream.mjs, last 200 interactions)
 //   GET  /events               live: thoughts entries / busy, worlds, board (a card changed), agents
 //   GET  /file?path=/abs/path  read-only, only under ~/Obsidian and ~/Work (links in replies)
 import http from "node:http";
@@ -27,6 +28,7 @@ import { execFileSync } from "node:child_process";
 import { connect } from "../lib/client.mjs";
 import { socketPath, runtimeDir, loadConfig, wsLabel } from "../lib/paths.mjs";
 import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
+import { buildStream, streamLine, DIRECT } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49)
 import { worldHex, theme } from "../lib/tui/term.mjs";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -178,7 +180,8 @@ async function start() {
       timeout: 3000,
       onEvent: (ev, data) => {
         if (ev === "board") { broadcast("board", { room: data?.room }); if (data?.room) refreshProjects(data.room); }
-        if (ev === "agents") broadcast("agents", {}); // statuses changed: the page re-fetches its Agnt lists // a card changed: the page re-fetches that world
+        if (ev === "agents") broadcast("agents", {}); // statuses changed: the page re-fetches its Agnt lists
+        if ((ev === "message" || ev === "activity" || ev === "board") && data?.room) streamSoon(data.room); // a card changed: the page re-fetches that world
         if (ev === "thoughts") {
           broadcast("thoughts", data);
           if (data?.busy !== undefined && !!data.busy !== !!busy.get(data.room)) { busy.set(data.room, !!data.busy); broadcast("state", state()); }
@@ -251,6 +254,35 @@ async function agentsSummary(r) {
   };
 }
 
+// ---- the Strm tab (J49): the world's Stream, as the desktop Stream panel (room-tui) builds it ---
+// Same data and builder: history.read (the last 200 interactions, the panel's default /history)
+// and lib/stream.mjs buildStream (room posts, did lines, topics, talk, board changes, Thoughts).
+// Cached per world; rebuilt (debounced) when a message / activity / board event for it arrives,
+// and the page is told only when the timeline really changed.
+const streams = new Map(); // room -> { items, sig }
+async function buildStreamFor(r) {
+  const [h, b] = await Promise.all([api.call("history.read", { room: r, interactions: 200 }), api.call("board.get", { room: r }).catch(() => ({ projects: [] }))]);
+  const projects = b.projects || [], pname = (id) => projects.find((p) => p.id === id)?.name || "";
+  const items = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects }).map((it) => {
+    const full = streamLine(it, { projectName: pname, time: false }); // "who: text [@project]", as /digest says it
+    const who = it.kind === "board" ? { name: "📋 " + it.who.name, color: "" } : { name: (it.who.icon ? it.who.icon + " " : "") + it.who.name, color: it.who.color || "", human: !!it.who.human };
+    // The body without the "who" lead (the row shows who in its colour); DIRECT / did / topic keep their verb.
+    const body = DIRECT[it.kind] ? full.replace(/^.*?(?= (to|asks|replies to) )/, "").trim() : it.kind === "turn" ? "did: " + it.text : it.kind === "topic" ? "topic: " + it.text : it.text;
+    return { k: it.key, ts: it.ts, kind: it.kind, who, project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body };
+  });
+  const sig = `${items.length}|${items.at(-1)?.k || ""}|${items.at(-1)?.text?.length || 0}`;
+  const old = streams.get(r);
+  streams.set(r, { items, sig });
+  if (old && old.sig !== sig) broadcast("stream", { room: r });
+  return streams.get(r);
+}
+const streamTimers = new Map();
+function streamSoon(r) {
+  if (!streams.has(r)) return; // nobody has asked for it yet
+  clearTimeout(streamTimers.get(r));
+  streamTimers.set(r, setTimeout(() => buildStreamFor(r).catch((e) => log("stream", r, e.message)), 600));
+}
+
 // ---- http ------------------------------------------------------------------------------------
 const room = (w) => /^[A-Z]$/.test(String(w || "")) ? String(w) : null;
 const json = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
@@ -320,6 +352,12 @@ const server = http.createServer(async (req, res) => {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       return json(res, 200, await agentsSummary(r));
+    }
+    if (req.method === "GET" && url.pathname === "/api/stream") {
+      const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      const st = streams.get(r) || await buildStreamFor(r);
+      return json(res, 200, { room: r, items: st.items });
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       const b = await body(req), r = room(b.world), text = String(b.text || "").trim();
