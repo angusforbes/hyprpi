@@ -312,8 +312,8 @@ async function body(req, max = 1e6) {
   let s = ""; for await (const c of req) { s += c; if (s.length > max) throw new Error("too large"); }
   return s ? JSON.parse(s) : {};
 }
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8" };
-const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8" };
+const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js" };
 
 function serveFile(res, file, type) {
   fs.stat(file, (err, st) => {
@@ -343,6 +343,36 @@ function fileAllowed(p) {
   const parts = underRoot(real);
   if (!parts || parts.some(refusedPart)) return null;
   return real;
+}
+
+// The vault's files by name, for /wiki (rebuilt at most once a minute; hidden folders skipped).
+const VAULT = path.join(HOME, "Obsidian");
+let vaultIdx = null, vaultAt = 0;
+function vaultIndex() {
+  if (vaultIdx && Date.now() - vaultAt < 60000) return vaultIdx;
+  const idx = new Map(), walk = (d, depth) => {
+    if (depth > 12) return;
+    let ents = []; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.name.startsWith(".")) continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else for (const k of [e.name.toLowerCase(), e.name.toLowerCase().replace(/\.md$/, "")]) { if (!idx.has(k)) idx.set(k, []); idx.get(k).push(p); }
+    }
+  };
+  walk(VAULT, 0); vaultIdx = idx; vaultAt = Date.now();
+  return idx;
+}
+function wikiFind(name, from) {
+  const n = name.trim().toLowerCase().replace(/^\/+/, ""); if (!n) return null;
+  const idx = vaultIndex(), base = n.split("/").pop();
+  let hits = [...(idx.get(base) || []), ...(idx.get(base + ".md") || [])];
+  if (n.includes("/")) hits = hits.filter((p) => p.toLowerCase().endsWith("/" + n) || p.toLowerCase().endsWith("/" + n + ".md")); // [[Folder/Note]]
+  hits = [...new Set(hits)];
+  if (!hits.length) return null;
+  const dir = from ? path.dirname(from) : VAULT;
+  hits.sort((a, b) => (path.dirname(a) === dir ? 0 : 1) - (path.dirname(b) === dir ? 0 : 1) || a.length - b.length);
+  return hits[0];
 }
 
 const server = http.createServer(async (req, res) => {
@@ -406,7 +436,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/file") {
       const real = fileAllowed(url.searchParams.get("path"));
       if (!real) return json(res, 404, { error: "not found or not allowed" });
+      // A Markdown file opens rendered (J56): the viewer page, which fetches the text with raw=1
+      // (the same guard) and draws it. raw=1 gives the text itself.
+      if (/\.(md|markdown)$/i.test(real) && url.searchParams.get("raw") !== "1") return serveFile(res, path.join(HERE, "viewer.html"));
       return serveFile(res, real);
+    }
+    // [[wiki links]] in Obsidian notes (J56): the note (or embedded file) of that name in the vault,
+    // nearest to the note it's linked from; then /file as usual (same guard).
+    if (req.method === "GET" && url.pathname === "/wiki") {
+      const found = wikiFind(String(url.searchParams.get("name") || ""), String(url.searchParams.get("from") || ""));
+      if (!found) { res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }); return res.end(`Not found in the vault: ${url.searchParams.get("name") || ""}`); }
+      res.writeHead(302, { location: "/file?path=" + encodeURIComponent(found) }); return res.end();
     }
     json(res, 404, { error: "not found" });
   } catch (e) { json(res, 500, { error: e.message }); }

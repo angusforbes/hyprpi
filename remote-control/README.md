@@ -8,7 +8,7 @@ Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short
 
 - `server.mjs`: plain Node, no dependencies. Listens on **127.0.0.1:8897** only, holds one
   connection to the hyprpi daemon (`ui.subscribe`) and relays it to the page as Server-Sent Events.
-- `index.html`, `app.js`, `style.css`: the page (its own small Markdown renderer; the colours
+- `index.html`, `app.js`, `style.css`: the page (`md.mjs`: its small Markdown renderer, shared with the document viewer; the colours
   follow the Omarchy theme, the world chips the hyprpi world colours).
 - Messages are sent with `thoughts.send {via: "phone"}`: the thread marks them 📱 and Thoughts is
   told Angus is away from the desk (no windows brought up unless he asks). The phone marks
@@ -54,6 +54,8 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 | `POST /api/send {world, text}` | to Thoughts (`thoughts.send`, via phone) |
 | `POST /api/stop {world}` | interrupt Thoughts |
 | `GET /events` | SSE: `state`, `thoughts {room, entry?, busy?}` |
+| `GET /file?path=X.md` | the document viewer (viewer.html/viewer.js): the file rendered with md.mjs, a raw toggle; `&raw=1` gives the text (same guard) |
+| `GET /wiki?name=&from=` | an Obsidian [[wiki link]]: the vault file of that name (nearest to the linking note), redirected to /file |
 | `GET /file?path=` | a file under ~/Obsidian, ~/Work, ~/Downloads or ~/Documents, read-only (no hidden paths, no key/credential names) |
 
 Next (card): 📎 photos into Thoughts (the daemon already takes image paths), Projects and Agents

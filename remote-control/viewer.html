@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+<title>document</title>
+<style>
+  /* The document viewer (J56): a normal scrolling page (the app's fixed layout doesn't apply). */
+  html { overflow: auto; height: auto; } body { overflow: visible; height: auto; } /* the window scrolls, so the bar can stick */
+  body { position: static; display: block; min-height: 100dvh; }
+  #vbar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; background: var(--bg); border-bottom: 1px solid var(--line);
+    padding: calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 12px) 8px calc(env(safe-area-inset-left) + 12px); }
+  #vname { flex: 1; min-width: 0; font-weight: 650; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #vdir { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #vraw { flex: none; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 4px 12px; }
+  #vraw.on { background: var(--accent); color: var(--bg); }
+  #doc { padding: 6px calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 40px) calc(env(safe-area-inset-left) + 16px); font-size: 16.5px; line-height: 1.55; max-width: 760px; margin: 0 auto; overflow-wrap: anywhere; }
+  #doc.md h1 { font-size: 1.55em; margin: .9em 0 .4em; } #doc.md h2 { font-size: 1.3em; margin: 1em 0 .35em; } #doc.md h3 { font-size: 1.12em; margin: .9em 0 .3em; }
+  #doc.md h4, #doc.md h5, #doc.md h6 { font-size: 1em; margin: .8em 0 .25em; }
+  #doc.md p, #doc.md ul, #doc.md ol, #doc.md pre, #doc.md table, #doc.md blockquote { margin: .6em 0; }
+  #doc.md pre { white-space: pre; overflow-x: auto; font-size: 13.5px; }
+  #doc.md table { font-size: 14.5px; }
+  #doc.md hr { border: none; border-top: 1px solid var(--line); margin: 1.2em 0; }
+  #doc.md .front { font-size: 12.5px; color: var(--dim); background: var(--faint); white-space: pre-wrap; }
+  #doc.md li.task { list-style: none; margin-left: -1.2em; }
+  #doc.md a.wiki { text-decoration-style: dotted; }
+  #doc.md .mdimg { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: .5em 0; }
+  #doc.raw { white-space: pre-wrap; font: 13.5px/1.5 ui-monospace, "JetBrains Mono", Menlo, monospace; }
+  #doc .err { color: #e64553; }
+</style>
+</head>
+<body>
+<header id="vbar"><div style="flex:1;min-width:0"><div id="vname"></div><div id="vdir"></div></div><button id="vraw" title="show the Markdown source">raw</button></header>
+<main id="doc" class="md"></main>
+<script type="module" src="/viewer.js"></script>
+</body>
+</html>

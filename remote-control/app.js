@@ -2,6 +2,7 @@
 // Thread entries (lib/thoughts.mjs): { role: you | thoughts | action | reply | agent | note | evidence, text, from?, ts }
 import { threadKind, answerLine, actionPrefix, splitLead } from "/lib/thoughts-lines.mjs";
 import { agentIn } from "/lib/tui/agent-click.mjs"; // the desktop panels' Ctrl+click matcher, shared as-is (J45)
+import { esc, href, link, inline, md } from "/md.mjs"; // the Markdown renderer, shared with the document viewer (J56)
 const $ = (s) => document.querySelector(s);
 const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), stopBtn = $("#stop");
 let world = null, worlds = [], busy = false, online = false, es = null, loadSeq = 0;
@@ -12,7 +13,6 @@ let world = null, worlds = [], busy = false, online = false, es = null, loadSeq 
 // text-presentation selector, unless the text already asks for emoji (U+FE0F). Real icons (📱, 🐦‍🔥,
 // project and agent icons) are emoji by default and are left alone.
 const TEXT_STYLE = /([\u2194-\u2199\u21A9\u21AA\u23CF\u23E9-\u23EF\u23F8-\u23FA\u25AA\u25AB\u25B6\u25C0\u25FB-\u25FE\u2611\u2622\u2623\u2660\u2663\u2665\u2666\u267B\u26A0\u2702\u2709\u270B\u270F\u2712\u2714\u2716\u2733\u2734\u2747\u2763\u2764\u27A1\u2934\u2935\u2B05-\u2B07\u203C\u2049\u2122\u2139\u00A9\u00AE])(?![\uFE0E\uFE0F])/g;
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // After each render: every such glyph in the text (not in attributes) becomes
 // <span class="tx">↩\uFE0E</span>; .tx puts a font that has it as plain text first (Menlo on iOS).
 // U+FE0E alone isn't enough when Safari's font list reaches the emoji font first.
@@ -38,56 +38,6 @@ async function call(method, url, body) {
   return j;
 }
 // file:///abs/path (and bare /home/… or ~/…) → /file?path=…, opened read-only by the server.
-function href(u) {
-  u = String(u).trim();
-  if (/^file:\/\//i.test(u)) { try { return "/file?path=" + encodeURIComponent(decodeURIComponent(new URL(u).pathname)); } catch { return "#"; } }
-  if (u.startsWith("/") || u.startsWith("~/")) return "/file?path=" + encodeURIComponent(u); // the server expands ~
-  if (/^(https?|mailto):/i.test(u)) return u;
-  return "#";
-}
-const link = (text, u) => `<a href="${esc(href(u))}" target="_blank" rel="noopener">${text}</a>`;
-
-// ---- a small Markdown renderer (escapes everything first) ---------------------------------
-function inline(s) {
-  const codes = [];
-  s = s.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
-  s = esc(s);
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => link(t, u.replace(/&amp;/g, "&")));
-  s = s.replace(/(^|[\s(])((?:https?:\/\/|file:\/\/\/)[^\s<)]+[^\s<).,;:!?'"])/g, (_, p, u) => p + link(u.startsWith("file:") ? esc(decodeURIComponent(u.replace(/&amp;/g, "&")).split("/").pop()) : u, u.replace(/&amp;/g, "&")));
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>").replace(/(^|\W)_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[i])}</code>`);
-}
-function md(src) {
-  const lines = String(src ?? "").replace(/\r/g, "").split("\n"), out = [];
-  let i = 0;
-  while (i < lines.length) {
-    const l = lines[i];
-    if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue; }
-    if (/^\s*$/.test(l)) { i++; continue; }
-    const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); i++; continue; }
-    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] || "")) {
-      const row = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim()));
-      let t = `<table><tr>${row(l).map((c) => `<th>${c}</th>`).join("")}</tr>`; i += 2;
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) t += `<tr>${row(lines[i++]).map((c) => `<td>${c}</td>`).join("")}</tr>`;
-      out.push(t + "</table>"); continue;
-    }
-    if (/^>\s?/.test(l)) { const buf = []; while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, "")); out.push(`<blockquote>${md(buf.join("\n"))}</blockquote>`); continue; }
-    const li = /^\s*([-*•]|\d+[.)])\s+/;
-    if (li.test(l)) {
-      const ordered = /^\s*\d/.test(l), items = [];
-      while (i < lines.length && (li.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
-        if (li.test(lines[i])) items.push(lines[i].replace(li, "")); else items[items.length - 1] += "\n" + lines[i].trim();
-        i++;
-      }
-      out.push(`<${ordered ? "ol" : "ul"}>${items.map((x) => `<li>${inline(x).replace(/\n/g, "<br>")}</li>`).join("")}</${ordered ? "ol" : "ul"}>`); continue;
-    }
-    const buf = [];
-    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^```|^#{1,4}\s|^>\s?/.test(lines[i]) && !li.test(lines[i])) buf.push(lines[i++]);
-    out.push(`<p>${buf.map(inline).join("<br>")}</p>`);
-  }
-  return out.join("");
-}
-
 // ---- rendering ------------------------------------------------------------------------------
 const hhmm = (ts) => ts ? new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
 const dayOf = (ts) => ts ? new Date(ts).toDateString() : "";
