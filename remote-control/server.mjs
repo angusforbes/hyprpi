@@ -123,8 +123,33 @@ function worlds() {
     shown: shownWorlds.includes(id),
   }));
 }
+// The names the page turns into links (J45): every world's agents as the Agnt tab lists them (live,
+// or lost to a restart; parked and closed ones aren't listed there), each world's Thoughts, and
+// every world's open projects (as the Proj tab lists them). Matching itself is the desktop panels'
+// own lib/tui/agent-click.mjs agentIn(), run in the page.
+const projectNames = new Map(); // room -> [{ id, name }]
+async function refreshProjects(room) {
+  if (!api) return;
+  try {
+    const b = await api.call("board.get", { room });
+    const next = (b.projects || []).filter((p) => p.status !== "archived").map((p) => ({ id: p.id, name: p.name, icon: p.icon || "📋" }));
+    if (JSON.stringify(next) !== JSON.stringify(projectNames.get(room))) { projectNames.set(room, next); broadcast("state", state()); }
+  } catch { /* no board */ }
+}
+function directory() {
+  const ids = new Set((listing?.rooms || []).map((r) => r.id).filter((id) => /^[A-Z]$/.test(id)));
+  const agents = [
+    ...(listing?.agents || []).filter((a) => !a.parked && ids.has(a.room)),
+    ...(listing?.dormant || []).filter((a) => a.kind !== "closed" && ids.has(a.room)),
+  ].map((a) => ({ id: a.id, name: a.name || "", display: a.display || a.name || "", room: a.room, color: a.color || "", kind: "agent" }));
+  for (const r of ids) agents.push({ id: "thoughts-" + r, name: "", display: "Thoughts-" + r, room: r, color: "", kind: "thoughts" });
+  const projects = [];
+  for (const [room, list] of projectNames) for (const p of list) projects.push({ ...p, display: p.name, room, kind: "project" });
+  return { agents, projects };
+}
 function state() {
   return {
+    directory: directory(),
     worlds: worlds(),
     active: listing?.active_room || "A",
     online: !!api,
@@ -151,7 +176,7 @@ async function start() {
       path: daemonSocket(),
       timeout: 3000,
       onEvent: (ev, data) => {
-        if (ev === "board") broadcast("board", { room: data?.room });
+        if (ev === "board") { broadcast("board", { room: data?.room }); if (data?.room) refreshProjects(data.room); }
         if (ev === "agents") broadcast("agents", {}); // statuses changed: the page re-fetches its Agnt lists // a card changed: the page re-fetches that world
         if (ev === "thoughts") {
           broadcast("thoughts", data);
@@ -164,6 +189,7 @@ async function start() {
     listing = await api.call("ui.subscribe", { windows: false });
     for (const t of listing.thoughts || []) if (t.running) api.call("thoughts.get", { room: t.room, limit: 1 }).then((g) => { busy.set(t.room, !!g.busy); broadcast("state", state()); }).catch(() => {});
     log("connected to the hyprpi daemon; worlds", (listing.rooms || []).map((r) => r.id).join(""));
+    for (const r of (listing.rooms || []).map((x) => x.id).filter((id) => /^[A-Z]$/.test(id))) refreshProjects(r);
     broadcast("state", state());
   } catch (e) { api = null; log("daemon not reachable:", e.message); setTimeout(start, 2000); }
 }
@@ -175,13 +201,13 @@ start();
 // No archived items, no Heard, no history. Archived projects are left out.
 function boardSummary(b) {
   const open = (p, sec) => (p.items || []).filter((it) => it.sec === sec && !it.archived);
-  const item = (it) => ({ h: it.h, text: it.text, ...(it.verified ? { verified: it.verified } : {}), ...(it.resolution ? { resolution: it.resolution } : {}), ...(it.options ? { options: it.options, recommend: it.recommend || "", default: it.default || "" } : {}), ts: it.updated || it.ts });
+  const item = (it) => ({ h: it.h, text: it.text, by: it.by?.name || "", ...(it.verified ? { verified: it.verified } : {}), ...(it.resolution ? { resolution: it.resolution } : {}), ...(it.options ? { options: it.options, recommend: it.recommend || "", default: it.default || "" } : {}), ts: it.updated || it.ts });
   return {
     room: b.room,
     projects: (b.projects || []).filter((p) => p.status !== "archived").map((p) => ({
       id: p.id, name: p.name, title: p.title || "", icon: p.icon || "📋", status: p.status || "active",
       where: p.where?.text || "", next_step: p.next_step?.text || "", updated: p.updated || 0,
-      writer: b.names?.[p.writer] || "",
+      writer: b.names?.[p.writer] || "", members: (p.members || []).map((m) => b.names?.[m]).filter(Boolean),
       decide: open(p, "decide").map(item), next: open(p, "next").map(item),
       done: open(p, "done").sort((x, y) => (x.updated || x.ts) - (y.updated || y.ts)).map(item),
     })),
@@ -262,6 +288,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && STATIC[url.pathname]) return serveFile(res, path.join(HERE, STATIC[url.pathname]));
     // The thread's display rule, shared with the desktop Thoughts window (J38).
     if (req.method === "GET" && url.pathname === "/lib/thoughts-lines.mjs") return serveFile(res, path.join(HERE, "..", "lib", "thoughts-lines.mjs"), "text/javascript; charset=utf-8");
+    // The desktop panels' Ctrl+click name matcher, as-is (pure, no imports): the page's links (J45).
+    if (req.method === "GET" && url.pathname === "/lib/tui/agent-click.mjs") return serveFile(res, path.join(HERE, "..", "lib", "tui", "agent-click.mjs"), "text/javascript; charset=utf-8");
     if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, state());
     if (req.method === "GET" && url.pathname === "/api/thoughts") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });

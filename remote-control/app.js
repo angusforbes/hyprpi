@@ -1,6 +1,7 @@
 // hyprpi remote control: the page. A chat with one world's Thoughts agent; world chips switch it.
 // Thread entries (lib/thoughts.mjs): { role: you | thoughts | action | reply | agent | note | evidence, text, from?, ts }
 import { threadKind, answerLine, actionPrefix, splitLead } from "/lib/thoughts-lines.mjs";
+import { agentIn } from "/lib/tui/agent-click.mjs"; // the desktop panels' Ctrl+click matcher, shared as-is (J45)
 const $ = (s) => document.querySelector(s);
 const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), stopBtn = $("#stop");
 let world = null, worlds = [], busy = false, online = false, es = null, loadSeq = 0;
@@ -128,9 +129,24 @@ function entryHtml(e, i, list) {
 }
 const nearBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
 // keep: "bottom" (stay at the end if we were there), "restore" (the world's saved place), "end"
-function render({ keep = "bottom" } = {}) {
-  const c = cached(world), entries = c.entries;
-  const wasBottom = nearBottom(), was = thread.scrollTop;
+// Each world's thread is drawn into its own box inside #thread and kept (hidden) when you switch
+// away, so switching back is just showing it: no parsing, no name/glyph passes (J45 made those
+// passes cost ~100 ms on a long thread). A box is redrawn only when its entries or the name
+// directory changed (boxSig).
+function boxOf(w) {
+  let box = thread.querySelector(`:scope > .tw[data-w="${w}"]`);
+  if (!box) { box = document.createElement("div"); box.className = "tw"; box.dataset.w = w; box.hidden = true; thread.append(box); }
+  return box;
+}
+function threadBox(w) {
+  const box = boxOf(w);
+  for (const b of thread.querySelectorAll(":scope > .tw")) b.hidden = b !== box;
+  return box;
+}
+// Draw world w's thread into its box if the box is stale (also for a hidden box).
+function fillBox(w) {
+  const c = cached(w), box = boxOf(w), entries = c.entries;
+  if (box.dataset.sig === boxSig(c)) return box;
   const html = []; let lastDay = "", lastTs = 0;
   for (const [i, e] of entries.entries()) {
     const d = dayOf(e.ts);
@@ -139,20 +155,52 @@ function render({ keep = "bottom" } = {}) {
     html.push(entryHtml(e, i, entries));
   }
   // "Nothing here yet" only once the server has said the thread really is empty.
-  if (!entries.length && c.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(world)}.</div>`);
-  thread.innerHTML = html.join("");
-  textGlyphs(thread);
+  if (!entries.length && c.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(w)}.</div>`);
+  box.innerHTML = html.join("");
+  linkNames(box); textGlyphs(box);
+  box.dataset.sig = boxSig(c);
+  return box;
+}
+// The other shown worlds' boxes are drawn ahead, when the browser is idle, so the first switch to
+// one is as quick as a revisit.
+const idle = window.requestIdleCallback || ((f) => setTimeout(f, 200));
+let prerenderQueued = false;
+function prerenderSoon() {
+  if (prerenderQueued) return; prerenderQueued = true;
+  idle(() => {
+    prerenderQueued = false;
+    const todo = worlds.filter((x) => x.shown && x.id !== world).map((x) => x.id).filter((w) => boxOf(w).dataset.sig !== boxSig(cached(w)));
+    if (todo.length) { fillBox(todo[0]); if (todo.length > 1) prerenderSoon(); } // one world per idle slot
+  });
+}
+const boxSig = (c) => `${sig(c.entries)}|${c.loaded}|${dirVer}`;
+// keep: "bottom" (stay at the end if we were there), "restore" (the world's saved place), "end"
+function render({ keep = "bottom" } = {}) {
+  if (view !== "thoughts") return; // drawn when Thgt is shown (setView), not in the background
+  const c = cached(world), entries = c.entries;
+  const shown = thread.querySelector(":scope > .tw:not([hidden])");
+  const wasBottom = nearBottom(), was = thread.scrollTop, sameBox = shown?.dataset.w === world;
+  threadBox(world); fillBox(world);
+  prerenderSoon();
   if (keep === "restore" && c.scroll != null) thread.scrollTop = c.scroll;
-  else if (keep === "bottom" && !wasBottom) thread.scrollTop = was;
-  else thread.scrollTop = thread.scrollHeight;
+  else if (keep === "bottom" && sameBox && !wasBottom) thread.scrollTop = was;
+  else toEnd();
+}
+// To the end of the thread. With content-visibility the lines off screen have estimated heights, so
+// the end moves as the last ones are laid out: pin it again for a few frames.
+function toEnd(n = 4) {
+  thread.scrollTop = thread.scrollHeight;
+  if (n > 0) requestAnimationFrame(() => { if (nearBottom() || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 2000) toEnd(n - 1); });
 }
 function append(e) {
   const atBottom = nearBottom();
-  const list = cached(world).entries;
-  if (list.length === 1) return render({ keep: "end" });
-  thread.insertAdjacentHTML("beforeend", entryHtml(e, list.length - 1, list));
-  if (thread.lastElementChild) textGlyphs(thread.lastElementChild);
-  if (atBottom || e.role === "you") thread.scrollTop = thread.scrollHeight;
+  const c = cached(world), list = c.entries;
+  if (list.length === 1 || view !== "thoughts") return render({ keep: "end" });
+  const box = threadBox(world);
+  box.insertAdjacentHTML("beforeend", entryHtml(e, list.length - 1, list));
+  if (box.lastElementChild) { linkNames(box.lastElementChild); textGlyphs(box.lastElementChild); }
+  box.dataset.sig = boxSig(c);
+  if (atBottom || e.role === "you") toEnd();
 }
 function renderTop() {
   const cur = worlds.find((w) => w.id === world);
@@ -202,6 +250,7 @@ async function fetchWorld(w) {
   const c = cached(w), next = t.entries || [], changed = !c.loaded || sig(next) !== sig(c.entries);
   c.entries = next; c.busy = !!t.busy; c.loaded = true; save(w);
   if (w === world) { busy = c.busy; if (changed) render(); renderTop(); note(""); }
+  else if (changed) prerenderSoon();
 }
 const prefetched = new Set();
 function refreshAll() {
@@ -210,17 +259,19 @@ function refreshAll() {
 }
 function setWorld(w) {
   if (!w || w === world) return;
-  if (world) cached(world).scroll = nearBottom() ? null : thread.scrollTop;
+  if (world && view === "thoughts") cached(world).scroll = nearBottom() ? null : thread.scrollTop; // only while it's on screen
   world = w;
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
-  renderTop(); render({ keep: "restore" }); renderProjects(); renderAgents(); // at once, from the cache
+  renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
+  if (view === "thoughts") render({ keep: "restore" }); else if (view === "projects") renderProjects(); else renderAgents();
   fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
   fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {});
 }
 function applyState(s) {
   worlds = s.worlds || []; online = !!s.online;
+  if (s.directory) { const sig = JSON.stringify(s.directory); if (sig !== dirSig) { dirSig = sig; dirVer++; setDirectory(s.directory); if (world) rerenderAll(); } }
   if (s.theme) { for (const [k, v] of Object.entries(s.theme)) document.documentElement.style.setProperty("--" + k, v); document.querySelector("meta[name=theme-color]").content = s.theme.bg; }
   const first = !stateSeen; stateSeen = true;
   if (!world) setWorld(new URLSearchParams(location.search).get("world") || s.active);
@@ -349,11 +400,13 @@ function renderProjects({ keepScroll = false } = {}) {
     if (!b.projects.length && b.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No projects in world ${esc(world)}.</div>`);
   } else {
     const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
-    const items = (list, done) => list.length ? `<ul class="items">${list.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}</div>${done && it.verified ? `<div class="small clip">✓ ${inline(it.verified)}</div>` : ""}${it.resolution ? `<div class="small">→ decided: ${inline(it.resolution)}</div>` : ""}</li>`).join("")}</ul>` : "";
-    const decide = p.decide.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}</div>${(it.options || []).length ? `<ol class="opts">${it.options.map((o) => `<li><b>${esc(o.key)})</b> ${inline(o.text)}${o.key === it.default ? ` <span class="small">(default)</span>` : ""}${o.key === it.recommend ? ` <span class="rec">★ recommended</span>` : ""}</li>`).join("")}</ol>` : ""}</li>`).join("");
+    const by = (it) => it.by ? ` <span class="small">(${esc(it.by)})</span>` : ""; // who added it, as on the desktop card
+    const items = (list, done) => list.length ? `<ul class="items">${list.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}${by(it)}</div>${done && it.verified ? `<div class="small clip">✓ ${inline(it.verified)}</div>` : ""}${it.resolution ? `<div class="small">→ decided: ${inline(it.resolution)}</div>` : ""}</li>`).join("")}</ul>` : "";
+    const decide = p.decide.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}${by(it)}</div>${(it.options || []).length ? `<ol class="opts">${it.options.map((o) => `<li><b>${esc(o.key)})</b> ${inline(o.text)}${o.key === it.default ? ` <span class="small">(default)</span>` : ""}${o.key === it.recommend ? ` <span class="rec">★ recommended</span>` : ""}</li>`).join("")}</ol>` : ""}</li>`).join("");
     html.push(`<div class="psum">` // no back button (J41 v2): the title, or Proj in the top bar, goes back to the list
       + `<h2 class="ptoggle" title="back to the projects"><span class="pic">${esc(p.icon)}</span><span>@${esc(p.name)} ${badge(p.status)}</span></h2>`
       + `${p.title ? `<div class="ptitle">${esc(p.title)}</div>` : ""}`
+      + (p.writer || p.members?.length ? `<div class="ppeople">${p.writer ? `owner ${esc(p.writer)}` : ""}${(p.members || []).filter((m) => m !== p.writer).length ? `${p.writer ? " · " : ""}members ${(p.members || []).filter((m) => m !== p.writer).map(esc).join(", ")}` : ""}</div>` : "")
       + sec("Where", p.where ? `<div class="md">${md(p.where)}</div>` : "")
       + (p.decide.length ? `<details class="needs"${needsOpen ? " open" : ""}><summary>Needs you <span class="cnt">${p.decide.length}</span></summary><ul class="items">${decide}</ul></details>` : "")
       + sec("Next", items(p.next)) + sec("Done", items(p.done, true))
@@ -361,7 +414,7 @@ function renderProjects({ keepScroll = false } = {}) {
       + `</div>`);
   }
   projectsEl.innerHTML = html.join("");
-  textGlyphs(projectsEl);
+  linkNames(projectsEl); textGlyphs(projectsEl);
   projectsEl.scrollTop = keepScroll ? was : 0;
 }
 function setView(v) {
@@ -446,7 +499,7 @@ function renderAgents({ keepScroll = false } = {}) {
       + `</div>`);
   }
   agentsEl.innerHTML = html.join("");
-  textGlyphs(agentsEl);
+  linkNames(agentsEl); textGlyphs(agentsEl);
   agentsEl.scrollTop = keepScroll ? was : 0;
 }
 agentsEl.addEventListener("click", (e) => {
@@ -457,7 +510,72 @@ agentsEl.addEventListener("click", (e) => {
   const c = e.target.closest(".clip"); if (c) c.classList.toggle("open");
 });
 
-window.__rc = { cached, setWorld, boardOf, setView, agentsOf }; // for tests (CDP)
+// ---- names as links (J45, Angus: "jump from agents to project or another agent when they are
+// listed, and also from inside projects to agents mentioned or assigned, and to other projects …
+// ALso the same thing for inside thoughts"). After each render, agent names (live or lost to a
+// restart, any world), "Thoughts-X" and @projects in the text become tappable: the agent opens in
+// Agnt, the project in Proj, Thoughts-X in Thgt, switching world if it lives elsewhere. Matching
+// is the desktop's agentIn() (longest name after an icon/@/punctuation, not followed by a letter).
+// Phone-only guards so plain words never link: a project needs its "@"; an agent named without
+// "@" must match its name's capitalisation (so "remote control" isn't Remote, "knock" isn't Knock).
+let dirAgents = [], dirProjects = [], namesRe = null, dirSig = "", dirVer = 0;
+// The directory changed (an agent came or went, a project was added): redraw what's on screen.
+function rerenderAll() { if (view === "thoughts") render(); else if (view === "projects") renderProjects({ keepScroll: true }); else renderAgents({ keepScroll: true }); }
+function setDirectory(d) {
+  dirAgents = d.agents || []; dirProjects = d.projects || [];
+  const names = [...dirAgents.flatMap((a) => [a.display, a.name]), ...dirProjects.map((p) => p.name)].filter((n) => n && n.length > 1);
+  const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  namesRe = names.length ? new RegExp(names.sort((a, b) => b.length - a.length).map(escRe).join("|"), "i") : null;
+}
+function matchWord(word) {
+  const lead = (/^[^\p{L}\p{N}]+/u.exec(word) || [""])[0], at = lead.endsWith("@");
+  if (at) { const p = agentIn(word, dirProjects); if (p) return { hit: p, kind: "project", len: lead.length + p.display.length, skip: lead.length - 1 }; } // the link starts at its "@"
+  const a = agentIn(word, dirAgents);
+  if (!a) return null;
+  const rest = word.slice(lead.length);
+  const n = [a.display, a.name].filter(Boolean).sort((x, y) => y.length - x.length).find((x) => rest.toLowerCase().startsWith(x.toLowerCase()));
+  if (!n || (!at && !rest.startsWith(n))) return null; // without "@": its own capitalisation only
+  return { hit: a, kind: a.kind, len: lead.length + n.length, skip: at ? lead.length - 1 : lead.length }; // from its "@" if any
+}
+function linkNames(root) {
+  if (!namesRe) return;
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => namesRe.test(n.data) && !n.parentElement?.closest("a, code, pre, .nl, .tx, button.proj, button.agent:not(.ptoggle), textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+  const nodes = []; while (walk.nextNode()) nodes.push(walk.currentNode);
+  for (const n of nodes) {
+    const parts = n.data.split(/(\s+)/); let changed = false;
+    const frag = document.createDocumentFragment();
+    for (const w of parts) {
+      const m = w && !/^\s+$/.test(w) && namesRe.test(w) ? matchWord(w) : null; // the quick test first: most words name nothing
+      // In the open agent's own row (its title) its own name stays plain: that row goes back.
+      if (!m || (m.kind === "agent" && n.parentElement?.closest(".ptoggle") && m.hit.id === openAgent.get(world))) { frag.append(w); continue; }
+      const start = m.skip ?? 0;
+      if (start) frag.append(w.slice(0, start));
+      const sp = document.createElement("span");
+      sp.className = "nl"; sp.dataset.kind = m.kind; sp.dataset.id = m.hit.id; sp.dataset.room = m.hit.room;
+      if (m.hit.color) sp.style.color = m.hit.color;
+      sp.textContent = w.slice(start, m.len); frag.append(sp);
+      if (m.len < w.length) frag.append(w.slice(m.len));
+      changed = true;
+    }
+    if (changed) n.replaceWith(frag);
+  }
+}
+// Tap a name: open it where it lives. No history stack: the tabs work as before.
+function jumpTo(kind, id, room) {
+  if (room && room !== world) setWorld(room);
+  if (kind === "thoughts") return setView("thoughts");
+  const target = kind === "project" ? "projects" : "agents";
+  (kind === "project" ? openProject : openAgent).set(world, id);
+  if (view === target) { kind === "project" ? renderProjects() : renderAgents(); } else setView(target);
+  (kind === "project" ? projectsEl : agentsEl).scrollTop = 0;
+}
+document.addEventListener("click", (e) => {
+  const l = e.target.closest(".nl"); if (!l) return;
+  e.preventDefault(); e.stopPropagation(); // not a <summary> toggle, a row tap or a .clip unfold
+  jumpTo(l.dataset.kind, l.dataset.id, l.dataset.room);
+}, true);
+
+window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }

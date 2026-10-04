@@ -46,6 +46,7 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 | `GET /api/thoughts?world=C` | the thread (`thoughts.get`, last 300 entries) |
 | `GET /api/board?world=C` | the Proj tab: each project's summary (status, where, open decide/next/done items, next step; no archive, no Heard) |
 | `GET /api/agents?world=C` | the Agnt tab: the world's agents in the desktop panel's order, each with mark, topic, workspace, last turn, model, current job, projects, last room posts |
+| `GET /lib/tui/agent-click.mjs` | the desktop panels' Ctrl+click name matcher, as-is: names in the page become links (agent → Agnt, @project → Proj, Thoughts-X → Thgt, switching world) |
 | `GET /lib/thoughts-lines.mjs` | the thread's display rule, the same module the desktop Thoughts window uses |
 | `POST /api/send {world, text}` | to Thoughts (`thoughts.send`, via phone) |
 | `POST /api/stop {world}` | interrupt Thoughts |

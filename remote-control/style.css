@@ -60,6 +60,8 @@ a { color: var(--accent); }
   padding: 10px calc(env(safe-area-inset-right) + 10px) 14px calc(env(safe-area-inset-left) + 10px);
   display: flex; flex-direction: column; gap: 8px;
 }
+.tw { display: flex; flex-direction: column; gap: 8px; } /* one world's thread (J45: kept per world) */
+.tw > .msg, .tw > .time { content-visibility: auto; contain-intrinsic-size: auto 60px; } /* lay out only what is on screen: switching is quick on long threads */
 .msg { flex: none; max-width: 100%; overflow-wrap: anywhere; } /* flex: none, or overflow:hidden lines shrink to 0 */
 .you { align-self: flex-end; max-width: 85%; background: var(--faint); border: 1px solid var(--line); border-radius: 16px 16px 4px 16px; padding: 7px 12px; white-space: pre-wrap; }
 .you .via { font-size: 12px; color: var(--dim); margin-left: 6px; }
@@ -100,6 +102,9 @@ details.card[open] summary { margin-bottom: 4px; }
 .md table { border-collapse: collapse; font-size: 14px; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--line); padding: 3px 7px; text-align: left; }
 
+/* names as links (J45): their own colour, a light underline */
+.nl { cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.ppeople { font-size: 13.5px; color: var(--dim); margin: -2px 0 6px; }
 /* ---- the Proj and Agnt tabs ---- */
 .amark { flex: none; width: 14px; text-align: center; font-weight: 700; color: var(--world); }
 .amark.mx { color: #e64553; } .amark.mi { color: var(--dim); font-weight: 400; }
