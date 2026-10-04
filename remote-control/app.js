@@ -404,9 +404,13 @@ function renderProjects({ keepScroll = false } = {}) {
     const items = (list, done) => list.length ? `<ul class="items">${list.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}${by(it)}</div>${done && it.verified ? `<div class="small clip">✓ ${inline(it.verified)}</div>` : ""}${it.resolution ? `<div class="small">→ decided: ${inline(it.resolution)}</div>` : ""}</li>`).join("")}</ul>` : "";
     const decide = p.decide.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}${by(it)}</div>${(it.options || []).length ? `<ol class="opts">${it.options.map((o) => `<li><b>${esc(o.key)})</b> ${inline(o.text)}${o.key === it.default ? ` <span class="small">(default)</span>` : ""}${o.key === it.recommend ? ` <span class="rec">★ recommended</span>` : ""}</li>`).join("")}</ol>` : ""}</li>`).join("");
     html.push(`<div class="psum">` // no back button (J41 v2): the title, or Proj in the top bar, goes back to the list
-      + `<h2 class="ptoggle" title="back to the projects"><span class="pic">${esc(p.icon)}</span><span>@${esc(p.name)} ${badge(p.status)}</span></h2>`
+      // The header (J48): icon, name, badge, title and owner/members as ONE tap target, the full width,
+      // that goes back to the list. Names in it are not links (the J45 pass skips .phead): the
+      // name used to be a link to this same project, which took the tap and re-opened it.
+      + `<div class="phead ptoggle" title="back to the projects"><h2><span class="pic">${esc(p.icon)}</span><span>@${esc(p.name)} ${badge(p.status)}</span></h2>`
       + `${p.title ? `<div class="ptitle">${esc(p.title)}</div>` : ""}`
       + (p.writer || p.members?.length ? `<div class="ppeople">${p.writer ? `owner ${esc(p.writer)}` : ""}${(p.members || []).filter((m) => m !== p.writer).length ? `${p.writer ? " · " : ""}members ${(p.members || []).filter((m) => m !== p.writer).map(esc).join(", ")}` : ""}</div>` : "")
+      + `</div>`
       + sec("Where", p.where ? `<div class="md">${md(p.where)}</div>` : "")
       + (p.decide.length ? `<details class="needs"${needsOpen ? " open" : ""}><summary>Needs you <span class="cnt">${p.decide.length}</span></summary><ul class="items">${decide}</ul></details>` : "")
       + sec("Next", items(p.next)) + sec("Done", items(p.done, true))
@@ -432,7 +436,7 @@ function setView(v) {
 }
 projectsEl.addEventListener("click", (e) => {
   const pr = e.target.closest(".proj"); if (pr) { openProject.set(world, pr.dataset.p); return renderProjects(); }
-  if (e.target.closest(".ptoggle") && !e.target.closest("a")) { openProject.delete(world); return renderProjects(); } // the title: back to the list
+  if (e.target.closest(".phead")) { openProject.delete(world); return renderProjects(); } // the header: back to the list
   const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open");
 });
 projectsEl.addEventListener("toggle", (e) => {
@@ -490,7 +494,7 @@ function renderAgents({ keepScroll = false } = {}) {
   } else {
     const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
     const status = { "●": "working", "×": "needs you", "✓": "finished (not seen yet)", "○": "idle", "◌": a.status }[a.mark] || a.status;
-    html.push(`<div class="psum">` + agentRow(a, "agent ptoggle") // its row is the title: a tap goes back (as in Proj)
+    html.push(`<div class="psum"><div class="phead ptoggle" title="back to the agents">` + agentRow(a, "agent open") + `</div>` // its row is the header: one tap target back to the list (J48)
       + sec("Status", `<div>${esc(a.mark)} ${esc(status)}${a.active ? ` <span class="small">· last turn ${ago(a.active)} ago</span>` : ""}</div>${a.topic ? `<div class="md"><i>${esc(a.topic)}</i></div>` : ""}${a.did ? `<div class="small clip">${inline(a.did)}</div>` : ""}`)
       + sec("Current job", a.job ? `<div>⟦${esc(a.job.id)} v${esc(a.job.version)} · ${esc(a.job.state)}⟧${a.job.project ? ` <span class="small">@${esc(a.job.project)}</span>` : ""}</div><div class="md">${md(a.job.goal)}</div>` : "")
       + sec("Projects", a.projects.length ? `<div>${a.projects.map((p) => `${esc(p.icon)} @${esc(p.name)}${p.writer ? ` <span class="small">(owner)</span>` : ""}`).join("<br>")}</div>` : "")
@@ -503,9 +507,9 @@ function renderAgents({ keepScroll = false } = {}) {
   agentsEl.scrollTop = keepScroll ? was : 0;
 }
 agentsEl.addEventListener("click", (e) => {
+  if (e.target.closest(".phead")) { openAgent.delete(world); return renderAgents(); } // the header: back to the list (J48)
   if (e.target.closest("a")) return;
   const t = e.target.closest(".agent");
-  if (t && t.classList.contains("ptoggle")) { openAgent.delete(world); return renderAgents(); } // the open one's row: back to the list
   if (t) { openAgent.set(world, t.dataset.a); return renderAgents(); }
   const c = e.target.closest(".clip"); if (c) c.classList.toggle("open");
 });
@@ -539,7 +543,7 @@ function matchWord(word) {
 }
 function linkNames(root) {
   if (!namesRe) return;
-  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => namesRe.test(n.data) && !n.parentElement?.closest("a, code, pre, .nl, .tx, button.proj, button.agent:not(.ptoggle), textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => namesRe.test(n.data) && !n.parentElement?.closest("a, code, pre, .nl, .tx, .phead, button.proj, button.agent, textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
   const nodes = []; while (walk.nextNode()) nodes.push(walk.currentNode);
   for (const n of nodes) {
     const parts = n.data.split(/(\s+)/); let changed = false;
@@ -547,7 +551,7 @@ function linkNames(root) {
     for (const w of parts) {
       const m = w && !/^\s+$/.test(w) && namesRe.test(w) ? matchWord(w) : null; // the quick test first: most words name nothing
       // In the open agent's own row (its title) its own name stays plain: that row goes back.
-      if (!m || (m.kind === "agent" && n.parentElement?.closest(".ptoggle") && m.hit.id === openAgent.get(world))) { frag.append(w); continue; }
+      if (!m) { frag.append(w); continue; }
       const start = m.skip ?? 0;
       if (start) frag.append(w.slice(0, start));
       const sp = document.createElement("span");

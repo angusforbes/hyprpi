@@ -127,7 +127,11 @@ details.card[open] summary { margin-bottom: 4px; }
 .ptitle { font-size: 14px; color: var(--dim); margin-bottom: 6px; }
 .psum section { margin-top: 14px; }
 .psum h3, details.needs summary { font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 0 0 4px; }
-.ptoggle { cursor: pointer; padding: 10px 2px; margin: 0 !important; border-bottom: 1px solid var(--line); } /* the open project's title row, like its list row; a tap goes back */
+/* the open project's / agent's header (J48): one full-width tap target back to the list */
+.phead { cursor: pointer; padding: 10px 2px; border-bottom: 1px solid var(--line); -webkit-tap-highlight-color: transparent; }
+.phead h2 { margin: 0 !important; }
+.phead .ptitle { margin: 4px 0 0; } .phead .ppeople { margin: 2px 0 0; }
+.phead > .agent { padding: 0; border-bottom: none; pointer-events: none; } /* the row shows; the header takes the tap */
 ul.items { list-style: none; padding: 0; margin: 0; }
 ul.items > li { padding: 6px 0; border-bottom: 1px solid var(--faint); font-size: 15px; }
 ul.items .h { float: left; font-size: 12px; font-weight: 700; color: var(--dim); margin: 2px 6px 0 0; }
