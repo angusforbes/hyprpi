@@ -14,7 +14,9 @@ Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short
   told Angus is away from the desk (no windows brought up unless he asks). The phone marks
   nothing as seen.
 - Links in replies: `file:///…` links open read-only through `/file`, only files under
-  `~/Obsidian` and `~/Work`.
+  `~/Obsidian`, `~/Work`, `~/Downloads` and `~/Documents`; never a hidden path (any `.x` part) or
+  anything named like a key or credential (*.pem, *.key, id_rsa*, id_ed25519*, *.p12, *.kdbx,
+  *secret*, *token*, *credential*, *password*, *wallet* …), checked before and after symlinks.
 
 ## Who can reach it
 
@@ -51,7 +53,7 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 | `POST /api/send {world, text}` | to Thoughts (`thoughts.send`, via phone) |
 | `POST /api/stop {world}` | interrupt Thoughts |
 | `GET /events` | SSE: `state`, `thoughts {room, entry?, busy?}` |
-| `GET /file?path=` | a file under ~/Obsidian or ~/Work, read-only |
+| `GET /file?path=` | a file under ~/Obsidian, ~/Work, ~/Downloads or ~/Documents, read-only (no hidden paths, no key/credential names) |
 
 Next (card): 📎 photos into Thoughts (the daemon already takes image paths), Projects and Agents
 tabs, iPad layout, notifications for ding/bonk, desktop control on request.

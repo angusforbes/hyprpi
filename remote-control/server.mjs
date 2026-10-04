@@ -32,7 +32,8 @@ import { worldHex, theme } from "../lib/tui/term.mjs";
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const HOME = os.homedir();
 const PORT = Number(process.env.HYPRPI_REMOTE_PORT) || 8897;
-const FILE_ROOTS = [path.join(HOME, "Obsidian"), path.join(HOME, "Work")];
+// /file: read-only, only under these folders (J47 added Downloads and Documents), real paths.
+const FILE_ROOTS = ["Obsidian", "Work", "Downloads", "Documents"].map((d) => { try { return fs.realpathSync(path.join(HOME, d)); } catch { return path.join(HOME, d); } });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 // ---- who may use it --------------------------------------------------------------------------
@@ -269,11 +270,25 @@ function serveFile(res, file, type) {
 }
 
 // /file: only real files under the allowed roots (symlinks resolved first).
+// Never served, in any allowed folder (J47): a hidden path component (".x", ".env", ".ssh", .git
+// internals), and anything named like a key or credential. Checked on the path as asked AND after
+// symlinks are resolved, so a link can't point past the roots or at a secret under another name.
+const SECRET = /\.(pem|key|p12|pfx|kdbx|keystore|jks|gpg|pgp|asc|ovpn|ppk)$|^id_(rsa|dsa|ecdsa|ed25519)|credential|secret|token|password|passwd|wallet|private[-_. ]?key/i;
+const refusedPart = (seg) => seg.startsWith(".") || SECRET.test(seg);
+function underRoot(p) {
+  const r = FILE_ROOTS.find((x) => p === x || p.startsWith(x + path.sep));
+  return r ? path.relative(r, p).split(path.sep).filter(Boolean) : null;
+}
 function fileAllowed(p) {
   if (p?.startsWith("~/")) p = path.join(HOME, p.slice(2));
   if (!p || !path.isAbsolute(p)) return null;
-  let real; try { real = fs.realpathSync(p); } catch { return null; }
-  return FILE_ROOTS.some((r) => real === r || real.startsWith(r + path.sep)) ? real : null;
+  const asked = path.resolve(p); // "../" folded away first
+  const askedParts = underRoot(asked) ?? (asked.startsWith(HOME + path.sep) ? path.relative(HOME, asked).split(path.sep) : null);
+  if (askedParts?.some(refusedPart)) return null;
+  let real; try { real = fs.realpathSync(asked); } catch { return null; }
+  const parts = underRoot(real);
+  if (!parts || parts.some(refusedPart)) return null;
+  return real;
 }
 
 const server = http.createServer(async (req, res) => {
