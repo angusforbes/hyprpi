@@ -37,9 +37,18 @@ export default function hyprpi(pi: ExtensionAPI) {
   // the next turn when it settles, one per turn. Pi's own "followUp" queue lost one (Thoughts-C's
   // 00:58 question to pi·wpzt: delivered to the window, never in the session; @hyprpi N44 follow-up).
   const held: any[] = [];
+  // J64 (Angus: "nothing lost"): one turn start at a time. Two requests to an idle agent in the same
+  // second used to both start a turn; pi rejected the second ASYNCHRONOUSLY and it vanished (J61).
+  // `starting` holds the rest until the turn has begun; a send that fails (now or later) is held again.
+  let starting: ReturnType<typeof setTimeout> | null = null;
   const send = (message: any, opts: any) => {
-    try { pi.sendMessage(message, opts); }
-    catch (e) { ctxRef?.ui?.notify?.(`hyprpi: could not deliver message (${(e as Error).message})`, "warning"); }
+    const again = () => { if (keyOf(message) && !landed.has(keyOf(message))) { held.unshift(message); setTimeout(releaseHeld, 1000); } };
+    try {
+      if (opts?.triggerTurn && !opts.deliverAs) { if (starting) clearTimeout(starting); starting = setTimeout(() => { starting = null; releaseHeld(); }, 5000); }
+      const r: any = pi.sendMessage(message, opts);
+      if (r && typeof r.then === "function") r.catch((e: any) => { ctxRef?.ui?.notify?.(`hyprpi: a message was refused (${e?.message || e}); trying again`, "warning"); again(); });
+    }
+    catch (e) { ctxRef?.ui?.notify?.(`hyprpi: could not deliver message (${(e as Error).message}); trying again`, "warning"); again(); }
   };
   // Steered ones are tracked until they show up in the session (message_end): Esc clears pi's queues
   // and drops queued custom messages without a trace (pi·wpzt's diagnosis), so whatever didn't land
@@ -47,18 +56,24 @@ export default function hyprpi(pi: ExtensionAPI) {
   const steered = new Map<string, any>(); // key (request_id / delivery_id) -> message
   const keyOf = (m: any) => String(m?.details?.request_id || m?.details?.delivery_id || "");
   const inject = (message: any, steer = false) => {
-    if (idle() && !held.length) return send(message, { triggerTurn: true });
+    const k = keyOf(message);
+    // A re-send from the daemon (J64 receipts) of something already here: just confirm it again.
+    if (k && (landed.has(k) || held.some((m) => keyOf(m) === k) || steered.has(k) || keyOf(afterAbort) === k)) { if (landed.has(k)) ack(k); return; }
+    if (idle() && !held.length && !starting) return send(message, { triggerTurn: true });
     if (steer && !idle()) { const k = keyOf(message); if (k) steered.set(k, message); return send(message, { triggerTurn: true, deliverAs: "steer" }); }
     held.push(message);
     if (idle()) setTimeout(releaseHeld, 0);
   };
   // Thoughts' work that landed in this session (ever) and in the current run (@hyprpi N57 cancel_work).
   const landed = new Set<string>(), inRun = new Set<string>();
-  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); if (k) { landed.add(k); inRun.add(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
+  // Delivery receipt (J64): the daemon keeps the request until this says it is in the session.
+  const ack = (k: string) => { conn?.call("agent.delivered", { id: k }).catch(() => { /* re-sent and acked later */ }); };
+  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); if (k) { landed.add(k); inRun.add(k); ack(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
+  pi.on("agent_start", async () => { if (starting) { clearTimeout(starting); starting = null; } });
   // Sent when a run that cancel_work aborted has settled (the stop / the replacement starts a turn).
   let afterAbort: any = null, afterAbortTimer: ReturnType<typeof setTimeout> | null = null;
   let interrupting = false; // an interrupt_agent abort: held requests stay held (released after the interrupt's turn), not kept
-  function releaseHeld() { if (held.length && idle()) send(held.shift(), { triggerTurn: true }); }
+  function releaseHeld() { if (held.length && idle() && !starting) send(held.shift(), { triggerTurn: true }); }
   // After Esc (Angus stopped the agent): keep the held messages in the context without starting a
   // turn, so the stop stays a stop; they are answered with his next message.
   function keepHeld() {
@@ -200,7 +215,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     try { session = ctx?.sessionManager?.getSessionFile?.() || ""; } catch { /* none */ }
     const ws = Number(process.env.HYPRPI_WORKSPACE);
     return conn!.call("agent.hello", {
-      agent_id: AGENT_ID, pid: process.pid, session, cwd: ctx?.cwd || process.cwd(),
+      agent_id: AGENT_ID, pid: process.pid, session, cwd: ctx?.cwd || process.cwd(), acks: true, // J64 delivery receipts
       model: ctx?.model?.id || "", thinking: safe(() => pi.getThinkingLevel()) || "",
       name: safe(() => pi.getSessionName()) || process.env.HYPRPI_NAME || "",
       icon: process.env.HYPRPI_ICON || undefined, // open_agent's icon (J15); used only by a new agent
