@@ -86,7 +86,7 @@ const nearBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientH
 // directory changed (boxSig).
 function boxOf(w) {
   let box = thread.querySelector(`:scope > .tw[data-w="${w}"]`);
-  if (!box) { box = document.createElement("div"); box.className = "tw"; box.dataset.w = w; box.hidden = true; thread.append(box); }
+  if (!box) { box = document.createElement("div"); box.className = "tw"; box.dataset.w = w; box.hidden = true; thread.append(box); holdRO.observe(box); }
   return box;
 }
 function threadBox(w) {
@@ -94,22 +94,44 @@ function threadBox(w) {
   for (const b of thread.querySelectorAll(":scope > .tw")) b.hidden = b !== box;
   return box;
 }
-// Draw world w's thread into its box if the box is stale (also for a hidden box).
+// Each entry's element carries data-k (its time and role), so a place in the thread can be found
+// again after a redraw (J67).
+const entryKey = (e) => `${e.ts || 0}:${e.role}`;
+const withKey = (html, k) => html ? html.replace(/^<(\w+)/, `<$1 data-k="${esc(k)}"`) : "";
+// entries[from..to) as HTML, with the day / time separators as the full thread would have them.
+function rangeHtml(entries, from, to) {
+  let lastDay = "", lastTs = 0;
+  for (let j = from - 1; j >= 0; j--) if (entries[j].ts) { lastDay = dayOf(entries[j].ts); lastTs = entries[j].ts; break; }
+  const html = [];
+  for (let i = from; i < to; i++) {
+    const e = entries[i], d = dayOf(e.ts);
+    if (e.role === "you" && e.ts && (d !== lastDay || e.ts - lastTs > 30 * 60e3)) html.push(`<div class="time" data-k="t${e.ts}">${d !== lastDay ? esc(new Date(e.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })) + " · " : ""}${hhmm(e.ts)}</div>`);
+    if (e.ts) { lastDay = d; lastTs = e.ts; }
+    html.push(withKey(entryHtml(e, i, entries), entryKey(e)));
+  }
+  return html.join("");
+}
+const nodesOf = (html) => { const t = document.createElement("div"); t.innerHTML = html; linkNames(t); textGlyphs(t); return [...t.childNodes]; };
+// Draw world w's thread into its box if the box is stale (also for a hidden box). When the new
+// entries only add to what's drawn (older turns in front, the server's 300 after the phone's
+// cached 150; new turns at the end), they are added in place instead of redrawing the box (J67).
 function fillBox(w) {
   const c = cached(w), box = boxOf(w), entries = c.entries;
   if (box.dataset.sig === boxSig(c)) return box;
-  const html = []; let lastDay = "", lastTs = 0;
-  for (const [i, e] of entries.entries()) {
-    const d = dayOf(e.ts);
-    if (e.role === "you" && e.ts && (d !== lastDay || e.ts - lastTs > 30 * 60e3)) html.push(`<div class="time">${d !== lastDay ? esc(new Date(e.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })) + " · " : ""}${hhmm(e.ts)}</div>`);
-    if (e.ts) { lastDay = d; lastTs = e.ts; }
-    html.push(entryHtml(e, i, entries));
+  const keys = entries.map(entryKey), old = box._keys;
+  if (old?.length && box.dataset.dir === String(dirVer)) { // (old entries drawn: no "Nothing here yet" in the box)
+    const i = keys.indexOf(old[0]);
+    if (i >= 0 && i + old.length <= keys.length && old.every((k, j) => keys[i + j] === k)) {
+      if (i > 0) box.prepend(...nodesOf(rangeHtml(entries, 0, i)));
+      if (i + old.length < keys.length) box.append(...nodesOf(rangeHtml(entries, i + old.length, keys.length)));
+      box._keys = keys; box.dataset.sig = boxSig(c);
+      return box;
+    }
   }
   // "Nothing here yet" only once the server has said the thread really is empty.
-  if (!entries.length && c.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(w)}.</div>`);
-  box.innerHTML = html.join("");
+  box.innerHTML = rangeHtml(entries, 0, entries.length) + (!entries.length && c.loaded ? `<div class="small empty" style="text-align:center;margin-top:30vh">Nothing here yet. Say something to Thoughts-${esc(w)}.</div>` : "");
   linkNames(box); textGlyphs(box);
-  box.dataset.sig = boxSig(c);
+  box._keys = keys; box.dataset.sig = boxSig(c); box.dataset.dir = String(dirVer); box.dataset.loaded = String(!!c.loaded);
   return box;
 }
 // The other shown worlds' boxes are drawn ahead, when the browser is idle, so the first switch to
@@ -125,33 +147,62 @@ function prerenderSoon() {
   });
 }
 const boxSig = (c) => `${sig(c.entries)}|${c.loaded}|${dirVer}`;
-// keep: "bottom" (stay at the end if we were there), "restore" (the world's saved place), "end"
+// The thread never jumps on its own (J67, Angus: "Sometimes the thoughts thread jumps back on its
+// own and I have to scroll down a lot"). Per world, where the reader is: pinned to the newest turn,
+// or a place (an entry and its offset from the top). It changes only when HE scrolls (touch, wheel,
+// keys); anything else that moves the layout (a redraw, older turns added in front, images loading,
+// estimated heights of off-screen lines becoming real, the keyboard) is followed by hold(), which
+// puts him back: at the bottom, or the same entry at the same offset. Safari has no scroll anchoring
+// of its own, so this does it by hand; a ResizeObserver on the thread and its boxes calls hold().
+const places = new Map(); // world -> { pinned, k, off }
+const placeOf = (w) => places.get(w) || places.set(w, { pinned: true, k: "", off: 0 }).get(w);
+const shownBox = () => thread.querySelector(":scope > .tw:not([hidden])");
+let lastUser = 0;
+for (const t of ["touchstart", "touchmove", "wheel", "pointerdown", "keydown"]) thread.addEventListener(t, () => { lastUser = Date.now(); }, { passive: true });
+function remember() {
+  const p = placeOf(world), box = shownBox(); if (!box) return;
+  p.pinned = nearBottom();
+  if (p.pinned) { newestBtn.hidden = true; return; }
+  const tr = thread.getBoundingClientRect();
+  const el = [...box.children].find((e) => e.dataset.k && e.getBoundingClientRect().bottom > tr.top + 1);
+  if (el) { p.k = el.dataset.k; p.off = el.getBoundingClientRect().top - tr.top; }
+}
+thread.addEventListener("scroll", () => { if (Date.now() - lastUser < 1200) { lastUser = Date.now(); remember(); } }, { passive: true }); // his scrolling, momentum included
+function hold() {
+  if (view !== "thoughts" || !world) return;
+  const p = placeOf(world), box = shownBox(); if (!box) return;
+  if (p.pinned) { const to = thread.scrollHeight - thread.clientHeight; if (Math.abs(thread.scrollTop - to) > 1) thread.scrollTop = to; return; }
+  const el = p.k && box.querySelector(`[data-k="${CSS.escape(p.k)}"]`);
+  if (!el) return;
+  const d = el.getBoundingClientRect().top - thread.getBoundingClientRect().top - p.off;
+  if (Math.abs(d) >= 1) thread.scrollTop += d;
+}
+const holdRO = new ResizeObserver(() => hold());
+holdRO.observe(thread);
+// "↓ newest": shown when something new arrives while he's scrolled up; a tap goes to the newest turn.
+const newestBtn = document.createElement("button");
+newestBtn.id = "newest"; newestBtn.textContent = "↓ newest"; newestBtn.hidden = true;
+document.body.append(newestBtn);
+newestBtn.addEventListener("click", () => { placeOf(world).pinned = true; newestBtn.hidden = true; hold(); });
+// keep: "end" pins to the newest turn; anything else keeps his place (pinned or not).
 function render({ keep = "bottom" } = {}) {
   if (view !== "thoughts") return; // drawn when Thgt is shown (setView), not in the background
-  const c = cached(world), entries = c.entries;
-  const shown = thread.querySelector(":scope > .tw:not([hidden])");
-  const wasBottom = nearBottom(), was = thread.scrollTop, sameBox = shown?.dataset.w === world;
+  if (keep === "end") placeOf(world).pinned = true;
   threadBox(world); fillBox(world);
+  newestBtn.hidden = placeOf(world).pinned || newestBtn.hidden;
   prerenderSoon();
-  if (keep === "restore" && c.scroll != null) thread.scrollTop = c.scroll;
-  else if (keep === "bottom" && sameBox && !wasBottom) thread.scrollTop = was;
-  else toEnd();
+  hold();
 }
-// To the end of the thread. With content-visibility the lines off screen have estimated heights, so
-// the end moves as the last ones are laid out: pin it again for a few frames.
-function toEnd(n = 4) {
-  thread.scrollTop = thread.scrollHeight;
-  if (n > 0) requestAnimationFrame(() => { if (nearBottom() || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 2000) toEnd(n - 1); });
-}
+function toEnd() { placeOf(world).pinned = true; newestBtn.hidden = true; hold(); }
 function append(e) {
-  const atBottom = nearBottom();
   const c = cached(world), list = c.entries;
-  if (list.length === 1 || view !== "thoughts") return render({ keep: "end" });
+  if (list.length === 1 || view !== "thoughts") return render();
   const box = threadBox(world);
-  box.insertAdjacentHTML("beforeend", entryHtml(e, list.length - 1, list));
-  if (box.lastElementChild) { linkNames(box.lastElementChild); textGlyphs(box.lastElementChild); }
-  box.dataset.sig = boxSig(c);
-  if (atBottom || e.role === "you") toEnd();
+  if (box.dataset.sig !== boxSig({ ...c, entries: list.slice(0, -1) })) return render(); // the box is behind: draw it properly
+  box.append(...nodesOf(rangeHtml(list, list.length - 1, list.length)));
+  box._keys = [...(box._keys || []), entryKey(e)]; box.dataset.sig = boxSig(c);
+  if (!placeOf(world).pinned) newestBtn.hidden = false; // he's reading above: say there's more, don't move him
+  hold();
 }
 function renderTop() {
   const cur = worlds.find((w) => w.id === world);
@@ -210,14 +261,14 @@ function refreshAll() {
 }
 function setWorld(w) {
   if (!w || w === world) return;
-  if (world && view === "thoughts") cached(world).scroll = nearBottom() ? null : thread.scrollTop; // only while it's on screen
   if (world && view === "stream") streamOf(world).scroll = streamNearEnd() ? null : streamEl.scrollTop;
   world = w;
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
-  if (view === "thoughts") render({ keep: "restore" }); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
+  newestBtn.hidden = true;
+  if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
   fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
   fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); fetchStream(w).catch(() => {});
 }
@@ -271,7 +322,7 @@ let sending = false;
 async function sendMessage() {
   const text = input.value.trim(); if (!text || !world || sending) return;
   sending = true; sendBtn.disabled = true;
-  try { await call("POST", "/api/send", { world, text }); input.value = ""; grow(); busy = true; renderTop(); note(""); }
+  try { await call("POST", "/api/send", { world, text }); input.value = ""; grow(); busy = true; renderTop(); note(""); toEnd(); }
   catch (err) { note("✗ not sent: " + err.message); }
   finally { sending = false; sendBtn.disabled = false; }
 }
@@ -316,7 +367,7 @@ input.addEventListener("touchend", (e) => {
   e.preventDefault();
   input.focus({ preventScroll: true });
 }, { passive: false });
-input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); if (!cached(world).scroll) thread.scrollTop = thread.scrollHeight; }); });
+input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); hold(); }); });
 // Scrollable panes (the thread, the Proj tab: J42) and the text box keep their drags.
 document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #stream, #input, #sbar")) e.preventDefault(); }, { passive: false });
 

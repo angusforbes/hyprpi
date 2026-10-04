@@ -150,6 +150,10 @@ details.card[open] summary { margin-bottom: 4px; }
 .shint { padding: 6px 2px; color: #e64553; }
 mark { background: color-mix(in srgb, var(--world) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 
+/* "↓ newest" (J67): new turns arrived while he's reading further up */
+#newest { position: fixed; z-index: 5; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom) + 76px);
+  font-family: inherit; font-size: 13.5px; font-weight: 650; color: var(--bg); background: var(--world); border: none; border-radius: 16px; padding: 7px 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); cursor: pointer; }
+
 /* names as links (J45): their own colour, a light underline */
 .nl { cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
 .ppeople { font-size: 13.5px; color: var(--dim); margin: -2px 0 6px; }
