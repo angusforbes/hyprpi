@@ -6,11 +6,11 @@
 <meta name="theme-color" content="#1a1b26">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default"><!-- light theme: dark clock on a light bar (J61) -->
 <meta name="apple-mobile-web-app-title" content="hyprpi">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" href="/favicon.png" type="image/png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png"><!-- J61: π, option 4 -->
 <link rel="stylesheet" href="/style.css">
 <title>hyprpi · Thoughts</title>
 </head>
@@ -29,6 +29,11 @@
 <main id="projects" hidden></main>
 <main id="agents" class="pane" hidden></main>
 <main id="stream" class="pane" hidden></main>
+<!-- the Strm filter (J60): filter-only, never sends anything; a different look from the message box -->
+<div id="sbar" hidden>
+  <div id="skinds" aria-label="kinds"></div>
+  <div class="srow"><span class="sicon">🔍</span><input id="sq" type="search" enterkeyhint="search" inputmode="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="filter: words · @Name · 3h · today" aria-label="filter the stream"><button id="sx" type="button" hidden title="clear the filter">✕</button></div>
+</div>
 <div id="note" hidden></div>
 <div id="composer"><!-- not a <form> (J59): Safari's form bar has less to step through -->
   <textarea id="input" rows="1" enterkeyhint="send" inputmode="text" autocapitalize="sentences" autocorrect="on" spellcheck="true" autocomplete="off" aria-label="message to Thoughts"></textarea>

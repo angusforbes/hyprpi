@@ -83,6 +83,13 @@ export function md(src, { doc = false } = {}) {
     // (a paragraph ends where a block starts; the same heading rule as above, or it would never move on)
     while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^```|^>\s?/.test(lines[i]) && !H.test(lines[i]) && !li.test(lines[i])) buf.push(lines[i++]);
     if (!buf.length) buf.push(lines[i++]); // never stall
+    // An image alone, or a short caption line and then an image: a small captioned figure (J63).
+    // Figures in a row sit side by side (inline blocks) and wrap, so a set of images fits a phone.
+    const lastImg = /^\s*!\[[^\]]*\]\([^)\s]+\)\s*$|^\s*!\[\[[^\]]+\]\]\s*$/.test(buf[buf.length - 1] || "");
+    if (lastImg && buf.length <= 2 && (buf.length === 1 || buf[0].length <= 80)) {
+      out.push(`<figure class="mdfig">${inline(buf[buf.length - 1].trim())}${buf.length === 2 ? `<figcaption>${inline(buf[0])}</figcaption>` : ""}</figure>`);
+      continue;
+    }
     out.push(`<p>${buf.map(inline).join("<br>")}</p>`);
   }
   return out.join("");

@@ -3,7 +3,7 @@
 A small web app for Angus's iPhone (and any browser on his tailnet): chat with a world's
 **Thoughts** agent from anywhere. One top bar, always visible (also with the keyboard open): the
 world chips (the desktop bar's worlds: A–E always, F–I while in use, live) and the tabs
-Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short summary; Agnt: its agents as the desktop agents panel lists them, one open at a time as a short read-only summary; Strm: the world's Stream, one line per event, a tap opens an event in place and closes it again). Board card:
+Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short summary; Agnt: its agents as the desktop agents panel lists them, one open at a time as a short read-only summary; Strm: the world's Stream, one line per event, a tap opens an event in place and closes it again; a 🔍 filter bar at the bottom with the desktop Stream panel's own syntax, kind chips and "search all history"). Board card:
 `@hyprpi-remote-control` (world D). Phone first; an iPad layout comes later.
 
 - `server.mjs`: plain Node, no dependencies. Listens on **127.0.0.1:8897** only, holds one
@@ -34,6 +34,10 @@ from the page itself (Origin check). There is no shell and no file writing.
 - Publish on the tailnet (once; it persists): `tailscale serve --bg --https=8443 http://127.0.0.1:8897`
 - Stop publishing: `tailscale serve --https=8443 off`
 - By hand: `node ~/Work/hyprpi/remote-control/server.mjs` (port: `HYPRPI_REMOTE_PORT`)
+
+## The icon
+
+π ringed by the world colours (J61, Angus's pick of four in `icon-options/`): `icon-180.png` (apple-touch-icon), `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `favicon.png`; `manifest.webmanifest` (standalone). After an icon change, remove and re-add the Home Screen icon (iOS caches it).
 
 ## On the iPhone
 

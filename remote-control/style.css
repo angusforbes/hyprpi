@@ -88,7 +88,17 @@ details.card summary { color: var(--dim); cursor: pointer; list-style: none; }
 details.card summary::-webkit-details-marker { display: none; }
 details.card summary .who { color: var(--fg); }
 details.card[open] summary { margin-bottom: 4px; }
-.img { display: block; max-width: 70%; max-height: 240px; border-radius: 10px; margin-top: 6px; }
+/* Images in the thread are thumbnails (J63, Angus: "they are too big they go off screen I can't
+   see them all"): about 45% of the width or 160 px tall, aspect kept, side by side and wrapping;
+   a tap opens the full image. Never wider than the screen. */
+.img, .tw .mdimg { display: inline-block; vertical-align: top; width: auto; height: auto; max-width: min(45%, 100%); max-height: 160px; object-fit: contain;
+  border-radius: 10px; border: 1px solid var(--line); margin: 6px 6px 0 0; cursor: zoom-in; background: var(--bg); }
+.tw .mdimg + br { display: none; } /* one image per line in the Markdown still sits side by side */
+/* a captioned image (md.mjs figure): two per row on a phone, more on wider screens */
+.mdfig { display: inline-block; vertical-align: top; width: calc(50% - 8px); max-width: 220px; margin: 6px 8px 2px 0; }
+.mdfig .mdimg { display: block; width: 100%; max-width: 100%; height: auto; max-height: 160px; object-fit: contain; margin: 0; }
+.mdfig figcaption { font-size: 13px; line-height: 1.3; margin-top: 3px; color: var(--fg); }
+.tw img { max-width: 100%; }
 
 /* markdown */
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
@@ -120,6 +130,25 @@ details.card[open] summary { margin-bottom: 4px; }
 .sfilter { position: sticky; top: -8px; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 8px 4px; margin: -8px 0 4px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 14px; }
 .sfilter b { color: var(--world); }
 .sclear { margin-left: auto; font-family: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 50%; width: 28px; height: 28px; cursor: pointer; }
+
+/* ---- the Strm filter bar (J60): filter-only, so it looks unlike the message box: a flat grey
+   field with a 🔍, square corners, kind chips above it; no send button ---- */
+#sbar { flex: none; border-top: 1px solid var(--line); background: var(--faint);
+  padding: 6px calc(env(safe-area-inset-right) + 10px) calc(env(safe-area-inset-bottom) + 6px) calc(env(safe-area-inset-left) + 10px); }
+#skinds { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; padding-bottom: 6px; }
+#skinds::-webkit-scrollbar { display: none; }
+.kchip { flex: none; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--dim); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+.kchip.on { color: var(--bg); background: var(--world); border-color: var(--world); }
+.srow { display: flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px 0 9px; }
+.sicon { font-size: 15px; opacity: .7; }
+#sq { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--fg); font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; font-size: 16px; padding: 9px 0; -webkit-appearance: none; appearance: none; }
+#sq::-webkit-search-cancel-button { display: none; }
+#sx { flex: none; width: 28px; height: 28px; border-radius: 50%; border: none; background: var(--faint); color: var(--fg); font-size: 14px; cursor: pointer; }
+.shead, .sfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--dim); padding: 8px 2px; }
+.shead { border-bottom: 1px solid var(--line); } .sfoot { border-top: 1px solid var(--line); margin-top: 4px; }
+.sall, .sback { flex: none; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--world); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 4px 11px; cursor: pointer; }
+.shint { padding: 6px 2px; color: #e64553; }
+mark { background: color-mix(in srgb, var(--world) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 
 /* names as links (J45): their own colour, a light underline */
 .nl { cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; text-decoration-thickness: 1px; }

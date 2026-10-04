@@ -268,7 +268,18 @@ async function buildStreamFor(r) {
   const [h, b] = await Promise.all([api.call("history.read", { room: r, interactions: 200 }), api.call("board.get", { room: r }).catch(() => ({ projects: [] }))]);
   const projects = b.projects || [], pname = (id) => projects.find((p) => p.id === id)?.name || "";
   const raw = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects });
-  const items = raw.map((it) => {
+  const items = raw.map((it) => phoneRow(it, pname));
+  const sig = `${items.length}|${items.at(-1)?.k || ""}|${items.at(-1)?.text?.length || 0}`;
+  const old = streams.get(r);
+  streams.set(r, { items, sig, raw, projects });
+  if (old && old.sig !== sig) broadcast("stream", { room: r });
+  return streams.get(r);
+}
+// One stream item as the phone's row. Besides what it shows, it carries the fields the shared
+// filter (lib/stream.mjs filterStream, run in the page, J60) looks at: who (id, raw name, human),
+// to, the project id, the raw text and the board line's project name.
+function phoneRow(it, pname) {
+  {
     const full = streamLine(it, { projectName: pname, time: false }); // "who: text [@project]", as /digest says it
     const who = it.kind === "board" ? { name: "📋 " + it.who.name, color: "" } : { name: (it.who.icon ? it.who.icon + " " : "") + it.who.name, color: it.who.color || "", human: !!it.who.human };
     // The body without the "who" lead (the row shows who in its colour); DIRECT / did / topic keep their verb.
@@ -276,14 +287,34 @@ async function buildStreamFor(r) {
     // by: whose line it is, for "only X" in the open view: an agent, a Thoughts agent, "Angus" (his
     // messages, and prompts he sent), or whoever made a board change.
     const by = it.who.human || it.kind === "prompt" ? "Angus" : it.who.name || "";
-    return { k: it.key, ts: it.ts, kind: it.kind, who, by, project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body };
-  });
-  const sig = `${items.length}|${items.at(-1)?.k || ""}|${items.at(-1)?.text?.length || 0}`;
-  const old = streams.get(r);
-  streams.set(r, { items, sig, raw, projects });
-  if (old && old.sig !== sig) broadcast("stream", { room: r });
-  return streams.get(r);
+    return { k: it.key, ts: it.ts, kind: it.kind, who, by, project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body,
+      f: { id: it.who.id || "", name: it.who.name || "", human: !!it.who.human, to: it.to || [], project: it.project || null, text: it.text, pname: it.pname || "" } };
+  }
 }
+// The name pool and projects the desktop Stream panel resolves @names against (room-tui: the
+// world's agents, live and parked, plus its dormant ones; the board's projects with members).
+function filterPool(r, projects) {
+  const agents = [...(listing?.agents || []).filter((a) => a.room === r), ...(listing?.dormant || []).filter((a) => a.room === r)].map((a) => ({ id: a.id, name: a.name || "", display: a.display || a.name || "" }));
+  return { agents, projects: (projects || []).map((p) => ({ id: p.id, name: p.name, members: p.members || [], status: p.status })) };
+}
+// "search all history" (J60): the same filter over the world's whole history, newest 400 matches.
+async function searchAll(r, q, kinds) {
+  const [h, b] = await Promise.all([api.call("history.read", { room: r, since: 0 }, { timeoutMs: 60000 }), api.call("board.get", { room: r }).catch(() => ({ projects: [] }))]);
+  const projects = b.projects || [], pname = (id) => projects.find((p) => p.id === id)?.name || "";
+  const raw = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects });
+  const f = parseStreamFilter(q), pool = filterPool(r, projects);
+  const res = f.names.length ? resolveFilterNames(f.names, { agents: pool.agents, projects: pool.projects, items: raw }) : null;
+  const keep = new Set(filterStream(raw, f, res).map((it) => it.key));
+  for (const n of f.names) { // the phone's extras (as in the page): Angus's lines, board changes made under a name
+    if (n.toLowerCase() === "angus") for (const it of raw) if (it.who?.human || it.kind === "prompt") keep.add(it.key);
+    for (const it of raw) if (it.kind === "board" && it.who?.name?.toLowerCase() === n.toLowerCase()) keep.add(it.key);
+  }
+  const ks = new Set(kinds || []);
+  const hits = raw.filter((it) => keep.has(it.key) && (!ks.size || ks.has(kindGroup(it.kind))));
+  return { total: hits.length, from: raw[0]?.ts || 0, items: hits.slice(-400).map((it) => phoneRow(it, pname)) };
+}
+// The chips' kind groups (the same in the page).
+const kindGroup = (k) => k === "post" || k === "angus" || k === "thoughts" ? "posts" : k === "turn" ? "did" : k === "topic" ? "topics" : k === "board" ? "board" : ["talk", "demand", "reply", "prompt"].includes(k) ? "talk" : "other";
 // One agent's lines: the desktop Stream panel's "/stream @Name" rule (lib/stream.mjs): lines by
 // that agent, to it, and Angus's / prompts naming it. (Angus, room D #304: filter Strm on an agent.)
 function streamFor(st, name) {
@@ -313,7 +344,7 @@ async function body(req, max = 1e6) {
   return s ? JSON.parse(s) : {};
 }
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8" };
-const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js" };
+const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png" };
 
 function serveFile(res, file, type) {
   fs.stat(file, (err, st) => {
@@ -376,7 +407,9 @@ function wikiFind(name, from) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://x");
+  // A malformed path ("//", "//x") made new URL() throw outside any try, which killed the server
+  // (systemd restarted it): any request could take it down. Refuse it instead.
+  let url; try { url = new URL(req.url, "http://x"); } catch { res.writeHead(400, { "content-type": "text/plain" }); return res.end("bad request"); }
   if (!allowed(req)) { log("refused", req.headers["tailscale-user-login"] || req.socket.remoteAddress, url.pathname); return json(res, 403, { error: "not allowed" }); }
   // A POST must come from this page (no cross-site form posts).
   if (req.method === "POST") {
@@ -387,6 +420,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && STATIC[url.pathname]) return serveFile(res, path.join(HERE, STATIC[url.pathname]));
     // The thread's display rule, shared with the desktop Thoughts window (J38).
     if (req.method === "GET" && url.pathname === "/lib/thoughts-lines.mjs") return serveFile(res, path.join(HERE, "..", "lib", "thoughts-lines.mjs"), "text/javascript; charset=utf-8");
+    // The desktop Stream panel's timeline + filter, as-is (pure, no imports): the Strm filter bar (J60).
+    if (req.method === "GET" && url.pathname === "/lib/stream.mjs") return serveFile(res, path.join(HERE, "..", "lib", "stream.mjs"), "text/javascript; charset=utf-8");
     // The desktop panels' Ctrl+click name matcher, as-is (pure, no imports): the page's links (J45).
     if (req.method === "GET" && url.pathname === "/lib/tui/agent-click.mjs") return serveFile(res, path.join(HERE, "..", "lib", "tui", "agent-click.mjs"), "text/javascript; charset=utf-8");
     if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, state());
@@ -408,9 +443,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/stream") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      const q = String(url.searchParams.get("q") || "").trim();
+      if (url.searchParams.get("all") === "1") return json(res, 200, { room: r, q, ...(await searchAll(r, q, String(url.searchParams.get("kinds") || "").split(",").filter(Boolean))) });
       const st = streams.get(r) || await buildStreamFor(r);
       const agent = String(url.searchParams.get("agent") || "").trim();
-      if (!agent) return json(res, 200, { room: r, items: st.items });
+      if (!agent) return json(res, 200, { room: r, items: st.items, ...filterPool(r, st.projects) });
       return json(res, 200, { room: r, agent, items: streamFor(st, agent) });
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
