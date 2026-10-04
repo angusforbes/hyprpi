@@ -251,18 +251,31 @@ function listen() {
 const touch = matchMedia("(pointer: coarse)").matches;
 function grow() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight + 2, innerHeight * 0.4) + "px"; }
 input.addEventListener("input", grow);
-input.addEventListener("keydown", (e) => {
-  // Desktop: Enter sends, Shift+Enter is a new line. Phone: Enter is a new line, ➤ sends.
-  if (e.key === "Enter" && !e.shiftKey && !touch && !e.isComposing) { e.preventDefault(); $("#composer").requestSubmit(); }
-});
-$("#composer").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const text = input.value.trim(); if (!text || !world) return;
-  sendBtn.disabled = true;
+// The box as a chat input (J59, Angus via Thoughts-E: "make the box a chat input:
+// enterkeyhint="send", so the keyboard's Return key sends the message (and closes the keyboard)").
+// Return sends: on the phone always (there's no Shift+Enter there) and then the keyboard closes;
+// on a desktop Shift+Enter is still a new line. An empty box ignores Return; Return while an
+// input method is composing (e.g. Japanese) is left to it. Works for a textarea and an <input>.
+function chatKeys(el, send) {
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return; // IME: not ours
+    if (e.shiftKey && !touch && el.tagName === "TEXTAREA") return; // desktop: a new line
+    e.preventDefault();
+    if (!el.value.trim()) return; // nothing to send
+    send();
+    if (touch) el.blur(); // the keyboard closes
+  });
+}
+let sending = false;
+async function sendMessage() {
+  const text = input.value.trim(); if (!text || !world || sending) return;
+  sending = true; sendBtn.disabled = true;
   try { await call("POST", "/api/send", { world, text }); input.value = ""; grow(); busy = true; renderTop(); note(""); }
   catch (err) { note("✗ not sent: " + err.message); }
-  finally { sendBtn.disabled = false; }
-});
+  finally { sending = false; sendBtn.disabled = false; }
+}
+chatKeys(input, sendMessage);
+sendBtn.addEventListener("click", () => { sendMessage(); if (touch) input.blur(); });
 // ■ (J38, Angus: "I want you to reply after I interrupt you"): stop the reply; Thoughts then says in
 // a line or two what got cut off and asks what's next. The cursor goes to the box.
 stopBtn.addEventListener("click", async () => {
@@ -629,7 +642,7 @@ streamEl.addEventListener("click", (e) => {
   textGlyphs(row);
 });
 
-window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly }; // for tests (CDP)
+window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly, chatKeys }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }

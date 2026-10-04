@@ -30,11 +30,11 @@
 <main id="agents" class="pane" hidden></main>
 <main id="stream" class="pane" hidden></main>
 <div id="note" hidden></div>
-<form id="composer" autocomplete="off">
-  <textarea id="input" rows="1" enterkeyhint="send"></textarea>
+<div id="composer"><!-- not a <form> (J59): Safari's form bar has less to step through -->
+  <textarea id="input" rows="1" enterkeyhint="send" inputmode="text" autocapitalize="sentences" autocorrect="on" spellcheck="true" autocomplete="off" aria-label="message to Thoughts"></textarea>
   <button type="button" id="stop" hidden title="stop Thoughts">■</button>
-  <button type="submit" id="send" title="send">➤</button>
-</form>
+  <button type="button" id="send" title="send">➤</button>
+</div>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
