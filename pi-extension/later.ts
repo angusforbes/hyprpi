@@ -55,6 +55,13 @@ export function bashBlockReason(command: string): string {
     if (!SAFE_CMDS.has(cmd)) return `"${cmd}" isn't on the read-only list`;
     if (cmd === "find" && /(^|\s)-(exec|execdir|ok|okdir|delete|fprint\w*|fls)\b/.test(rest)) return "find -exec / -delete isn't allowed";
     if (cmd === "sed" && /(^|\s)(-i|--in-place|-[a-zA-Z]*i)/.test(rest)) return "sed -i isn't allowed";
+    // Blink's holes (J46 v2 test): commands that write through an option or argument.
+    if (cmd === "sed" && /(?:^|[;'"{}\s])[wW]\s*\S|\/[gpiIme0-9]*[wW]\s/.test(raw.slice(raw.indexOf("sed")))) return "sed's w command (write to a file) isn't allowed";
+    if (cmd === "sort" && /(^|\s)(-o\S*|--output\S*|-[a-zA-Z]*o\S*)/.test(rest)) return "sort -o (write to a file) isn't allowed";
+    if (cmd === "uniq" && words.slice(1).filter((w) => w && !w.startsWith("-")).length >= 2) return "uniq IN OUT (writes OUT) isn't allowed";
+    if (cmd === "tree" && /(^|\s)(-o|--output)/.test(rest)) return "tree -o (write to a file) isn't allowed";
+    if (cmd === "git" && /(^|\s)--output\b/.test(rest)) return "git --output (write to a file) isn't allowed";
+    if (cmd === "journalctl" && /(^|\s)--(vacuum|rotate|flush|sync|relinquish|setup-keys|update-catalog)/.test(rest)) return "journalctl maintenance options aren't allowed";
     if (cmd === "awk" && /system\s*\(|\|\s*""|print\s*>/.test(raw)) return "awk system() / output redirection isn't allowed";
     if (cmd === "git" && !/^(-C\s+\S+\s+)?(--no-pager\s+)?(status|log|diff|show|grep|blame|ls-files|rev-parse)\b/.test(rest)) return `git ${words[1] || ""} isn't read-only here (status, log, diff, show, grep, blame, ls-files, rev-parse)`;
     if (cmd === "hyprctl" && !/^(-j\s+)?(clients|activewindow|activeworkspace|workspaces|monitors|cursorpos|version|devices|layers|binds)\b/.test(rest)) return "only hyprctl queries (clients, workspaces, monitors, …) are allowed";
