@@ -17,7 +17,8 @@
 //   GET  /lib/thoughts-lines.mjs     the thread's display rule, shared with the desktop
 //   GET  /api/board?world=C    the Proj tab: each project's summary (open items only)
 //   GET  /api/agents?world=C   the Agnt tab: the world's agents as the desktop agents panel lists them
-//   GET  /api/stream?world=C   the Strm tab: the world's Stream (lib/stream.mjs, last 200 interactions)
+//   GET  /api/stream?world=C[&agent=Name]   the Strm tab: the world's Stream (lib/stream.mjs, last 200
+//                              interactions), or one agent's lines (the desktop's /stream @Name rule)
 //   GET  /events               live: thoughts entries / busy, worlds, board (a card changed), agents
 //   GET  /file?path=/abs/path  read-only, only under ~/Obsidian and ~/Work (links in replies)
 import http from "node:http";
@@ -28,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { connect } from "../lib/client.mjs";
 import { socketPath, runtimeDir, loadConfig, wsLabel } from "../lib/paths.mjs";
 import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
-import { buildStream, streamLine, DIRECT } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49)
+import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames, filterStream } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49) and @Name filter
 import { worldHex, theme } from "../lib/tui/term.mjs";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -234,6 +235,7 @@ async function agentsSummary(r) {
     api.call("room.read", { room: r, limit: 200 }).catch(() => ({ messages: [] })),
   ]);
   const size = Number(loadConfig()?.worldSize) || 10;
+  const st = streams.get(r) || await buildStreamFor(r).catch(() => null);
   return {
     room: r,
     agents: here.map((a) => {
@@ -249,6 +251,8 @@ async function agentsSummary(r) {
         job: job ? { id: job.job, version: job.version, state: job.state, goal: job.goal || "", project: job.project || "" } : null,
         projects: (board.projects || []).filter((p) => p.status !== "archived" && (p.members || []).includes(a.id)).map((p) => ({ name: p.name, icon: p.icon || "📋", writer: p.writer === a.id })),
         posts: (log.messages || []).filter((m) => m.author?.id === a.id).slice(-4).map((m) => ({ ts: m.ts, text: String(m.text || "").slice(0, 400) })),
+        // Its last lines in the Stream, any kind (posts, did lines, topics, talk): every agent has some (room D #304).
+        recent: st ? streamFor(st, name).slice(-5).map((it) => ({ ts: it.ts, kind: it.kind, text: String(it.text || "").slice(0, 400) })) : [],
       };
     }),
   };
@@ -263,18 +267,29 @@ const streams = new Map(); // room -> { items, sig }
 async function buildStreamFor(r) {
   const [h, b] = await Promise.all([api.call("history.read", { room: r, interactions: 200 }), api.call("board.get", { room: r }).catch(() => ({ projects: [] }))]);
   const projects = b.projects || [], pname = (id) => projects.find((p) => p.id === id)?.name || "";
-  const items = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects }).map((it) => {
+  const raw = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects });
+  const items = raw.map((it) => {
     const full = streamLine(it, { projectName: pname, time: false }); // "who: text [@project]", as /digest says it
     const who = it.kind === "board" ? { name: "📋 " + it.who.name, color: "" } : { name: (it.who.icon ? it.who.icon + " " : "") + it.who.name, color: it.who.color || "", human: !!it.who.human };
     // The body without the "who" lead (the row shows who in its colour); DIRECT / did / topic keep their verb.
     const body = DIRECT[it.kind] ? full.replace(/^.*?(?= (to|asks|replies to) )/, "").trim() : it.kind === "turn" ? "did: " + it.text : it.kind === "topic" ? "topic: " + it.text : it.text;
-    return { k: it.key, ts: it.ts, kind: it.kind, who, project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body };
+    // by: the agent the line is by (for "only X" in the open view), not for Angus or board lines.
+    return { k: it.key, ts: it.ts, kind: it.kind, who, by: it.kind !== "board" && !it.who.human && it.who.name ? it.who.name : "", project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body };
   });
   const sig = `${items.length}|${items.at(-1)?.k || ""}|${items.at(-1)?.text?.length || 0}`;
   const old = streams.get(r);
-  streams.set(r, { items, sig });
+  streams.set(r, { items, sig, raw, projects });
   if (old && old.sig !== sig) broadcast("stream", { room: r });
   return streams.get(r);
+}
+// One agent's lines: the desktop Stream panel's "/stream @Name" rule (lib/stream.mjs): lines by
+// that agent, to it, and Angus's / prompts naming it. (Angus, room D #304: filter Strm on an agent.)
+function streamFor(st, name) {
+  const f = parseStreamFilter("@" + name);
+  const pool = [...(listing?.agents || []), ...(listing?.dormant || [])].map((a) => ({ id: a.id, name: a.name || "", display: a.display || a.name || "" }));
+  const r = resolveFilterNames(f.names, { agents: pool, projects: st.projects || [], items: st.raw || [] });
+  const keep = new Set(filterStream(st.raw || [], f, r).map((it) => it.key));
+  return st.items.filter((it) => keep.has(it.k));
 }
 const streamTimers = new Map();
 function streamSoon(r) {
@@ -357,7 +372,9 @@ const server = http.createServer(async (req, res) => {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       const st = streams.get(r) || await buildStreamFor(r);
-      return json(res, 200, { room: r, items: st.items });
+      const agent = String(url.searchParams.get("agent") || "").trim();
+      if (!agent) return json(res, 200, { room: r, items: st.items });
+      return json(res, 200, { room: r, agent, items: streamFor(st, agent) });
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       const b = await body(req), r = room(b.world), text = String(b.text || "").trim();

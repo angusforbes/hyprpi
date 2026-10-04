@@ -113,7 +113,13 @@ details.card[open] summary { margin-bottom: 4px; }
 .ev.open .sone { display: none; }
 .sfull { font-size: 14.5px; padding: 4px 2px 2px; white-space: normal; cursor: auto; }
 .sproj { font-size: 12.5px; color: var(--dim); }
-.stime { font-size: 12px; color: var(--dim); padding: 2px 2px 0; font-variant-numeric: tabular-nums; } /* J52: the time, in the open view only */
+.stime { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--dim); padding: 2px 2px 0; font-variant-numeric: tabular-nums; } /* J52: the time, in the open view only */
+/* one agent's lines (room D #304): the filter bar, "only X ›" in an open event, "Stream: only X ›" in Agnt */
+.sonly, .tostream { flex: none; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--world); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 3px 10px; cursor: pointer; }
+.tostream { margin-top: 8px; font-size: 13.5px; padding: 5px 12px; }
+.sfilter { position: sticky; top: -8px; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 8px 4px; margin: -8px 0 4px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 14px; }
+.sfilter b { color: var(--world); }
+.sclear { margin-left: auto; font-family: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 50%; width: 28px; height: 28px; cursor: pointer; }
 
 /* names as links (J45): their own colour, a light underline */
 .nl { cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; text-decoration-thickness: 1px; }

@@ -503,7 +503,9 @@ function renderAgents({ keepScroll = false } = {}) {
       + sec("Current job", a.job ? `<div>⟦${esc(a.job.id)} v${esc(a.job.version)} · ${esc(a.job.state)}⟧${a.job.project ? ` <span class="small">@${esc(a.job.project)}</span>` : ""}</div><div class="md">${md(a.job.goal)}</div>` : "")
       + sec("Projects", a.projects.length ? `<div>${a.projects.map((p) => `${esc(p.icon)} @${esc(p.name)}${p.writer ? ` <span class="small">(owner)</span>` : ""}`).join("<br>")}</div>` : "")
       + sec("Model", a.model ? `<div>${esc(a.model)}${a.thinking ? ` <span class="small">· thinking ${esc(a.thinking)}</span>` : ""}</div>` : "")
-      + sec("Last room posts", a.posts.length ? `<ul class="items">${a.posts.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : "")
+      // Its last lines in the Stream, any kind (room D #304: Summoner had events but no room posts),
+      // then a link to Strm filtered on it.
+      + sec("In the stream", `${(a.recent || []).length ? `<ul class="items">${a.recent.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : `<div class="small">nothing in the last 200 interactions</div>`}<button class="tostream" data-name="${esc(a.name)}">Stream: only ${esc(a.name)} ›</button>`)
       + `</div>`);
   }
   agentsEl.innerHTML = html.join("");
@@ -512,6 +514,7 @@ function renderAgents({ keepScroll = false } = {}) {
 }
 agentsEl.addEventListener("click", (e) => {
   if (e.target.closest(".phead")) { openAgent.delete(world); return renderAgents(); } // the header: back to the list (J48)
+  const ts = e.target.closest(".tostream"); if (ts) { streamOnly(ts.dataset.name); return setView("stream"); } // its lines in Strm
   if (e.target.closest("a")) return;
   const t = e.target.closest(".agent");
   if (t) { openAgent.set(world, t.dataset.a); return renderAgents(); }
@@ -547,7 +550,7 @@ function matchWord(word) {
 }
 function linkNames(root) {
   if (!namesRe) return;
-  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => namesRe.test(n.data) && !n.parentElement?.closest("a, code, pre, .nl, .tx, .phead, button.proj, button.agent, textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => namesRe.test(n.data) && !n.parentElement?.closest("a, code, pre, .nl, .tx, .phead, button, textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
   const nodes = []; while (walk.nextNode()) nodes.push(walk.currentNode);
   for (const n of nodes) {
     const parts = n.data.split(/(\s+)/); let changed = false;
@@ -591,12 +594,12 @@ document.addEventListener("click", (e) => {
 // Open events are remembered per world (in memory) across tabs and worlds. Read-only; cached,
 // prefetched and live like the other tabs.
 const streamEl = $("#stream");
-const streams = new Map(); // world -> { items, loaded, open: Set(key), scroll }
+const streams = new Map(); // world -> { items, loaded, open: Set(key), scroll, only: agent name | "", fitems: [] }
 const LSS = (w) => "hyprpi-rc.stream." + w;
 function streamOf(w) {
   let st = streams.get(w);
   if (!st) {
-    st = { items: [], loaded: false, open: new Set(), scroll: null };
+    st = { items: [], loaded: false, open: new Set(), scroll: null, only: "", fitems: [], floaded: false };
     try { const x = JSON.parse(localStorage.getItem(LSS(w)) || "null"); if (Array.isArray(x?.items)) st.items = x.items; } catch { /* none */ }
     streams.set(w, st);
   }
@@ -604,11 +607,30 @@ function streamOf(w) {
 }
 const streamNearEnd = () => streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 60;
 async function fetchStream(w) {
+  const st0 = streamOf(w);
+  if (st0.only) fetchFiltered(w).catch(() => {});
   const r = await call("GET", `/api/stream?world=${w}`), st = streamOf(w);
   const next = r.items || [], changed = !st.loaded || next.length !== st.items.length || next.at(-1)?.k !== st.items.at(-1)?.k || next.at(-1)?.text !== st.items.at(-1)?.text;
   st.items = next; st.loaded = true;
   try { localStorage.setItem(LSS(w), JSON.stringify({ items: next.slice(-250) })); } catch { /* memory only */ }
+  if (w === world && view === "stream" && changed && !st.only) renderStream();
+}
+// One agent's lines (Angus, room D #304), filtered by the server with the desktop Stream panel's
+// "/stream @Name" rule (by it, to it, naming it). Until that answer is here, its own lines show.
+async function fetchFiltered(w) {
+  const st = streamOf(w), name = st.only; if (!name) return;
+  const r = await call("GET", `/api/stream?world=${w}&agent=${encodeURIComponent(name)}`);
+  if (st.only !== name) return;
+  const changed = !st.floaded || JSON.stringify(r.items.map((x) => x.k)) !== JSON.stringify(st.fitems.map((x) => x.k));
+  st.fitems = r.items || []; st.floaded = true;
   if (w === world && view === "stream" && changed) renderStream();
+}
+function streamOnly(name, w = world) {
+  const st = streamOf(w);
+  st.only = name || ""; st.floaded = false; st.scroll = null; st.pinEnd = true; // a new view of the stream starts at its end
+  st.fitems = name ? st.items.filter((it) => it.by === name) : [];
+  if (w === world && view === "stream") renderStream({ restore: true });
+  if (name) fetchFiltered(w).catch(() => {});
 }
 const evFirst = (t) => String(t || "").split("\n").find((x) => x.trim()) || "";
 function streamRow(it, open) {
@@ -619,24 +641,37 @@ function streamRow(it, open) {
   // Compact: who and the first line, no time (J52, Angus: "get rid of the timestamp in the compact
   // view, you can include it in the full view"). Open: the time (and the date if not today) on top.
   const stamp = `${esc(when)}${day ? " · " + esc(new Date(it.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })) : ""}`;
+  // Open: "only X ›" at the right of the time line filters Strm to that agent (room D #304).
+  const only = it.by && it.by !== streamOf(world).only ? `<button class="sonly" data-name="${esc(it.by)}">only ${esc(it.by)} ›</button>` : "";
   return `<div class="ev k-${esc(it.kind)}${open ? " open" : ""}" data-k="${esc(it.k)}"><div class="sline">${who} <span class="sone">${esc(evFirst(it.text))}</span></div>`
-    + (open ? `<div class="stime">${stamp}</div><div class="sfull md">${md(it.text)}${tag}</div>` : "") + `</div>`;
+    + (open ? `<div class="stime"><span>${stamp}</span>${only}</div><div class="sfull md">${md(it.text)}${tag}</div>` : "") + `</div>`;
 }
 function renderStream({ restore = false } = {}) {
   if (view !== "stream") return;
   const st = streamOf(world), atEnd = streamNearEnd(), was = streamEl.scrollTop;
-  streamEl.innerHTML = st.items.map((it) => streamRow(it, st.open.has(it.k))).join("")
-    + (!st.items.length && st.loaded ? `<div class="small empty" style="text-align:center;margin-top:30vh">Nothing in world ${esc(world)}'s stream yet.</div>` : "");
+  const list = st.only ? st.fitems : st.items, loaded = st.only ? st.floaded : st.loaded;
+  const bar = st.only ? `<div class="sfilter">only <b>${esc(st.only)}</b> <span class="small">· ${list.length} line${list.length === 1 ? "" : "s"}</span><button class="sclear" title="show everyone">✕</button></div>` : "";
+  streamEl.innerHTML = bar + list.map((it) => streamRow(it, st.open.has(it.k))).join("")
+    + (!list.length && loaded ? `<div class="small empty" style="text-align:center;margin-top:30vh">${st.only ? `No lines by or to ${esc(st.only)} in world ${esc(world)}'s stream.` : `Nothing in world ${esc(world)}'s stream yet.`}</div>` : "");
   for (const el of streamEl.querySelectorAll(".ev.open .sfull")) { linkNames(el); textGlyphs(el); }
   textGlyphs(streamEl);
-  if (restore) streamEl.scrollTop = st.scroll == null ? streamEl.scrollHeight : st.scroll;
-  else streamEl.scrollTop = atEnd ? streamEl.scrollHeight : was; // at the end: follow new events
+  if (st.pinEnd || (restore && st.scroll == null) || (!restore && atEnd)) streamToEnd(); // at the end: follow new events
+  else streamEl.scrollTop = restore ? st.scroll : was;
+  if (st.pinEnd && (st.only ? st.floaded : st.loaded)) st.pinEnd = false;
+}
+// To the end; rows off screen have estimated heights (content-visibility), so pin again for a few frames.
+function streamToEnd(n = 4) {
+  streamEl.scrollTop = streamEl.scrollHeight;
+  if (n > 0) requestAnimationFrame(() => { if (!streamEl.hidden && streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 2500) streamToEnd(n - 1); });
 }
 // A tap on an event opens / closes it in place (not when the tap is on a link inside it).
 streamEl.addEventListener("click", (e) => {
+  const on = e.target.closest(".sonly"); if (on) return streamOnly(on.dataset.name); // filter on that agent
+  if (e.target.closest(".sclear")) return streamOnly(""); // back to everyone
+  if (e.target.closest(".sfilter")) return;
   if (e.target.closest("a, .nl")) return;
   const ev = e.target.closest(".ev"); if (!ev) return;
-  const st = streamOf(world), k = ev.dataset.k, it = st.items.find((x) => x.k === k); if (!it) return;
+  const st = streamOf(world), k = ev.dataset.k, it = (st.only ? st.fitems : st.items).find((x) => x.k === k); if (!it) return;
   if (st.open.has(k)) st.open.delete(k); else st.open.add(k);
   const tmp = document.createElement("div"); tmp.innerHTML = streamRow(it, st.open.has(k));
   const row = tmp.firstElementChild; ev.replaceWith(row);
@@ -644,7 +679,7 @@ streamEl.addEventListener("click", (e) => {
   textGlyphs(row);
 });
 
-window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf }; // for tests (CDP)
+window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }
