@@ -113,6 +113,7 @@ details.card[open] summary { margin-bottom: 4px; }
 .ev.open .sone { display: none; }
 .sfull { font-size: 14.5px; padding: 4px 2px 2px; white-space: normal; cursor: auto; }
 .sproj { font-size: 12.5px; color: var(--dim); }
+.stime { font-size: 12px; color: var(--dim); padding: 2px 2px 0; font-variant-numeric: tabular-nums; } /* J52: the time, in the open view only */
 
 /* names as links (J45): their own colour, a light underline */
 .nl { cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; text-decoration-thickness: 1px; }

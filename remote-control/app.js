@@ -616,8 +616,11 @@ function streamRow(it, open) {
   const when = new Date(it.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const tag = it.project ? ` <span class="sproj">@${esc(it.project)}</span>` : "";
   const who = `<span class="swho"${it.who.color ? ` style="color:${esc(it.who.color)}"` : ""}>${esc(it.who.name)}</span>`;
-  return `<div class="ev k-${esc(it.kind)}${open ? " open" : ""}" data-k="${esc(it.k)}"><div class="sline"><span class="st">${day ? esc(new Date(it.ts).toLocaleDateString([], { month: "numeric", day: "numeric" })) + " " : ""}${esc(when)}</span> ${who} <span class="sone">${esc(evFirst(it.text))}</span></div>`
-    + (open ? `<div class="sfull md">${md(it.text)}${tag}</div>` : "") + `</div>`;
+  // Compact: who and the first line, no time (J52, Angus: "get rid of the timestamp in the compact
+  // view, you can include it in the full view"). Open: the time (and the date if not today) on top.
+  const stamp = `${esc(when)}${day ? " · " + esc(new Date(it.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })) : ""}`;
+  return `<div class="ev k-${esc(it.kind)}${open ? " open" : ""}" data-k="${esc(it.k)}"><div class="sline">${who} <span class="sone">${esc(evFirst(it.text))}</span></div>`
+    + (open ? `<div class="stime">${stamp}</div><div class="sfull md">${md(it.text)}${tag}</div>` : "") + `</div>`;
 }
 function renderStream({ restore = false } = {}) {
   if (view !== "stream") return;
