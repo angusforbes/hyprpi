@@ -214,7 +214,9 @@ function draw() {
     const rest = boxed + ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
-      const what = a.parked ? "parked" : "closed";
+      // J78: a crash leftover says when it was lost ("lost in the 9/30 crash"); others stay "closed".
+      const lost = !a.parked && a.lost_at ? new Date(a.lost_at) : null;
+      const what = a.parked ? "parked" : lost ? `lost in the ${lost.getMonth() + 1}/${lost.getDate()} crash` : "closed";
       const how = a.parked ? " · ⏎ revive" : " · ⏎ resume · ^W^W forget";
       return { text: ` ◌ ${iconCol(a)}${nm}${rest}${dot}${what}${a.id === cursorId ? how : ""}`, prefixW: 3 + ICON_W, style: midFg };
     }
