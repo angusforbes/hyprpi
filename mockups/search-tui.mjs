@@ -167,7 +167,7 @@ function loadThoughts() {
 }
 function setThoughts(on) { thoughtsOn = on; TH.scroll = 0; note = ""; if (on) loadThoughts(); render(); }
 // Pasted screenshots (Angus, N54: like pi's own windows): Ctrl+V / SUPER+V with an image on the
-// clipboard saves it as /tmp/pi-clipboard-<id>.png and puts its PATH in the box at the cursor, next
+// clipboard saves it as ~/Screenshots/pi-clipboard-<id>.png (/tmp if that folder is missing; J71) and puts its PATH in the box at the cursor, next
 // to what it's about. On ⏎ every image path in the text that exists goes to Thoughts as an image,
 // in order (it sees them and can pass the paths on); the path stays in the message, clickable.
 function imagePaths(text) {
