@@ -94,7 +94,6 @@ export function laterModes(pi: ExtensionAPI) {
       `Don't implement anything. Think it through in your reply: the issues, the options, ideas, a rough plan, and the questions you need answered. ` +
       `Then ${fileIt}; if this continues an earlier "discussing" item, edit that item instead of adding one. ` +
       `Item text: \`discussing: "<his words above, verbatim>" — plan gist: <one or two lines>\`. ` +
-      `For this turn, tools that change files or the system are blocked (board updates, reads, searches and talk still work). ` +
       `What Angus means by /discuss (his words, 2026-10-04: "be intelligent and interpret what i mean like would be normal"): ` +
       `we are talking this through, the way two people would. It stays a discussion until something clearly tells you otherwise; ` +
       `his answers to your questions, his opinions and his "yes, that sounds good" are more discussion, not a go-ahead. ` +
@@ -103,7 +102,7 @@ export function laterModes(pi: ExtensionAPI) {
   };
   const DESC: Record<string, string> = {
     notnow: "Not now: the agent reads and briefly considers it, implements nothing, and files it on the project board for later (one turn)",
-    discuss: "Discuss: the agent thinks it through (issues, options, plan, questions) and files it on the board, implementing nothing (one turn)",
+    discuss: "Discuss: the agent thinks it through (issues, options, plan, questions), files it on the board, and keeps discussing until you clearly want it built",
   };
   for (const m of ["notnow", "discuss"] as const) {
     pi.registerCommand(m, {
@@ -119,7 +118,7 @@ export function laterModes(pi: ExtensionAPI) {
   }
 
   pi.on("tool_call", async (e: any) => {
-    if (!mode) return;
+    if (mode !== "notnow") return; // /discuss never blocks (Angus 2026-10-04: no block, just judgment); /notnow's one turn does
     const name = String(e?.toolName || ""), input = e?.input || {};
     let why = "";
     if (READ_TOOLS.has(name)) return;
