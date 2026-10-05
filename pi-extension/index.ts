@@ -125,6 +125,12 @@ export default function hyprpi(pi: ExtensionAPI) {
           `(Answer in the room with room_reply using delivery_id "${d.delivery_id}" — once. The history is context, not new requests.)`,
         details: { delivery_id: d.delivery_id, room: d.room, seq: d.seq, text: d.text },
       });
+    } else if (event === "restart") {
+      restartReq = { compact: d?.compact !== false, by: String(d?.by || "") };
+      ctxRef?.ui?.notify?.(`🔄 restart asked${restartReq.by && restartReq.by !== "itself" ? ` by ${restartReq.by}` : ""}${idle() ? "" : "; it waits until this turn ends"}${restartReq.compact ? " (compacting first)" : ""}`, "info");
+      armRestart();
+    } else if (event === "note") {
+      if (d?.text) ctxRef?.ui?.notify?.(String(d.text), "info");
     } else if (event === "self") {
       showSelf(d);
     } else if (event === "prompt") {
@@ -480,6 +486,55 @@ export default function hyprpi(pi: ExtensionAPI) {
   });
 
   // /tinker TEXT: drop a friction fix off in the workshop world and carry on here.
+  // /restart (J87, Angus): replace this agent's pi with a fresh one on the same session (frees memory,
+  // picks up the current pi). Compacts first by default (J87 v2); /restart --no-compact keeps the full
+  // context. Never mid-turn: it waits until the agent is idle with nothing held. The daemon reopens it.
+  let restartReq: { compact: boolean; by: string } | null = null, restartBusy = false, restartTimer: ReturnType<typeof setInterval> | null = null;
+  function armRestart() {
+    if (!restartTimer) restartTimer = setInterval(() => { void tryRestart(); }, 1500);
+    void tryRestart();
+  }
+  async function tryRestart() {
+    if (!restartReq || restartBusy || !idle() || held.length) return;
+    restartBusy = true;
+    const ctx = ctxRef, req = restartReq;
+    let compacted = "no compaction (--no-compact)";
+    try {
+      if (req.compact) {
+        const tokens = safe(() => ctx?.getContextUsage?.()?.tokens) ?? null;
+        if (tokens !== null && tokens < 20000) compacted = `no compaction needed (${Math.round(tokens / 1000)}k tokens)`;
+        else compacted = await new Promise<string>((res) => {
+          try {
+            ctx?.ui?.notify?.("🔄 restart: compacting first…", "info");
+            ctx.compact({ onComplete: () => res("compacted"), onError: (e: any) => res(`compaction failed: ${e?.message || e}; restarted anyway`) });
+          } catch (e: any) { res(`compaction failed: ${e?.message || e}; restarted anyway`); }
+        });
+      }
+      await call("agent.restartReady", { compacted });
+      if (restartTimer) { clearInterval(restartTimer); restartTimer = null; }
+      ctx?.ui?.notify?.(`🔄 restarting (${compacted})…`, "info");
+      stopped = true; // don't reconnect from this process
+      ctx.shutdown();
+    } catch (e: any) {
+      ctx?.ui?.notify?.(`/restart: ${e?.message || e}`, "error");
+      restartReq = null; restartBusy = false;
+      if (restartTimer) { clearInterval(restartTimer); restartTimer = null; }
+    }
+  }
+  pi.registerCommand("restart", {
+    description: "Restart this agent's pi on the same session (frees memory, picks up the current pi). Compacts first; --no-compact keeps the full context. /restart NAME restarts another agent",
+    getArgumentCompletions: (prefix: string) => ("--no-compact".startsWith(prefix.trim()) && prefix.trim().startsWith("-") ? [{ value: "--no-compact", label: "--no-compact — keep the full context" }] : null),
+    handler: async (args: any, ctx: any) => {
+      ctxRef = ctx;
+      const words = String(args ?? "").trim().split(/\s+/).filter(Boolean);
+      const compact = !words.includes("--no-compact"), who = words.filter((w) => !w.startsWith("-"))[0];
+      try {
+        const r = await call("agent.restart", { ...(who ? { agent: who } : {}), compact, by: "Angus" });
+        if (who) ctx.ui.notify(`🔄 ${r.agent}: ${r.already ? "already restarting" : r.queued ? "restarts when its turn ends" : "restarting"}${compact ? " (compacting first)" : ""}`, "info");
+      } catch (e: any) { ctx.ui.notify(`/restart: ${e?.message || e}`, "error"); }
+    },
+  });
+
   pi.registerCommand("tinker", {
     description: "Drop a friction fix off in the workshop world: one free agent there does it. /tinker D: text also makes world D the workshop (remembered)",
     handler: async (args: any, ctx: any) => {
