@@ -94,7 +94,9 @@ export function laterModes(pi: ExtensionAPI) {
       `Don't implement anything. Think it through in your reply: the issues, the options, ideas, a rough plan, and the questions you need answered. ` +
       `Then ${fileIt}; if this continues an earlier "discussing" item, edit that item instead of adding one. ` +
       `Item text: \`discussing: "<his words above, verbatim>" — plan gist: <one or two lines>\`. ` +
-      `For this turn, tools that change files or the system are blocked (board updates, reads, searches and talk still work); his next message is handled normally.`,
+      `For this turn, tools that change files or the system are blocked (board updates, reads, searches and talk still work). ` +
+      `The discussion does NOT end with this turn (Angus 2026-10-04): until he says to build it, or you ask him for confirmation and he gives it, ` +
+      `treat his follow-up messages on this topic as more discussion: answer, refine the plan, edit the same "discussing" item, and implement nothing.`,
   };
   const DESC: Record<string, string> = {
     notnow: "Not now: the agent reads and briefly considers it, implements nothing, and files it on the project board for later (one turn)",
