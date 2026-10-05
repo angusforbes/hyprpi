@@ -3,6 +3,8 @@
 import { threadKind, answerLine, actionPrefix, splitLead } from "/lib/thoughts-lines.mjs";
 import { agentIn } from "/lib/tui/agent-click.mjs"; // the desktop panels' Ctrl+click matcher, shared as-is (J45)
 import { esc, href, link, inline, md } from "/md.mjs";
+import { install as installFileViewer } from "/fileview.mjs";
+installFileViewer();
 import { parseStreamFilter, resolveFilterNames, filterStream } from "/lib/stream.mjs"; // the desktop Stream panel's filter, shared as-is (J60) // the Markdown renderer, shared with the document viewer (J56)
 const $ = (s) => document.querySelector(s);
 const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), stopBtn = $("#stop");
@@ -334,8 +336,8 @@ stopBtn.addEventListener("click", async () => {
   input.focus({ preventScroll: true });
   try { await call("POST", "/api/stop", { world, ask: true }); } catch (err) { note("✗ " + err.message); }
 });
-// A tap on a thumbnail opens the full image (J63); images in the user's own lines are links already.
-thread.addEventListener("click", (e) => { const im = e.target.closest("img.mdimg"); if (im && !im.closest("a")) { e.preventDefault(); window.open(im.getAttribute("src"), "_blank", "noopener"); } });
+// A tap on a thumbnail (J63) or on any file link, in every tab, opens the file viewer over the app
+// (J70, fileview.mjs: ✕ back to the same place, Share). Installed once, at the top.
 // A tap on a two-line action / answer line shows all of it (and again folds it).
 thread.addEventListener("click", (e) => { const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open"); });
 $("#tabs").addEventListener("click", (e) => {

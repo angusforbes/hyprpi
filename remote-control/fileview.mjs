@@ -1,0 +1,172 @@
+// The file viewer (J70, Angus via Thoughts-E: he opened an image link on the iPhone and "couldn't
+// copy or share it (e.g. to send in a text message)" and "couldn't get back to the remote control
+// app and had to quit and reopen it"). In the Home Screen app a /file link replaced the page and
+// there is no browser back button. Now every file link (thread, Proj, Agnt, Strm, thumbnails, the
+// Markdown viewer's own links) opens here, over the app: a bar with ✕ (back to exactly where he
+// was: the app underneath is never touched, so its scroll stays), the name and Share.
+//   images: a real <img> (long-press gives iOS's Save/Copy menu), fitted; pinch or double-tap zooms
+//   Markdown: the J56 document viewer in a frame (its links open here too)
+//   PDF: in a frame; text: shown as text; anything else: Share / Download
+// Share: navigator.share with the file itself (the blob, fetched when the viewer opens, so the tap
+// still counts as the user's gesture), so iOS offers Messages, Save Image, Copy; else the URL; else
+// a download. The server's /file guard (J47, J69) decides what can be read, as before.
+const HOME = "/home/agf";
+const IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/i;
+const MDX = /\.(md|markdown)$/i;
+const PDF = /\.pdf$/i;
+const MAX_BLOB = 60e6; // larger files: Share sends the link instead
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let el = null, depth = 0, cur = null, gen = 0;
+
+function build() {
+  el = document.createElement("div");
+  el.id = "fv"; el.hidden = true;
+  el.innerHTML = `<header id="fvbar"><button id="fvback" type="button" title="back" hidden>‹</button><div id="fvtitle"><div id="fvname"></div><div id="fvdir"></div></div><button id="fvshare" type="button" title="share">Share</button><button id="fvx" type="button" title="close" aria-label="close">✕</button></header><div id="fvbody"></div><div id="fvnote" hidden></div>`;
+  document.body.append(el);
+  el.querySelector("#fvx").addEventListener("click", closeAll);
+  el.querySelector("#fvback").addEventListener("click", () => history.back());
+  el.querySelector("#fvshare").addEventListener("click", share);
+  addEventListener("popstate", (e) => {
+    const d = e.state?.fv || 0;
+    if (!d) { depth = 0; hide(); return; }
+    depth = d; show(e.state.href);
+  });
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && !el.hidden) closeAll(); });
+  // Links inside the framed Markdown viewer come here (viewer.js posts them).
+  addEventListener("message", (e) => { if (e.origin === location.origin && e.data?.fvOpen) open(e.data.fvOpen); });
+}
+
+// Every way a file can be tapped in the app: /file and /wiki links, and images that aren't links.
+export function fileTarget(t) {
+  const a = t.closest?.("a[href]");
+  if (a) { const h = a.getAttribute("href") || ""; return /^\/(file|wiki)\?/.test(h) ? h : null; }
+  const im = t.closest?.("img.mdimg, img.img");
+  if (im) { const s = im.getAttribute("src") || ""; return /^\/(file|wiki)\?/.test(s) ? s : null; }
+  return null;
+}
+export function install(root = document) {
+  root.addEventListener("click", (e) => {
+    if (e.defaultPrevented || e.button > 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    if (el && el.contains(e.target)) return;
+    const h = fileTarget(e.target); if (!h) return;
+    e.preventDefault(); e.stopPropagation();
+    open(h);
+  }, true);
+}
+
+export function open(href) {
+  if (!el) build();
+  depth++;
+  history.pushState({ ...(history.state || {}), fv: depth, href }, "");
+  document.activeElement?.blur?.(); // the keyboard down, if it was up
+  show(href);
+}
+function closeAll() { if (depth > 0) history.go(-depth); else hide(); }
+function hide() { gen++; el.hidden = true; el.querySelector("#fvbody").innerHTML = ""; cur = null; }
+
+const pathOf = (u) => { try { return new URL(u, location.href).searchParams.get("path") || ""; } catch { return ""; } };
+function note(t) { const n = el.querySelector("#fvnote"); n.textContent = t || ""; n.hidden = !t; if (t) setTimeout(() => { if (n.textContent === t) n.hidden = true; }, 3000); }
+
+async function show(href) {
+  const my = ++gen;
+  el.hidden = false;
+  el.querySelector("#fvback").hidden = depth < 2;
+  const body = el.querySelector("#fvbody"); body.innerHTML = `<div class="fvmsg">…</div>`; body.className = "";
+  el.querySelector("#fvname").textContent = "…"; el.querySelector("#fvdir").textContent = "";
+  // A [[wiki link]]: the server finds the file and redirects to /file?path=…
+  let url = href;
+  if (href.startsWith("/wiki?")) {
+    try { const r = await fetch(href, { cache: "no-store" }); if (!r.ok) throw new Error("not found in the vault"); url = new URL(r.url).pathname + new URL(r.url).search; r.body?.cancel?.(); }
+    catch (e) { if (my === gen) fail(e.message); return; }
+    if (my !== gen) return;
+  }
+  const p = pathOf(url), name = p.split("/").pop() || "file";
+  url = "/file?path=" + encodeURIComponent(p);
+  cur = { url, name, path: p, blob: null, ready: null };
+  el.querySelector("#fvname").textContent = name;
+  el.querySelector("#fvdir").textContent = p.replace(/\/[^/]*$/, "").replace(HOME, "~");
+  // The file itself, fetched now so Share has it at the tap (iOS needs the share in the gesture).
+  const c = cur;
+  // (Markdown: /file serves the viewer page, so the text itself comes with raw=1.)
+  c.ready = fetch(MDX.test(p) ? url + "&raw=1" : url, { cache: "no-store" }).then(async (r) => {
+    if (!r.ok) throw new Error(r.status === 404 ? "not found, or not allowed" : r.statusText);
+    const n = +r.headers.get("content-length") || 0;
+    if (n > MAX_BLOB) { r.body?.cancel?.(); return null; }
+    if (MDX.test(p)) return new Blob([await r.text()], { type: "text/markdown" });
+    return r.blob();
+  });
+  c.ready.then((b) => { c.blob = b; }, () => {});
+
+  if (IMG.test(p)) return showImage(body, url, my);
+  if (MDX.test(p) || PDF.test(p)) {
+    body.className = "frame";
+    body.innerHTML = `<iframe src="${esc(url)}" title="${esc(name)}"></iframe>`;
+    c.ready.catch((e) => { if (my === gen) fail(e.message); });
+    return;
+  }
+  let b; try { b = await c.ready; } catch (e) { if (my === gen) fail(e.message); return; }
+  if (my !== gen) return;
+  if (b && b.size < 3e6) {
+    const head = new Uint8Array(await b.slice(0, 4096).arrayBuffer());
+    if (!head.includes(0)) { body.className = "text"; body.innerHTML = `<pre>${esc(await b.text())}</pre>`; return; }
+  }
+  body.innerHTML = `<div class="fvmsg">No preview for this kind of file.<br><br><a class="fvbtn" href="${esc(url)}" download="${esc(name)}">Download</a> <button class="fvbtn" type="button">Share</button></div>`;
+  body.querySelector("button").addEventListener("click", share);
+}
+function fail(msg) { el.querySelector("#fvbody").innerHTML = `<div class="fvmsg err">✗ ${esc(msg)}</div>`; }
+
+// An image: fitted to the screen; two fingers zoom (the page itself doesn't), a double tap zooms in
+// and out; panning is the box's own scrolling. Single touches are left alone, so a long press
+// still gets iOS's Save / Copy menu on the <img>.
+function showImage(body, url, my) {
+  body.className = "fvimg";
+  body.innerHTML = `<img alt="">`;
+  const img = body.querySelector("img");
+  img.onerror = () => { if (my === gen) fail("not found, or not allowed"); };
+  img.src = url;
+  let z = 1, start = null, lastTap = 0;
+  const fit = () => { const r = body.getBoundingClientRect(); return Math.min(1, r.width / (img.naturalWidth || 1), r.height / (img.naturalHeight || 1)); };
+  const zoom = (nz, cx, cy) => {
+    nz = Math.max(1, Math.min(8, nz));
+    const r = body.getBoundingClientRect(), ox = (body.scrollLeft + cx - r.left) / z, oy = (body.scrollTop + cy - r.top) / z;
+    z = nz; body.classList.toggle("zoomed", z > 1.01);
+    if (z > 1.01) { const f = fit(); img.style.width = img.naturalWidth * f * z + "px"; img.style.height = img.naturalHeight * f * z + "px"; }
+    else { img.style.width = img.style.height = ""; }
+    body.scrollLeft = ox * z - (cx - r.left); body.scrollTop = oy * z - (cy - r.top);
+  };
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const mid = (t) => [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2];
+  body.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) { start = { d: dist(e.touches), z }; e.preventDefault(); }
+    else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTap < 300) { const t = e.touches[0]; zoom(z > 1.01 ? 1 : 2.5, t.clientX, t.clientY); e.preventDefault(); lastTap = 0; } else lastTap = now;
+    }
+  }, { passive: false });
+  body.addEventListener("touchmove", (e) => { if (e.touches.length === 2 && start) { e.preventDefault(); const [x, y] = mid(e.touches); zoom(start.z * dist(e.touches) / start.d, x, y); } }, { passive: false });
+  body.addEventListener("touchend", (e) => { if (e.touches.length < 2) start = null; });
+  for (const ev of ["gesturestart", "gesturechange"]) body.addEventListener(ev, (e) => e.preventDefault());
+  body.addEventListener("dblclick", (e) => zoom(z > 1.01 ? 1 : 2.5, e.clientX, e.clientY)); // a mouse
+}
+
+async function share() {
+  const c = cur; if (!c) return;
+  const abs = new URL(c.url, location.href).href;
+  try {
+    if (navigator.share) {
+      const b = c.blob; // already here in nearly every case; waiting would lose the tap on iOS
+      if (b) {
+        const f = new File([b], c.name, { type: b.type || "application/octet-stream" });
+        if (navigator.canShare?.({ files: [f] })) { await navigator.share({ files: [f], title: c.name }); return; }
+      }
+      await navigator.share({ url: abs, title: c.name });
+      return;
+    }
+  } catch (e) {
+    if (e.name === "AbortError") return; // he closed the sheet
+    note(e.name === "NotAllowedError" ? "Tap Share again" : "✗ " + e.message); return;
+  }
+  // No share sheet (a desktop browser): download it.
+  const a = document.createElement("a"); a.href = c.url; a.download = c.name; document.body.append(a); a.click(); a.remove();
+}

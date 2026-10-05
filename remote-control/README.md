@@ -14,9 +14,13 @@ Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short
   told Angus is away from the desk (no windows brought up unless he asks). The phone marks
   nothing as seen.
 - Links in replies: `file:///…` links open read-only through `/file`, only files under
-  `~/Obsidian`, `~/Work`, `~/Downloads` and `~/Documents`; never a hidden path (any `.x` part) or
+  `~/Obsidian`, `~/Work`, `~/Downloads`, `~/Documents` and `~/Screenshots` (J69); never a hidden path (any `.x` part) or
   anything named like a key or credential (*.pem, *.key, id_rsa*, id_ed25519*, *.p12, *.kdbx,
   *secret*, *token*, *credential*, *password*, *wallet* …), checked before and after symlinks.
+- File links and thumbnails open in the app's own file viewer (`fileview.mjs`, J70), never as a new
+  page: ✕ goes back to the same place, Share sends the file itself (iOS share sheet: Messages,
+  Save Image, Copy). Images fitted (pinch / double-tap zoom, long-press Save/Copy), Markdown in the
+  J56 viewer (its links open in the viewer too, ‹ back), PDFs framed, text as text, else Download.
 
 ## Who can reach it
 
@@ -60,7 +64,7 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 | `GET /events` | SSE: `state`, `thoughts {room, entry?, busy?}` |
 | `GET /file?path=X.md` | the document viewer (viewer.html/viewer.js): the file rendered with md.mjs, a raw toggle; `&raw=1` gives the text (same guard) |
 | `GET /wiki?name=&from=` | an Obsidian [[wiki link]]: the vault file of that name (nearest to the linking note), redirected to /file |
-| `GET /file?path=` | a file under ~/Obsidian, ~/Work, ~/Downloads or ~/Documents, read-only (no hidden paths, no key/credential names) |
+| `GET /file?path=` | a file under ~/Obsidian, ~/Work, ~/Downloads, ~/Documents or ~/Screenshots, read-only (no hidden paths, no key/credential names) |
 
 Next (card): 📎 photos into Thoughts (the daemon already takes image paths), Projects and Agents
 tabs, iPad layout, notifications for ding/bonk, desktop control on request.

@@ -344,7 +344,7 @@ async function body(req, max = 1e6) {
   return s ? JSON.parse(s) : {};
 }
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8" };
-const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png" };
+const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js", "/fileview.mjs": "fileview.mjs", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png" };
 
 function serveFile(res, file, type) {
   fs.stat(file, (err, st) => {

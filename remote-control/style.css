@@ -215,3 +215,28 @@ ol.opts li { margin: 3px 0; }
 }
 #composer #stop { background: #f7768e; font-size: 14px; }
 #composer button:disabled { opacity: .4; }
+
+/* ---- the file viewer (J70, fileview.mjs): over the app, which stays as it was underneath ---- */
+#fv { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); }
+#fv[hidden] { display: none; }
+#fvbar { flex: none; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); background: var(--bg);
+  padding: calc(env(safe-area-inset-top) + 6px) calc(env(safe-area-inset-right) + 8px) 6px calc(env(safe-area-inset-left) + 8px); }
+#fvtitle { flex: 1; min-width: 0; }
+#fvname { font-weight: 650; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fvdir { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fvbar button { flex: none; font: inherit; font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; min-height: 34px; }
+#fvshare { font-size: 14px; padding: 4px 14px; }
+#fvx, #fvback { width: 38px; font-size: 18px; padding: 0; }
+#fvx { color: var(--fg); }
+#fvbody { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+#fvbody.fvimg { display: flex; align-items: center; justify-content: center; touch-action: pan-x pan-y; }
+#fvbody.fvimg img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+#fvbody.fvimg.zoomed { display: block; }
+#fvbody.fvimg.zoomed img { max-width: none; max-height: none; }
+#fvbody.frame { overflow: hidden; }
+#fvbody.frame iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--bg); }
+#fvbody.text pre { margin: 0; padding: 10px calc(env(safe-area-inset-right) + 12px) calc(env(safe-area-inset-bottom) + 30px) calc(env(safe-area-inset-left) + 12px); white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, "JetBrains Mono", Menlo, monospace; }
+.fvmsg { padding: 30vh 20px 0; text-align: center; color: var(--dim); }
+.fvmsg.err { color: #e64553; }
+.fvbtn { display: inline-block; font: inherit; font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 6px 16px; text-decoration: none; }
+#fvnote { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 20px); transform: translateX(-50%); background: var(--faint); color: var(--fg); border-radius: 12px; padding: 6px 14px; font-size: 14px; }

@@ -38,3 +38,17 @@ fetch("/api/state", { cache: "no-store" }).then((r) => r.json()).then((s) => {
     show();
   } catch (e) { $("#doc").innerHTML = `<p class="err">✗ ${esc(e.message)}</p>`; }
 })();
+
+// Inside the app's file viewer (J70: a frame): its name is in the viewer's bar already, and links to
+// files open in that viewer (one ‹ back, ✕ to the app) instead of a new page the Home Screen app
+// can't leave.
+if (window.parent !== window) {
+  document.documentElement.classList.add("framed");
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href]"), im = !a && e.target.closest("img.mdimg");
+    const h = a ? a.getAttribute("href") : im ? im.getAttribute("src") : "";
+    if (!/^\/(file|wiki)\?/.test(h || "")) return;
+    e.preventDefault();
+    window.parent.postMessage({ fvOpen: h }, location.origin);
+  }, true);
+}
