@@ -35,8 +35,8 @@ import { worldHex, theme } from "../lib/tui/term.mjs";
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const HOME = os.homedir();
 const PORT = Number(process.env.HYPRPI_REMOTE_PORT) || 8897;
-// /file: read-only, only under these folders (J47 added Downloads and Documents), real paths.
-const FILE_ROOTS = ["Obsidian", "Work", "Downloads", "Documents"].map((d) => { try { return fs.realpathSync(path.join(HOME, d)); } catch { return path.join(HOME, d); } });
+// /file: read-only, only under these folders (J47 added Downloads and Documents, J69 Screenshots), real paths.
+const FILE_ROOTS = ["Obsidian", "Work", "Downloads", "Documents", "Screenshots"].map((d) => { try { return fs.realpathSync(path.join(HOME, d)); } catch { return path.join(HOME, d); } });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 // ---- who may use it --------------------------------------------------------------------------
