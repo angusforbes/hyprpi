@@ -294,7 +294,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     // stopReason "error" + "The operation was aborted." (J36; interrupted.ts turns it into an abort,
     // but without that extension it arrives as an error): that is Angus's stop too, not a failure.
     const abortErr = (m: any) => (m?.stopReason ?? m?.message?.stopReason) === "error"
-      && /^(?:the )?operation was aborted\.?$/i.test(String(m?.errorMessage ?? m?.message?.errorMessage ?? "").trim());
+      && /^(?:(?:the|this) )?operation was aborted\.?$/i.test(String(m?.errorMessage ?? m?.message?.errorMessage ?? "").trim());
     aborted = msgs.some((m: any) => m?.stopReason === "aborted" || m?.message?.stopReason === "aborted" || abortErr(m) ||
       (m?.role === "toolResult" && ((m?.isError && /\b(?:Operation|Command) aborted\b/i.test(JSON.stringify(m?.content ?? "")))
         // ~/.pi/agent/extensions/interrupted.ts rewrites an Esc'd tool result to a plain "interrupted" (no error)
