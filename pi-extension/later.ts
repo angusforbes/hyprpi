@@ -95,8 +95,11 @@ export function laterModes(pi: ExtensionAPI) {
       `Then ${fileIt}; if this continues an earlier "discussing" item, edit that item instead of adding one. ` +
       `Item text: \`discussing: "<his words above, verbatim>" — plan gist: <one or two lines>\`. ` +
       `For this turn, tools that change files or the system are blocked (board updates, reads, searches and talk still work). ` +
-      `The discussion does NOT end with this turn (Angus 2026-10-04): until he says to build it, or you ask him for confirmation and he gives it, ` +
-      `treat his follow-up messages on this topic as more discussion: answer, refine the plan, edit the same "discussing" item, and implement nothing.`,
+      `What Angus means by /discuss (his words, 2026-10-04: "be intelligent and interpret what i mean like would be normal"): ` +
+      `we are talking this through, the way two people would. It stays a discussion until something clearly tells you otherwise; ` +
+      `his answers to your questions, his opinions and his "yes, that sounds good" are more discussion, not a go-ahead. ` +
+      `Keep answering, refining the plan and editing the same "discussing" item; build nothing. If you're unsure whether he wants it built, ` +
+      `ask him (you're welcome to ask "shall I build it?"). Don't make him repeat /discuss every turn, and don't add ceremony (no build commands or modes).`,
   };
   const DESC: Record<string, string> = {
     notnow: "Not now: the agent reads and briefly considers it, implements nothing, and files it on the project board for later (one turn)",
