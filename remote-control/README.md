@@ -14,13 +14,33 @@ Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short
   told Angus is away from the desk (no windows brought up unless he asks). The phone marks
   nothing as seen.
 - Links in replies: `file:///…` links open read-only through `/file`, only files under
-  `~/Obsidian`, `~/Work`, `~/Downloads`, `~/Documents` and `~/Screenshots` (J69); never a hidden path (any `.x` part) or
+  `~/Obsidian`, `~/Work`, `~/Downloads`, `~/Documents`, `~/Screenshots` (J69) and `~/Phone` (J74, the Files app's uploads); never a hidden path (any `.x` part) or
   anything named like a key or credential (*.pem, *.key, id_rsa*, id_ed25519*, *.p12, *.kdbx,
   *secret*, *token*, *credential*, *password*, *wallet* …), checked before and after symlinks.
 - File links and thumbnails open in the app's own file viewer (`fileview.mjs`, J70), never as a new
   page: ✕ goes back to the same place, Share sends the file itself (iOS share sheet: Messages,
   Save Image, Copy). Images fitted (pinch / double-tap zoom, long-press Save/Copy), Markdown in the
   J56 viewer (its links open in the viewer too, ‹ back), PDFs framed, text as text, else Download.
+
+## The Files app (J74)
+
+A second Home Screen app on the same server: `https://<this machine>.<tailnet>.ts.net:8443/files/`
+(open it in Safari, Share → Add to Home Screen; its own icon, the π folder). Browse the allowed
+folders (`/api/ls`, the same J47 rules: hidden and key-like names never listed), open files in the
+J70 viewer, Select several → Share (one iOS share sheet with all the files), **⬆ Upload** phone
+photos/files into **`~/Phone`** (the app's only write: `POST /api/upload`, files-routes.mjs), and
+**→ Thoughts**: a note plus the files to a world's Thoughts (📱; images reach the model as images).
+
+Upload rules: one plain name (no folders, not hidden, not key-like), never overwrites ("name (2).ext"),
+250 MB a file, 1000 MB / 50 files per Upload tap, 5 GB always left free, at most 4 at once, a
+minute without data ends it (env `HYPRPI_UPLOAD_MAX_FILE_MB`, `…_MAX_BATCH_MB`, `…_MAX_BATCH_FILES`,
+`…_KEEP_FREE_GB`). Writes need the page's token (`/api/files/token`) and its own Origin. Log:
+`~/.local/state/hyprpi/phone-uploads.log`. iOS doesn't let web apps appear in the Share sheet, so
+sending from Photos starts in Files (Upload), not in Photos.
+
+The server answers only to its own host names (localhost on its port, this machine's tailnet name;
+more with `HYPRPI_REMOTE_HOSTS`), against DNS rebinding. Files from `/file` are never sniffed, and
+anything that could run script (HTML, SVG, …) opens sandboxed.
 
 ## Who can reach it
 

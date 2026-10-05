@@ -31,12 +31,17 @@ import { socketPath, runtimeDir, loadConfig, wsLabel } from "../lib/paths.mjs";
 import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
 import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames, filterStream } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49) and @Name filter
 import { worldHex, theme } from "../lib/tui/term.mjs";
+import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const HOME = os.homedir();
 const PORT = Number(process.env.HYPRPI_REMOTE_PORT) || 8897;
-// /file: read-only, only under these folders (J47 added Downloads and Documents, J69 Screenshots), real paths.
-const FILE_ROOTS = ["Obsidian", "Work", "Downloads", "Documents", "Screenshots"].map((d) => { try { return fs.realpathSync(path.join(HOME, d)); } catch { return path.join(HOME, d); } });
+// /file: read-only, only under these folders (J47 added Downloads and Documents, J69 Screenshots,
+// J74 Phone: the Files app's upload inbox, its only write), real paths.
+try { fs.mkdirSync(path.join(HOME, "Phone"), { recursive: true }); } catch { /* there */ }
+const FILE_ROOTS = ["Obsidian", "Work", "Downloads", "Documents", "Screenshots", "Phone"]
+  .filter((d) => d !== "Phone" || (() => { try { return !fs.lstatSync(path.join(HOME, d)).isSymbolicLink(); } catch { return false; } })()) // the upload inbox: never through a link
+  .map((d) => { try { return fs.realpathSync(path.join(HOME, d)); } catch { return path.join(HOME, d); } });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 // ---- who may use it --------------------------------------------------------------------------
@@ -51,6 +56,28 @@ function ownLogins() {
 }
 const LOGINS = ownLogins();
 log("allowed tailscale logins:", [...LOGINS].join(", ") || "(none: local only)");
+// The Host names it answers to (J74 security review: DNS rebinding). A page on another site whose
+// name is re-pointed at 127.0.0.1 would otherwise count as "local" and as same-origin. Only these
+// hosts are served: this machine's tailnet name (any port: tailscale serve) and localhost on PORT;
+// more with HYPRPI_REMOTE_HOSTS=a,b.
+function ownHosts() {
+  const hosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
+  const names = new Set(String(process.env.HYPRPI_REMOTE_HOSTS || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean));
+  try {
+    const st = JSON.parse(execFileSync("tailscale", ["status", "--json"], { encoding: "utf8", timeout: 5000 }));
+    const dns = String(st.Self?.DNSName || "").replace(/\.$/, "").toLowerCase();
+    if (dns) names.add(dns);
+  } catch { /* local only */ }
+  return { hosts, names };
+}
+const HOSTS = ownHosts();
+log("hosts:", [...HOSTS.hosts, ...[...HOSTS.names].map((n) => n + "[:port]")].join(", "));
+function hostOk(h) {
+  h = String(h || "").toLowerCase();
+  if (HOSTS.hosts.has(h)) return true;
+  const name = h.replace(/:\d+$/, "");
+  return HOSTS.names.has(name);
+}
 
 function allowed(req) {
   const login = req.headers["tailscale-user-login"];
@@ -344,13 +371,23 @@ async function body(req, max = 1e6) {
   return s ? JSON.parse(s) : {};
 }
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8" };
-const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js", "/fileview.mjs": "fileview.mjs", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png" };
+const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png",
+  // the Files app (J74): its own page, manifest and icon, so it installs as a second Home Screen app
+  "/files/": "files.html", "/files": "files.html", "/files.js": "files.js", "/files.css": "files.css", "/fileview.mjs": "fileview.mjs", "/files-manifest.webmanifest": "files-manifest.webmanifest",
+  "/files-icon-180.png": "files-icon-180.png", "/files-icon-192.png": "files-icon-192.png", "/files-icon-512.png": "files-icon-512.png", "/files-icon-maskable-512.png": "files-icon-maskable-512.png" };
 
-function serveFile(res, file, type) {
+function serveFile(res, file, type, user = false) { // user: a file from /file (not the app's own)
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) return json(res, 404, { error: "not found" });
-    res.writeHead(200, { "content-type": type || TYPES[path.extname(file).toLowerCase()] || "text/plain; charset=utf-8", "content-length": st.size, "cache-control": "no-cache" });
-    fs.createReadStream(file).pipe(res);
+    const ext = path.extname(file).toLowerCase();
+    // A user's file (not the app's own): never sniffed, and anything that could run script (HTML,
+    // SVG, XML, …) opens sandboxed, without script and with no access to the app (J74 security
+    // review: an uploaded or shared page could otherwise use the app's token). Images and PDFs as they are.
+    const extra = !user ? {} : { "x-content-type-options": "nosniff", ...(/^\.(png|jpe?g|gif|webp|pdf)$/.test(ext) ? {} : { "content-security-policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self'" }) };
+    res.writeHead(200, { "content-type": type || TYPES[ext] || "text/plain; charset=utf-8", "content-length": st.size, "cache-control": "no-cache", ...extra });
+    const rs = fs.createReadStream(file);
+    rs.on("error", () => res.destroy()); // gone or unreadable after stat: drop the response, don't crash
+    rs.pipe(res);
   });
 }
 
@@ -406,15 +443,19 @@ function wikiFind(name, from) {
   return hits[0];
 }
 
+const filesHandle = filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underRoot, json, body, log, getApi: () => api, room });
+
 const server = http.createServer(async (req, res) => {
   // A malformed path ("//", "//x") made new URL() throw outside any try, which killed the server
   // (systemd restarted it): any request could take it down. Refuse it instead.
   let url; try { url = new URL(req.url, "http://x"); } catch { res.writeHead(400, { "content-type": "text/plain" }); return res.end("bad request"); }
+  if (!hostOk(req.headers.host)) { log("refused host", req.headers.host, url.pathname); return json(res, 421, { error: "unknown host" }); }
   if (!allowed(req)) { log("refused", req.headers["tailscale-user-login"] || req.socket.remoteAddress, url.pathname); return json(res, 403, { error: "not allowed" }); }
   // A POST must come from this page (no cross-site form posts).
   if (req.method === "POST") {
     const origin = req.headers.origin;
-    if (origin && new URL(origin).host !== req.headers.host) return json(res, 403, { error: "bad origin" });
+    let oh = null; try { oh = origin ? new URL(origin).host : null; } catch { oh = ""; } // "null" or junk: refused, not a crash
+    if (origin && oh !== req.headers.host) return json(res, 403, { error: "bad origin" });
   }
   try {
     if (req.method === "GET" && STATIC[url.pathname]) return serveFile(res, path.join(HERE, STATIC[url.pathname]));
@@ -424,6 +465,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/lib/stream.mjs") return serveFile(res, path.join(HERE, "..", "lib", "stream.mjs"), "text/javascript; charset=utf-8");
     // The desktop panels' Ctrl+click name matcher, as-is (pure, no imports): the page's links (J45).
     if (req.method === "GET" && url.pathname === "/lib/tui/agent-click.mjs") return serveFile(res, path.join(HERE, "..", "lib", "tui", "agent-click.mjs"), "text/javascript; charset=utf-8");
+    if (await filesHandle(req, res, url)) return;
     if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, state());
     if (req.method === "GET" && url.pathname === "/api/thoughts") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
@@ -476,7 +518,7 @@ const server = http.createServer(async (req, res) => {
       // A Markdown file opens rendered (J56): the viewer page, which fetches the text with raw=1
       // (the same guard) and draws it. raw=1 gives the text itself.
       if (/\.(md|markdown)$/i.test(real) && url.searchParams.get("raw") !== "1") return serveFile(res, path.join(HERE, "viewer.html"));
-      return serveFile(res, real);
+      return serveFile(res, real, undefined, true);
     }
     // [[wiki links]] in Obsidian notes (J56): the note (or embedded file) of that name in the vault,
     // nearest to the note it's linked from; then /file as usual (same guard).

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f8f8f8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Files">
+<link rel="manifest" href="/files-manifest.webmanifest">
+<link rel="icon" href="/files-icon-192.png" type="image/png">
+<link rel="apple-touch-icon" sizes="180x180" href="/files-icon-180.png"><!-- J74: the π folder -->
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/files.css">
+<title>Files · hyprpi</title>
+</head>
+<body class="files">
+<header id="ftop">
+  <div class="frow">
+    <button id="fup" type="button" title="up a folder" hidden>‹</button>
+    <div id="fwhere"><div id="fname">Files</div><div id="fdir">the laptop's allowed folders</div></div>
+    <button id="fhelp" type="button" title="help">?</button>
+  </div>
+  <div class="frow">
+    <input id="fq" type="search" placeholder="search this folder" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="search this folder">
+    <button id="fsort" type="button" title="sort">Date ↓</button>
+    <button id="fsel" type="button" title="select files">Select</button>
+  </div>
+</header>
+<main id="flist"></main>
+<footer id="fbar">
+  <div id="fnormal"><label id="fuplabel" class="fbig">⬆ Upload to ~/Phone<input id="ffile" type="file" multiple hidden></label></div>
+  <div id="fselbar" hidden><span id="fcount">0 selected</span><button id="fshare" type="button" class="fbig">Share</button><button id="fthink" type="button" class="fbig">→ Thoughts</button><button id="fcancel" type="button">✕</button></div>
+</footer>
+<div id="fsheet" hidden><div class="fpanel" role="dialog"></div></div>
+<div id="fnote" hidden></div>
+<script type="module" src="/files.js"></script>
+</body>
+</html>
