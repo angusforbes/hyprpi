@@ -92,7 +92,10 @@ const box = createInputBox({
 // Insert text at the cursor, replacing the selection (paste keeps its line breaks). In the board
 // view the sent text is replaced by what you type or paste; ←→ / Backspace first edit it.
 // J165: a "✓ Sent to …" line stays SENT_STICKY_MS even while Angus types on (Sentcheck).
-function insertText(t) { box.insert(t); if (!(note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS)) note = ""; focusArea = "input"; render(); }
+function insertText(t) { box.insert(t); if (!keepSent()) note = ""; focusArea = "input"; render(); }
+const keepSent = () => note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS; // every editing path keeps it (Sentcheck)
+function sentNote(t) { note = t; noteSeen = t; noteAt = Date.now(); } // stamped per send, even when the text repeats
+const sentW = () => Math.max(30, (process.stdout.columns || 80) - 18);
 function copyInputSel(cut) { box.copySel(cut); render(); }
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
@@ -659,7 +662,7 @@ async function boardSend(raw) {
   input = raw; ic = graphemes(raw).length; note = ""; selA = null;
   try {
     const r = await bv.input(raw, { api, room, board: board.room === room ? board : { projects: [] } });
-    if (r) { sentText = r.confirm ? null : raw; sentTouched = false; note = r.note; return render(); } // a confirm prompt (/spinout, /merge) isn't sent yet: ⏎ again runs it
+    if (r) { sentText = r.confirm ? null : raw; sentTouched = false; if (String(r.note || "").startsWith("✓")) sentNote(r.note); else note = r.note; return render(); } // a confirm prompt (/spinout, /merge) isn't sent yet: ⏎ again runs it
   } catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; return render(); }
   if (command(raw)) return;
   input = raw; ic = graphemes(raw).length; note = "✗ not a board command · /help"; render();
@@ -705,7 +708,7 @@ async function send() {
     const pr = resolveAt(parseAt(at[1]).names, hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name })));
     if (pr.found.length) {
       if (pr.found.length > 1 || parseAt(at[1]).names.length > 1) { input = raw; ic = graphemes(raw).length; note = "✗ one @project at a time, without agent names"; return render(); }
-      try { const r = await api.call("board.request", { room, project: pr.ids[0], text: at[2], where: "room", via: "room-tui" }); note = r.recipients ? sentLine(r, { project: "@" + r.name }) : `→ @${r.name}: ${r.told.join(", ")}`; } // J165
+      try { const r = await api.call("board.request", { room, project: pr.ids[0], text: at[2], where: "room", via: "room-tui" }); if (r.recipients) sentNote(sentLine(r, { project: "@" + r.name, width: sentW() })); else note = `→ @${r.name}: ${r.told.join(", ")}`; } // J165
       catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; }
       return render();
     }
@@ -717,12 +720,12 @@ async function send() {
     const sent = [], failed = [];
     await Promise.all(targets.map((who) => api.call("agent.prompt", { agent: who, text: body, via: "room-tui" })
       .then((r) => sent.push({ name: r.name || who, busy: !!r.busy })).catch((e) => failed.push(`${who} (${e.message})`))));
-    note = (sent.length ? sentLine({ recipients: sent }) : "") + (failed.length ? (sent.length ? "  ✗ " : "✗ ") + failed.join(", ") : ""); // J165
+    sentNote((sent.length ? sentLine({ recipients: sent }, { width: sentW() }) : "") + (failed.length ? (sent.length ? "  ✗ " : "✗ ") + failed.join(", ") : "")); // J165
     return render();
   }
   try {
     const r = await api.call("room.post", { room, text, as_human: true, via: "room-tui" });
-    note = r.recipients ? sentLine(r) : r.delivered?.length ? "→ " + r.delivered.join(", ") : "saved · no agents in this room yet"; // J165
+    if (r.recipients) sentNote(sentLine(r, { width: sentW() })); else note = r.delivered?.length ? "→ " + r.delivered.join(", ") : "saved · no agents in this room yet"; // J165
   } catch (e) { note = "✗ " + e.message; }
   render();
 }
@@ -754,7 +757,7 @@ function onKey(d) {
   if (d === "\x11") return quit(); // Ctrl+Q
   if (d === "\x1b[2;5~") return copyInputSel(false); // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
   if (d === "\x18") return copyInputSel(true); // Ctrl+X: cut
-  if (d === "\x16" || d === "\x1b[2;2~") { box.paste(); note = ""; focusArea = "input"; return render(); } // Ctrl+V / Shift+Insert: text, or a screenshot's path at the cursor (the shared box)
+  if (d === "\x16" || d === "\x1b[2;2~") { box.paste(); if (!keepSent()) note = ""; focusArea = "input"; return render(); } // Ctrl+V / Shift+Insert: text, or a screenshot's path at the cursor (the shared box)
   // Shift+Space (the launcher maps it to CSI 32;2u) or Ctrl+Space: toggle the cursor
   // agent's mark in every view, even while typing (plain Space is text then).
   if (d === "\t" && /^\/[^\s/]*$/.test(input)) { // complete a command
@@ -867,7 +870,7 @@ function onKey(d) {
   // Shift+arrows / Shift+Home End select, Backspace / Delete / Alt+Backspace / Ctrl+W, Ctrl+U clear.
   // (Typing, paste, Shift+Enter and Ctrl+C/X/V are handled above and below, through insertText.)
   if (d.startsWith("\x1b") || d === "\x7f" || d === "\b" || d === "\x15" || d === "\x05" || d === "\x17") {
-    if (box.key(d)) { note = box.note || ""; focusArea = "input"; return render(); }
+    if (box.key(d)) { note = box.note || (keepSent() ? note : ""); focusArea = "input"; return render(); }
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
   if (d === "\x06") { if (view !== "stream") setView("stream"); sview = SVIEWS[(SVIEWS.indexOf(sview) + 1) % SVIEWS.length]; scroll = 0; lastConvoLen = 0; streamSel = null;

@@ -271,7 +271,7 @@ async function send() {
       note = "✗ not a board command · /help"; return render();
     }
     if (r.confirm) note = r.note; // a confirm prompt (/spinout, /merge): not sent yet, ⏎ again runs it
-    else { box.remember(raw); box.clear(); note = r.note; } // Enter clears the box like every panel; ↑ brings it back (Angus, N51)
+    else { box.remember(raw); box.clear(); note = r.note; if (String(note || "").startsWith("✓")) { noteSeen = note; noteAt = Date.now(); } } // (J165: stamped per send) Enter clears the box like every panel; ↑ brings it back (Angus, N51)
   } catch (e) { note = "✗ " + e.message; }
   render();
 }
