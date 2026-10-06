@@ -58,3 +58,13 @@ body.files .fto1.on { background: var(--accent); color: #fff !important; border-
 /* J142: the "everywhere" results under the folder's own (a name search across all allowed folders) */
 .fevh { position: sticky; top: 0; z-index: 1; margin-top: 6px; padding: 6px 6px 4px; font-size: 12.5px; font-weight: 700; letter-spacing: .02em; color: var(--dim); background: var(--bg); border-bottom: 1px solid var(--line); }
 .fevw { margin-top: 18px; }
+
+/* J148: the selection is a basket across folders and searches; the count opens it */
+#fcount { flex: 1; text-align: left; border: none; background: none; color: var(--accent); font-size: 14px; padding: 4px 2px; text-decoration: underline dotted; }
+#fselbar button:disabled { opacity: .4; }
+.fbasket { max-height: 52dvh; overflow-y: auto; margin: 4px 0 6px; }
+.fbi { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-bottom: 1px solid var(--faint); }
+.fbi .nm { flex: 1; min-width: 0; }
+.fbi .n1 { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fbi .n2 { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.files .fbrm { width: 34px; padding: 0; color: var(--fg); }

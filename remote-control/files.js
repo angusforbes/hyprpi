@@ -78,14 +78,20 @@ function render() {
     : k ? (cur.path ? `<div class="fempty fevw">Nothing in this folder matches.</div>` : "") : `<div class="fempty">This folder is empty.</div>`;
   if (k.length >= 2) el.insertAdjacentHTML("beforeend", everywhereHtml(k));
   // J145 (Angus: "if there are no files to select (ie only folders visible) then the select button
-  // should not be visible … same with the send… and share button"): Select, and the Send… / Share bar,
-  // only when this view lists files that can be selected (the folder's own rows; "Everywhere" search
-  // results open, they aren't selectable). A view that turns folders-only leaves select mode.
-  const actable = list.some((e) => !e.dir);
-  $("#fsel").hidden = !actable;
-  if (!actable && selecting) { selecting = false; sel.clear(); $("#fsel").textContent = "Select"; document.body.classList.remove("selecting"); }
+  // should not be visible … same with the send… and share button"): Select only when this view lists
+  // files (the folder's own rows, or, J148, files among the Everywhere results). A view that turns
+  // folders-only leaves select mode, but KEEPS the selection.
+  // J148 (Angus: "any selected files should stay selected so that i can find files in different dirs and
+  // then send all of them when ready"): the selection is a basket across folders, filters and searches;
+  // while it holds anything, its bar (count → review, Share, Send…, clear) shows everywhere.
+  const actable = list.some((e) => !e.dir) || (k.length >= 2 && ev.q === k && ev.items.some((e) => !e.dir));
+  if (!actable && selecting) { selecting = false; document.body.classList.remove("selecting"); }
+  $("#fsel").hidden = !actable && !selecting;
+  $("#fsel").textContent = selecting ? "Done" : "Select";
   $("#fcount").textContent = `${sel.size} selected`;
-  $("#fnormal").hidden = selecting; $("#fselbar").hidden = !selecting;
+  const bar = selecting || sel.size > 0;
+  $("#fnormal").hidden = bar; $("#fselbar").hidden = !bar;
+  $("#fshare").disabled = $("#fthink").disabled = !sel.size;
 }
 function rowHtml(e, sub) {
   return `<div class="fe${e.dir ? " dir" : ""}${sel.has(e.path) ? " on" : ""}" data-p="${esc(e.path)}"${sub ? ' data-ev="1"' : ""}>
@@ -136,6 +142,7 @@ $("#flist").addEventListener("click", (ev) => {
   if (row.dataset.ev) { // J142: an "everywhere" result: a folder opens, a file opens in its folder's viewer
     const hit = everywhereHit(row.dataset.p); if (!hit) return;
     if (hit.dir) return go(hit.path);
+    if (selecting) { select(hit, !sel.has(hit.path)); render(); return; } // J148: search results go in the basket too
     // J144 (Angus: "press x … i want to go back to page I was just at … the search results"): the viewer
     // opens over the results; nothing underneath moves, so ✕ shows the same query, results and scroll.
     openViewer(fileHref(hit.path));
@@ -150,8 +157,23 @@ $("#fup").addEventListener("click", () => go(cur.parent ?? ""));
 $("#fq").addEventListener("input", (e) => { q = e.target.value; searchEverywhere(q.trim().toLowerCase()); render(); });
 function everywhereHit(p) { return ev.items.find((x) => x.path === p); }
 $("#fsort").addEventListener("click", () => { sort = sort === "date" ? "name" : "date"; localStorage.setItem("files.sort", sort); render(); });
-$("#fsel").addEventListener("click", () => { selecting = !selecting; if (!selecting) sel.clear(); $("#fsel").textContent = selecting ? "Done" : "Select"; render(); });
-$("#fcancel").addEventListener("click", () => { selecting = false; sel.clear(); $("#fsel").textContent = "Select"; render(); });
+// Select / Done only switches select mode; the selection stays (J148). ✕ in the bar clears it all.
+$("#fsel").addEventListener("click", () => { selecting = !selecting; render(); });
+function clearSelection() { selecting = false; sel.clear(); render(); }
+$("#fcancel").addEventListener("click", clearSelection);
+// J148: the count opens the basket: every selected file (from any folder), remove one, or clear all.
+$("#fcount").addEventListener("click", () => {
+  if (!sel.size) return note("Nothing selected yet: tap Select, then files (here or in search results)");
+  const draw = () => {
+    if (!sel.size) { sheet(""); render(); return; }
+    const p = sheet(`<h3>${sel.size} selected</h3><div class="fbasket">${[...sel.values()].map((s) => `<div class="fbi" data-p="${esc(s.entry.path)}"><div class="nm"><div class="n1">${esc(s.entry.name)}</div><div class="n2">${esc(tilde(s.entry.path.replace(/\/[^/]*$/, "")))} · ${size(s.entry.size)}</div></div><button type="button" class="fbrm" title="remove from the selection" aria-label="remove">✕</button></div>`).join("")}</div>
+      <div class="fact"><button type="button" class="fclear">Clear all</button><button type="button" class="fclose">Done</button></div>`);
+    p.querySelector(".fbasket").onclick = (e) => { const b = e.target.closest(".fbrm"); if (!b) return; sel.delete(b.closest(".fbi").dataset.p); draw(); render(); };
+    p.querySelector(".fclear").onclick = () => { sheet(""); clearSelection(); };
+    p.querySelector(".fclose").onclick = () => sheet("");
+  };
+  draw();
+});
 
 // ---- Share (several files) ---------------------------------------------------------------------
 $("#fshare").addEventListener("click", async () => {
@@ -180,7 +202,7 @@ $("#fhelp").addEventListener("click", () => {
   const p = sheet(`<h3>Files</h3>
     <p>The laptop's allowed folders (Obsidian, Work, Downloads, Documents, Screenshots, Phone). Hidden files and anything named like a key or password are never shown.</p>
     <p><b>Search</b> filters this folder at once, and below it lists matching <b>names everywhere</b> in the allowed folders (folders first; tap one to go there, a file to open it). Contents aren't searched, and files a project's .gitignore leaves out (build output, caches) aren't listed.</p>
-    <p><b>Tap</b> a file to open it; <b>Share</b> sends it with the iPhone's share panel (Messages, Mail, Gmail, WhatsApp, Save Image, Save to Files). <b>Select</b> picks several.</p>
+    <p><b>Tap</b> a file to open it; <b>Share</b> sends it with the iPhone's share panel (Messages, Mail, Gmail, WhatsApp, Save Image, Save to Files). <b>Select</b> picks several, here and in search results; the selection stays while you move between folders and searches (tap the count to review it or remove some), until you send it or clear it with ✕.</p>
     <p><b>⬆ Upload</b> sends photos or files from the phone into <b>~/Phone</b> on the laptop (the only folder this app can write to; nothing is ever overwritten or deleted)${caps ? `, up to ${caps.fileMB} MB a file and ${caps.batchMB} MB at once` : ""}. Afterwards you can send them to Thoughts with a note.</p>
     <p><b>Send…</b> sends the selected files (one or several) with a short note to a world's Thoughts (this world's by default) or to any agent, so it can act on them.</p>
     <p>iOS doesn't let web apps appear in the Share sheet, so you can't send to this app from Photos: open Files and use Upload.</p>
@@ -210,30 +232,12 @@ function sendSheet(paths) {
       const noteText = p.querySelector("#ftnote").value, tw = to.startsWith("thoughts:") ? to.slice(9) : "";
       const j = tw ? await postJSON("/api/files/thoughts", { world: tw, note: noteText, paths }) : await postJSON("/api/files/agent", { agent: to, note: noteText, paths });
       sheet(""); note(`Sent to ${tw ? "Thoughts-" + tw : j.name || "the agent"} ✓`);
-      if (selecting) $("#fcancel").click();
+      clearSelection(); // J148: a successful send empties the basket (Share keeps it)
     } catch (err) { e.target.disabled = false; note("✗ " + err.message); }
   };
 }
-function thoughtsSheet(paths) {
-  return sendSheet(paths); // J143: Send… (any Thoughts or agent) in the standalone app too; the old sheet is kept below, unused
-  const p = sheet(`<h3>→ Thoughts</h3>
-    <div class="fworlds">${(worlds.length ? worlds : [{ id: lastWorld || "A" }]).map((w) => `<button type="button" data-w="${esc(w.id)}" style="--w:${esc(w.color || "")}" class="${w.id === lastWorld ? "on" : ""}">${esc(w.id)}</button>`).join("")}</div>
-    <textarea id="ftnote" placeholder="a note for Thoughts (what to do with ${paths.length === 1 ? "it" : "them"})"></textarea>
-    <div class="ffiles">${paths.map((x) => "📎 " + esc(tilde(x))).join("<br>")}</div>
-    <div class="fact"><button type="button" class="fclose">Cancel</button><button type="button" class="fgo">Send 📱</button></div>`);
-  p.querySelector(".fworlds").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; lastWorld = b.dataset.w; p.querySelectorAll(".fworlds button").forEach((x) => x.classList.toggle("on", x === b)); };
-  p.querySelector(".fclose").onclick = () => sheet("");
-  p.querySelector(".fgo").onclick = async (e) => {
-    e.target.disabled = true;
-    try {
-      const r = { ok: true }; await postJSON("/api/files/thoughts", { world: lastWorld, note: p.querySelector("#ftnote").value, paths });
-      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
-      localStorage.setItem("files.world", lastWorld);
-      sheet(""); note(`Sent to Thoughts-${lastWorld} ✓`);
-      if (selecting) $("#fcancel").click();
-    } catch (err) { e.target.disabled = false; note("✗ " + err.message); }
-  };
-}
+function thoughtsSheet(paths) { return sendSheet(paths); } // J143: Send… (any Thoughts or agent) in both modes
+
 $("#fthink").addEventListener("click", () => { if (!sel.size) return note("Select some files first"); thoughtsSheet([...sel.keys()]); });
 
 // ---- Upload (into ~/Phone) ---------------------------------------------------------------------
