@@ -159,7 +159,7 @@ mark { background: color-mix(in srgb, var(--world) 30%, transparent); color: inh
 .ppeople { font-size: 13.5px; color: var(--dim); margin: -2px 0 6px; }
 /* ---- the Proj and Agnt tabs ---- */
 .amark { flex: none; width: 14px; text-align: center; font-weight: 700; color: var(--world); }
-.amark.mx { color: #e64553; } .amark.mi { color: var(--dim); font-weight: 400; }
+.amark.mx { color: #e64553; } .amark.mb { color: var(--world); opacity: .75; } /* ◐ background: its subagents still run (J93) */ .amark.mi { color: var(--dim); font-weight: 400; }
 .agent .pic { width: 26px; text-align: center; }
 .agent.gone { opacity: .55; }
 .aname { color: var(--fg); }
