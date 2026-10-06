@@ -177,11 +177,13 @@ async function rows() {
         sub: "", worlds: S.room, ws, subtitle: [L.line2, stateNote(c), ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
     }
   }
-  // Agents first, then projects (summon: agents, panels, projects). Within each, by category, then most recent first (Angus,
-  // 2026-09-30): × needs you (blocked, a decision, a bonk) · ✓ finished, not seen yet · ● working ·
-  // ○ idle (a finished one already seen shows ○ too) · ◌ parked / nobody live. "Recent": agents
-  // their last turn event, projects their card's last change. Ties A–Z.
-  const CAT = { "×": 0, "✓": 1, "●": 2, "○": 3, "◌": 4 };
+  // Agents first, then projects (summon: agents, panels, projects). Within each, by category, then most recent first:
+  // × needs you (blocked, a decision, a bonk) · ● working · ✓ finished, not seen yet · ○ idle (a finished one
+  // already seen shows ○ too) · ◌ parked / nobody live (Angus, J92: "lets list blocked agents, then working
+  // agents, then finished agents, then idle agents. I find myself looking for who is working more often than
+  // who is done"; was × ✓ ● ○ ◌). A project's mark is its most urgent live member's (× ● ✓). "Recent": agents
+  // their last turn event, projects their card's last change. Ties A–Z. (The SUPER+S pop-up has its own order.)
+  const CAT = { "×": 0, "●": 1, "✓": 2, "○": 3, "◌": 4 };
   const cat = (r) => CAT[r.mark] ?? 3;
   const KIND = { agent: 0, panel: 1, app: 2, project: 3 };
   out.sort((x, y) => KIND[x.kind] - KIND[y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
