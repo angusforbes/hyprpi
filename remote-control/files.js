@@ -155,7 +155,7 @@ $("#fsheet").addEventListener("click", (e) => { if (e.target.id === "fsheet" && 
 $("#fhelp").addEventListener("click", () => {
   const p = sheet(`<h3>Files</h3>
     <p>The laptop's allowed folders (Obsidian, Work, Downloads, Documents, Screenshots, Phone). Hidden files and anything named like a key or password are never shown.</p>
-    <p><b>Search</b> filters this folder at once, and below it lists matching <b>names everywhere</b> in the allowed folders (folders first; tap one to go there, a file to open it). Contents aren't searched.</p>
+    <p><b>Search</b> filters this folder at once, and below it lists matching <b>names everywhere</b> in the allowed folders (folders first; tap one to go there, a file to open it). Contents aren't searched, and files a project's .gitignore leaves out (build output, caches) aren't listed.</p>
     <p><b>Tap</b> a file to open it; <b>Share</b> sends it with the iPhone's share panel (Messages, Mail, Gmail, WhatsApp, Save Image, Save to Files). <b>Select</b> picks several.</p>
     <p><b>⬆ Upload</b> sends photos or files from the phone into <b>~/Phone</b> on the laptop (the only folder this app can write to; nothing is ever overwritten or deleted)${caps ? `, up to ${caps.fileMB} MB a file and ${caps.batchMB} MB at once` : ""}. Afterwards you can send them to Thoughts with a note.</p>
     <p><b>→ Thoughts</b> sends the selected files with a short note to a world's Thoughts, so an agent can act on them.</p>
