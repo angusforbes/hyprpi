@@ -36,6 +36,7 @@ import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
 import { createDecisionsView } from "../lib/tui/decisions-view.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
+import { SENT_STICKY_MS } from "../lib/tui/sent.mjs";
 
 let room = (process.argv[2] || "").toUpperCase(), rooms = [], agents = [], online = false, api = null, note = "";
 let board = { room: "", projects: [], names: {}, live: {} };
@@ -52,7 +53,8 @@ const boardHere = () => (board.room === room ? board : null);
 // The box: @names tinted (projects in the world colour, agents in theirs); sent text in the
 // world colour until edited (the first typed key replaces it).
 const box = createInputBox({
-  onChange: () => { note = note.startsWith("✗") ? note : ""; render(); },
+  // J165: a "✓ Sent to …" line stays SENT_STICKY_MS even while Angus types on (then the next keystroke clears it).
+  onChange: () => { note = note.startsWith("✗") || (note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS) ? note : ""; render(); },
   // ↑↓ as in every panel (Angus, N51): the box's start / end, then your earlier entries.
   history: createHistory("projects"), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
   copy: (t) => copy(t),
@@ -145,7 +147,9 @@ function ctrlClick(x, y) { // a link opens; an agent's name ("Sankey[e]" too) �
 // ---- drawing ---------------------------------------------------------------------------
 let restarting = false, batching = false, dirty = false;
 function render() { if (restarting) return; if (batching) { dirty = true; return; } draw(); }
+let noteSeen = "", noteAt = 0; // when the current note appeared (J165)
 function draw() {
+  if (note !== noteSeen) { noteSeen = note; noteAt = Date.now(); }
   dirty = false;
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30, c = worldFg(room);
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
@@ -172,7 +176,7 @@ function draw() {
   const slash = /^\/[^\s/]*$/.test(text) && !note.startsWith("✗") && cmds.hint(text) !== null ? boardCompletions(text) : null; // a hidden command like /ignore: no hint at all (N52)
   const busy = mode === "decisions" ? "" : bv.status(c, false);
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : (busy ? "  " + busy : "") + (note ? (note.startsWith("✗") ? `  ${ESC}31m${note}${ESC}39m` : dim("  " + note)) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
+    : (busy ? "  " + busy : "") + (note ? (note.startsWith("✗") ? `  ${ESC}31m${note}${ESC}39m` : note.startsWith("✓") ? `  ${ESC}32m${bold(note)}${ESC}39m` : dim("  " + note)) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
       ? `text → @${open.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · ⏎ or Esc: all projects`
       : "@project text · @project alone opens it · D1 b answers · ^F decisions · ^↑↓ highlight · /help")));
   // A hint that doesn't fit after the text (a narrow panel, e.g. in the 2x2 grid) goes on the

@@ -39,6 +39,7 @@ import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, strea
 const completions = (prefix) => view === "board" ? [...new Set([...boardCompletions(prefix), ...cmds.complete(prefix)])] : cmds.complete(prefix);
 // Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
+import { sentLine } from "../lib/tui/sent.mjs"; // J165
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 let worldBar = null;
@@ -460,10 +461,10 @@ function draw() {
   // request) shows only on the project's header; what was sent stays in the box (world colour).
   const bs = view === "board" ? bv.status(c, false) : "";
   const boardHint = bs ? "  " + bs + (note ? dim("  " + note) : "")
-    : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
+    : note.startsWith("✓") ? `${ESC}32m${bold(note)}${ESC}39m` : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (bs ? "  " + bs : "") + (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
-    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full / compact / topics / all · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
+    : input ? (bs ? "  " + bs : "") + (note ? (note.startsWith("✓") ? `  ${ESC}32m${bold(note)}${ESC}39m` : dim("  " + note)) : "") : view === "help" ? dim("Esc back")
+    : view === "board" ? boardHint : !confirm && note.startsWith("✓") ? `${ESC}32m${bold(note)}${ESC}39m` : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full / compact / topics / all · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -701,7 +702,7 @@ async function send() {
     const pr = resolveAt(parseAt(at[1]).names, hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name })));
     if (pr.found.length) {
       if (pr.found.length > 1 || parseAt(at[1]).names.length > 1) { input = raw; ic = graphemes(raw).length; note = "✗ one @project at a time, without agent names"; return render(); }
-      try { const r = await api.call("board.request", { room, project: pr.ids[0], text: at[2], where: "room", via: "room-tui" }); note = `→ @${r.name}: ${r.told.join(", ")}`; }
+      try { const r = await api.call("board.request", { room, project: pr.ids[0], text: at[2], where: "room", via: "room-tui" }); note = r.recipients ? sentLine(r, { project: "@" + r.name }) : `→ @${r.name}: ${r.told.join(", ")}`; } // J165
       catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; }
       return render();
     }
@@ -712,13 +713,13 @@ async function send() {
   if (targets.length) {
     const sent = [], failed = [];
     await Promise.all(targets.map((who) => api.call("agent.prompt", { agent: who, text: body, via: "room-tui" })
-      .then((r) => sent.push(r.name || who)).catch((e) => failed.push(`${who} (${e.message})`))));
-    note = (sent.length ? "→ sent to " + sent.join(", ") : "") + (failed.length ? "  ✗ " + failed.join(", ") : "");
+      .then((r) => sent.push({ name: r.name || who, busy: !!r.busy })).catch((e) => failed.push(`${who} (${e.message})`))));
+    note = (sent.length ? sentLine({ recipients: sent }) : "") + (failed.length ? (sent.length ? "  ✗ " : "✗ ") + failed.join(", ") : ""); // J165
     return render();
   }
   try {
     const r = await api.call("room.post", { room, text, as_human: true, via: "room-tui" });
-    note = r.delivered?.length ? "→ " + r.delivered.join(", ") : "saved · no agents in this room yet";
+    note = r.recipients ? sentLine(r) : r.delivered?.length ? "→ " + r.delivered.join(", ") : "saved · no agents in this room yet"; // J165
   } catch (e) { note = "✗ " + e.message; }
   render();
 }
