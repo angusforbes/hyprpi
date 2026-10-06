@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install hyprpi's omarchy-shell plugins (today: agf.hyprpi-finder, the coloured agent finder):
+# Install hyprpi's omarchy-shell plugins (agf.hyprpi-finder, the coloured agent finder; agf.hyprpi-login, the lapsed-login bar mark, J136):
 # link each into ~/.config/omarchy/plugins/, rescan, enable. Safe to run again; no shell restart.
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
@@ -12,3 +12,7 @@ for d in "$here"/*/; do
 done
 omarchy-shell shell rescanPlugins >/dev/null; sleep 2
 for d in "$here"/*/; do id=$(basename "$d"); [[ -f "$d/manifest.json" ]] && omarchy-shell shell setPluginEnabled "$id" true >/dev/null && echo "enabled $id"; done
+# J136: the login mark sits at the end of the bar's left section (after Reprieve); hidden unless a login lapsed.
+if ! omarchy-shell shell listShellConfig | jq -e '[.bar.layout[][]?.id] | index("agf.hyprpi-login")' >/dev/null; then
+  omarchy-shell shell putBarWidget agf.hyprpi-login '{"section":"left","after":"tech.greyforge.reprieve"}' >/dev/null && echo "placed agf.hyprpi-login on the bar (left, after Reprieve)"
+fi

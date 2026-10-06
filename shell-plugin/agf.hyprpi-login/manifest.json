@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "agf.hyprpi-login",
+  "name": "hyprpi login",
+  "version": "1.0.0",
+  "author": "hyprpi",
+  "license": "MIT",
+  "description": "A red mark on the bar when hyprpi's daemon sees a lapsed model login (J136); hidden otherwise.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "hyprpi login",
+    "description": "Red when the Claude (model) login has lapsed and agents are stuck; hover for the fix.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

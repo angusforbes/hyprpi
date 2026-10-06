@@ -43,6 +43,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
   hyprpi daemon restart [--reason R] [--ttl MIN]   restart the daemon once everyone is idle (returns at once; never poll for idle) · --status · --cancel
+  hyprpi auth [--json]        the login watch (J136): a lapsed model login, who stopped on it, the credentials file it watches
   hyprpi stop                 stop the daemon (it saves what is open first: hyprpi restore brings it back)
   hyprpi restore [all|X] [--list] [--no]   reopen the agents and panels that were open when hyprpi
                               last went down (own workspaces, model and thinking; panels silently);
@@ -441,6 +442,18 @@ const commands = {
       return;
     }
     const { runDaemon } = await import("../lib/daemon.mjs"); await runDaemon();
+  },
+  // J136: what the daemon's login watch knows (never a token).
+  auth: async () => {
+    const s = await request("auth.status");
+    if (flag("--json")) { console.log(JSON.stringify(s, null, 1)); return; }
+    const L = Object.entries(s.lapses || {});
+    console.log(L.length ? L.map(([p, l]) => `${p}: login LAPSED since ${new Date(l.since).toTimeString().slice(0, 5)}; stopped: ${l.stalled.map((x) => x.name).join(", ") || "none yet"}`).join("\n") : "no lapsed login");
+    const W = Object.entries(s.warned || {}).filter(([, w]) => w.active);
+    for (const [p, w] of W) console.log(`${p}: login ends ${new Date(w.expires).toLocaleString()}`);
+    const R = Object.entries(s.recent || {}).filter(([, l]) => l.length);
+    for (const [p, l] of R) console.log(`${p}: recent login errors from ${l.join(", ")} (not enough to call it)`);
+    console.log(`watching ${s.authFile}; bar mark: ${s.alertFile}`);
   },
   ensure: async () => { await ensureDaemon(); console.log(socketPath()); },
   stop: async () => { if (await alive()) await request("shutdown"); },

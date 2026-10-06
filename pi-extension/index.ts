@@ -349,7 +349,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   });
   pi.on("agent_start", async (_e: any, ctx: any) => { ctxRef = ctx; unseen = false; aborted = false; watchTyping(ctx); update({ status: "working" }); });
   // A turn you stopped with Esc ("Operation aborted") is not a finish: no ✓, no ding.
-  let aborted = false;
+  let aborted = false, lastErrProvider = "";
   pi.on("agent_end", async (e: any) => {
     const msgs: any[] = Array.isArray(e?.messages) ? e.messages : [];
     // Esc while the model's next request is in flight (right after an Esc'd tool): pi 0.87 records
@@ -363,9 +363,19 @@ export default function hyprpi(pi: ExtensionAPI) {
         || (Array.isArray(m?.content) ? m.content.map((c: any) => c?.text || "").join("") : String(m?.content ?? "")).trim() === "interrupted")));
     // Stream: a turn stopped with Esc, or one that ended in an error.
     const err = [...msgs].reverse().find((m: any) => (m?.stopReason ?? m?.message?.stopReason) === "error");
-    const report = aborted ? { kind: "aborted", text: "stopped (Esc)" }
-      : err ? { kind: "error", text: `error: ${String(err?.errorMessage ?? err?.message?.errorMessage ?? "turn failed").replace(/\s+/g, " ").slice(0, 160)}` } : null;
+    const errText = String(err?.errorMessage ?? err?.message?.errorMessage ?? "turn failed").replace(/\s+/g, " ");
+    // J136: the daemon's login watch gets the fuller error (token-like strings masked) and the provider.
+    const report: any = aborted ? { kind: "aborted", text: "stopped (Esc)" }
+      : err ? { kind: "error", text: `error: ${errText.slice(0, 160)}`, detail: errText.replace(/\b(sk-|ey|Bearer\s+)[\w.*-]{8,}/g, "$1…").slice(0, 1200), provider: String(err?.provider ?? err?.message?.provider ?? "") } : null;
     if (report && conn && !conn.closed) { flushActivity(); conn.call("agent.activity", { items: [report] }).catch(() => {}); }
+    // J136: the first good turn after an error tells the daemon (it clears a lapsed-login alert at once).
+    if (err && !aborted) lastErrProvider = report.provider || "?";
+    else if (!aborted && lastErrProvider && conn && !conn.closed) {
+      const last = [...msgs].reverse().find((m: any) => (m?.role ?? m?.message?.role) === "assistant");
+      const prov = String(last?.provider ?? last?.message?.provider ?? "");
+      if (prov) conn.call("auth.ok", { provider: prov }).catch(() => {});
+      lastErrProvider = "";
+    }
   });
   pi.on("agent_settled", async (_e: any, ctx: any) => {
     flushActivity();

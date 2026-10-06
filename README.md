@@ -388,6 +388,22 @@ It picks entries from the room's agents' conversations, the room log and the act
 and makes one small-model call (`askModel`, else `searchModel`, default `claude-haiku-4-5`) with no
 tools and no memory: about 3 s. The room TUI's `/ask` uses it. For real questions, ask a Pi agent.
 
+## Lapsed model login (J136)
+
+When the Claude login lapses (2026-10-06: `OAuth refresh failed for anthropic: … status=400 … "invalid_grant", "Refresh
+token expired"`; a plain API call says `401 … authentication_error … OAuth token has expired`), every agent on it
+stops. The daemon notices it in plain code (`lib/authwatch.mjs`, no model call): when 2 agents, or any Thoughts, end a
+turn on a login error within 2 min (network errors, timeouts, 429/5xx overloads don't count), Angus gets ONE critical
+notification with the fix (`/login` in any agent window, choose Anthropic), a red **󰌾 login** mark on the bar
+(`shell-plugin/agf.hyprpi-login`, which reads `~/.local/state/hyprpi/alert.json`; hidden otherwise), and every world's
+Thoughts one 🔑 line. Every 15 s it looks at pi's `~/.pi/agent/auth.json` (only each login's type and expiry; never a
+token): a new live login (or a stopped agent's next good turn) clears the mark and tells each agent that stopped on the
+error to carry on (a hyprpi prompt; held if it's busy, J133). A login entry vanishing from the file raises the alert at
+once. No early warning for Claude: its 8 h access token renews itself and the refresh token's lifetime isn't stored;
+logins without a refresh token are warned `warnHours` ahead. `hyprpi auth` shows the state; settings: `hyprpi.jsonc`
+section `auth`. The extension sends the fuller error text (token-like strings masked) and the provider with each
+failed turn.
+
 ## Config — `~/.config/hyprpi/config.json`
 
 ```json
