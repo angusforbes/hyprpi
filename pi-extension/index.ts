@@ -23,7 +23,7 @@ import { orchAgent } from "./orch.ts";
 type Conn = Awaited<ReturnType<typeof connect>>;
 
 export default function hyprpi(pi: ExtensionAPI) {
-  ignoreNotes(pi); // /ignore works in any window that loads this extension
+  const ignoreNote = ignoreNotes(pi); // /ignore works in any window that loads this extension
   const AGENT_ID = process.env.HYPRPI_AGENT_ID;
   if (!AGENT_ID) return;
   laterModes(pi); // /notnow and /discuss (J46): hyprpi agent windows only (they file on the board)
@@ -165,6 +165,9 @@ export default function hyprpi(pi: ExtensionAPI) {
       // A prompt sent from a room panel is labelled so the agent can tell it apart from
       // typing in its own window. No auto-post: the agent decides whether to room_post.
       let text = String(d.text ?? "");
+      // An /ignore line sent from elsewhere (the phone's session page, J161 fix): a signpost note, as if
+      // typed here; no turn (held until the run settles if it's working).
+      if (IGNORE.test(text.trim())) { ignoreNote(text.trim(), idle() && !starting); return; }
       if (d.via === "room-tui") text = `[hyprpi · Angus → you]\n${text}`;
       // J133: a busy agent's prompt waits in OUR held queue (a custom message, started as its own turn when the
       // run ends), not in pi's followUp queue: an abort (Esc, an interrupt_agent) returns pi's queued messages
@@ -891,4 +894,6 @@ function ignoreNotes(pi: ExtensionAPI) {
     return { action: "handled" };
   });
   pi.on("agent_settled", async () => flush());
+  // For text that arrives another way (a prompt from hyprpi): the same note, now or when the run settles.
+  return (text: string, isIdle: boolean) => { if (isIdle) add(text); else held.push(text); };
 }

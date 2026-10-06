@@ -531,10 +531,14 @@ const server = http.createServer(async (req, res) => {
       if (!a) return json(res, 404, { error: "no such live agent" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       const text = String(b.text || "").trim().slice(0, 8000);
-      const msg = text ? `[Angus, from his phone]\n${text}` : "";
+      // "/ignore …" (Angus's signpost, N52) goes as typed: the agent's extension files it as a note with no
+      // turn. The phone label in front used to hide the /ignore, so it became a prompt (Pocket, from Angus).
+      const ignore = /^\/ignore(?:\s|$)/.test(text);
+      const msg = !text ? "" : ignore ? text : `[Angus, from his phone]\n${text}`;
       try {
         if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → agent", a.name || id, a.status); return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working" }); }
         if (what === "interrupt" && !text) return json(res, 400, { error: "empty" });
+        if (what === "interrupt" && ignore) return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), ignored: true }); // a note interrupts nothing
         log("phone", what, a.name || id);
         return json(res, 200, await api.call("agent.interrupt", { agent: id, text: what === "interrupt" ? msg : "", via: "phone" }, { timeoutMs: 30000 }));
       } catch (e) { return json(res, 409, { error: e.message }); }
@@ -559,6 +563,8 @@ const server = http.createServer(async (req, res) => {
       if (!r || !text) return json(res, 400, { error: "world and text needed" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       log("send", r, JSON.stringify(text.slice(0, 80)));
+      // "/ignore …": a signpost in the thread, given to Thoughts with his next message; no reply now (N52).
+      if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 200, { ...(await api.call("thoughts.ignore", { room: r, text })), ignored: true });
       return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone" }));
     }
     if (req.method === "POST" && url.pathname === "/api/stop") {
