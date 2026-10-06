@@ -363,10 +363,11 @@ export default function hyprpi(pi: ExtensionAPI) {
         || (Array.isArray(m?.content) ? m.content.map((c: any) => c?.text || "").join("") : String(m?.content ?? "")).trim() === "interrupted")));
     // Stream: a turn stopped with Esc, or one that ended in an error.
     const err = [...msgs].reverse().find((m: any) => (m?.stopReason ?? m?.message?.stopReason) === "error");
-    const errText = String(err?.errorMessage ?? err?.message?.errorMessage ?? "turn failed").replace(/\s+/g, " ");
+    const errText = String(err?.errorMessage ?? err?.message?.errorMessage ?? "turn failed").replace(/\s+/g, " ").replace(/\b(sk-[a-z]*-?|eyJ|bearer\s+)[\w.*~+\/=-]{8,}/gi, "$1…")
+      .replace(/("?(?:access_token|refresh_token|id_token|api[_-]?key|x-api-key|authorization|token|secret|password)"?\s*[:=]\s*"?)(?:bearer\s+)?[^"\s,;}]{6,}/gi, "$1…"); // same as lib/authwatch.mjs maskSecrets
     // J136: the daemon's login watch gets the fuller error (token-like strings masked) and the provider.
     const report: any = aborted ? { kind: "aborted", text: "stopped (Esc)" }
-      : err ? { kind: "error", text: `error: ${errText.slice(0, 160)}`, detail: errText.replace(/\b(sk-|ey|Bearer\s+)[\w.*-]{8,}/g, "$1…").slice(0, 1200), provider: String(err?.provider ?? err?.message?.provider ?? "") } : null;
+      : err ? { kind: "error", text: `error: ${errText.slice(0, 160)}`, detail: errText.slice(0, 1200), provider: String(err?.provider ?? err?.message?.provider ?? "") } : null;
     if (report && conn && !conn.closed) { flushActivity(); conn.call("agent.activity", { items: [report] }).catch(() => {}); }
     // J136: the first good turn after an error tells the daemon (it clears a lapsed-login alert at once).
     if (err && !aborted) lastErrProvider = report.provider || "?";
