@@ -193,6 +193,9 @@ function state() {
 function daemonSocket() {
   const p = socketPath();
   if (fs.existsSync(p)) return p;
+  // An explicit socket (a test daemon) never falls back to the live one: a test must not reach
+  // real agents (J141: a missing test socket sent two real messages).
+  if (process.env.HYPRPI_SOCKET) return p;
   try {
     const dir = runtimeDir();
     const socks = fs.readdirSync(dir).filter((f) => f.endsWith(".sock")).map((f) => path.join(dir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
