@@ -156,7 +156,7 @@ const TH = { room: "", entries: [], busy: false, scroll: 0, pinned: false, unsee
 // down again"): scrolling up PINS the view: new entries, the thinking… lines and re-renders keep the same
 // lines on screen (render adds the growth to scroll) and the status line says "↓ N new · End to follow".
 // Back at the bottom (End / ^End, PgDn, ^↓, the wheel) or sending/searching yourself follows again.
-function follow() { TH.scroll = 0; TH.pinned = false; TH.unseen = 0; }
+function follow() { TH.scroll = 0; TH.pinned = false; TH.unseen = 0; if (!note.startsWith("✗")) note = ""; }
 // Thread build cache (Angus via Thoughts-C 2026-09-30: typing re-wrapped the whole thread on
 // every keystroke, ~170 ms on the long world-C thread). The per-entry wrapped lines and their
 // items are rebuilt only on a width change, new/changed entries (bumpThread), a world switch,
@@ -521,7 +521,8 @@ function render() {
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
   const bottom = [];
   // One animation only (Angus): "thinking…" / "searching…" in the thread; this line stays still.
-  bottom.push(" " + (note ? statusStyled : thoughtsOn && TH.pinned && TH.scroll > 0 ? fg(c, `↓ ${TH.unseen ? `${TH.unseen} new` : "more below"} · End to follow`) : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
+  const pinHint = thoughtsOn && TH.pinned && TH.scroll > 0 && (!note || (TH.unseen && !note.startsWith("✗"))); // J121: new lines below beat an old note ("copied"); errors still show
+  bottom.push(" " + (note && !pinHint ? statusStyled : pinHint ? fg(c, `↓ ${TH.unseen ? `${TH.unseen} new` : "more below"} · End to follow`) : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
   bottom.push(fg(c, "─".repeat(W)));
   const boxAt = bottom.length;
   inRows.forEach((l, i) => bottom.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
