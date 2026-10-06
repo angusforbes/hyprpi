@@ -30,6 +30,20 @@ if (EMBED) { const w = new URLSearchParams(location.search).get("world"); if (/^
 function note(t, ms = 3000) { const n = $("#fnote"); n.textContent = t; n.hidden = !t; if (t) setTimeout(() => { if (n.textContent === t) n.hidden = true; }, ms); }
 async function getJSON(u) { const r = await fetch(u, { cache: "no-store" }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; }
 async function tokenNow() { if (!token) { const t = await getJSON("/api/files/token"); token = t.token; caps = t.caps; phoneDir = t.phone || phoneDir; } return token; }
+// J143 ("bad token" on Angus's iPhone): the server makes a new token at every restart, and a Home
+// Screen app can stay open for hours holding the old one. A "bad token" answer now fetches a fresh
+// one and tries once more. (The check itself is unchanged: a page from another site still can't
+// read the token, so it still can't send.)
+async function postJSON(url, payload) {
+  for (let tries = 0; tries < 2; tries++) {
+    const t = await tokenNow();
+    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-upload-token": t }, body: JSON.stringify(payload) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) return j;
+    if (r.status === 403 && j.error === "bad token" && tries === 0) { token = null; continue; }
+    throw new Error(j.error || r.statusText);
+  }
+}
 
 // Theme and worlds, as the main app (colours follow the desktop).
 getJSON("/api/state").then((s) => {
@@ -158,7 +172,7 @@ $("#fhelp").addEventListener("click", () => {
     <p><b>Search</b> filters this folder at once, and below it lists matching <b>names everywhere</b> in the allowed folders (folders first; tap one to go there, a file to open it). Contents aren't searched, and files a project's .gitignore leaves out (build output, caches) aren't listed.</p>
     <p><b>Tap</b> a file to open it; <b>Share</b> sends it with the iPhone's share panel (Messages, Mail, Gmail, WhatsApp, Save Image, Save to Files). <b>Select</b> picks several.</p>
     <p><b>⬆ Upload</b> sends photos or files from the phone into <b>~/Phone</b> on the laptop (the only folder this app can write to; nothing is ever overwritten or deleted)${caps ? `, up to ${caps.fileMB} MB a file and ${caps.batchMB} MB at once` : ""}. Afterwards you can send them to Thoughts with a note.</p>
-    <p><b>→ Thoughts</b> sends the selected files with a short note to a world's Thoughts, so an agent can act on them.</p>
+    <p><b>Send…</b> sends the selected files (one or several) with a short note to a world's Thoughts (this world's by default) or to any agent, so it can act on them.</p>
     <p>iOS doesn't let web apps appear in the Share sheet, so you can't send to this app from Photos: open Files and use Upload.</p>
     <div class="fact"><button type="button" class="fclose">OK</button></div>`);
   p.querySelector(".fclose").onclick = () => sheet("");
@@ -172,28 +186,26 @@ function sendSheet(paths) {
   for (const a of agents) (byWorld.get(a.room) || byWorld.set(a.room, []).get(a.room)).push(a);
   const order = [...byWorld.keys()].sort((x, y) => (x === lastWorld ? -1 : y === lastWorld ? 1 : x.localeCompare(y)));
   const p = sheet(`<h3>Send ${paths.length === 1 ? "this file" : paths.length + " files"} to…</h3>
-    <div class="fto"><button type="button" class="fto1 on" data-to="thoughts">💭 Thoughts-<span class="tw">${esc(lastWorld)}</span></button>
-    ${order.map((w) => `<div class="ftow">${esc(w)}</div>` + byWorld.get(w).map((a) => `<button type="button" class="fto1" data-to="${esc(a.id)}" style="color:${esc(a.color || "")}">${esc((a.icon ? a.icon + " " : "") + a.display)}</button>`).join("")).join("")}</div>
+    <div class="fto"><button type="button" class="fto1 on" data-to="thoughts:${esc(lastWorld)}">💭 Thoughts-${esc(lastWorld)}</button>
+    ${[...new Set([...order, ...worlds.map((w) => w.id)])].map((w) => `<div class="ftow">${esc(w)}</div>` + (w !== lastWorld ? `<button type="button" class="fto1" data-to="thoughts:${esc(w)}">💭 Thoughts-${esc(w)}</button>` : "") + (byWorld.get(w) || []).map((a) => `<button type="button" class="fto1" data-to="${esc(a.id)}" style="color:${esc(a.color || "")}">${esc((a.icon ? a.icon + " " : "") + a.display)}</button>`).join("")).join("")}</div>
     <textarea id="ftnote" placeholder="a note (what to do with ${paths.length === 1 ? "it" : "them"})"></textarea>
     <div class="ffiles">${paths.map((x) => "📎 " + esc(tilde(x))).join("<br>")}</div>
     <div class="fact"><button type="button" class="fclose">Cancel</button><button type="button" class="fgo">Send 📱</button></div>`);
-  let to = "thoughts";
+  let to = "thoughts:" + lastWorld;
   p.querySelector(".fto").onclick = (e) => { const b = e.target.closest(".fto1"); if (!b) return; to = b.dataset.to; p.querySelectorAll(".fto1").forEach((x) => x.classList.toggle("on", x === b)); };
   p.querySelector(".fclose").onclick = () => sheet("");
   p.querySelector(".fgo").onclick = async (e) => {
     e.target.disabled = true;
     try {
-      const t = await tokenNow(), noteText = p.querySelector("#ftnote").value;
-      const [url, payload] = to === "thoughts" ? ["/api/files/thoughts", { world: lastWorld, note: noteText, paths }] : ["/api/files/agent", { agent: to, note: noteText, paths }];
-      const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-upload-token": t }, body: JSON.stringify(payload) });
-      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
-      sheet(""); note(`Sent to ${to === "thoughts" ? "Thoughts-" + lastWorld : j.name || "the agent"} ✓`);
+      const noteText = p.querySelector("#ftnote").value, tw = to.startsWith("thoughts:") ? to.slice(9) : "";
+      const j = tw ? await postJSON("/api/files/thoughts", { world: tw, note: noteText, paths }) : await postJSON("/api/files/agent", { agent: to, note: noteText, paths });
+      sheet(""); note(`Sent to ${tw ? "Thoughts-" + tw : j.name || "the agent"} ✓`);
       if (selecting) $("#fcancel").click();
     } catch (err) { e.target.disabled = false; note("✗ " + err.message); }
   };
 }
 function thoughtsSheet(paths) {
-  if (EMBED) return sendSheet(paths);
+  return sendSheet(paths); // J143: Send… (any Thoughts or agent) in the standalone app too; the old sheet is kept below, unused
   const p = sheet(`<h3>→ Thoughts</h3>
     <div class="fworlds">${(worlds.length ? worlds : [{ id: lastWorld || "A" }]).map((w) => `<button type="button" data-w="${esc(w.id)}" style="--w:${esc(w.color || "")}" class="${w.id === lastWorld ? "on" : ""}">${esc(w.id)}</button>`).join("")}</div>
     <textarea id="ftnote" placeholder="a note for Thoughts (what to do with ${paths.length === 1 ? "it" : "them"})"></textarea>
@@ -204,8 +216,7 @@ function thoughtsSheet(paths) {
   p.querySelector(".fgo").onclick = async (e) => {
     e.target.disabled = true;
     try {
-      const t = await tokenNow();
-      const r = await fetch("/api/files/thoughts", { method: "POST", headers: { "content-type": "application/json", "x-upload-token": t }, body: JSON.stringify({ world: lastWorld, note: p.querySelector("#ftnote").value, paths }) });
+      const r = { ok: true }; await postJSON("/api/files/thoughts", { world: lastWorld, note: p.querySelector("#ftnote").value, paths });
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
       localStorage.setItem("files.world", lastWorld);
       sheet(""); note(`Sent to Thoughts-${lastWorld} ✓`);
@@ -244,7 +255,8 @@ $("#ffile").addEventListener("change", async (ev) => {
     const row = p.querySelector("#fu" + i);
     if (caps && f.size > caps.fileMB * 1e6) { row.classList.add("err"); row.querySelector(".s").textContent = `over ${caps.fileMB} MB`; done += f.size; continue; }
     try {
-      const r = await put(f, batch, t, (n) => { bar.style.width = ((done + n) / total * 100).toFixed(1) + "%"; });
+      const prog = (n) => { bar.style.width = ((done + n) / total * 100).toFixed(1) + "%"; };
+      let r; try { r = await put(f, batch, t, prog); } catch (e) { if (e.message !== "bad token") throw e; token = null; t = await tokenNow(); r = await put(f, batch, t, prog); } // J143: a restarted server
       ok.push(r.path); row.classList.add("ok"); row.querySelector(".s").textContent = r.name === f.name ? "✓" : `✓ as ${r.name}`;
     } catch (e) { row.classList.add("err"); row.querySelector(".s").textContent = "✗ " + e.message; }
     done += f.size; bar.style.width = (done / total * 100).toFixed(1) + "%";
@@ -259,8 +271,9 @@ $("#ffile").addEventListener("change", async (ev) => {
 });
 
 installViewer();
+$("#fthink").textContent = "Send…"; // J143: both modes pick any Thoughts or agent
 if (EMBED) {
-  $("#fthink").textContent = "Send…";
+  $("#fthink").textContent = "Send…"; // (also in the standalone app, below)
   // From π (same origin): { world } when its top bar changes; { open: path } for a tapped file link:
   // show its folder and open it in the viewer.
   addEventListener("message", async (e) => {

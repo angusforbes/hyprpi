@@ -58,7 +58,7 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
   };
   const writeGate = (req, res) => {
     if (!sameOrigin(req)) { json(res, 403, { error: "bad origin" }); return false; }
-    if (!tokenOk(req)) { json(res, 403, { error: "bad token" }); return false; }
+    if (!tokenOk(req)) { log("refused: bad token", req.headers["tailscale-user-login"] || "local", req.url); json(res, 403, { error: "bad token" }); return false; } // J143: logged
     return true;
   };
 
@@ -199,7 +199,7 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
     const note = String(b.note || "").trim().slice(0, 4000);
     if (!note && !files.length) return json(res, 400, { error: "a note or files needed" });
     const api = getApi(); if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
-    const text = `[Angus, from his phone (π app, Fils tab)]\n${note || "(files from my phone)"}${files.length ? `\n\n📎 ${files.length === 1 ? "File" : files.length + " files"} from Angus's phone (open ${files.length === 1 ? "it" : "them"} with your read tool; images too):\n${files.map((f) => "- " + f.replace(/[\r\n]+/g, " ")).join("\n")}` : ""}`;
+    const text = `[Angus, from his phone (Files)]\n${note || "(files from my phone)"}${files.length ? `\n\n📎 ${files.length === 1 ? "File" : files.length + " files"} from Angus's phone (open ${files.length === 1 ? "it" : "them"} with your read tool; images too):\n${files.map((f) => `- [${f.replace(/[\r\n\]\[]+/g, " ")}](file://${encodeURI(f)})`).join("\n")}` : ""}`;
     log("files → agent", id, files.length, "files");
     try { return json(res, 200, await api.call("agent.prompt", { agent: id, text, via: "phone" })); }
     catch (e) { return json(res, 409, { error: e.message }); }
