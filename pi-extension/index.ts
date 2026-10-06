@@ -171,6 +171,9 @@ export default function hyprpi(pi: ExtensionAPI) {
       // J163: a slash command from the phone's session page runs as if typed here (unlabelled), and waits
       // for the end of a running turn.
       if (d.via === "phone" && text.trim().startsWith("/")) { phoneSlash(text.trim()); return; }
+      // "A /step B" from the phone splits as in the window (steps.ts skips extension input, so it's handed
+      // to its /step command instead: "/step A /step B").
+      if (d.via === "phone" && /(^|\s)\/step(\s|$)/.test(text)) { phoneSlash("/step " + text.trim()); return; }
       if (d.via === "room-tui") text = `[hyprpi · Angus → you]\n${text}`;
       // J133: a busy agent's prompt waits in OUR held queue (a custom message, started as its own turn when the
       // run ends), not in pi's followUp queue: an abort (Esc, an interrupt_agent) returns pi's queued messages

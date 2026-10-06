@@ -536,7 +536,7 @@ const server = http.createServer(async (req, res) => {
       const ignore = /^\/ignore(?:\s|$)/.test(text);
       // J163: any slash command goes as typed (the agent's extension runs it as if typed in its window,
       // after a running turn); an /ignore line is one of them.
-      const slash = text.startsWith("/");
+      const slash = text.startsWith("/") || /(^|\s)\/step(\s|$)/.test(text); // also "A /step B" (Pocket's J163 check)
       const msg = !text ? "" : slash ? text : `[Angus, from his phone]\n${text}`;
       try {
         if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → agent", a.name || id, a.status, slash ? text.split(/\s/)[0] : ""); return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working", ...(slash ? { slash: true } : {}) }); }
