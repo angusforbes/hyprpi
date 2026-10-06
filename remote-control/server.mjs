@@ -385,7 +385,9 @@ function serveFile(res, file, type, user = false) { // user: a file from /file (
     // A user's file (not the app's own): never sniffed, and anything that could run script (HTML,
     // SVG, XML, …) opens sandboxed, without script and with no access to the app (J74 security
     // review: an uploaded or shared page could otherwise use the app's token). Images and PDFs as they are.
-    const extra = !user ? {} : { "x-content-type-options": "nosniff", ...(/^\.(png|jpe?g|gif|webp|pdf)$/.test(ext) ? {} : { "content-security-policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self'" }) };
+    // The app's own pages may be framed only by the app itself (J141: Fils frames /files/; Pocket's
+    // review: no other site Angus visits on the phone may frame them, a clickjacking risk).
+    const extra = !user ? (ext === ".html" ? { "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN" } : {}) : { "x-content-type-options": "nosniff", ...(/^\.(png|jpe?g|gif|webp|pdf)$/.test(ext) ? {} : { "content-security-policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self'" }) };
     res.writeHead(200, { "content-type": type || TYPES[ext] || "text/plain; charset=utf-8", "content-length": st.size, "cache-control": "no-cache", ...extra });
     const rs = fs.createReadStream(file);
     rs.on("error", () => res.destroy()); // gone or unreadable after stat: drop the response, don't crash
