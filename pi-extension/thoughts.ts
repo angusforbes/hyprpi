@@ -165,6 +165,23 @@ export default function thoughts(pi: ExtensionAPI) {
     },
   });
 
+  // J125 upkeep: you are in charge of your world's upkeep (strategy ~/.config/hyprpi/upkeep.jsonc).
+  pi.registerTool({
+    name: "upkeep",
+    label: "Upkeep",
+    description: "Your world's automatic upkeep (Angus's editable strategy ~/.config/hyprpi/upkeep.jsonc: context pruning, compact-and-continue, overdue refreshes). action status = the strategy and each agent's compactions / due / paused state; pause AGENT = no upkeep refresh for it (e.g. it's mid-debug and needs its context) until resume AGENT; now AGENT = ask an idle agent for its handoff and refresh it now. Upkeep runs by itself; you get a 🧹 note in your thread for each action. Never ask Angus first; tell him after, in a line, if it matters.",
+    promptSnippet: "Status / pause / resume / refresh-now for your world's upkeep",
+    parameters: Type.Object({ action: Type.Union([Type.Literal("status"), Type.Literal("pause"), Type.Literal("resume"), Type.Literal("now")]), agent: Type.Optional(Type.String()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.upkeep", p); return out(r.text, r); },
+  });
+  pi.registerTool({
+    name: "write_handoff",
+    label: "Write handoff",
+    description: "Only when hyprpi upkeep asks you to (your own session is due for a refresh): your handoff note for your next self, in Markdown (open jobs and who has them, what's waiting on Angus, decisions and context you'd need). It's saved and you restart on a fresh session from it when your turn ends; the last turns of the thread stay visible to Angus.",
+    parameters: Type.Object({ text: Type.String() }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.handoff", p); return out(r.text, r); },
+  });
+
   pi.registerTool({
     name: "cancel_work",
     label: "Cancel work",

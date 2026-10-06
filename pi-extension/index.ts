@@ -14,6 +14,7 @@ import { connect } from "../lib/client.mjs";
 import { ROOT } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { laterModes } from "./later.ts";
+import { upkeepAgent } from "./upkeep.ts";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
@@ -31,6 +32,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   const demands = new Map<string, { expect: number; replies: { name: string; text: string }[]; done: () => void }>();
 
   const idle = () => { try { return ctxRef?.isIdle?.() ?? true; } catch { return true; } };
+  upkeepAgent(pi, { call: (m: string, p: any = {}) => call(m, p), agentId: AGENT_ID, idle }); // J125 upkeep: pruning, compact reminder, upkeep_ready
   // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
   // coordination; a "followUp" talk once arrived only after the work it asked about was done, @hyprpi N44).
   // Not steered (Thoughts' tasks, room questions): held HERE while the agent works and started as
