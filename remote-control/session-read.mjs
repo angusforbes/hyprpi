@@ -67,6 +67,7 @@ function itemsOf(e, at) {
     const t = String(e.content ?? textOf(e.content));
     const head = /^\[hyprpi (\w+) from ([^·\]\n]+)/.exec(t);
     if (turnStart(e)) out.push({ k: "in", from: head ? `${head[2].trim()} (${head[1]})` : e.customType === "hyprpi-prompt" ? "Angus" : (e.customType || "hyprpi"), text: clip(t, 6000), imgs: [], ts });
+    else if (e.customType === "hyprpi-phone-cmd" || e.customType === "hyprpi-ignore") out.push({ k: "note", text: one(t, 200), ts }); // J163: a phone command's result; an /ignore signpost
     else if (e.customType === "hyprpi-talk-reply") out.push({ k: "in", from: head ? head[2].trim() + " (reply)" : "reply", text: clip(t, 4000), imgs: [], ts, reply: true });
   } else if (e.type === "compaction") out.push({ k: "note", text: "— earlier context compacted —", ts });
   return out;

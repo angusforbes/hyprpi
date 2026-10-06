@@ -168,6 +168,9 @@ export default function hyprpi(pi: ExtensionAPI) {
       // An /ignore line sent from elsewhere (the phone's session page, J161 fix): a signpost note, as if
       // typed here; no turn (held until the run settles if it's working).
       if (IGNORE.test(text.trim())) { ignoreNote(text.trim(), idle() && !starting); return; }
+      // J163: a slash command from the phone's session page runs as if typed here (unlabelled), and waits
+      // for the end of a running turn.
+      if (d.via === "phone" && text.trim().startsWith("/")) { phoneSlash(text.trim()); return; }
       if (d.via === "room-tui") text = `[hyprpi · Angus → you]\n${text}`;
       // J133: a busy agent's prompt waits in OUR held queue (a custom message, started as its own turn when the
       // run ends), not in pi's followUp queue: an abort (Esc, an interrupt_agent) returns pi's queued messages
@@ -381,6 +384,40 @@ export default function hyprpi(pi: ExtensionAPI) {
       lastErrProvider = "";
     }
   });
+  // ---- J163: slash commands from the phone ------------------------------------------------------
+  // Pi's real input path, as typed: sendUserMessage with expandPromptTemplates runs extension commands
+  // (/jot-note, /step, /reload-runtime, …), /skill:… and prompt templates, and the input handlers;
+  // anything else goes to the model as typed text, as in the window. Pi's own TUI commands aren't on that
+  // path, so the ones that make sense from afar are done through the API (/name, /compact, /model,
+  // /thinking, /reload); the rest open pickers or dialogs in the window, and a note says so. While a
+  // turn runs, they wait here and go one at a time once it has settled.
+  const phoneQ: string[] = [];
+  const phoneNote = (t: string) => { try { pi.sendMessage({ customType: "hyprpi-phone-cmd", content: t, display: true }, { triggerTurn: false }); } catch { /* best effort */ } };
+  const TUI_ONLY = /^\/(settings|scoped-models|export|import|share|bug|copy|session|changelog|hotkeys|fork|clone|tree|trust|login|logout|new|resume|quit|exit|debug)(\s|$)/;
+  async function runPhoneSlash(t: string) {
+    const [cmd, ...rest] = t.split(/\s+/), arg = t.slice(cmd.length).trim();
+    try {
+      if (cmd === "/name") { if (!arg) return phoneNote(`/name: this session is "${pi.getSessionName?.() || ""}"`); pi.setSessionName(arg); return phoneNote(`/name ${arg} (from the phone)`); }
+      if (cmd === "/compact") { phoneNote(`/compact${arg ? " " + arg : ""} (from the phone)`); return (ctxRef as any)?.compact?.(arg ? { customInstructions: arg } : undefined); }
+      if (cmd === "/thinking") { if (arg) pi.setThinkingLevel(arg as any); return phoneNote(`/thinking → ${(() => { try { return pi.getThinkingLevel(); } catch { return arg; } })()} (from the phone)`); }
+      if (cmd === "/model") {
+        const reg = ctxRef?.modelRegistry, i = arg.indexOf("/");
+        const m = !arg ? null : (i > 0 ? reg?.find(arg.slice(0, i), arg.slice(i + 1)) : null) || reg?.getAvailable?.().find((x: any) => x.id === arg || `${x.provider}/${x.id}` === arg || x.id.includes(arg));
+        if (!m) return phoneNote(`/model ${arg}: no such model here (from the phone)`);
+        return phoneNote((await pi.setModel(m)) ? `/model → ${m.provider}/${m.id} (from the phone)` : `/model ${arg}: can't switch (no key?)`);
+      }
+      if (cmd === "/reload") return pi.sendUserMessage("/reload-runtime", { expandPromptTemplates: true } as any);
+      if (TUI_ONLY.test(t)) return phoneNote(`${cmd}: only in its own window (it opens a picker or dialog there)`);
+      await pi.sendUserMessage(t, { expandPromptTemplates: true } as any); // as typed: commands, skills, templates, input handlers
+    } catch (e) { phoneNote(`${cmd}: ${(e as Error).message}`); }
+  }
+  function phoneSlash(t: string) { if (idle() && !held.length && !starting && !phoneQ.length) runPhoneSlash(t); else phoneQ.push(t); }
+  function drainPhoneQ() {
+    if (!phoneQ.length || !idle() || starting) return;
+    runPhoneSlash(phoneQ.shift()!);
+    setTimeout(() => { if (idle()) drainPhoneQ(); }, 1500); // a command with no turn (a note, a rename): the next one
+  }
+
   pi.on("agent_settled", async (_e: any, ctx: any) => {
     flushActivity();
     ctxRef = ctx; watchTyping(ctx);
@@ -400,6 +437,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     else { unseen = true; update({ status: "done" }); }
     if (afterAbort) { held.unshift(afterAbort); afterAbort = null; if (afterAbortTimer) { clearTimeout(afterAbortTimer); afterAbortTimer = null; } } // the abort came too late to stop the run
     setTimeout(releaseHeld, 50); // a held message starts the next turn
+    setTimeout(drainPhoneQ, 120); // J163: then a waiting slash command from the phone
   });
   // ---- activity: one short line per tool call for the room's stream (never anyone's context).
   // Batched: sent 2 s after the last call (at most every 6 s while busy); consecutive calls with

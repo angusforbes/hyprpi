@@ -534,11 +534,14 @@ const server = http.createServer(async (req, res) => {
       // "/ignore …" (Angus's signpost, N52) goes as typed: the agent's extension files it as a note with no
       // turn. The phone label in front used to hide the /ignore, so it became a prompt (Pocket, from Angus).
       const ignore = /^\/ignore(?:\s|$)/.test(text);
-      const msg = !text ? "" : ignore ? text : `[Angus, from his phone]\n${text}`;
+      // J163: any slash command goes as typed (the agent's extension runs it as if typed in its window,
+      // after a running turn); an /ignore line is one of them.
+      const slash = text.startsWith("/");
+      const msg = !text ? "" : slash ? text : `[Angus, from his phone]\n${text}`;
       try {
-        if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → agent", a.name || id, a.status); return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working" }); }
+        if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → agent", a.name || id, a.status, slash ? text.split(/\s/)[0] : ""); return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working", ...(slash ? { slash: true } : {}) }); }
         if (what === "interrupt" && !text) return json(res, 400, { error: "empty" });
-        if (what === "interrupt" && ignore) return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), ignored: true }); // a note interrupts nothing
+        if (what === "interrupt" && slash) return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working", slash: true }); // a command (or a note) interrupts nothing: it waits for the turn
         log("phone", what, a.name || id);
         return json(res, 200, await api.call("agent.interrupt", { agent: id, text: what === "interrupt" ? msg : "", via: "phone" }, { timeoutMs: 30000 }));
       } catch (e) { return json(res, 409, { error: e.message }); }

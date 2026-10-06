@@ -946,8 +946,10 @@ async function sessSend(how) {
   const text = sinput.value.trim(); if (!text || !sess.agent) return;
   ssend.disabled = sint.disabled = true;
   try {
-    if (how === "interrupt") { await call("POST", "/api/agent/interrupt", { agent: sess.agent, text }); note("interrupted: your message is its next turn"); }
-    else { const r = await call("POST", "/api/agent/send", { agent: sess.agent, text }); note(r.queued ? "queued: it reads this after its current turn" : "sent"); }
+    // J163: a slash command runs as if typed in its window (after a running turn); Interrupt doesn't stop for it.
+    const r = await call("POST", how === "interrupt" ? "/api/agent/interrupt" : "/api/agent/send", { agent: sess.agent, text });
+    note(r.slash ? (r.queued ? `${text.split(/\s/)[0]}: runs when its turn ends` : `${text.split(/\s/)[0]}: sent as typed`)
+      : how === "interrupt" ? "interrupted: your message is its next turn" : r.queued ? "queued: it reads this after its current turn" : "sent");
     sinput.value = ""; sinput.style.height = "auto"; setTimeout(() => note(""), 3000);
     if (touch) sinput.blur();
   } catch (err) { note("✗ not sent: " + err.message); }
