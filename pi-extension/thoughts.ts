@@ -239,10 +239,14 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "verify_work",
     label: "Verify a job",
-    description: "Mark a DONE job (its report answered every done-when line) as VERIFIED, once Angus or a second agent has confirmed the proof (not the agent that did it). Ask a second agent with ask_agent first when Angus wants it checked.",
+    description: "Mark a DONE job (its report answered every done-when line) as VERIFIED, once Angus or a second agent has confirmed the proof (not the agent that did it); or, with failed: true, record that the check FAILED (the job reopens and a spawned agent escalates one model step, J140). Ask a second agent with ask_agent first when Angus wants it checked.",
     promptSnippet: "Mark a done job verified",
-    parameters: Type.Object({ job: Type.String(), by: Type.String({ description: "Angus, or the confirming agent's name" }), note: Type.Optional(Type.String()) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.verify", p); return out(`${r.job} verified by ${r.by}.`, { action: `${r.job} verified by ${r.by}` }); },
+    parameters: Type.Object({ job: Type.String(), by: Type.String({ description: "Angus, or the confirming agent's name" }), note: Type.Optional(Type.String()), failed: Type.Optional(Type.Boolean({ description: "the check FAILED (J140): the job is reopened and, for a spawned agent on the routing ladder, it moves one model step up (once per job; routing.escalate.onFailedCheck)" })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.verify", p);
+      if (r.failed) return out(`${r.job} FAILED its check (${r.by}); reopened.${r.escalation?.escalating ? ` ${r.escalation.escalating} moves one model step up.` : r.escalation?.skipped ? ` No escalation: ${r.escalation.skipped}.` : ""}`, { action: `${r.job} failed its check (${r.by})` });
+      return out(`${r.job} verified by ${r.by}.`, { action: `${r.job} verified by ${r.by}` });
+    },
   });
 
   pi.registerTool({
