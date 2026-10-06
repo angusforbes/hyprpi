@@ -146,7 +146,12 @@ export default function hyprpi(pi: ExtensionAPI) {
       // typing in its own window. No auto-post: the agent decides whether to room_post.
       let text = String(d.text ?? "");
       if (d.via === "room-tui") text = `[hyprpi · Angus → you]\n${text}`;
-      try { idle() ? pi.sendUserMessage(text) : pi.sendUserMessage(text, { deliverAs: "followUp" }); } catch { /* best effort */ }
+      // J133: a busy agent's prompt waits in OUR held queue (a custom message, started as its own turn when the
+      // run ends), not in pi's followUp queue: an abort (Esc, an interrupt_agent) returns pi's queued messages
+      // to the editor as unsent draft text (Blink's input box after a /move, 2026-10-06). After an Esc it goes
+      // into the context without starting a turn, like every held message (J36); after an interrupt it waits its turn.
+      if (idle() && !held.length && !starting) { try { pi.sendUserMessage(text); } catch { /* best effort */ } }
+      else inject({ customType: "hyprpi-prompt", display: true, content: text, details: { delivery_id: `prompt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, via: String(d.via || "") } });
     } else if (event === "set_model") {
       // Thoughts switches this agent's model (Angus's standing permission, @hyprpi N47).
       (async () => {
@@ -437,6 +442,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.registerMessageRenderer("hyprpi-room", render("room"));
   pi.registerMessageRenderer("hyprpi-talk", render("talk"));
   pi.registerMessageRenderer("hyprpi-talk-reply", render("reply"));
+  pi.registerMessageRenderer("hyprpi-prompt", render("prompt")); // J133: a prompt held while the agent was busy
 
   const text = (t: string, details?: any) => ({ content: [{ type: "text" as const, text: t }], details });
 

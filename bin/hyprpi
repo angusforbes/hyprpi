@@ -35,7 +35,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi finder [--list]      find an agent or project (the Omarchy menu; the finder add-on, SUPER+SHIFT+SPACE)
   hyprpi move AGENT... --to WS|WORLD   move agents' windows (focus stays); a world letter keeps
                               each one's slot (C4 -> F4). --room C moves every live agent in C
-  hyprpi spinout @PROJECT --to WORLD   move a project to another world: its board card, and its
+  hyprpi spinout @PROJECT --to WORLD [--keep-owner]   move a project to another world: its board card, and its
                               members (slots kept) unless they are also on another project
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
@@ -517,14 +517,16 @@ const commands = {
     for (const k of r.skipped) console.log(`${k.agent}: not moved (${k.why})`);
   },
   spinout: async () => {
-    const to = opt("--to"), from = opt("--from");
-    if (!to || args.length !== 1) die("usage: hyprpi spinout @PROJECT --to WORLD [--from WORLD]");
-    const r = await request("project.spinout", { project: args[0], to, ...(from ? { from } : {}) });
+    const to = opt("--to"), from = opt("--from"), keepOwner = flag("--keep-owner");
+    if (!to || args.length !== 1) die("usage: hyprpi spinout @PROJECT --to WORLD [--from WORLD] [--keep-owner]");
+    // J133: run inside an agent, the board credits that agent (as_agent), not Angus.
+    const r = await request("project.spinout", { project: args[0], to, ...(from ? { from } : {}), ...(keepOwner ? { keep_owner: true } : {}), ...(process.env.HYPRPI_AGENT_ID ? { as_agent: process.env.HYPRPI_AGENT_ID } : {}) });
     console.log(`📋 @${r.name}: board ${r.from} -> ${r.to}`);
     for (const m of r.moved) console.log(`${m.agent}: ${m.from ?? "?"} -> ${m.to}`);
     for (const k of r.skipped) console.log(`${k.agent}: not moved (${k.why})`);
     for (const n of r.rehomed) console.log(`${n}: closed, now listed in room ${r.to}`);
     for (const n of r.shared) console.log(`${n}: shared with another project, not moved`);
+    for (const n of r.kept || []) console.log(`${n}: stays on it (--keep-owner), no new owner agent`);
   },
   finder: () => { // the finder add-on (mockups/finder; README "Add-ons")
     const r = spawnSync(process.execPath, [path.join(ROOT, "mockups", "finder"), ...args], { stdio: "inherit" });
