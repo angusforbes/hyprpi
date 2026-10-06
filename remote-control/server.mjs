@@ -272,6 +272,7 @@ async function agentsSummary(r) {
         id: a.id, name, icon: a.icon || "", color: a.color || "", mark: agentMark(a),
         status: a.dormant ? (a.kind === "restart" ? "lost to a restart" : "closed") : a.status || "idle",
         helpers: (a.helpers || []).map((h) => ({ description: h.description || "", type: h.type || "", startedAt: h.startedAt || 0 })), // J93 ◐
+        compactions: a.compactions || 0, // J117 ⟳N
         topic: a.topic || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, size) : "",
         active: a.last_did?.ts || a.left || null, // its last finished turn (since resets on a daemon restart)
         did: a.last_did?.text || "",

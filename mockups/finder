@@ -116,8 +116,8 @@ async function rows() {
     // The mark first (in the menu's icon column), then the agent's own icon in the name (Angus).
     const mk = markOf(a), recent = turns[a.id] || a.since || 0;
     const wsRoom = a.parked ? "" : Number.isInteger(a.workspace) && a.workspace > 0 ? (a.workspace_label || "")[0] || a.room : a.room;
-    const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (since(recent, mk) ? font("dim", " · " + since(recent, mk)) : "");
-    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (since(recent, mk) ? " · " + since(recent, mk) : ""), rich, sub, parked: !!a.parked, world: a.room || "",
+    const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (since(recent, mk) ? font("dim", " · " + since(recent, mk)) : "") + (a.compactions >= 1 ? font("dim", " · ⟳" + a.compactions) : ""); // J117
+    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (since(recent, mk) ? " · " + since(recent, mk) : "") + (a.compactions >= 1 ? " · ⟳" + a.compactions : ""), rich, sub, parked: !!a.parked, world: a.room || "",
       // J17: where it is, for "D" (one world letter) in the plugin: its workspace's world; parked: none.
       subtitle: activeLine(a), // J23: the topic; the time is on the top line
       worlds: a.parked ? "" : String(loc || "")[0] || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? a.workspace : 0 });

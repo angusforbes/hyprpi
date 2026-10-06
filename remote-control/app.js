@@ -504,7 +504,7 @@ function ago(ts) {
 }
 const agentName = (a) => `<span class="aname"${a.color ? ` style="color:${esc(a.color)}"` : ""}>${esc(a.name)}</span>`;
 function agentRow(a, cls = "agent") {
-  const meta = [a.ws, a.topic ? `<i>${esc(a.topic)}</i>` : "", a.active ? ago(a.active) : ""].filter(Boolean).join(" · ");
+  const meta = [a.ws, a.compactions >= 1 ? `⟳${a.compactions}` : "", a.topic ? `<i>${esc(a.topic)}</i>` : "", a.active ? ago(a.active) : ""].filter(Boolean).join(" · "); // J117 ⟳N: compactions
   return `<button class="${cls}${a.mark === "◌" ? " gone" : ""}" data-a="${esc(a.id)}"><span class="amark m${a.mark === "●" ? "w" : a.mark === "◐" ? "b" : a.mark === "×" ? "x" : a.mark === "✓" ? "d" : "i"}">${esc(a.mark)}</span><span class="pic">${esc(a.icon || "")}</span><span class="pmain"><span class="pname">${agentName(a)}</span><span class="pwhere">${meta}</span></span>${cls === "agent" ? `<span class="chev">›</span>` : ""}</button>`;
 }
 function renderAgents({ keepScroll = false } = {}) {

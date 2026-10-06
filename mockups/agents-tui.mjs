@@ -220,7 +220,8 @@ function draw() {
     const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
     const boxed = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
     const hl = helpersLine(a);
-    const rest = boxed + ws + (hl ? dot + hl : "") + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    const cp = a.compactions >= 1 ? dot + "⟳" + a.compactions : ""; // J117: compactions of its session
+    const rest = boxed + ws + cp + (hl ? dot + hl : "") + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
       // J78: a crash leftover says when it was lost ("lost in the 9/30 crash"); others stay "closed".
