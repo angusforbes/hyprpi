@@ -120,6 +120,7 @@ details.card[open] summary { margin-bottom: 4px; }
 .sone { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
 .k-turn .sone, .k-topic .sone, .k-board .sone, .k-joined .sone, .k-moved .sone { color: var(--dim); }
 .ev.open { background: var(--faint); border-radius: 8px; }
+.ev.open + .ev.open { border-top: 1px solid #fff; } /* J156: one thin white line between two opened posts that touch */
 .ev.open .sone { display: none; }
 .sfull { font-size: 14.5px; padding: 4px 2px 2px; white-space: normal; cursor: auto; }
 .sproj { font-size: 12.5px; color: var(--dim); }
