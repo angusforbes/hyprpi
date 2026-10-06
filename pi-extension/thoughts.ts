@@ -6,6 +6,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { request } from "../lib/client.mjs";
+import path from "node:path";
+import { loadUpkeep, expandHome } from "../lib/upkeep.mjs";
+import { pruneMessages } from "../lib/prune.mjs";
 
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const checkThinking = (t: any) => { if (t != null && t !== "" && !THINKING.includes(String(t))) throw new Error(`thinking "${t}" isn't a level: ${THINKING.join(", ")}`); };
@@ -18,6 +21,19 @@ function findModel(ctx: any, s: string) {
 export default function thoughts(pi: ExtensionAPI) {
   const ROOM = process.env.HYPRPI_THOUGHTS_ROOM;
   if (!ROOM) return;
+
+  // J137 (Thoughts get J125's context pruning too, same upkeep.prune settings in ~/.config/hyprpi/hyprpi.jsonc):
+  // older pasted screenshots and big tool outputs leave what each request sends (the session keeps them) as a
+  // stub with a file:// link; anything that isn't a file is saved first. Angus's current message (and its
+  // images) and the latest tool result are never pruned.
+  const seen = new Set<string>();
+  pi.on("context", async (e: any) => {
+    let S: any; try { S = loadUpkeep(); } catch { return; }
+    if (!S?.prune?.enabled) return;
+    const r = pruneMessages(e?.messages || [], S, { dir: path.join(expandHome(S.prune.saveDir || "~/.local/state/hyprpi/pruned"), `thoughts-${ROOM}`), seen });
+    if (!r.stats.images && !r.stats.outputs) return;
+    return { messages: r.messages };
+  });
   const call = (method: string, params: any = {}, timeoutMs = 20000) => request(method, { room: ROOM, ...params }, { timeoutMs });
   const out = (text: string, details: any = {}) => ({ content: [{ type: "text", text }], details });
 
