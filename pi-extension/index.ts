@@ -15,6 +15,7 @@ import { ROOT } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { laterModes } from "./later.ts";
 import { upkeepAgent } from "./upkeep.ts";
+import { orchAgent } from "./orch.ts";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
@@ -33,6 +34,8 @@ export default function hyprpi(pi: ExtensionAPI) {
 
   const idle = () => { try { return ctxRef?.isIdle?.() ?? true; } catch { return true; } };
   upkeepAgent(pi, { call: (m: string, p: any = {}) => call(m, p), agentId: AGENT_ID, idle }); // J125 upkeep: pruning, compact reminder, upkeep_ready
+  // J130 orchestration primitives (spawn_agent, report_to_parent, wait_report, close_agent, …; budgets).
+  const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef });
   // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
   // coordination; a "followUp" talk once arrived only after the work it asked about was done, @hyprpi N44).
   // Not steered (Thoughts' tasks, room questions): held HERE while the agent works and started as
@@ -131,6 +134,8 @@ export default function hyprpi(pi: ExtensionAPI) {
       restartReq = { compact: d?.compact !== false, by: String(d?.by || "") };
       ctxRef?.ui?.notify?.(`🔄 restart asked${restartReq.by && restartReq.by !== "itself" ? ` by ${restartReq.by}` : ""}${idle() ? "" : "; it waits until this turn ends"}${restartReq.compact ? " (compacting first)" : ""}`, "info");
       armRestart();
+    } else if (event.startsWith("orch.")) {
+      orchEvent(event, d); // J130
     } else if (event === "note") {
       if (d?.text) ctxRef?.ui?.notify?.(String(d.text), "info");
     } else if (event === "self") {

@@ -294,6 +294,7 @@ export default function thoughts(pi: ExtensionAPI) {
       project: Type.Optional(Type.String({ description: "@name: the new agent joins it" })),
       cwd: Type.Optional(Type.String({ description: "working folder (default ~/Work)" })),
       images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
+      complexity: Type.Optional(Type.String({ description: "simple | ordinary | hard | review: picks model + thinking from the routing rules (~/.config/hyprpi/hyprpi.jsonc) when no model is given (J130)" })),
       model: Type.Optional(Type.String({ description: "start it on this model: provider/id as list_models shows it (default: the usual one). Same standing permission as set_model" })),
       thinking: Type.Optional(Type.String({ description: "its thinking level: off, minimal, low, medium, high, xhigh, max" })),
       name: Type.Optional(Type.String({ description: "its name, reflecting its purpose: short, usually one word (e.g. Namesmith); must not be taken" })),
@@ -306,5 +307,49 @@ export default function thoughts(pi: ExtensionAPI) {
       const r: any = await call("thoughts.open", { ...p, model });
       return out(`Opened ${r.icon ? r.icon + " " : ""}${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""} with ${r.job} v1.`, { action: `opened a new agent, ${r.icon ? r.icon + " " : ""}${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 120)}` });
     },
+  });
+
+  // J130 orchestration primitives, as Thoughts-<room> (the parent of what it spawns). open_agent stays the
+  // way to hand out a tracked JOB (brief, card); spawn_agent is the light primitive for helpers you run yourself.
+  const T = { thoughts: ROOM };
+  pi.registerTool({
+    name: "spawn_agent",
+    label: "Spawn an agent",
+    description: "Open a light helper agent (your child) silently in this world for a bounded side task you coordinate yourself (no brief or card; for a tracked job use open_agent). prompt = its whole instructions. complexity (simple | ordinary | hard | review) picks its model from the routing rules (~/.config/hyprpi/hyprpi.jsonc) unless model is given; Angus's explicit choice always wins. Its reports come to you as messages; wait_report blocks for them.",
+    parameters: Type.Object({
+      prompt: Type.String(), name: Type.Optional(Type.String()), icon: Type.Optional(Type.String()),
+      complexity: Type.Optional(Type.String()), model: Type.Optional(Type.String()), thinking: Type.Optional(Type.String()),
+      cwd: Type.Optional(Type.String()), project: Type.Optional(Type.String()),
+      budget: Type.Optional(Type.Object({ tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { checkThinking(p.thinking); const r: any = await call("orch.spawn", { ...p, ...T }); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
+  });
+  pi.registerTool({
+    name: "wait_report",
+    label: "Wait for reports",
+    description: "Block until the agents you spawned report (all, or any: true), or the timeout (default 300 s). No polling.",
+    parameters: Type.Object({ ids: Type.Optional(Type.Array(Type.String())), timeout_sec: Type.Optional(Type.Number()), any: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const t = Math.max(1, Math.min(1800, Number(p.timeout_sec) || 300)); const r: any = await call("orch.wait", { ...p, timeout_sec: t, ...T }, (t + 30) * 1000); return out(`${r.timed_out ? "Timed out. " : ""}${r.reports.map((x: any) => `## ${x.name}${x.final ? " · final" : ""}\n${x.text}`).join("\n\n") || "No reports."}${r.still_working.length ? `\n(no report yet: ${r.still_working.map((s: any) => s.name).join(", ")})` : ""}`); },
+  });
+  pi.registerTool({
+    name: "close_agent",
+    label: "Close an agent",
+    description: "Close an agent spawned with spawn_agent (yours, or an orphan you adopted) at its next idle moment; its last report is kept.",
+    parameters: Type.Object({ id: Type.String(), reason: Type.Optional(Type.String()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("orch.close", { ...p, ...T }); return out(`Closing ${r.name}.`, { action: `closed ${r.name}` }); },
+  });
+  pi.registerTool({
+    name: "extend_budget",
+    label: "Extend a budget",
+    description: "Give a spawned agent that hit its budget more tokens / minutes (none given: the default amounts again).",
+    parameters: Type.Object({ id: Type.String(), tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("orch.extend", { ...p, ...T }); return out(`${r.name}: ${Math.round(r.budget.tokens / 1000)}k tokens / ${r.budget.minutes} min.`, { action: `extended ${r.name}'s budget` }); },
+  });
+  pi.registerTool({
+    name: "escalate_agent",
+    label: "Escalate a model",
+    description: "Move a spawned agent one step up the model ladder (failed check, stuck). Once per job automatically; explicit: true only when Angus asked.",
+    parameters: Type.Object({ id: Type.String(), reason: Type.String(), explicit: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("orch.escalate", { ...p, ...T }); return out(r.skipped ? `Not escalated: ${r.skipped}.` : `${r.name}: ${r.before} → ${r.model}/${r.thinking}.`, { action: r.skipped ? "" : `escalated ${r.name} to ${r.model}` }); },
   });
 }
