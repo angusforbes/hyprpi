@@ -224,7 +224,7 @@ function renderTop() {
   stopBtn.hidden = !busy;
   $("#dot").className = online ? "on" : "off";
   document.querySelector('.tab[data-tab="thoughts"]').classList.toggle("busy", busy);
-  for (const t of document.querySelectorAll(".tab")) t.classList.toggle("cur", t.dataset.tab === view);
+  for (const t of document.querySelectorAll(".tab")) t.classList.toggle("cur", t.dataset.tab === (view === "session" ? "agents" : view));
   // The desktop bar's worlds (server: shown), plus the one open here even if it's hidden there.
   $("#worlds").innerHTML = worlds.filter((w) => w.shown || w.id === world).map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.needsYou ? " needs" : w.working || w.thoughtsBusy ? " working" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)} · ${w.agents} agents${w.working ? ` · ${w.working} working` : ""}${w.needsYou ? ` · ${w.needsYou} need you` : ""}">${esc(w.id)}</button>`).join("");
   fitTop();
@@ -384,7 +384,7 @@ input.addEventListener("touchend", (e) => {
 }, { passive: false });
 input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); hold(); }); });
 // Scrollable panes (the thread, the Proj tab: J42) and the text box keep their drags.
-document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #stream, #input, #sbar, #files")) e.preventDefault(); }, { passive: false });
+document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #stream, #input, #sbar, #files, #session, #sinput")) e.preventDefault(); }, { passive: false });
 
 // iOS drops the connection when the app goes to the background: catch up on return.
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
@@ -456,6 +456,7 @@ function renderProjects({ keepScroll = false } = {}) {
   projectsEl.scrollTop = keepScroll ? was : 0;
 }
 function setView(v) {
+  if (v === "agents" && view === "session") { view = "agents"; sessEl.hidden = true; $("#scomp").hidden = true; sess.agent = null; agentsEl.hidden = false; renderTop(); renderAgents(); return; } // J161: Agnt from a session → its summary
   if (v === view) { // Proj / Agnt again: back to the list
     if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); }
     if (v === "agents" && openAgent.get(world)) { openAgent.delete(world); renderAgents(); }
@@ -467,6 +468,7 @@ function setView(v) {
   view = v;
   $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects"; agentsEl.hidden = v !== "agents"; streamEl.hidden = v !== "stream"; sbar.hidden = v !== "stream";
   filsEl.hidden = v !== "files"; if (v === "files") filsFrame();
+  sessEl.hidden = v !== "session"; $("#scomp").hidden = v !== "session"; if (v !== "session") sess.agent = null; // J161
   renderTop();
   if (v === "projects") { renderProjects(); fetchBoard(world).catch(() => {}); }
   else if (v === "agents") { renderAgents(); fetchAgents(world).catch(() => {}); }
@@ -520,7 +522,7 @@ function ago(ts) {
 const agentName = (a) => `<span class="aname"${a.color ? ` style="color:${esc(a.color)}"` : ""}>${esc(a.name)}</span>`;
 function agentRow(a, cls = "agent") {
   const meta = [a.ws, a.compactions >= 1 ? `⟳${a.compactions}` : "", a.topic ? `<i>${esc(a.topic)}</i>` : "", a.active ? ago(a.active) : ""].filter(Boolean).join(" · "); // J117 ⟳N: compactions
-  return `<button class="${cls}${a.mark === "◌" ? " gone" : ""}" data-a="${esc(a.id)}"><span class="amark m${a.mark === "●" ? "w" : a.mark === "◐" ? "b" : a.mark === "×" ? "x" : a.mark === "✓" ? "d" : "i"}">${esc(a.mark)}</span><span class="pic">${esc(a.icon || "")}</span><span class="pmain"><span class="pname">${agentName(a)}</span><span class="pwhere">${meta}</span></span>${cls === "agent" ? `<span class="chev">›</span>` : ""}</button>`;
+  return `<button class="${cls}${a.mark === "◌" ? " gone" : ""}" data-a="${esc(a.id)}"><span class="amark m${a.mark === "●" ? "w" : a.mark === "◐" ? "b" : a.mark === "×" ? "x" : a.mark === "✓" ? "d" : "i"}">${esc(a.mark)}</span><span class="pic">${esc(a.icon || "")}</span><span class="pmain"><span class="pname">${agentName(a)}</span><span class="pwhere">${meta}</span></span>${cls === "agent" ? `<span class="chev aopen" title="open its session">›</span>` : ""}</button>`;
 }
 function renderAgents({ keepScroll = false } = {}) {
   if (view !== "agents") return;
@@ -540,7 +542,7 @@ function renderAgents({ keepScroll = false } = {}) {
       + sec("Model", a.model ? `<div>${esc(a.model)}${a.thinking ? ` <span class="small">· thinking ${esc(a.thinking)}</span>` : ""}</div>` : "")
       // Its last lines in the Stream, any kind (room D #304: Summoner had events but no room posts),
       // then a link to Strm filtered on it.
-      + sec("In the stream", `${(a.recent || []).length ? `<ul class="items">${a.recent.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : `<div class="small">nothing in the last 200 interactions</div>`}<button class="tostream" data-name="${esc(a.name)}">Stream: only ${esc(a.name)} ›</button>`)
+      + sec("In the stream", `${(a.recent || []).length ? `<ul class="items">${a.recent.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : `<div class="small">nothing in the last 200 interactions</div>`}${a.mark !== "◌" ? `<button class="tosession" data-a="${esc(a.id)}">Open ${esc(a.name)} session ›</button>` : ""}<button class="tostream" data-name="${esc(a.name)}">Stream: only ${esc(a.name)} ›</button>`)
       + `</div>`);
   }
   agentsEl.innerHTML = html.join("");
@@ -550,8 +552,10 @@ function renderAgents({ keepScroll = false } = {}) {
 agentsEl.addEventListener("click", (e) => {
   if (e.target.closest(".phead")) { openAgent.delete(world); return renderAgents(); } // the header: back to the list (J48)
   const ts = e.target.closest(".tostream"); if (ts) { streamOnly(ts.dataset.name); return setView("stream"); } // its lines in Strm
+  const so = e.target.closest(".tosession"); if (so) return openSession(so.dataset.a); // J161
   if (e.target.closest("a")) return;
   const t = e.target.closest(".agent");
+  if (t && e.target.closest(".aopen") && !t.classList.contains("gone")) return openSession(t.dataset.a); // J161: the arrow opens its session
   if (t) { openAgent.set(world, t.dataset.a); return renderAgents(); }
   const c = e.target.closest(".clip"); if (c) c.classList.toggle("open");
 });
@@ -821,7 +825,122 @@ addEventListener("message", (e) => {
   filsFrom = "";
 });
 
-window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly, chatKeys }; // for tests (CDP)
+// ---- an agent's session (J161, Angus: "if i click on the arrow to the right, open the agent … a box
+// similar to what we have for Thgt. queue and interrupt are fine … just the last say 10 turns, and then
+// we can scroll up to load"). The server reads only the tail of its session file (session-read.mjs).
+// Turns: one input (his prompt, a talk, a brief) and everything the agent did after it; tool calls are
+// one grey line each (tap: what it ran and what came back). Live: polled every 1.5 s while open; when
+// he's scrolled up, new things show a "new below" pill instead of moving him. Send queues if it's
+// working (it reads it after its turn); Interrupt (only while it works) stops the turn and the message
+// becomes its next turn; Stop (header) stops the turn, like Esc.
+const sessEl = $("#session"), sinput = $("#sinput"), ssend = $("#ssend"), sint = $("#sint");
+const sess = { agent: null, items: [], before: 0, more: false, end: 0, loading: false, timer: null, results: new Map() };
+const sessAgent = () => { for (const l of agentLists.values()) { const a = l.agents.find((x) => x.id === sess.agent); if (a) return a; } return null; };
+const sessNearEnd = () => sessEl.scrollHeight - sessEl.scrollTop - sessEl.clientHeight < 80;
+async function openSession(id) {
+  sess.agent = id; sess.items = []; sess.results = new Map(); sess.before = 0; sess.more = false; sess.end = 0;
+  setView("session");
+  sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">loading…</div>`;
+  try {
+    const r = await call("GET", `/api/session?agent=${encodeURIComponent(id)}`);
+    if (sess.agent !== id) return;
+    sess.items = r.items; sess.before = r.before; sess.more = r.more; sess.end = r.end;
+    renderSession({ toEnd: true });
+  } catch (e) { sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">✗ ${esc(e.message)}</div>`; }
+  clearInterval(sess.timer); sess.timer = setInterval(pollSession, 1500);
+}
+async function pollSession() {
+  if (view !== "session" || !sess.agent || document.hidden || sess.loading) return;
+  const id = sess.agent;
+  try {
+    const r = await call("GET", `/api/session?agent=${encodeURIComponent(id)}&after=${sess.end}`);
+    if (sess.agent !== id) return;
+    renderSessionHead();
+    if (!r.items.length) { sess.end = r.end; return; }
+    const atEnd = sessNearEnd();
+    sess.items.push(...r.items); sess.end = r.end;
+    renderSession({ toEnd: atEnd });
+    if (!atEnd) $("#snew").hidden = false; // he's reading further up: don't move him
+  } catch { /* the next poll tries again */ }
+}
+async function loadOlder() {
+  if (!sess.more || sess.loading) return;
+  sess.loading = true;
+  const id = sess.agent, h0 = sessEl.scrollHeight, t0 = sessEl.scrollTop;
+  try {
+    const r = await call("GET", `/api/session?agent=${encodeURIComponent(id)}&before=${sess.before}`);
+    if (sess.agent !== id) return;
+    sess.items = r.items.concat(sess.items); sess.before = r.before; sess.more = r.more;
+    renderSession();
+    sessEl.scrollTop = t0 + (sessEl.scrollHeight - h0); // keep his place
+  } finally { sess.loading = false; }
+}
+sessEl.addEventListener("scroll", () => { if (sessEl.scrollTop < 300) loadOlder(); if (sessNearEnd()) $("#snew") && ($("#snew").hidden = true); }, { passive: true });
+const sessThumb = (im) => im.file ? `<img class="sthumb" loading="lazy" src="/api/thumb?path=${encodeURIComponent(im.file)}" data-file="${esc(im.file)}" alt="">`
+  : `<img class="sthumb" loading="lazy" src="/api/session/img?agent=${encodeURIComponent(sess.agent)}&at=${im.at}&i=${im.i}" alt="">`;
+function sessItemHtml(it) {
+  if (it.k === "in") {
+    const mine = it.from === "Angus" || /^\[Angus, from his phone\]/.test(it.text);
+    const text = it.text.replace(/^\[Angus, from his phone\]\n/, "");
+    if (mine) return `<div class="msg you">${esc(text)}${(it.imgs || []).map(sessThumb).join("")}</div>`;
+    const first = text.split("\n").find((l) => l.trim()) || "";
+    return `<details class="msg card sin"><summary>${it.reply ? "↩" : "✉"} <span class="who">${esc(it.from)}</span> · ${esc(first.replace(/^\[hyprpi [^\]]*\]\s*/, "").slice(0, 90))}</summary><div class="md">${md(text)}</div></details>`;
+  }
+  if (it.k === "text") return `<div class="msg thoughts"><div class="md">${md(it.text)}</div></div>`;
+  if (it.k === "tool") {
+    const r = sess.results.get(it.id);
+    const imgs = [...(it.file ? [{ file: it.file }] : []), ...((r?.imgs) || []).filter(() => !it.file)];
+    return `<div class="stool${r?.err ? " err" : ""}" data-id="${esc(it.id)}"><div class="stl">${esc("↳ " + it.line)}</div>${imgs.length ? `<div class="simgs">${imgs.map(sessThumb).join("")}</div>` : ""}<div class="stx" hidden><pre>${esc(it.args)}</pre>${r ? `<pre class="sres">${esc(r.text || "(no output)")}</pre>` : ""}</div></div>`;
+  }
+  if (it.k === "note") return `<div class="msg small note${it.err ? " error" : ""}">${esc(it.text)}</div>`;
+  return "";
+}
+function renderSessionHead() {
+  const a = sessAgent(), h = $("#shead"); if (!h || !a) return;
+  const status = { "●": "working", "◐": "background", "×": "needs you", "✓": "done", "○": "idle", "◌": a.status }[a.mark] || a.status;
+  h.querySelector(".sst").textContent = `${a.mark} ${status}`;
+  const working = a.mark === "●";
+  $("#sstop").hidden = !working; sint.hidden = !working;
+}
+function renderSession({ toEnd = false } = {}) {
+  const a = sessAgent() || { name: "agent", icon: "", mark: "○" };
+  for (const it of sess.items) if (it.k === "result") sess.results.set(it.id, it);
+  const projects = (a.projects || []).map((p) => `${esc(p.icon || "")} @${esc(p.name)}`).join(" ");
+  const body = sess.items.filter((it) => it.k !== "result").map(sessItemHtml).join("");
+  sessEl.innerHTML = `<div id="shead" class="phead"><div class="shrow"><span class="pic">${esc(a.icon || "")}</span><span class="pname">${agentName(a)}</span><span class="sst"></span><button id="sstop" type="button" hidden title="stop its turn (like Esc)">Stop</button></div><div class="ssub">${esc([a.model, a.thinking].filter(Boolean).join(" · "))}${projects ? " · " + projects : ""}</div></div>`
+    + (sess.more ? `<div class="small" style="text-align:center;padding:8px">↑ older turns load as you scroll up</div>` : "")
+    + `<div class="sbody">${body}</div><button id="snew" type="button" hidden>new below ↓</button>`;
+  linkNames(sessEl.querySelector(".sbody")); textGlyphs(sessEl);
+  renderSessionHead();
+  if (toEnd) { sessEl.scrollTop = sessEl.scrollHeight; requestAnimationFrame(() => { sessEl.scrollTop = sessEl.scrollHeight; }); }
+}
+sessEl.addEventListener("click", async (e) => {
+  if (e.target.id === "snew") { sessEl.scrollTop = sessEl.scrollHeight; e.target.hidden = true; return; }
+  if (e.target.id === "sstop") { try { await call("POST", "/api/agent/stop", { agent: sess.agent }); note("stopped"); } catch (err) { note("✗ " + err.message); } return; }
+  const th = e.target.closest(".sthumb");
+  if (th) { if (th.dataset.file) return openInFils(th.dataset.file); th.classList.toggle("big"); return; } // a file: in Fils; an inline image: bigger in place
+  if (e.target.closest("#shead")) { const id = sess.agent, a = sessAgent(); if (a) openAgent.set(world, id); return setView("agents"); } // the header: back to its summary
+  const t = e.target.closest(".stool"); if (t && !e.target.closest("a")) { const x = t.querySelector(".stx"); x.hidden = !x.hidden; }
+});
+async function sessSend(how) {
+  const text = sinput.value.trim(); if (!text || !sess.agent) return;
+  ssend.disabled = sint.disabled = true;
+  try {
+    if (how === "interrupt") { await call("POST", "/api/agent/interrupt", { agent: sess.agent, text }); note("interrupted: your message is its next turn"); }
+    else { const r = await call("POST", "/api/agent/send", { agent: sess.agent, text }); note(r.queued ? "queued: it reads this after its current turn" : "sent"); }
+    sinput.value = ""; sinput.style.height = "auto"; setTimeout(() => note(""), 3000);
+    if (touch) sinput.blur();
+  } catch (err) { note("✗ not sent: " + err.message); }
+  finally { ssend.disabled = sint.disabled = false; }
+}
+ssend.addEventListener("click", () => sessSend("send"));
+sint.addEventListener("click", () => sessSend("interrupt"));
+sinput.addEventListener("input", () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; });
+chatKeys(sinput, () => sessSend("send"));
+sinput.addEventListener("touchend", (e) => { if (document.activeElement === sinput) return; e.preventDefault(); sinput.focus({ preventScroll: true }); }, { passive: false });
+sinput.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(fitViewport); });
+
+window.__rc = { openSession, sess, cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly, chatKeys }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
 { const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }

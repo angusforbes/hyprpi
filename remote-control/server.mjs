@@ -32,6 +32,7 @@ import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
 import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames, filterStream } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49) and @Name filter
 import { worldHex, theme } from "../lib/tui/term.mjs";
 import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
+import * as session from "./session-read.mjs"; // an agent's session, tail-read (J161)
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const HOME = os.homedir();
@@ -368,6 +369,16 @@ function streamSoon(r) {
   streamTimers.set(r, setTimeout(() => buildStreamFor(r).catch((e) => log("stream", r, e.message)), 600));
 }
 
+// An agent's session file (J161): a listed (live or recently closed) agent's own, real path under
+// ~/.pi/agent/sessions, a .jsonl.
+const SESSIONS = path.join(HOME, ".pi/agent/sessions");
+function sessionFile(id) {
+  const a = [...(listing?.agents || []), ...(listing?.dormant || [])].find((x) => x.id === id);
+  if (!a?.session) return null;
+  let real; try { real = fs.realpathSync(a.session); } catch { return null; }
+  return real.startsWith(SESSIONS + path.sep) && real.endsWith(".jsonl") ? real : null;
+}
+
 // ---- http ------------------------------------------------------------------------------------
 const room = (w) => /^[A-Z]$/.test(String(w || "")) ? String(w) : null;
 const json = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
@@ -483,6 +494,41 @@ const server = http.createServer(async (req, res) => {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       return json(res, 200, boardSummary(await api.call("board.get", { room: r })));
+    }
+    // ---- an agent's session page (J161) ---------------------------------------------------------
+    // GET /api/session?agent=ID[&before=BYTE|&after=BYTE]: the last 10 turns (or 10 more before BYTE, or
+    // what came after BYTE), read from the tail of its session file only. Only a listed agent's own
+    // session file, and only under ~/.pi/agent/sessions.
+    if (req.method === "GET" && (url.pathname === "/api/session" || url.pathname === "/api/session/img")) {
+      const file = sessionFile(String(url.searchParams.get("agent") || ""));
+      if (!file) return json(res, 404, { error: "no such agent or session" });
+      if (url.pathname === "/api/session/img") {
+        const im = session.image(file, url.searchParams.get("at"), url.searchParams.get("i"));
+        if (!im) return json(res, 404, { error: "no image there" });
+        res.writeHead(200, { "content-type": im.mime, "content-length": im.data.length, "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" });
+        return res.end(im.data);
+      }
+      const after = url.searchParams.get("after"), before = url.searchParams.get("before");
+      const r = after != null ? session.since(file, after) : session.tail(file, { turns: 10, end: before != null ? before : null });
+      return json(res, 200, r);
+    }
+    // POST /api/agent/send {agent, text}: a message from the phone. Queued if it's working (the
+    // extension's held queue, J133: delivered when its turn ends); a turn of its own if idle.
+    // POST /api/agent/interrupt {agent, text}: stop its turn, then the message is its next turn.
+    // POST /api/agent/stop {agent}: stop its turn (like Esc).
+    if (req.method === "POST" && /^\/api\/agent\/(send|interrupt|stop)$/.test(url.pathname)) {
+      const b = await body(req), id = String(b.agent || ""), what = url.pathname.split("/").pop();
+      const a = (listing?.agents || []).find((x) => x.id === id && !x.parked);
+      if (!a) return json(res, 404, { error: "no such live agent" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      const text = String(b.text || "").trim().slice(0, 8000);
+      const msg = text ? `[Angus, from his phone]\n${text}` : "";
+      try {
+        if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → agent", a.name || id, a.status); return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working" }); }
+        if (what === "interrupt" && !text) return json(res, 400, { error: "empty" });
+        log("phone", what, a.name || id);
+        return json(res, 200, await api.call("agent.interrupt", { agent: id, text: what === "interrupt" ? msg : "", via: "phone" }, { timeoutMs: 30000 }));
+      } catch (e) { return json(res, 409, { error: e.message }); }
     }
     if (req.method === "GET" && url.pathname === "/api/agents") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });

@@ -78,6 +78,9 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 | `GET /api/agents?world=C` | the Agnt tab: the world's agents in the desktop panel's order, each with mark, topic, workspace, last turn, model, current job, projects, last room posts |
 | `GET /api/stream?world=C` | the Strm tab: the world's Stream as the desktop Stream panel builds it (lib/stream.mjs, last 200 interactions) |
 | `POST /api/files/agent {agent, note, paths}` | a note + files to a live agent (Fils' Send…): its prompt lists the paths, like a pasted image (same token/Origin checks as Files) |
+| `GET /api/session?agent=ID[&before=B\|&after=B]` | an agent's session page (J161): its last 10 turns read from the TAIL of its session file only (session-read.mjs; 1 MB chunks, capped), 10 more before byte B, or what came after B (live) |
+| `GET /api/session/img?agent=&at=&i=` | an image inline in its session (by line offset) |
+| `POST /api/agent/send\|interrupt\|stop {agent, text}` | a message from the phone (queued if it's working), Interrupt (stop its turn; the message is its next turn), Stop (like Esc); daemon `agent.interrupt` |
 | `GET /lib/tui/agent-click.mjs` | the desktop panels' Ctrl+click name matcher, as-is: names in the page become links (agent → Agnt, @project → Proj, Thoughts-X → Thgt, switching world) |
 | `GET /lib/thoughts-lines.mjs` | the thread's display rule, the same module the desktop Thoughts window uses |
 | `POST /api/send {world, text}` | to Thoughts (`thoughts.send`, via phone) |
