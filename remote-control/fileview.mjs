@@ -144,7 +144,9 @@ function showMedia(body, url, c, my) {
   const m = body.querySelector(audio ? "audio" : "video");
   m.addEventListener("error", () => { if (my === gen && m.error) fail("can't play this file here; Share or Send… still work"); });
   // Share's whole-file fetch starts once he has watched a little (he may well share it), not at open.
-  m.addEventListener("timeupdate", () => { if (m.currentTime > 3 && !c.ready && my === gen) c.fetch(); });
+  // (Time actually PLAYED, not the position: scrubbing far in shouldn't start it. Remote's J175 note.)
+  const played = () => { let t = 0; for (let i = 0; i < m.played.length; i++) t += m.played.end(i) - m.played.start(i); return t; };
+  m.addEventListener("timeupdate", () => { if (!c.ready && my === gen && played() > 3) c.fetch(); });
   m.src = url; // after the listeners
 }
 function fail(msg) { el.querySelector("#fvbody").innerHTML = `<div class="fvmsg err">✗ ${esc(msg)}</div>`; }
