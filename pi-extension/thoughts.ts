@@ -244,7 +244,7 @@ export default function thoughts(pi: ExtensionAPI) {
     parameters: Type.Object({ job: Type.String(), by: Type.String({ description: "Angus, or the confirming agent's name" }), note: Type.Optional(Type.String()), failed: Type.Optional(Type.Boolean({ description: "the check FAILED (J140): the job is reopened and, for a spawned agent on the routing ladder, it moves one model step up (once per job; routing.escalate.onFailedCheck)" })) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.verify", p);
-      if (r.failed) return out(`${r.job} FAILED its check (${r.by}); reopened.${r.escalation?.escalating ? ` ${r.escalation.escalating} moves one model step up.` : r.escalation?.skipped ? ` No escalation: ${r.escalation.skipped}.` : ""}`, { action: `${r.job} failed its check (${r.by})` });
+      if (r.failed) return out(`${r.job} FAILED its check (${r.by}); reopened.${r.escalation?.escalating ? ` ${r.escalation.escalating} was put up for one model step (only if it hasn't moved for this job yet; a ⤴ note in this thread confirms a move).` : r.escalation?.skipped ? ` No escalation: ${r.escalation.skipped}.` : ""}`, { action: `${r.job} failed its check (${r.by})` });
       return out(`${r.job} verified by ${r.by}.`, { action: `${r.job} verified by ${r.by}` });
     },
   });
