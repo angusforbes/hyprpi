@@ -183,6 +183,7 @@ mark { background: color-mix(in srgb, var(--world) 30%, transparent); color: inh
 .simgs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
 .sthumb { height: 90px; max-width: 45%; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; background: var(--faint); }
 .sthumb.big { height: auto; max-width: 100%; cursor: zoom-out; }
+.sgone { display: inline-block; padding: 4px 8px; border: 1px dashed var(--line); border-radius: 8px; }
 #snew { position: sticky; bottom: 8px; left: 50%; display: block; margin: 0 auto; z-index: 3; font-family: inherit; font-size: 13.5px; font-weight: 650; color: var(--bg); background: var(--world); border: none; border-radius: 16px; padding: 7px 14px; box-shadow: 0 2px 8px rgba(0,0,0,.18); cursor: pointer; }
 #scomp { display: flex; align-items: flex-end; gap: 8px; border-top: 1px solid var(--line); background: var(--bg);
   padding: 8px calc(env(safe-area-inset-right) + 10px) calc(env(safe-area-inset-bottom) + 8px) calc(env(safe-area-inset-left) + 10px); }

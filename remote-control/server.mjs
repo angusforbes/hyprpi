@@ -474,6 +474,13 @@ const server = http.createServer(async (req, res) => {
     const origin = req.headers.origin;
     let oh = null; try { oh = origin ? new URL(origin).host : null; } catch { oh = ""; } // "null" or junk: refused, not a crash
     if (origin && oh !== req.headers.host) return json(res, 403, { error: "bad origin" });
+    // The POSTs that act on agents or Thoughts (J161, Pocket's review) must PROVE they come from this page:
+    // a same-host Origin, or Sec-Fetch-Site: same-origin. (Browsers always send Origin on cross-site POSTs,
+    // so this mostly shuts out non-browser requests that carry no Origin at all.)
+    if (/^\/api\/(agent\/|send$|stop$)/.test(url.pathname)) {
+      const sfs = req.headers["sec-fetch-site"];
+      if (!(origin && oh === req.headers.host) && sfs !== "same-origin") return json(res, 403, { error: "bad origin" });
+    }
   }
   try {
     if (req.method === "GET" && STATIC[url.pathname]) return serveFile(res, path.join(HERE, STATIC[url.pathname]));

@@ -876,21 +876,30 @@ async function loadOlder() {
   } finally { sess.loading = false; }
 }
 sessEl.addEventListener("scroll", () => { if (sessEl.scrollTop < 300) loadOlder(); if (sessNearEnd()) $("#snew") && ($("#snew").hidden = true); }, { passive: true });
-const sessThumb = (im) => im.file ? `<img class="sthumb" loading="lazy" src="/api/thumb?path=${encodeURIComponent(im.file)}" data-file="${esc(im.file)}" alt="">`
-  : `<img class="sthumb" loading="lazy" src="/api/session/img?agent=${encodeURIComponent(sess.agent)}&at=${im.at}&i=${im.i}" alt="">`;
+// A file it read: the cached thumbnail (opens in Fils). If the file isn't servable (in /tmp, outside the
+// allowed folders, or deleted since: Pocket's review), the session's own copy of what it saw (the tool
+// result's inline image), else a small label. An inline image: from the session.
+const sessImgUrl = (im) => `/api/session/img?agent=${encodeURIComponent(sess.agent)}&at=${im.at}&i=${im.i}`;
+const sessThumb = (im, fallback) => im.file
+  ? `<img class="sthumb" loading="lazy" src="/api/thumb?path=${encodeURIComponent(im.file)}" data-file="${esc(im.file)}"${fallback ? ` data-fb="${esc(sessImgUrl(fallback))}"` : ""} alt="" onerror="window.__sthumbFail(this)">`
+  : `<img class="sthumb" loading="lazy" src="${esc(sessImgUrl(im))}" alt="" onerror="window.__sthumbFail(this)">`;
+window.__sthumbFail = (img) => {
+  if (img.dataset.fb) { img.src = img.dataset.fb; delete img.dataset.fb; delete img.dataset.file; return; } // what it saw, from the session; tap enlarges it in place
+  const s = document.createElement("span"); s.className = "small sgone"; s.textContent = "image no longer on disk"; img.replaceWith(s);
+};
 function sessItemHtml(it) {
   if (it.k === "in") {
     const mine = it.from === "Angus" || /^\[Angus, from his phone\]/.test(it.text);
     const text = it.text.replace(/^\[Angus, from his phone\]\n/, "");
-    if (mine) return `<div class="msg you">${esc(text)}${(it.imgs || []).map(sessThumb).join("")}</div>`;
+    if (mine) return `<div class="msg you">${esc(text)}${(it.imgs || []).map((im) => sessThumb(im)).join("")}</div>`;
     const first = text.split("\n").find((l) => l.trim()) || "";
     return `<details class="msg card sin"><summary>${it.reply ? "↩" : "✉"} <span class="who">${esc(it.from)}</span> · ${esc(first.replace(/^\[hyprpi [^\]]*\]\s*/, "").slice(0, 90))}</summary><div class="md">${md(text)}</div></details>`;
   }
   if (it.k === "text") return `<div class="msg thoughts"><div class="md">${md(it.text)}</div></div>`;
   if (it.k === "tool") {
     const r = sess.results.get(it.id);
-    const imgs = [...(it.file ? [{ file: it.file }] : []), ...((r?.imgs) || []).filter(() => !it.file)];
-    return `<div class="stool${r?.err ? " err" : ""}" data-id="${esc(it.id)}"><div class="stl">${esc("↳ " + it.line)}</div>${imgs.length ? `<div class="simgs">${imgs.map(sessThumb).join("")}</div>` : ""}<div class="stx" hidden><pre>${esc(it.args)}</pre>${r ? `<pre class="sres">${esc(r.text || "(no output)")}</pre>` : ""}</div></div>`;
+    const imgs = it.file ? [{ file: it.file }] : ((r?.imgs) || []);
+    return `<div class="stool${r?.err ? " err" : ""}" data-id="${esc(it.id)}"><div class="stl">${esc("↳ " + it.line)}</div>${imgs.length ? `<div class="simgs">${imgs.map((im) => sessThumb(im, it.file ? r?.imgs?.[0] : null)).join("")}</div>` : ""}<div class="stx" hidden><pre>${esc(it.args)}</pre>${r ? `<pre class="sres">${esc(r.text || "(no output)")}</pre>` : ""}</div></div>`;
   }
   if (it.k === "note") return `<div class="msg small note${it.err ? " error" : ""}">${esc(it.text)}</div>`;
   return "";
