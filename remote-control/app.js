@@ -4,6 +4,16 @@ import { threadKind, answerLine, actionPrefix, splitLead } from "/lib/thoughts-l
 import { agentIn } from "/lib/tui/agent-click.mjs"; // the desktop panels' Ctrl+click matcher, shared as-is (J45)
 import { esc, href, link, inline, md } from "/md.mjs";
 import { install as installFileViewer } from "/fileview.mjs";
+// J141: a tapped file LINK (/file?path=…) anywhere in π opens in the Fils tab, in its folder, with
+// the viewer on top; this runs before the J70 overlay's own handler. Thumbnails (J63) and [[wiki]]
+// links still open in the overlay, over the tab they're in.
+addEventListener("click", (e) => {
+  if (e.defaultPrevented || e.button > 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  const a = e.target.closest?.("a[href^='/file?path=']"); if (!a || a.closest("#fv")) return;
+  const fp = new URLSearchParams(a.getAttribute("href").split("?")[1] || "").get("path"); if (!fp) return;
+  e.preventDefault(); e.stopPropagation();
+  openInFils(fp);
+}, true);
 installFileViewer();
 import { parseStreamFilter, resolveFilterNames, filterStream } from "/lib/stream.mjs"; // the desktop Stream panel's filter, shared as-is (J60) // the Markdown renderer, shared with the document viewer (J56)
 const $ = (s) => document.querySelector(s);
@@ -268,6 +278,7 @@ function setWorld(w) {
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
+  if (filsWin) filsPost({ world: w });
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
   newestBtn.hidden = true;
   if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
@@ -372,7 +383,7 @@ input.addEventListener("touchend", (e) => {
 }, { passive: false });
 input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() => { fitViewport(); hold(); }); });
 // Scrollable panes (the thread, the Proj tab: J42) and the text box keep their drags.
-document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #stream, #input, #sbar")) e.preventDefault(); }, { passive: false });
+document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #stream, #input, #sbar, #files")) e.preventDefault(); }, { passive: false });
 
 // iOS drops the connection when the app goes to the background: catch up on return.
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
@@ -452,6 +463,7 @@ function setView(v) {
   view = v;
   if (view === "stream" && world) streamOf(world).scroll = streamNearEnd() ? null : streamEl.scrollTop; // leaving Strm: keep its place
   $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects"; agentsEl.hidden = v !== "agents"; streamEl.hidden = v !== "stream"; sbar.hidden = v !== "stream";
+  filsEl.hidden = v !== "files"; if (v === "files") filsFrame();
   renderTop();
   if (v === "projects") { renderProjects(); fetchBoard(world).catch(() => {}); }
   else if (v === "agents") { renderAgents(); fetchAgents(world).catch(() => {}); }
@@ -761,6 +773,28 @@ skinds.addEventListener("click", (e) => {
 // J37 for this box too: a tap focuses it without Safari panning the page.
 sq.addEventListener("touchend", (e) => { if (document.activeElement === sq) return; e.preventDefault(); sq.focus({ preventScroll: true }); }, { passive: false });
 sq.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(fitViewport); });
+
+// ---- the Fils tab (J141, Angus: "integrate the file app and the remote control app … a separate
+// "Fils" tab next to Strm"). iOS doesn't let two Home Screen apps share anything, so the Files app
+// (Pocket's J74, still at /files/ on its own icon) is embedded: /files/?embed=1 in a frame, made the
+// first time Fils is shown and kept (its folder, selection and uploads stay while you switch tabs).
+// In there: browse and view the allowed folders, upload into ~/Phone, Share, and "Send…" to a
+// world's Thoughts or any live agent. π tells it the current world and which file to open.
+const filsEl = $("#files");
+let filsWin = null, filsReady = false, filsQueue = [];
+function filsFrame() {
+  if (filsEl.firstElementChild) return;
+  const f = document.createElement("iframe");
+  f.src = `/files/?embed=1&world=${world || ""}`; f.title = "Files"; f.allow = "web-share; clipboard-write";
+  filsEl.append(f); filsWin = f.contentWindow;
+}
+addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data?.filsReady) return;
+  filsReady = true; filsPost({ world });
+  for (const m of filsQueue.splice(0)) filsPost(m);
+});
+function filsPost(m) { if (filsReady && filsWin) filsWin.postMessage(m, location.origin); else filsQueue.push(m); }
+function openInFils(fp) { setView("files"); filsPost({ open: fp }); }
 
 window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly, chatKeys }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.

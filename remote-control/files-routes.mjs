@@ -10,6 +10,8 @@
 //   POST /api/upload                 one file, raw body; X-File-Name (URI-encoded), X-Batch, X-Upload-Token.
 //                                    THE ONLY WRITE: into ~/Phone, nowhere else; caps; never overwrites
 //   POST /api/files/thoughts {world, note, paths}   a note + files to a world's Thoughts (via phone)
+//   POST /api/files/agent {agent, note, paths}      the same to any live agent (J141, the π app's Fils tab):
+//                                    its prompt names the files, as a pasted image does on the desktop
 //
 // Read-side checks (fileAllowed, refusedPart, underRoot) are server.mjs's own (J47/J69), passed in.
 import fs from "node:fs";
@@ -181,6 +183,25 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
     return json(res, 200, await api.call("thoughts.send", { room: r, text, images, via: "phone" }));
   }
 
+  // J141: a note + files to an agent (by id). The prompt carries the paths (an agent opens them with
+  // its read tool, images included), like a screenshot pasted into its window. Same checks as Thoughts.
+  async function toAgent(req, res) {
+    if (!writeGate(req, res)) return;
+    const b = await body(req), id = String(b.agent || "").trim();
+    if (!id) return json(res, 400, { error: "agent?" });
+    const asked = Array.isArray(b.paths) ? b.paths.slice(0, 20) : [];
+    const files = [];
+    for (const p of asked) { const real = typeof p === "string" ? fileAllowed(p) : null; if (real) { try { if (fs.statSync(real).isFile()) files.push(real); } catch { /* gone */ } } }
+    if (asked.length && files.length !== asked.length) return json(res, 404, { error: "a file is not found or not allowed" });
+    const note = String(b.note || "").trim().slice(0, 4000);
+    if (!note && !files.length) return json(res, 400, { error: "a note or files needed" });
+    const api = getApi(); if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+    const text = `[Angus, from his phone (π app, Fils tab)]\n${note || "(files from my phone)"}${files.length ? `\n\n📎 ${files.length === 1 ? "File" : files.length + " files"} from Angus's phone (open ${files.length === 1 ? "it" : "them"} with your read tool; images too):\n${files.map((f) => "- " + f).join("\n")}` : ""}`;
+    log("files → agent", id, files.length, "files");
+    try { return json(res, 200, await api.call("agent.prompt", { agent: id, text, via: "phone" })); }
+    catch (e) { return json(res, 409, { error: e.message }); }
+  }
+
   // Returns true when it handled the request.
   return async function handle(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/files/token") { res.setHeader("cache-control", "no-store"); json(res, 200, { token: TOKEN, caps: { fileMB: CAPS.file / MB, batchMB: CAPS.batch / MB, batchFiles: CAPS.batchFiles }, phone: PHONE }); return true; }
@@ -191,6 +212,7 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
     }
     if (req.method === "POST" && url.pathname === "/api/upload") { await upload(req, res); return true; }
     if (req.method === "POST" && url.pathname === "/api/files/thoughts") { await toThoughts(req, res); return true; }
+    if (req.method === "POST" && url.pathname === "/api/files/agent") { await toAgent(req, res); return true; }
     return false;
   };
 }

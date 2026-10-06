@@ -23,12 +23,14 @@
     <button class="tab" data-tab="projects" title="Projects">Proj</button>
     <button class="tab" data-tab="agents" title="Agents">Agnt</button>
     <button class="tab" data-tab="stream" title="Stream">Strm</button>
+    <button class="tab" data-tab="files" title="Files">Fils</button>
   </nav>
 </header>
 <main id="thread" aria-live="polite"></main>
 <main id="projects" hidden></main>
 <main id="agents" class="pane" hidden></main>
 <main id="stream" class="pane" hidden></main>
+<main id="files" class="pane" hidden></main><!-- J141: the Files app, embedded (an iframe made on first use) -->
 <!-- the Strm filter (J60): filter-only, never sends anything; a different look from the message box -->
 <div id="sbar" hidden>
   <div id="skinds" aria-label="kinds"></div>

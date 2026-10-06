@@ -4,6 +4,11 @@
 // upload phone files into ~/Phone (the only place it can write), and send files with a short note to
 // a world's Thoughts (📱). iOS doesn't let web apps appear in the Share sheet, so sends start here.
 import { install as installViewer, open as openViewer } from "/fileview.mjs";
+// J141: the same app inside the π app's "Fils" tab (/files/?embed=1, an iframe). Only then: "Send…"
+// to Thoughts or any live agent, the world from π's top bar, and π can ask it to open a file. The
+// standalone Files app (no ?embed) is unchanged.
+const EMBED = new URLSearchParams(location.search).has("embed");
+if (EMBED) document.body.classList.add("embed");
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -16,7 +21,8 @@ const tilde = (p) => String(p || "").replace(HOME, "~");
 let cur = { path: "", parent: null, entries: [] }, sort = localStorage.getItem("files.sort") || "date", q = "";
 let selecting = false;
 const sel = new Map(); // path -> { entry, blob|null, loading: Promise }
-let token = null, caps = null, phoneDir = HOME + "/Phone", worlds = [], lastWorld = localStorage.getItem("files.world") || "";
+let token = null, caps = null, phoneDir = HOME + "/Phone", worlds = [], lastWorld = localStorage.getItem("files.world") || "", agents = [];
+if (EMBED) { const w = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w || "")) lastWorld = w; }
 
 function note(t, ms = 3000) { const n = $("#fnote"); n.textContent = t; n.hidden = !t; if (t) setTimeout(() => { if (n.textContent === t) n.hidden = true; }, ms); }
 async function getJSON(u) { const r = await fetch(u, { cache: "no-store" }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; }
@@ -27,6 +33,7 @@ getJSON("/api/state").then((s) => {
   for (const [k, v] of Object.entries(s.theme || {})) document.documentElement.style.setProperty("--" + k, v);
   if (s.theme?.bg) document.querySelector("meta[name=theme-color]").content = s.theme.bg;
   worlds = (s.worlds || []).filter((w) => w.shown !== false);
+  agents = (s.directory?.agents || []).filter((a) => a.kind === "agent" && a.live);
   if (!lastWorld) lastWorld = s.active || worlds[0]?.id || "A";
 }).catch(() => {});
 
@@ -122,7 +129,34 @@ $("#fhelp").addEventListener("click", () => {
 });
 
 // ---- → Thoughts -------------------------------------------------------------------------------
+// J141 (embed): "Send…": Thoughts of a world, or any live agent (grouped by world, this one first).
+function sendSheet(paths) {
+  const byWorld = new Map();
+  for (const a of agents) (byWorld.get(a.room) || byWorld.set(a.room, []).get(a.room)).push(a);
+  const order = [...byWorld.keys()].sort((x, y) => (x === lastWorld ? -1 : y === lastWorld ? 1 : x.localeCompare(y)));
+  const p = sheet(`<h3>Send ${paths.length === 1 ? "this file" : paths.length + " files"} to…</h3>
+    <div class="fto"><button type="button" class="fto1 on" data-to="thoughts">💭 Thoughts-<span class="tw">${esc(lastWorld)}</span></button>
+    ${order.map((w) => `<div class="ftow">${esc(w)}</div>` + byWorld.get(w).map((a) => `<button type="button" class="fto1" data-to="${esc(a.id)}" style="color:${esc(a.color || "")}">${esc((a.icon ? a.icon + " " : "") + a.display)}</button>`).join("")).join("")}</div>
+    <textarea id="ftnote" placeholder="a note (what to do with ${paths.length === 1 ? "it" : "them"})"></textarea>
+    <div class="ffiles">${paths.map((x) => "📎 " + esc(tilde(x))).join("<br>")}</div>
+    <div class="fact"><button type="button" class="fclose">Cancel</button><button type="button" class="fgo">Send 📱</button></div>`);
+  let to = "thoughts";
+  p.querySelector(".fto").onclick = (e) => { const b = e.target.closest(".fto1"); if (!b) return; to = b.dataset.to; p.querySelectorAll(".fto1").forEach((x) => x.classList.toggle("on", x === b)); };
+  p.querySelector(".fclose").onclick = () => sheet("");
+  p.querySelector(".fgo").onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      const t = await tokenNow(), noteText = p.querySelector("#ftnote").value;
+      const [url, payload] = to === "thoughts" ? ["/api/files/thoughts", { world: lastWorld, note: noteText, paths }] : ["/api/files/agent", { agent: to, note: noteText, paths }];
+      const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-upload-token": t }, body: JSON.stringify(payload) });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
+      sheet(""); note(`Sent to ${to === "thoughts" ? "Thoughts-" + lastWorld : j.name || "the agent"} ✓`);
+      if (selecting) $("#fcancel").click();
+    } catch (err) { e.target.disabled = false; note("✗ " + err.message); }
+  };
+}
 function thoughtsSheet(paths) {
+  if (EMBED) return sendSheet(paths);
   const p = sheet(`<h3>→ Thoughts</h3>
     <div class="fworlds">${(worlds.length ? worlds : [{ id: lastWorld || "A" }]).map((w) => `<button type="button" data-w="${esc(w.id)}" style="--w:${esc(w.color || "")}" class="${w.id === lastWorld ? "on" : ""}">${esc(w.id)}</button>`).join("")}</div>
     <textarea id="ftnote" placeholder="a note for Thoughts (what to do with ${paths.length === 1 ? "it" : "them"})"></textarea>
@@ -188,4 +222,23 @@ $("#ffile").addEventListener("change", async (ev) => {
 });
 
 installViewer();
+if (EMBED) {
+  $("#fthink").textContent = "Send…";
+  // From π (same origin): { world } when its top bar changes; { open: path } for a tapped file link:
+  // show its folder and open it in the viewer.
+  addEventListener("message", async (e) => {
+    if (e.origin !== location.origin) return;
+    if (/^[A-Z]$/.test(e.data?.world || "")) lastWorld = e.data.world;
+    if (typeof e.data?.open === "string") {
+      const fp = e.data.open.replace(/\/+$/, "") || e.data.open;
+      // A folder link opens the folder; a file link its folder, with the file in the viewer.
+      const isDir = await getJSON("/api/ls?path=" + encodeURIComponent(fp)).then(() => true, () => false);
+      if (isDir) return go(fp, { push: cur.path !== fp });
+      const dir = fp.replace(/\/[^/]*$/, "");
+      await go(dir, { push: cur.path !== dir });
+      openViewer(fileHref(fp));
+    }
+  });
+  parent.postMessage({ filsReady: true }, location.origin);
+}
 go(localStorage.getItem("files.dir") || "", { push: false });

@@ -172,7 +172,7 @@ function directory() {
   const agents = [
     ...(listing?.agents || []).filter((a) => !a.parked && ids.has(a.room)),
     ...(listing?.dormant || []).filter((a) => a.kind !== "closed" && ids.has(a.room)),
-  ].map((a) => ({ id: a.id, name: a.name || "", display: a.display || a.name || "", room: a.room, color: a.color || "", kind: "agent" }));
+  ].map((a) => ({ id: a.id, name: a.name || "", display: a.display || a.name || "", room: a.room, color: a.color || "", icon: a.icon || "", live: !a.dormant && !a.kind, kind: "agent" })); // live: can be sent to (J141)
   for (const r of ids) agents.push({ id: "thoughts-" + r, name: "", display: "Thoughts-" + r, room: r, color: "", kind: "thoughts" });
   const projects = [];
   for (const [room, list] of projectNames) for (const p of list) projects.push({ ...p, display: p.name, room, kind: "project" });
