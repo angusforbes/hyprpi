@@ -10,6 +10,8 @@
 //   POST /api/upload                 one file, raw body; X-File-Name (URI-encoded), X-Batch, X-Upload-Token.
 //                                    THE ONLY WRITE: into ~/Phone, nowhere else; caps; never overwrites
 //   POST /api/files/thoughts {world, note, paths}   a note + files to a world's Thoughts (via phone)
+//   GET  /api/find?q=                a NAME search across all the allowed roots (J142): fd, read-only, clutter
+//                                    skipped, every hit re-checked with fileAllowed; folders first, capped
 //   POST /api/files/agent {agent, note, paths}      the same to any live agent (J141, the π app's Fils tab):
 //                                    its prompt names the files, as a pasted image does on the desktop
 //
@@ -17,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
+import { spawn } from "node:child_process";
 
 const MB = 1e6;
 // Caps (J74, Angus's pick on the card, D3; default a): per file, per batch (one Upload tap), free disk kept.
@@ -202,6 +205,45 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
     catch (e) { return json(res, 409, { error: e.message }); }
   }
 
+  // J142 (Angus: "if i search for "squishy" while at the "root", should it go into Work and find that
+  // project?"): names only (not contents), case-insensitive, fixed string. fd skips hidden entries and what
+  // .gitignore files ignore, never follows symlinks, and gets the clutter excludes below; each hit then goes
+  // through fileAllowed (the J47 guard: hidden or key-like parts, symlinks resolved and kept inside the
+  // roots), so search can reach nothing that browsing can't. Folders first, then exact / prefix matches,
+  // shallower, newer. At most FIND_MAX shown; fd stops at 600 hits or after 4 s.
+  const FIND_MAX = 60;
+  const CLUTTER = ["node_modules", ".git", "__pycache__", ".venv", "venv", ".cache", "dist", "build", "target", ".next", ".nuxt", "coverage", ".turbo", ".parcel-cache", ".pytest_cache", ".mypy_cache", ".gradle", ".idea", ".browser-profile", "site-packages"];
+  function find(q) {
+    return new Promise((resolve) => {
+      const roots = FILE_ROOTS.filter((r) => { try { return fs.statSync(r).isDirectory(); } catch { return false; } });
+      const args = ["--fixed-strings", "--ignore-case", "--absolute-path", "--color", "never", "--max-results", "600", "--max-depth", "14", ...CLUTTER.flatMap((x) => ["--exclude", x]), "--", q, ...roots];
+      let out = "", done = false;
+      const t0 = Date.now();
+      const p = spawn("fd", args, { stdio: ["ignore", "pipe", "ignore"] });
+      const finish = (timedOut) => {
+        if (done) return; done = true; clearTimeout(timer);
+        const seen = new Set(), hits = [];
+        const ql = q.toLowerCase();
+        for (let line of out.split("\n")) {
+          line = line.replace(/\/+$/, ""); if (!line) continue;
+          const real = fileAllowed(line); if (!real || seen.has(real)) continue;
+          let st; try { st = fs.statSync(real); } catch { continue; }
+          if (!st.isDirectory() && !st.isFile()) continue;
+          seen.add(real);
+          const name = path.basename(real), nl = name.toLowerCase();
+          hits.push({ name, path: real, dir: st.isDirectory(), size: st.isFile() ? st.size : 0, mtime: st.mtimeMs,
+            rank: (st.isDirectory() ? 0 : 4) + (nl === ql ? 0 : nl.startsWith(ql) ? 1 : 2), depth: real.split("/").length });
+        }
+        hits.sort((a, b) => a.rank - b.rank || a.depth - b.depth || b.mtime - a.mtime);
+        resolve({ q, total: hits.length, truncated: hits.length > FIND_MAX || timedOut || hits.length >= 600, ms: Date.now() - t0, results: hits.slice(0, FIND_MAX).map(({ rank, depth, ...h }) => h) });
+      };
+      const timer = setTimeout(() => { try { p.kill(); } catch { /* gone */ } finish(true); }, 4000);
+      p.stdout.on("data", (d) => { out += d; });
+      p.on("close", () => finish(false));
+      p.on("error", () => finish(false));
+    });
+  }
+
   // Returns true when it handled the request.
   return async function handle(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/files/token") { res.setHeader("cache-control", "no-store"); json(res, 200, { token: TOKEN, caps: { fileMB: CAPS.file / MB, batchMB: CAPS.batch / MB, batchFiles: CAPS.batchFiles }, phone: PHONE }); return true; }
@@ -209,6 +251,11 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
       const l = listDir(String(url.searchParams.get("path") || ""));
       l ? json(res, 200, l) : json(res, 404, { error: "not found or not allowed" });
       return true;
+    }
+    if (req.method === "GET" && url.pathname === "/api/find") {
+      const q = String(url.searchParams.get("q") || "").trim();
+      if (q.length < 2 || q.length > 80 || /[\0\n\r]/.test(q)) { json(res, 400, { error: "2 to 80 characters" }); return true; }
+      json(res, 200, await find(q)); return true;
     }
     if (req.method === "POST" && url.pathname === "/api/upload") { await upload(req, res); return true; }
     if (req.method === "POST" && url.pathname === "/api/files/thoughts") { await toThoughts(req, res); return true; }

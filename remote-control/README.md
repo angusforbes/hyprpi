@@ -27,7 +27,7 @@ Thgt · Proj · Agnt (Proj: this world's projects, one open at a time as a short
 A second Home Screen app on the same server: `https://<this machine>.<tailnet>.ts.net:8443/files/`
 (open it in Safari, Share → Add to Home Screen; its own icon, the π folder). Browse the allowed
 folders (`/api/ls`, the same J47 rules: hidden and key-like names never listed), open files in the
-J70 viewer, Select several → Share (one iOS share sheet with all the files), **⬆ Upload** phone
+J70 viewer, search names everywhere (J142: typing filters the folder at once, and `/api/find` lists matching folder and file names across all the allowed roots via fd, clutter like node_modules/.git/build skipped, each hit re-checked by the read guard, folders first, 60 max), Select several → Share (one iOS share sheet with all the files), **⬆ Upload** phone
 photos/files into **`~/Phone`** (the app's only write: `POST /api/upload`, files-routes.mjs), and
 **→ Thoughts**: a note plus the files to a world's Thoughts (📱; images reach the model as images).
 

@@ -20,6 +20,9 @@ const tilde = (p) => String(p || "").replace(HOME, "~");
 
 let cur = { path: "", parent: null, entries: [] }, sort = localStorage.getItem("files.sort") || "date", q = "";
 let selecting = false;
+// J142: the "everywhere" results under the folder's own (a name search across all the allowed roots, on the
+// laptop). { q, loading, items, total, truncated, ms, error }
+let ev = { q: "", loading: false, items: [], total: 0 }, evTimer = null, evSeq = 0;
 const sel = new Map(); // path -> { entry, blob|null, loading: Promise }
 let token = null, caps = null, phoneDir = HOME + "/Phone", worlds = [], lastWorld = localStorage.getItem("files.world") || "", agents = [];
 if (EMBED) { const w = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w || "")) lastWorld = w; }
@@ -57,9 +60,35 @@ function render() {
     <div class="ic">${!e.dir && IMG.test(e.name) && !/\.heic$/i.test(e.name) ? `<img loading="lazy" decoding="async" alt="" src="${esc(fileHref(e.path))}">` : icon(e)}</div>
     <div class="nm"><div class="n1">${esc(e.name)}</div><div class="n2">${e.dir ? (cur.path ? "folder" : tilde(e.path)) : `${size(e.size)} · ${when(e.mtime)}`}${!cur.path && e.name === "Phone" ? " · uploads land here" : ""}</div></div>
     <div class="ck"></div></div>`).join("") + (cur.truncated ? `<div class="fempty">(the first 5000 shown)</div>` : "")
-    : `<div class="fempty">${k ? "Nothing here matches." : "This folder is empty."}</div>`;
+    : k ? (cur.path ? `<div class="fempty fevw">Nothing in this folder matches.</div>` : "") : `<div class="fempty">This folder is empty.</div>`;
+  if (k.length >= 2) el.insertAdjacentHTML("beforeend", everywhereHtml(k));
   $("#fcount").textContent = `${sel.size} selected`;
   $("#fnormal").hidden = selecting; $("#fselbar").hidden = !selecting;
+}
+function rowHtml(e, sub) {
+  return `<div class="fe${e.dir ? " dir" : ""}${sel.has(e.path) ? " on" : ""}" data-p="${esc(e.path)}"${sub ? ' data-ev="1"' : ""}>
+    <div class="ic">${!e.dir && IMG.test(e.name) && !/\.heic$/i.test(e.name) ? `<img loading="lazy" decoding="async" alt="" src="${esc(fileHref(e.path))}">` : icon(e)}</div>
+    <div class="nm"><div class="n1">${esc(e.name)}</div><div class="n2">${sub}</div></div>
+    <div class="ck"></div></div>`;
+}
+function everywhereHtml(k) {
+  const head = `<div class="fevh">Everywhere${ev.q === k && !ev.loading ? ` · ${ev.total > ev.items.length ? `the first ${ev.items.length} of ${ev.truncated ? "many" : ev.total}` : ev.items.length}` : ""}</div>`;
+  if (ev.q !== k || ev.loading) return head + `<div class="fempty fevw">searching all folders…</div>`;
+  if (ev.error) return head + `<div class="fempty fevw">✗ ${esc(ev.error)}</div>`;
+  if (!ev.items.length) return head + `<div class="fempty fevw">No names match anywhere.</div>`;
+  return head + ev.items.map((e) => rowHtml(e, `${esc(tilde(e.path.replace(/\/[^/]*$/, "")))}${e.dir ? "" : ` · ${size(e.size)} · ${when(e.mtime)}`}`)).join("");
+}
+function searchEverywhere(k) {
+  clearTimeout(evTimer);
+  if (k.length < 2) { ev = { q: "", loading: false, items: [], total: 0 }; return; }
+  if (ev.q === k && !ev.error) return;
+  ev = { q: k, loading: true, items: [], total: 0 };
+  const my = ++evSeq;
+  evTimer = setTimeout(async () => {
+    try { const r = await getJSON("/api/find?q=" + encodeURIComponent(k)); if (my !== evSeq) return; ev = { q: k, loading: false, items: r.results || [], total: r.total || 0, truncated: !!r.truncated, ms: r.ms }; }
+    catch (e) { if (my !== evSeq) return; ev = { q: k, loading: false, items: [], total: 0, error: e.message }; }
+    if (q.trim().toLowerCase() === k) render();
+  }, 250);
 }
 async function go(p, { push = true } = {}) {
   try {
@@ -82,13 +111,20 @@ function select(e, on) {
 }
 $("#flist").addEventListener("click", (ev) => {
   const row = ev.target.closest(".fe"); if (!row) return;
+  if (row.dataset.ev) { // J142: an "everywhere" result: a folder opens, a file opens in its folder's viewer
+    const hit = everywhereHit(row.dataset.p); if (!hit) return;
+    if (hit.dir) return go(hit.path);
+    go(hit.path.replace(/\/[^/]*$/, "")).then(() => openViewer(fileHref(hit.path)));
+    return;
+  }
   const e = cur.entries.find((x) => x.path === row.dataset.p); if (!e) return;
   if (e.dir) return go(e.path);
   if (selecting) { select(e, !sel.has(e.path)); render(); return; }
   openViewer(fileHref(e.path));
 });
 $("#fup").addEventListener("click", () => go(cur.parent ?? ""));
-$("#fq").addEventListener("input", (e) => { q = e.target.value; render(); });
+$("#fq").addEventListener("input", (e) => { q = e.target.value; searchEverywhere(q.trim().toLowerCase()); render(); });
+function everywhereHit(p) { return ev.items.find((x) => x.path === p); }
 $("#fsort").addEventListener("click", () => { sort = sort === "date" ? "name" : "date"; localStorage.setItem("files.sort", sort); render(); });
 $("#fsel").addEventListener("click", () => { selecting = !selecting; if (!selecting) sel.clear(); $("#fsel").textContent = selecting ? "Done" : "Select"; render(); });
 $("#fcancel").addEventListener("click", () => { selecting = false; sel.clear(); $("#fsel").textContent = "Select"; render(); });
@@ -119,6 +155,7 @@ $("#fsheet").addEventListener("click", (e) => { if (e.target.id === "fsheet" && 
 $("#fhelp").addEventListener("click", () => {
   const p = sheet(`<h3>Files</h3>
     <p>The laptop's allowed folders (Obsidian, Work, Downloads, Documents, Screenshots, Phone). Hidden files and anything named like a key or password are never shown.</p>
+    <p><b>Search</b> filters this folder at once, and below it lists matching <b>names everywhere</b> in the allowed folders (folders first; tap one to go there, a file to open it). Contents aren't searched.</p>
     <p><b>Tap</b> a file to open it; <b>Share</b> sends it with the iPhone's share panel (Messages, Mail, Gmail, WhatsApp, Save Image, Save to Files). <b>Select</b> picks several.</p>
     <p><b>⬆ Upload</b> sends photos or files from the phone into <b>~/Phone</b> on the laptop (the only folder this app can write to; nothing is ever overwritten or deleted)${caps ? `, up to ${caps.fileMB} MB a file and ${caps.batchMB} MB at once` : ""}. Afterwards you can send them to Thoughts with a note.</p>
     <p><b>→ Thoughts</b> sends the selected files with a short note to a world's Thoughts, so an agent can act on them.</p>
