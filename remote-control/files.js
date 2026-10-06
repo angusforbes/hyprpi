@@ -302,13 +302,17 @@ if (EMBED) {
     if (/^[A-Z]$/.test(e.data?.world || "")) lastWorld = e.data.world;
     if (typeof e.data?.open === "string") {
       const fp = e.data.open.replace(/\/+$/, "") || e.data.open;
-      // A folder link opens the folder; a file link its folder, with the file in the viewer.
-      const isDir = await getJSON("/api/ls?path=" + encodeURIComponent(fp)).then(() => true, () => false);
-      if (isDir) return go(fp, { push: cur.path !== fp });
+      // J164 (Angus: "why not jump right to the image?"): a name with a file extension opens in the viewer at
+      // once (no folder check first, which showed the folder list while it waited); only other paths are
+      // checked, and a folder opens as a folder.
+      const looksFile = /\.[a-z0-9]{1,8}$/i.test(fp.split("/").pop() || "");
+      const isDir = !looksFile && await getJSON("/api/ls?path=" + encodeURIComponent(fp)).then(() => true, () => false);
+      if (isDir) { parent.postMessage({ filsShow: true }, location.origin); return go(fp, { push: cur.path !== fp }); }
       // J144: a file link from another π tab opens in the viewer over whatever Fils shows; ✕ (or a
       // back-swipe) then takes Angus back to the tab the link was in (π switches back on filsClosed).
       fromLink = true;
       openViewer(fileHref(fp));
+      parent.postMessage({ filsShow: true }, location.origin); // π switches to the tab now that the viewer is up
     }
   });
   onViewerClose(() => { if (fromLink) { fromLink = false; parent.postMessage({ filsClosed: true }, location.origin); } });

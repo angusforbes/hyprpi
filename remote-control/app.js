@@ -818,7 +818,18 @@ function filsPost(m) { if (filsReady && filsWin) filsWin.postMessage(m, location
 // J144: remember the tab a file link was tapped in; when its viewer closes in Fils (✕ or a back-swipe),
 // go back there (Strm, a thread, Proj…), scroll untouched. A folder link stays in Fils.
 let filsFrom = "";
-function openInFils(fp) { filsFrom = view !== "files" ? view : ""; setView("files"); filsPost({ open: fp }); }
+// J164: the tab switches when Fils says its viewer (or the folder) is up ({filsShow}), so the folder list
+// never flashes first; a fallback switches anyway after 1.5 s (Fils still loading the first time).
+let filsShowTimer = 0;
+function openInFils(fp) {
+  filsFrom = view !== "files" ? view : "";
+  if (filsFrom) { filsFrame(); clearTimeout(filsShowTimer); filsShowTimer = setTimeout(() => setView("files"), 1500); }
+  filsPost({ open: fp });
+}
+addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data?.filsShow) return;
+  clearTimeout(filsShowTimer); if (view !== "files") setView("files");
+});
 addEventListener("message", (e) => {
   if (e.origin !== location.origin || !e.data?.filsClosed) return;
   if (filsFrom && view === "files") setView(filsFrom);
