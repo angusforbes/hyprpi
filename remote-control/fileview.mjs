@@ -63,7 +63,11 @@ export function open(href) {
   show(href);
 }
 function closeAll() { if (depth > 0) history.go(-depth); else hide(); }
-function hide() { gen++; el.hidden = true; el.querySelector("#fvbody").innerHTML = ""; cur = null; }
+function hide() { const was = !el.hidden; gen++; el.hidden = true; el.querySelector("#fvbody").innerHTML = ""; cur = null; if (was) for (const f of closers) try { f(); } catch { /* ignore */ } }
+// J144: told when the viewer closes (✕, Esc or a back-swipe all end here), so a caller can return the
+// user to where the file was opened from.
+const closers = new Set();
+export function onClose(f) { closers.add(f); return () => closers.delete(f); }
 
 const pathOf = (u) => { try { return new URL(u, location.href).searchParams.get("path") || ""; } catch { return ""; } };
 function note(t) { const n = el.querySelector("#fvnote"); n.textContent = t || ""; n.hidden = !t; if (t) setTimeout(() => { if (n.textContent === t) n.hidden = true; }, 3000); }

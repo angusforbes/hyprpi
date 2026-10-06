@@ -274,7 +274,7 @@ function refreshAll() {
 }
 function setWorld(w) {
   if (!w || w === world) return;
-  if (world && view === "stream") streamOf(world).scroll = streamNearEnd() ? null : streamEl.scrollTop;
+  if (world && view === "stream") keepStreamPlace(world);
   world = w;
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
@@ -461,8 +461,10 @@ function setView(v) {
     if (v === "agents" && openAgent.get(world)) { openAgent.delete(world); renderAgents(); }
     return;
   }
+  // leaving Strm: keep its place (J144: this ran after `view = v`, so it never saw Strm being left and a
+  // return to Strm always jumped to the newest event).
+  if (view === "stream" && world) keepStreamPlace(world);
   view = v;
-  if (view === "stream" && world) streamOf(world).scroll = streamNearEnd() ? null : streamEl.scrollTop; // leaving Strm: keep its place
   $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects"; agentsEl.hidden = v !== "agents"; streamEl.hidden = v !== "stream"; sbar.hidden = v !== "stream";
   filsEl.hidden = v !== "files"; if (v === "files") filsFrame();
   renderTop();
@@ -727,10 +729,24 @@ function renderStream({ restore = false } = {}) {
   sx.hidden = !on;
   for (const c of skinds.querySelectorAll(".kchip")) c.classList.toggle("on", st.kinds.has(c.dataset.k));
   if (st.pinEnd || (restore && st.scroll == null) || (!restore && atEnd)) streamToEnd(); // at the end: follow new events
-  else streamEl.scrollTop = restore ? st.scroll : was;
+  else {
+    streamEl.scrollTop = restore ? st.scroll : was;
+    const el = restore && st.anchor && streamEl.querySelector(`.ev[data-k="${CSS.escape(st.anchor.k)}"]`);
+    if (el) streamEl.scrollTop += el.getBoundingClientRect().top - streamEl.getBoundingClientRect().top - st.anchor.off;
+  }
   if (st.pinEnd && st.loaded && !(allOn && st.all.loading)) st.pinEnd = false;
 }
 // To the end; rows off screen have estimated heights (content-visibility), so pin again for a few frames.
+// J144: Strm's place is kept as the first visible event and its offset (not a pixel scrollTop): events
+// come and go above it between visits, which made a return land a few rows off.
+function keepStreamPlace(w) {
+  const st = streamOf(w);
+  if (streamNearEnd()) { st.scroll = null; st.anchor = null; return; }
+  st.scroll = streamEl.scrollTop;
+  const top = streamEl.getBoundingClientRect().top;
+  const el = [...streamEl.querySelectorAll(".ev[data-k]")].find((e) => e.getBoundingClientRect().bottom > top + 1);
+  st.anchor = el ? { k: el.dataset.k, off: el.getBoundingClientRect().top - top } : null;
+}
 function streamToEnd(n = 4) {
   streamEl.scrollTop = streamEl.scrollHeight;
   if (n > 0) requestAnimationFrame(() => { if (!streamEl.hidden && streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 2500) streamToEnd(n - 1); });
@@ -795,7 +811,15 @@ addEventListener("message", (e) => {
   for (const m of filsQueue.splice(0)) filsPost(m);
 });
 function filsPost(m) { if (filsReady && filsWin) filsWin.postMessage(m, location.origin); else filsQueue.push(m); }
-function openInFils(fp) { setView("files"); filsPost({ open: fp }); }
+// J144: remember the tab a file link was tapped in; when its viewer closes in Fils (✕ or a back-swipe),
+// go back there (Strm, a thread, Proj…), scroll untouched. A folder link stays in Fils.
+let filsFrom = "";
+function openInFils(fp) { filsFrom = view !== "files" ? view : ""; setView("files"); filsPost({ open: fp }); }
+addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data?.filsClosed) return;
+  if (filsFrom && view === "files") setView(filsFrom);
+  filsFrom = "";
+});
 
 window.__rc = { cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly, chatKeys }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.

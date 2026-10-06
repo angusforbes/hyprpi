@@ -3,12 +3,13 @@
 // several and Share them (the iOS share sheet: Messages, Mail/Gmail, WhatsApp, Save to Files/Photos),
 // upload phone files into ~/Phone (the only place it can write), and send files with a short note to
 // a world's Thoughts (📱). iOS doesn't let web apps appear in the Share sheet, so sends start here.
-import { install as installViewer, open as openViewer } from "/fileview.mjs";
+import { install as installViewer, open as openViewer, onClose as onViewerClose } from "/fileview.mjs";
 // J141: the same app inside the π app's "Fils" tab (/files/?embed=1, an iframe). Only then: "Send…"
 // to Thoughts or any live agent, the world from π's top bar, and π can ask it to open a file. The
 // standalone Files app (no ?embed) is unchanged.
 const EMBED = new URLSearchParams(location.search).has("embed");
 if (EMBED) document.body.classList.add("embed");
+let fromLink = false; // J144: the open viewer came from a file link in another π tab
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -135,7 +136,9 @@ $("#flist").addEventListener("click", (ev) => {
   if (row.dataset.ev) { // J142: an "everywhere" result: a folder opens, a file opens in its folder's viewer
     const hit = everywhereHit(row.dataset.p); if (!hit) return;
     if (hit.dir) return go(hit.path);
-    go(hit.path.replace(/\/[^/]*$/, "")).then(() => openViewer(fileHref(hit.path)));
+    // J144 (Angus: "press x … i want to go back to page I was just at … the search results"): the viewer
+    // opens over the results; nothing underneath moves, so ✕ shows the same query, results and scroll.
+    openViewer(fileHref(hit.path));
     return;
   }
   const e = cur.entries.find((x) => x.path === row.dataset.p); if (!e) return;
@@ -291,11 +294,13 @@ if (EMBED) {
       // A folder link opens the folder; a file link its folder, with the file in the viewer.
       const isDir = await getJSON("/api/ls?path=" + encodeURIComponent(fp)).then(() => true, () => false);
       if (isDir) return go(fp, { push: cur.path !== fp });
-      const dir = fp.replace(/\/[^/]*$/, "");
-      await go(dir, { push: cur.path !== dir });
+      // J144: a file link from another π tab opens in the viewer over whatever Fils shows; ✕ (or a
+      // back-swipe) then takes Angus back to the tab the link was in (π switches back on filsClosed).
+      fromLink = true;
       openViewer(fileHref(fp));
     }
   });
+  onViewerClose(() => { if (fromLink) { fromLink = false; parent.postMessage({ filsClosed: true }, location.origin); } });
   parent.postMessage({ filsReady: true }, location.origin);
 }
 go(localStorage.getItem("files.dir") || "", { push: false });
