@@ -318,7 +318,17 @@ and the daemon find the window by it.)
 - **Ctrl+F** cycles the views (the header says which): **full** text → **compact** (one line each:
   time · who · @project · text) → **topics** (topic changes only, drawn as before the Stream: the
   agent's name on its own line, its consecutive topics under it, a blank line before the next
-  agent; no times). The `/stream` filters apply in every view.
+  agent; no times) → **all activity** (J147: full text plus what the others hide: 🧹 upkeep actions
+  (refreshes, reloads, pruning, compaction nudges, pause/resume), the automatic notes a Thoughts
+  thread no longer draws (kind `notice`: 📨 reported, 🌱 spawned, 🍂 closed, ⏳, card care, …), ✓ / ×,
+  and board where / next-step bookkeeping). The `/stream` filters apply in every view.
+- **The Thoughts thread** (J147, Angus: "if you're not commenting on it, don't include it") draws only
+  his lines, Thoughts' replies and their lead lines (↳ actions, ↩ answers), evidence, and the notes
+  that need him (⚠ alerts such as a refresh upkeep gave up on, 🔑 login, ✗ errors, ⏹, a room message
+  handed back, the refresh divider); `lib/thoughts-lines.mjs` quietNote is the rule (desktop and phone).
+  The "since you last spoke" digest no longer lists refresh-due notes or compaction suffixes (world and
+  the upkeep tool still do). An upkeep problem reaches Thoughts as a ⚠ note plus a line with Angus's next
+  message.
 - **Filters**, all combinable, typed as `/stream …`: `@Blink @Sankey @hyprpi` (a union of agents and
   projects; a project = lines tagged with it or naming it, its board changes, and its members'
   untagged lines) · `3h` `90m` `2d` `today` `yesterday` `since 9am` `since 14:30` (a time window

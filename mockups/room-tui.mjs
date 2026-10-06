@@ -5,7 +5,8 @@
 // per-turn did lines (one line when the turn also posted: the post), topics, agent events,
 // agent-to-agent talk, Angus's prompts, board changes and project moves, Thoughts' 💭 lines; each
 // with its project when known. Ctrl+F cycles the views: full text → compact (one line each) →
-// topics (topic changes only, drawn as before the Stream: the agent's name, its topics under it; no times).
+// topics (topic changes only, drawn as before the Stream: the agent's name, its topics under it; no times) →
+// all activity (J147: full text plus upkeep, Thoughts' automatic notices, ✓ / ×, board bookkeeping).
 // Filters (combinable): /stream @Blink @Sankey @hyprpi (a union of agents and projects) · 3h ·
 // today · since 9am · words (narrow) · raw (also tool lines); the header shows it, Esc or /stream clears.
 //
@@ -49,10 +50,10 @@ const helpRows = () => {
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
     `   ${bold("/stream FILTER".padEnd(w))}  ${dim("@Blink @Sankey @hyprpi (agents or projects, any of them) · 3h · today · since 9am · words (all of them) · raw (tool lines too); combinable")}`,
-    `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F cycles full → compact → topics")}`,
+    `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F cycles full → compact → topics → all activity")}`,
     `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
-    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F views: full → compact (one line each) → topics (topic changes only)")}`,
+    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F views: full → compact (one line each) → topics (topic changes only) → all activity (also upkeep, notices, ✓ / ×)")}`,
     `   ${dim("message box: ↑↓ lines, then the start / end, then your earlier messages · ←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A · projects: SUPER+ALT+P · thoughts: SUPER+ALT+/")}`,
     `   ${dim("the projects panel (the board) is its own panel: SUPER+ALT+P")}`,
@@ -108,18 +109,20 @@ let dormant = [];
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The Stream: room messages, agent activity and board changes (lib/stream.mjs builds the timeline).
 let activity = {}, changes = {}; // room -> activity events · board changes
-// Ctrl+F cycles the views: full text, compact (one line per item), topics (topic changes only).
-const SVIEWS = ["full", "compact", "topics"];
+// Ctrl+F cycles the views: full text, compact (one line per item), topics (topic changes only), all activity
+// (J147: full text plus what the others hide: upkeep, Thoughts' automatic notices, ✓ / ×, board bookkeeping).
+const SVIEWS = ["full", "compact", "topics", "all"];
+const SVIEW_LABEL = { full: "full", compact: "compact", topics: "topics", all: "all activity" };
 let sview = "full";
 let streamArg = "";    // the /stream filter as typed ("" = everything)
 let sfCache = { k: null, f: null };
 const streamFilter = (a, minute) => { const k = a + "|" + minute; if (sfCache.k !== k) sfCache = { k, f: parseStreamFilter(a) }; return sfCache.f; }; // (re-parsed each minute: "3h" slides)
 // The timeline, rebuilt only when something arrived (typing must stay fast).
 let streamCache = { key: "", items: [] };
-function streamItems(raw) {
+function streamItems(raw, all = sview === "all") {
   const msgs = messages[room] || [], acts = activity[room] || [], ch = changes[room] || [], ps = board.room === room ? board.projects : [];
-  const key = `${room}|${msgs.length}|${acts.length}|${ch.length}|${raw}|${ps.map((p) => p.id + p.status + p.members.join()).join()}`;
-  if (streamCache.key !== key) streamCache = { key, items: buildStream({ msgs, events: acts, changes: ch, projects: ps, raw }) };
+  const key = `${room}|${msgs.length}|${acts.length}|${ch.length}|${raw}|${all}|${ps.map((p) => p.id + p.status + p.members.join()).join()}`;
+  if (streamCache.key !== key) streamCache = { key, items: buildStream({ msgs, events: acts, changes: ch, projects: ps, raw, all }) };
   return streamCache.items;
 }
 // What the pane shows: "stream" | "help".
@@ -440,7 +443,7 @@ function draw() {
     if (busy.length) { convo.push({ line: "", msg: null }); convo.push({ line: "   " + dim(busy.map((a) => `● ${a.display} working…`).join("   ")), msg: null }); }
   }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
-  rows[ruleAt] = rule(`stream ${room} · ${sview} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "")
+  rows[ruleAt] = rule(`stream ${room} · ${SVIEW_LABEL[sview] || sview} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "")
     + (sf.text ? ` · ${sf.text} (Esc clears)` : "") + (res?.unknown.length ? ` · ✗ no ${res.unknown.map((n) => "@" + n).join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
   if (!convo.length) shown.push({ line: dim(sf.text ? `  (nothing matches "${sf.text}" · Esc or /stream alone clears)` : sview === "topics" ? "  (no topic changes yet)" : "  (nothing yet)"), msg: null });
@@ -460,7 +463,7 @@ function draw() {
     : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : input ? (bs ? "  " + bs : "") + (note ? dim("  " + note) : "") : view === "help" ? dim("Esc back")
-    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full / compact / topics · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
+    : view === "board" ? boardHint : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full / compact / topics / all · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -864,7 +867,7 @@ function onKey(d) {
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
   if (d === "\x06") { if (view !== "stream") setView("stream"); sview = SVIEWS[(SVIEWS.indexOf(sview) + 1) % SVIEWS.length]; scroll = 0; lastConvoLen = 0; streamSel = null;
-    note = { full: "full text (^F: compact)", compact: "compact: one line each (^F: topics)", topics: "topics: topic changes only (^F: full text)" }[sview]; return render(); } // Ctrl+F
+    note = { full: "full text (^F: compact)", compact: "compact: one line each (^F: topics)", topics: "topics: topic changes only (^F: all activity)", all: "all activity: also upkeep, Thoughts' notices, ✓ / ×, board bookkeeping (^F: full text)" }[sview]; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {

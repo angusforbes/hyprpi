@@ -550,7 +550,7 @@ function render() {
     // Which entries show and how: lib/thoughts-lines.mjs (the same rule as the phone app).
     for (const [ei, e] of TH.entries.entries()) {
       const kind = threadKind(e);
-      if (kind === "hidden") continue;
+      if (kind === "hidden" || kind === "quiet") continue; // J147: quiet = hyprpi's automatic notes (in the Stream's all-activity view)
       if (kind === "answer") {
         const { to, raw, said, cutOld } = answerLine(e);
         const k2 = items.push({ copy: `to ${to}: ${raw}` }) - 1;
