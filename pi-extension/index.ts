@@ -16,6 +16,8 @@ import { ROOT } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { laterModes } from "./later.ts";
 import { upkeepAgent } from "./upkeep.ts";
+import { codeVersion } from "../lib/codever.mjs";
+import { loadPolicy } from "../lib/policy.mjs";
 import { orchAgent } from "./orch.ts";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
@@ -35,6 +37,20 @@ export default function hyprpi(pi: ExtensionAPI) {
 
   const idle = () => { try { return ctxRef?.isIdle?.() ?? true; } catch { return true; } };
   upkeepAgent(pi, { call: (m: string, p: any = {}) => call(m, p), agentId: AGENT_ID, idle }); // J125 upkeep: pruning, compact reminder, upkeep_ready
+  // J135: the fingerprint of the code this window loaded (computed on every load and reload of the extension).
+  let LOADED_CODE = ""; try { LOADED_CODE = codeVersion("agent", loadPolicy().upkeep?.autoReload?.watch || []); } catch { /* unknown */ }
+  let reloadReq = false, reloadTimer: ReturnType<typeof setInterval> | null = null;
+  function armReload() {
+    if (!reloadTimer) reloadTimer = setInterval(() => {
+      if (!reloadReq || !idle() || held.length) return;
+      reloadReq = false; if (reloadTimer) { clearInterval(reloadTimer); reloadTimer = null; }
+      try { pi.sendUserMessage("/hyprpi-reload", { expandPromptTemplates: true } as any); } catch { reloadReq = true; armReload(); }
+    }, 1500);
+  }
+  pi.registerCommand("hyprpi-reload", {
+    description: "Reload this window's pi runtime (hyprpi upkeep does this by itself when the agent-side code changed)",
+    handler: async (_a: any, ctx: any) => { ctxRef?.ui?.notify?.("🧹 reloading: hyprpi code changed", "info"); await ctx.reload(); },
+  });
   // J130 orchestration primitives (spawn_agent, report_to_parent, wait_report, close_agent, …; budgets).
   const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef });
   // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
@@ -131,6 +147,10 @@ export default function hyprpi(pi: ExtensionAPI) {
           `(Answer in the room with room_reply using delivery_id "${d.delivery_id}" — once. The history is context, not new requests.)`,
         details: { delivery_id: d.delivery_id, room: d.room, seq: d.seq, text: d.text },
       });
+    } else if (event === "reload") {
+      // J135: upkeep (the daemon) asks for a reload because the agent-side code changed. Only when idle with
+      // nothing held; never mid-turn (it waits for the turn to end).
+      reloadReq = true; armReload();
     } else if (event === "restart") {
       restartReq = { compact: d?.compact !== false, by: String(d?.by || "") };
       ctxRef?.ui?.notify?.(`🔄 restart asked${restartReq.by && restartReq.by !== "itself" ? ` by ${restartReq.by}` : ""}${idle() ? "" : "; it waits until this turn ends"}${restartReq.compact ? " (compacting first)" : ""}`, "info");
@@ -235,6 +255,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     const ws = Number(process.env.HYPRPI_WORKSPACE);
     return conn!.call("agent.hello", {
       agent_id: AGENT_ID, pid: process.pid, session, cwd: ctx?.cwd || process.cwd(), acks: true, // J64 delivery receipts
+      code: LOADED_CODE, // J135: the code this window loaded (lib/codever.mjs); the daemon reloads it when stale
       model: ctx?.model?.id || "", thinking: safe(() => pi.getThinkingLevel()) || "",
       name: safe(() => pi.getSessionName()) || process.env.HYPRPI_NAME || "",
       icon: process.env.HYPRPI_ICON || undefined, // open_agent's icon (J15); used only by a new agent
