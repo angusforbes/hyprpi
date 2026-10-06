@@ -15,7 +15,7 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const HOME = "/home/agf";
 const IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/i;
-const SHARE_MAX = 100e6; // more than this in one Share: links instead of the files
+import { MAX as SHARE_MAX, loadBlob, shareFiles, asFile, download, mb } from "/share.mjs"; // J173: real files to the share sheet (MAX: in one Share, held in memory)
 const fileHref = (p) => "/file?path=" + encodeURIComponent(p);
 const tilde = (p) => String(p || "").replace(HOME, "~");
 // J151: list rows show a small cached WebP made on the laptop (not the full image); v = the image's mtime,
@@ -97,6 +97,7 @@ function render() {
   const bar = selecting || sel.size > 0;
   $("#fnormal").hidden = bar; $("#fselbar").hidden = !bar;
   $("#fshare").disabled = $("#fthink").disabled = !sel.size;
+  shareProgress();
 }
 function rowHtml(e, sub) {
   return `<div class="fe${e.dir ? " dir" : ""}${sel.has(e.path) ? " on" : ""}" data-p="${esc(e.path)}"${sub ? ' data-ev="1"' : ""}>
@@ -139,7 +140,8 @@ addEventListener("popstate", (e) => { if (e.state?.fv) return; const d = e.state
 function select(e, on) {
   if (!on) { sel.delete(e.path); return; }
   const s = { entry: e, blob: null };
-  s.loading = e.size <= SHARE_MAX ? fetch(fileHref(e.path)).then((r) => r.ok ? r.blob() : null).then((b) => { s.blob = b; }).catch(() => {}) : Promise.resolve();
+  s.got = 0;
+  s.loading = e.size <= SHARE_MAX ? loadBlob(fileHref(e.path), { onProgress: (got) => { s.got = got; shareProgress(); } }).then((b) => { s.blob = b; shareProgress(); }).catch(() => { s.failed = true; shareProgress(); }) : Promise.resolve();
   sel.set(e.path, s);
 }
 $("#flist").addEventListener("click", (ev) => {
@@ -181,23 +183,26 @@ $("#fcount").addEventListener("click", () => {
 });
 
 // ---- Share (several files) ---------------------------------------------------------------------
+// J173: the Share button shows how much of the selection has been fetched (the files have to be here
+// before the tap: iOS opens the sheet only inside it). Then the files go as Files with their real types;
+// if iOS refuses them, or they're over the limit together, they download instead, with a note.
+function shareProgress() {
+  const items = [...sel.values()], b = $("#fshare");
+  const total = items.reduce((n, s) => n + s.entry.size, 0), got = items.reduce((n, s) => n + (s.blob ? s.entry.size : s.got || 0), 0);
+  const busy = items.length && total <= SHARE_MAX && items.some((s) => !s.blob && !s.failed) && total > 3e6;
+  b.textContent = busy ? `Share ${Math.floor(got / total * 100)}%` : "Share"; b.classList.toggle("loading", !!busy);
+}
 $("#fshare").addEventListener("click", async () => {
   const items = [...sel.values()]; if (!items.length) return note("Select some files first");
   const total = items.reduce((n, s) => n + s.entry.size, 0);
-  const ready = items.every((s) => s.blob);
+  const dlAll = (why) => { for (const s of items) download(s.entry.path, s.entry.name); note(why); };
+  if (!navigator.share) return dlAll(items.length > 1 ? `Downloading ${items.length} files` : "Downloading");
+  if (total > SHARE_MAX) return dlAll(`Over ${mb(SHARE_MAX)} together: too big for the share sheet, so ${items.length > 1 ? "they're" : "it's"} downloading instead`);
+  if (!items.every((s) => s.blob)) { const got = items.reduce((n, s) => n + (s.blob ? s.entry.size : s.got || 0), 0); return note(`Preparing the files (${Math.floor(got / total * 100)}% of ${mb(total)})… tap Share again when it's ready`); }
   try {
-    if (!navigator.share) throw Object.assign(new Error("no share sheet here"), { name: "NoShare" });
-    if (ready && total <= SHARE_MAX) {
-      const files = items.map((s) => new File([s.blob], s.entry.name, { type: s.blob.type || "application/octet-stream" }));
-      if (navigator.canShare?.({ files })) { await navigator.share({ files }); return; }
-    } else if (!ready && total <= SHARE_MAX) { note("Still loading the files… tap Share again in a moment"); return; }
-    // too big (or the phone won't take these files): their links, one per line
-    await navigator.share({ text: items.map((s) => location.origin + fileHref(s.entry.path)).join("\n"), title: `${items.length} files` });
-  } catch (e) {
-    if (e.name === "AbortError") return;
-    if (e.name === "NoShare") { for (const s of items) { const a = document.createElement("a"); a.href = fileHref(s.entry.path); a.download = s.entry.name; a.click(); } return; }
-    note(e.name === "NotAllowedError" ? "Tap Share again" : "✗ " + e.message);
-  }
+    const r = await shareFiles(items.map((s) => asFile(s.blob, s.entry.name)), items.length > 1 ? `${items.length} files` : items[0].entry.name);
+    if (r === "refused") dlAll("iOS won't share these files from a web app, so they're downloading instead");
+  } catch (e) { note(e.name === "NotAllowedError" ? "Tap Share again" : "✗ " + e.message); }
 });
 
 // ---- sheets ------------------------------------------------------------------------------------

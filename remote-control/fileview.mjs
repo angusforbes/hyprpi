@@ -14,7 +14,7 @@ const HOME = "/home/agf";
 const IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/i;
 const MDX = /\.(md|markdown)$/i;
 const PDF = /\.pdf$/i;
-const MAX_BLOB = 60e6; // larger files: Share sends the link instead
+import { MAX as MAX_BLOB, loadBlob, shareFiles, asFile, download, mb } from "/share.mjs"; // J173: real files to the share sheet
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let el = null, depth = 0, cur = null, gen = 0;
@@ -100,14 +100,16 @@ async function show(href) {
   // The file itself, fetched now so Share has it at the tap (iOS needs the share in the gesture).
   const c = cur;
   // (Markdown: /file serves the viewer page, so the text itself comes with raw=1.)
-  c.ready = fetch(MDX.test(p) ? url + "&raw=1" : url, { cache: "no-store" }).then(async (r) => {
-    if (!r.ok) throw new Error(r.status === 404 ? "not found, or not allowed" : r.statusText);
-    const n = +r.headers.get("content-length") || 0;
-    if (n > MAX_BLOB) { r.body?.cancel?.(); return null; }
-    if (MDX.test(p)) return new Blob([await r.text()], { type: "text/markdown" });
-    return r.blob();
-  });
-  c.ready.then((b) => { c.blob = b; }, () => {});
+  // J173: with progress on the Share button for a big file (iOS only opens the sheet inside the tap, so
+  // the file has to be here before it); a file over MAX_BLOB isn't held (Share downloads it instead).
+  const shareBtn = el.querySelector("#fvshare");
+  shareBtn.textContent = "Share"; shareBtn.classList.remove("loading");
+  c.loaded = 0; c.total = 0;
+  c.ready = loadBlob(MDX.test(p) ? url + "&raw=1" : url, { onProgress: (got, total) => {
+    c.loaded = got; c.total = total;
+    if (cur === c && total > 3e6) { shareBtn.classList.add("loading"); shareBtn.textContent = `Share ${Math.floor(got / total * 100)}%`; }
+  } });
+  c.ready.then((b) => { c.blob = b; c.tooBig = b === null; if (cur === c) { shareBtn.textContent = "Share"; shareBtn.classList.remove("loading"); if (c.waiting) { c.waiting = false; note("Ready: tap Share"); } } }, () => { if (cur === c) { shareBtn.textContent = "Share"; shareBtn.classList.remove("loading"); } });
 
   if (IMG.test(p)) return showImage(body, url, my);
   if (MDX.test(p) || PDF.test(p)) {
@@ -161,23 +163,17 @@ function showImage(body, url, my) {
   body.addEventListener("dblclick", (e) => zoom(z > 1.01 ? 1 : 2.5, e.clientX, e.clientY)); // a mouse
 }
 
+// Share (J173): the file itself, as a File with its real type, so iOS offers AirDrop, Messages, Save
+// Video / Save Image… If it isn't here yet: say so (the tap can't wait for it). Too big to hold, or iOS
+// won't take that kind of file: download it instead, and say so. No share sheet at all (a desktop
+// browser): download.
 async function share() {
   const c = cur; if (!c) return;
-  const abs = new URL(c.url, location.href).href;
+  if (!navigator.share) return download(c.path, c.name);
+  if (c.tooBig) { download(c.path, c.name); return note(`Over ${mb(MAX_BLOB)}: too big to hand to the share sheet, so it's downloading instead`); }
+  if (!c.blob) { c.waiting = true; return note(c.total ? `Preparing the file (${Math.floor(c.loaded / c.total * 100)}% of ${mb(c.total)})… tap Share again when it's ready` : "Preparing the file… tap Share again in a moment"); }
   try {
-    if (navigator.share) {
-      const b = c.blob; // already here in nearly every case; waiting would lose the tap on iOS
-      if (b) {
-        const f = new File([b], c.name, { type: b.type || "application/octet-stream" });
-        if (navigator.canShare?.({ files: [f] })) { await navigator.share({ files: [f], title: c.name }); return; }
-      }
-      await navigator.share({ url: abs, title: c.name });
-      return;
-    }
-  } catch (e) {
-    if (e.name === "AbortError") return; // he closed the sheet
-    note(e.name === "NotAllowedError" ? "Tap Share again" : "✗ " + e.message); return;
-  }
-  // No share sheet (a desktop browser): download it.
-  const a = document.createElement("a"); a.href = c.url; a.download = c.name; document.body.append(a); a.click(); a.remove();
+    const r = await shareFiles([asFile(c.blob, c.name)], c.name);
+    if (r === "refused") { download(c.path, c.name); note("iOS won't share this kind of file from a web app, so it's downloading instead"); }
+  } catch (e) { note(e.name === "NotAllowedError" ? "Tap Share again" : "✗ " + e.message); }
 }

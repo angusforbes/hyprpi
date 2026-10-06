@@ -388,13 +388,16 @@ async function body(req, max = 1e6) {
   let s = ""; for await (const c of req) { s += c; if (s.length > max) throw new Error("too large"); }
   return s ? JSON.parse(s) : {};
 }
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8" };
-const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/viewer.js": "viewer.js", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png",
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8",
+  // J173: media and documents get their real types (an mp4 used to go out as text/plain, so iOS refused it as a file to share)
+  ".mp4": "video/mp4", ".m4v": "video/x-m4v", ".mov": "video/quicktime", ".webm": "video/webm", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".wav": "audio/wav", ".ogg": "audio/ogg", ".flac": "audio/flac",
+  ".heic": "image/heic", ".avif": "image/avif", ".bmp": "image/bmp", ".csv": "text/csv; charset=utf-8", ".zip": "application/zip" };
+const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/share.mjs": "share.mjs", "/viewer.js": "viewer.js", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png",
   // the Files app (J74): its own page, manifest and icon, so it installs as a second Home Screen app
   "/files/": "files.html", "/files": "files.html", "/files.js": "files.js", "/files.css": "files.css", "/fileview.mjs": "fileview.mjs", "/files-manifest.webmanifest": "files-manifest.webmanifest",
   "/files-icon-180.png": "files-icon-180.png", "/files-icon-192.png": "files-icon-192.png", "/files-icon-512.png": "files-icon-512.png", "/files-icon-maskable-512.png": "files-icon-maskable-512.png" };
 
-function serveFile(res, file, type, user = false) { // user: a file from /file (not the app's own)
+function serveFile(res, file, type, user = false, attach = "") { // user: a file from /file (not the app's own); attach: a download (J173)
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) return json(res, 404, { error: "not found" });
     const ext = path.extname(file).toLowerCase();
@@ -404,7 +407,8 @@ function serveFile(res, file, type, user = false) { // user: a file from /file (
     // The app's own pages may be framed only by the app itself (J141: Fils frames /files/; Pocket's
     // review: no other site Angus visits on the phone may frame them, a clickjacking risk).
     const extra = !user ? (ext === ".html" ? { "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN" } : {}) : { "x-content-type-options": "nosniff", ...(/^\.(png|jpe?g|gif|webp|pdf)$/.test(ext) ? {} : { "content-security-policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self'" }) };
-    res.writeHead(200, { "content-type": type || TYPES[ext] || "text/plain; charset=utf-8", "content-length": st.size, "cache-control": "no-cache", ...extra });
+    const disp = attach ? { "content-disposition": `attachment; filename="${attach.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(attach)}` } : {};
+    res.writeHead(200, { "content-type": type || TYPES[ext] || "text/plain; charset=utf-8", "content-length": st.size, "cache-control": "no-cache", ...extra, ...disp });
     const rs = fs.createReadStream(file);
     rs.on("error", () => res.destroy()); // gone or unreadable after stat: drop the response, don't crash
     rs.pipe(res);
@@ -588,8 +592,8 @@ const server = http.createServer(async (req, res) => {
       if (!real) return json(res, 404, { error: "not found or not allowed" });
       // A Markdown file opens rendered (J56): the viewer page, which fetches the text with raw=1
       // (the same guard) and draws it. raw=1 gives the text itself.
-      if (/\.(md|markdown)$/i.test(real) && url.searchParams.get("raw") !== "1") return serveFile(res, path.join(HERE, "viewer.html"));
-      return serveFile(res, real, undefined, true);
+      if (/\.(md|markdown)$/i.test(real) && url.searchParams.get("raw") !== "1" && url.searchParams.get("dl") !== "1") return serveFile(res, path.join(HERE, "viewer.html"));
+      return serveFile(res, real, undefined, true, url.searchParams.get("dl") === "1" ? path.basename(real) : ""); // dl=1: a download (J173's share fallback)
     }
     // [[wiki links]] in Obsidian notes (J56): the note (or embedded file) of that name in the vault,
     // nearest to the note it's linked from; then /file as usual (same guard).
