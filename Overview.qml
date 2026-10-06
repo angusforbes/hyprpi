@@ -1125,7 +1125,7 @@ Item {
 
                         Rectangle {
                           anchors { left: parent.left; bottom: parent.bottom; margins: 3 }
-                          visible: parent.height > 34
+                          visible: parent.height > 40
                           width: Math.min(parent.width - 6, appLabel.implicitWidth + 8)
                           height: appLabel.implicitHeight + 2
                           radius: 3
@@ -1138,7 +1138,7 @@ Item {
                             elide: Text.ElideRight
                             color: root.fg
                             font.family: root.fontFamily
-                            font.pixelSize: 10
+                            font.pixelSize: 14 // the window label (lower left of each window); was 10 (Angus: "bigger")
                           }
                         }
 
