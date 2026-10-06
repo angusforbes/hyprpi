@@ -22,11 +22,13 @@ let el = null, depth = 0, cur = null, gen = 0;
 function build() {
   el = document.createElement("div");
   el.id = "fv"; el.hidden = true;
-  el.innerHTML = `<header id="fvbar"><button id="fvback" type="button" title="back" hidden>‹</button><div id="fvtitle"><div id="fvname"></div><div id="fvdir"></div></div><button id="fvshare" type="button" title="share">Share</button><button id="fvx" type="button" title="close" aria-label="close">✕</button></header><div id="fvbody"></div><div id="fvnote" hidden></div>`;
+  el.innerHTML = `<header id="fvbar"><button id="fvback" type="button" title="back" hidden>‹</button><div id="fvtitle"><div id="fvname"></div><div id="fvdir"></div></div><button id="fvsend" type="button" title="send to Thoughts or an agent" hidden>Send…</button><button id="fvshare" type="button" title="share">Share</button><button id="fvx" type="button" title="close" aria-label="close">✕</button></header><div id="fvbody"></div><div id="fvnote" hidden></div>`;
   document.body.append(el);
   el.querySelector("#fvx").addEventListener("click", closeAll);
   el.querySelector("#fvback").addEventListener("click", () => history.back());
   el.querySelector("#fvshare").addEventListener("click", share);
+  el.querySelector("#fvsend").addEventListener("click", () => { if (cur?.path && sendHandler) sendHandler(cur.path); });
+  el.querySelector("#fvsend").hidden = !sendHandler;
   addEventListener("popstate", (e) => {
     const d = e.state?.fv || 0;
     if (!d) { depth = 0; hide(); return; }
@@ -67,6 +69,11 @@ function hide() { const was = !el.hidden; gen++; el.hidden = true; el.querySelec
 // J144: told when the viewer closes (✕, Esc or a back-swipe all end here), so a caller can return the
 // user to where the file was opened from.
 const closers = new Set();
+// J155 (Angus: "i should be able to send... and share a single file from within the file once i've
+// opened it"): a page that can send files (the Files app and π's Fils tab) registers a handler; the
+// viewer then shows Send… beside Share for the open file. Elsewhere (the π overlay) there is none.
+let sendHandler = null;
+export function onSend(f) { sendHandler = f; if (el) el.querySelector("#fvsend").hidden = !f; }
 export function onClose(f) { closers.add(f); return () => closers.delete(f); }
 
 const pathOf = (u) => { try { return new URL(u, location.href).searchParams.get("path") || ""; } catch { return ""; } };

@@ -68,3 +68,7 @@ body.files .fto1.on { background: var(--accent); color: #fff !important; border-
 .fbi .n1 { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fbi .n2 { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 body.files .fbrm { width: 34px; padding: 0; color: var(--fg); }
+
+/* J155: the Send… sheet can open over the file viewer (#fv, z-index 50) */
+#fsheet { z-index: 60; }
+#fnote { z-index: 65; }

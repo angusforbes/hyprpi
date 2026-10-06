@@ -3,7 +3,7 @@
 // several and Share them (the iOS share sheet: Messages, Mail/Gmail, WhatsApp, Save to Files/Photos),
 // upload phone files into ~/Phone (the only place it can write), and send files with a short note to
 // a world's Thoughts (📱). iOS doesn't let web apps appear in the Share sheet, so sends start here.
-import { install as installViewer, open as openViewer, onClose as onViewerClose } from "/fileview.mjs";
+import { install as installViewer, open as openViewer, onClose as onViewerClose, onSend as onViewerSend } from "/fileview.mjs";
 // J141: the same app inside the π app's "Fils" tab (/files/?embed=1, an iframe). Only then: "Send…"
 // to Thoughts or any live agent, the world from π's top bar, and π can ask it to open a file. The
 // standalone Files app (no ?embed) is unchanged.
@@ -218,7 +218,8 @@ $("#fhelp").addEventListener("click", () => {
 
 // ---- → Thoughts -------------------------------------------------------------------------------
 // J141 (embed): "Send…": Thoughts of a world, or any live agent (grouped by world, this one first).
-function sendSheet(paths) {
+// fromViewer (J155): sending the one file open in the viewer leaves the basket as it is.
+function sendSheet(paths, { fromViewer = false } = {}) {
   const byWorld = new Map();
   for (const a of agents) (byWorld.get(a.room) || byWorld.set(a.room, []).get(a.room)).push(a);
   const order = [...byWorld.keys()].sort((x, y) => (x === lastWorld ? -1 : y === lastWorld ? 1 : x.localeCompare(y)));
@@ -237,7 +238,7 @@ function sendSheet(paths) {
       const noteText = p.querySelector("#ftnote").value, tw = to.startsWith("thoughts:") ? to.slice(9) : "";
       const j = tw ? await postJSON("/api/files/thoughts", { world: tw, note: noteText, paths }) : await postJSON("/api/files/agent", { agent: to, note: noteText, paths });
       sheet(""); note(`Sent to ${tw ? "Thoughts-" + tw : j.name || "the agent"} ✓`);
-      clearSelection(); // J148: a successful send empties the basket (Share keeps it)
+      if (!fromViewer) clearSelection(); // J148: a successful send empties the basket (Share keeps it); J155: a viewer send doesn't touch it
     } catch (err) { e.target.disabled = false; note("✗ " + err.message); }
   };
 }
@@ -290,6 +291,7 @@ $("#ffile").addEventListener("change", async (ev) => {
 });
 
 installViewer();
+onViewerSend((p) => sendSheet([p], { fromViewer: true })); // J155: Send… in the viewer, for the open file
 $("#fthink").textContent = "Send…"; // J143: both modes pick any Thoughts or agent
 if (EMBED) {
   $("#fthink").textContent = "Send…"; // (also in the standalone app, below)
