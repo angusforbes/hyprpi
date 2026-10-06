@@ -1,5 +1,5 @@
 /**
- * J125 upkeep, the agent side (strategy: ~/.config/hyprpi/upkeep.jsonc, lib/upkeep.mjs).
+ * J125 upkeep, the agent side (settings: ~/.config/hyprpi/hyprpi.jsonc, section "upkeep"; lib/policy.mjs).
  *
  * 1. Pruning: pi's "context" hook transforms the messages of each model request (pi restores them, so the
  *    session file keeps everything). Older large images and big tool outputs become a stub with a

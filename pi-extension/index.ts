@@ -10,6 +10,7 @@ import { UserMessageComponent, getMarkdownTheme, type ExtensionAPI } from "@eare
 import { Type } from "typebox";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
 import { ROOT } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
@@ -826,12 +827,24 @@ function safe<T>(f: () => T): T | undefined { try { return f(); } catch { return
 // ends (never steered in). Not a registered command, so it isn't in pi's command list. Saved in the
 // session as a custom message "hyprpi-ignore" (hyprpi's search finds it; topics and did lines skip it).
 const IGNORE = /^\/ignore(?:\s|$)/;
+// J132 (Angus: "if I type /ignore and then paste a screenshot … I still want to be able to Ctrl+click it to
+// open it, but other than that, yes ignore it"): for DISPLAY only, an existing file path in an /ignore line
+// (a pasted screenshot: /tmp/pi-clipboard-….png, ~/Screenshots/…) becomes a Markdown link to file://…, which
+// pi draws as a clickable hyperlink. The stored line (what the model sees) stays exactly as typed.
+function linkPaths(text: string): string {
+  return text.replace(/(^|\s)((?:~\/|\/)[^\s]+)/g, (all, pre, p) => {
+    const abs = p.startsWith("~/") ? (process.env.HOME || "") + p.slice(1) : p;
+    try { if (!fs.statSync(abs).isFile()) return all; } catch { return all; }
+    const shown = p.replace(/([\\`*_[\]<>])/g, "\\$1");
+    return `${pre}[${shown}](<file://${abs.split("/").map(encodeURIComponent).join("/")}>)`;
+  });
+}
 function ignoreNotes(pi: ExtensionAPI) {
   const held: string[] = [];
   let idle = () => true;
   const add = (text: string) => pi.sendMessage({ customType: "hyprpi-ignore", content: text, display: true }, { triggerTurn: false });
   const flush = () => { while (held.length) add(held.shift()!); };
-  pi.registerMessageRenderer("hyprpi-ignore", (m: any) => new UserMessageComponent(typeof m.content === "string" ? m.content : (m.content || []).map((c: any) => c.text || "").join(""), getMarkdownTheme()));
+  pi.registerMessageRenderer("hyprpi-ignore", (m: any) => new UserMessageComponent(linkPaths(typeof m.content === "string" ? m.content : (m.content || []).map((c: any) => c.text || "").join("")), getMarkdownTheme()));
   pi.on("input", (e: any, ctx: any) => {
     const text = String(e?.text ?? "").trim();
     if (!IGNORE.test(text)) return { action: "continue" };
