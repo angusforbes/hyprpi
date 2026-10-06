@@ -20,7 +20,7 @@ const tilde = (p) => String(p || "").replace(home, "~");
 // A turn starts with input from outside: a user message, or a displayed custom message from hyprpi.
 function turnStart(e) {
   if (e.type === "message" && e.message?.role === "user") return true;
-  if (e.type === "custom_message" && e.display !== false && !/^hyprpi-(talk-reply|note|activity)$/.test(e.customType || "")) return true;
+  if (e.type === "custom_message" && e.display !== false && !/^hyprpi-(talk-reply|note|activity|phone-cmd|ignore)$/.test(e.customType || "")) return true;
   return false;
 }
 const textOf = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.filter((x) => x.type === "text").map((x) => x.text).join("\n") : "";
