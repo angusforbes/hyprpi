@@ -294,6 +294,7 @@ function listen() {
   es.addEventListener("board", (ev) => { const d = JSON.parse(ev.data); if (d.room) boardSoon(d.room); });
   es.addEventListener("thoughts", (ev) => {
     const d = JSON.parse(ev.data), c = cached(d.room);
+    if (d.reset) { c.entries = []; save(d.room); if (d.room === world) refreshAll(); } // J116: a fresh Thoughts session
     if (d.entry) { c.entries.push(d.entry); save(d.room); if (d.room === world) append(d.entry); }
     if (d.busy !== undefined) { c.busy = !!d.busy; if (d.room === world) { busy = c.busy; renderTop(); } }
   });

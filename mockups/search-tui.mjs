@@ -716,7 +716,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
-        else if (ev === "thoughts" && data?.room === room) { if (data.entry) { TH.entries.push(data.entry); TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
+        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; TH.scroll = 0; bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });

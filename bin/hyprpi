@@ -21,6 +21,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi list [--json]        live agents and rooms
   hyprpi post [--room R] TEXT post to a room as Angus (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
+  hyprpi thoughts new W [--handoff FILE]   a fresh session for world W's Thoughts (the old one archived, never deleted)
   hyprpi thoughts [--room R] [--via voice] TEXT   a message to a world's Thoughts (default: the world you're on); --via voice marks it 🎤 (dictation)
   hyprpi dictate [--to hp:ID|proj:NAME] TEXT   a dictation: the focused world's Thoughts (🎤), or the agent /
                               project it starts with ("Knock, …", "project system, …")
@@ -403,6 +404,13 @@ const commands = {
   },
   // J98: a message to a world's Thoughts (default: the world you're on), e.g. dictation: --via voice marks it 🎤.
   thoughts: async () => {
+    // J116: hyprpi thoughts new W [--handoff FILE]: a fresh session for world W's Thoughts (old one archived).
+    if (args[0] === "new" && /^[A-Za-z][A-Za-z0-9]*$/.test(args[1] || "")) {
+      const handoff = opt("--handoff") || "";
+      const r = await request("thoughts.fresh", { room: args[1].toUpperCase(), ...(args.includes("--force") ? { force: true } : {}), ...(handoff ? { handoff: path.resolve(handoff.replace(/^~(?=\/)/, process.env.HOME)) } : {}) }, { timeoutMs: 20000 });
+      console.log(`Thoughts-${r.room}: new session; ${r.files} file(s) archived in ${r.archived}${r.handoff ? `; reading ${r.handoff}` : ""}`);
+      return;
+    }
     const room = opt("--room"), via = opt("--via") || "";
     const text = args.join(" ");
     if (!text.trim()) die("usage: hyprpi thoughts [--room R] [--via voice|phone] TEXT");
