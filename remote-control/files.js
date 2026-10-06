@@ -195,7 +195,13 @@ function shareProgress() {
 $("#fshare").addEventListener("click", async () => {
   const items = [...sel.values()]; if (!items.length) return note("Select some files first");
   const total = items.reduce((n, s) => n + s.entry.size, 0);
-  const dlAll = (why) => { for (const s of items) download(s.entry.path, s.entry.name); note(why); };
+  // J175: a download opens in a new window (so the app stays); the phone allows only one window per tap,
+  // so with several files only the first downloads and the note says what to do with the rest (Remote).
+  const dlAll = (why) => {
+    if (!navigator.share || items.length === 1) { for (const s of items) download(s.entry.path, s.entry.name); return note(why); }
+    download(items[0].entry.path, items[0].entry.name);
+    note(`${why} (${items[0].entry.name} now; the phone allows one download per tap, so open the other ${items.length - 1} and Share or download them one at a time)`, 9000);
+  };
   if (!navigator.share) return dlAll(items.length > 1 ? `Downloading ${items.length} files` : "Downloading");
   if (total > SHARE_MAX) return dlAll(`Over ${mb(SHARE_MAX)} together: too big for the share sheet, so ${items.length > 1 ? "they're" : "it's"} downloading instead`);
   if (!items.every((s) => s.blob)) { const got = items.reduce((n, s) => n + (s.blob ? s.entry.size : s.got || 0), 0); return note(`Preparing the files (${Math.floor(got / total * 100)}% of ${mb(total)})… tap Share again when it's ready`); }

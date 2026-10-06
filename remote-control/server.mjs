@@ -397,6 +397,17 @@ const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app
   "/files/": "files.html", "/files": "files.html", "/files.js": "files.js", "/files.css": "files.css", "/fileview.mjs": "fileview.mjs", "/files-manifest.webmanifest": "files-manifest.webmanifest",
   "/files-icon-180.png": "files-icon-180.png", "/files-icon-192.png": "files-icon-192.png", "/files-icon-512.png": "files-icon-512.png", "/files-icon-maskable-512.png": "files-icon-maskable-512.png" };
 
+// "bytes=a-b" / "a-" / "-n" → [start, end] (inclusive), "bad" when unsatisfiable, null when absent or
+// not a single plain range (then the whole file).
+function rangeOf(h, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(h || "").trim());
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  let a, b;
+  if (m[1] === "") { const n = Number(m[2]); if (!n) return "bad"; a = Math.max(0, size - n); b = size - 1; }
+  else { a = Number(m[1]); b = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1); }
+  if (!(a <= b) || a >= size) return "bad";
+  return [a, b];
+}
 function serveFile(res, file, type, user = false, attach = "") { // user: a file from /file (not the app's own); attach: a download (J173)
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) return json(res, 404, { error: "not found" });
@@ -408,7 +419,18 @@ function serveFile(res, file, type, user = false, attach = "") { // user: a file
     // review: no other site Angus visits on the phone may frame them, a clickjacking risk).
     const extra = !user ? (ext === ".html" ? { "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN" } : {}) : { "x-content-type-options": "nosniff", ...(/^\.(png|jpe?g|gif|webp|pdf)$/.test(ext) ? {} : { "content-security-policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self'" }) };
     const disp = attach ? { "content-disposition": `attachment; filename="${attach.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(attach)}` } : {};
-    res.writeHead(200, { "content-type": type || TYPES[ext] || "text/plain; charset=utf-8", "content-length": st.size, "cache-control": "no-cache", ...extra, ...disp });
+    const head = { "content-type": type || TYPES[ext] || "text/plain; charset=utf-8", "cache-control": "no-cache", ...extra, ...disp };
+    // J175: byte ranges for a user's file (iOS plays <video> only from a server that answers Range with 206;
+    // scrubbing and picture-in-picture fetch pieces). One range only; the path was checked before this.
+    const range = user ? rangeOf(res.req?.headers?.range, st.size) : null;
+    if (range === "bad") { res.writeHead(416, { "content-range": `bytes */${st.size}`, ...head }); return res.end(); }
+    if (range) {
+      res.writeHead(206, { ...head, "accept-ranges": "bytes", "content-range": `bytes ${range[0]}-${range[1]}/${st.size}`, "content-length": range[1] - range[0] + 1 });
+      if (res.req?.method === "HEAD") return res.end();
+      const rs = fs.createReadStream(file, { start: range[0], end: range[1] });
+      rs.on("error", () => res.destroy()); return rs.pipe(res);
+    }
+    res.writeHead(200, { ...head, "content-length": st.size, ...(user ? { "accept-ranges": "bytes" } : {}) });
     const rs = fs.createReadStream(file);
     rs.on("error", () => res.destroy()); // gone or unreadable after stat: drop the response, don't crash
     rs.pipe(res);

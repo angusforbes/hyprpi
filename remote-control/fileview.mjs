@@ -12,6 +12,7 @@
 // a download. The server's /file guard (J47, J69) decides what can be read, as before.
 const HOME = "/home/agf";
 const IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/i;
+const AUDIO = /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus)$/i, MEDIA = /\.(mp4|m4v|mov|webm|mp3|m4a|aac|wav|ogg|oga|flac|opus)$/i; // J175
 const MDX = /\.(md|markdown)$/i;
 const PDF = /\.pdf$/i;
 import { MAX as MAX_BLOB, loadBlob, shareFiles, asFile, download, mb } from "/share.mjs"; // J173: real files to the share sheet
@@ -105,11 +106,20 @@ async function show(href) {
   const shareBtn = el.querySelector("#fvshare");
   shareBtn.textContent = "Share"; shareBtn.classList.remove("loading");
   c.loaded = 0; c.total = 0;
-  c.ready = loadBlob(MDX.test(p) ? url + "&raw=1" : url, { onProgress: (got, total) => {
-    c.loaded = got; c.total = total;
-    if (cur === c && total > 3e6) { shareBtn.classList.add("loading"); shareBtn.textContent = `Share ${Math.floor(got / total * 100)}%`; }
-  } });
-  c.ready.then((b) => { c.blob = b; c.tooBig = b === null; if (cur === c) { shareBtn.textContent = "Share"; shareBtn.classList.remove("loading"); if (c.waiting) { c.waiting = false; note("Ready: tap Share"); } } }, () => { if (cur === c) { shareBtn.textContent = "Share"; shareBtn.classList.remove("loading"); } });
+  c.fetch = () => {
+    if (c.ready) return c.ready;
+    c.ready = loadBlob(MDX.test(p) ? url + "&raw=1" : url, { onProgress: (got, total) => {
+      c.loaded = got; c.total = total;
+      if (cur === c && total > 3e6) { shareBtn.classList.add("loading"); shareBtn.textContent = `Share ${Math.floor(got / total * 100)}%`; }
+    } });
+    c.ready.then((b) => { c.blob = b; c.tooBig = b === null; if (cur === c) { shareBtn.textContent = "Share"; shareBtn.classList.remove("loading"); if (c.waiting) { c.waiting = false; note("Ready: tap Share"); } } }, () => { if (cur === c) { shareBtn.textContent = "Share"; shareBtn.classList.remove("loading"); } });
+    return c.ready;
+  };
+  // J175: a video or audio file plays in the viewer, streamed in ranges; it isn't also downloaded whole for
+  // Share until that's wanted (the first Share tap, or once it has played a few seconds), so just looking
+  // at a big video doesn't fetch it twice.
+  if (MEDIA.test(p)) return showMedia(body, url, c, my);
+  c.fetch();
 
   if (IMG.test(p)) return showImage(body, url, my);
   if (MDX.test(p) || PDF.test(p)) {
@@ -124,8 +134,18 @@ async function show(href) {
     const head = new Uint8Array(await b.slice(0, 4096).arrayBuffer());
     if (!head.includes(0)) { body.className = "text"; body.innerHTML = `<pre>${esc(await b.text())}</pre>`; return; }
   }
-  body.innerHTML = `<div class="fvmsg">No preview for this kind of file.<br><br><a class="fvbtn" href="${esc(url)}" download="${esc(name)}">Download</a> <button class="fvbtn" type="button">Share</button></div>`;
+  body.innerHTML = `<div class="fvmsg">No preview for this kind of file.<br><br><a class="fvbtn" href="${esc(url)}&dl=1" download="${esc(name)}" target="_blank" rel="noopener">Download</a> <button class="fvbtn" type="button">Share</button></div>`;
   body.querySelector("button").addEventListener("click", share);
+}
+function showMedia(body, url, c, my) {
+  const audio = AUDIO.test(c.path);
+  body.className = "fvmedia" + (audio ? " audio" : "");
+  body.innerHTML = audio ? `<div class="fvaudio"><div class="fvaicon">🎵</div><audio controls preload="metadata"></audio></div>` : `<video controls playsinline preload="metadata"></video>`;
+  const m = body.querySelector(audio ? "audio" : "video");
+  m.addEventListener("error", () => { if (my === gen && m.error) fail("can't play this file here; Share or Send… still work"); });
+  // Share's whole-file fetch starts once he has watched a little (he may well share it), not at open.
+  m.addEventListener("timeupdate", () => { if (m.currentTime > 3 && !c.ready && my === gen) c.fetch(); });
+  m.src = url; // after the listeners
 }
 function fail(msg) { el.querySelector("#fvbody").innerHTML = `<div class="fvmsg err">✗ ${esc(msg)}</div>`; }
 
@@ -171,6 +191,7 @@ async function share() {
   const c = cur; if (!c) return;
   if (!navigator.share) return download(c.path, c.name);
   if (c.tooBig) { download(c.path, c.name); return note(`Over ${mb(MAX_BLOB)}: too big to hand to the share sheet, so it's downloading instead`); }
+  if (!c.ready) c.fetch(); // J175: media start their Share fetch on the first tap
   if (!c.blob) { c.waiting = true; return note(c.total ? `Preparing the file (${Math.floor(c.loaded / c.total * 100)}% of ${mb(c.total)})… tap Share again when it's ready` : "Preparing the file… tap Share again in a moment"); }
   try {
     const r = await shareFiles([asFile(c.blob, c.name)], c.name);

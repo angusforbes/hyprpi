@@ -286,3 +286,11 @@ ol.opts li { margin: 3px 0; }
 .fvbtn { display: inline-block; font: inherit; font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 6px 16px; text-decoration: none; }
 #fvnote { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 20px); transform: translateX(-50%); background: var(--faint); color: var(--fg); border-radius: 12px; padding: 6px 14px; font-size: 14px; }
 .fpair button.loading { opacity: .7; font-variant-numeric: tabular-nums; } /* J173: Share shows the fetch progress */
+
+/* J175: video and audio play in the viewer (the phone's own player) */
+#fvbody.fvmedia { display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; }
+#fvbody.fvmedia video { display: block; width: 100%; max-height: 100%; background: #000; }
+#fvbody.fvmedia.audio { background: var(--bg); }
+.fvaudio { display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%; padding: 0 16px; }
+.fvaicon { font-size: 64px; }
+.fvaudio audio { width: 100%; }

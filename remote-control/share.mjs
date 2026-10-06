@@ -48,7 +48,10 @@ export async function shareFiles(files, title) {
 }
 export const asFile = (blob, name) => new File([blob], name, { type: mimeFor(name) });
 
-// The fallback: a real download (the server sends Content-Disposition: attachment for dl=1).
+// The fallback: a real download (the server sends Content-Disposition: attachment for dl=1). In a NEW
+// window (J175, Angus: "once you download the movie … there's no way to go back to Fils or to the hyprpi
+// app … i need to kill it and reopen"): in the Home Screen app a download in the app's own page replaced
+// it with iOS's file view and no way back; a new window opens as a sheet with Done, and the app stays.
 export function download(path, name) {
-  const a = document.createElement("a"); a.href = fileUrl(path) + "&dl=1"; a.download = name || ""; document.body.append(a); a.click(); a.remove();
+  const a = document.createElement("a"); a.href = fileUrl(path) + "&dl=1"; a.download = name || ""; a.target = "_blank"; a.rel = "noopener"; document.body.append(a); a.click(); a.remove();
 }
