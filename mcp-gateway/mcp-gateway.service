@@ -1,0 +1,15 @@
+# systemd --user unit: mcp-gateway (one shared, lazily started copy of each stdio MCP server for all
+# pi agents). Install: `hyprpi mcp-gateway install` (see mcp-gateway/README.md). The %h path ties it
+# to the checkout at ~/Work/hyprpi; edit ExecStart if hyprpi lives elsewhere.
+[Unit]
+Description=mcp-gateway: one shared, lazily started copy of each stdio MCP server for all pi agents (hyprpi)
+After=default.target
+
+[Service]
+ExecStart=/usr/bin/env node %h/Work/hyprpi/mcp-gateway/gateway.mjs
+Restart=on-failure
+RestartSec=5
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

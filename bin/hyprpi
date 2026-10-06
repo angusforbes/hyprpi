@@ -30,6 +30,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
                               the workshop from now on (remembered)
   hyprpi focus AGENT          jump to an agent's window
   hyprpi restart AGENT [--no-compact] [--wait]   restart an agent's pi on the same session when it's idle
+  hyprpi mcp-gateway [install|status]   the MCP gateway (mcp-gateway/): install links + starts its systemd --user unit
                               (compacts first; frees memory, picks up the current pi); --wait prints before/after
   hyprpi finder [--list]      find an agent or project (the Omarchy menu; the finder add-on, SUPER+SHIFT+SPACE)
   hyprpi move AGENT... --to WS|WORLD   move agents' windows (focus stays); a world letter keeps
@@ -383,6 +384,44 @@ async function cmdName() {
 }
 
 const commands = {
+  // J129: the MCP gateway (mcp-gateway/, standalone; see its README). install links its unit into
+  // ~/.config/systemd/user and enables it (idempotent; never overwrites a different file); status shows it.
+  "mcp-gateway": async () => {
+    const unitSrc = path.join(ROOT, "mcp-gateway", "mcp-gateway.service");
+    const unitDir = path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config"), "systemd", "user");
+    const unit = path.join(unitDir, "mcp-gateway.service");
+    const sc = (...a) => spawnSync("systemctl", ["--user", ...a], { encoding: "utf8" });
+    const state = () => `${sc("is-active", "mcp-gateway.service").stdout.trim()}, ${sc("is-enabled", "mcp-gateway.service").stdout.trim()}`;
+    const sub = args[0] || "status";
+    if (sub === "install") {
+      let cur = null; try { cur = fs.lstatSync(unit); } catch { /* none */ }
+      if (cur) {
+        const target = cur.isSymbolicLink() ? path.resolve(unitDir, fs.readlinkSync(unit)) : "";
+        if (target !== unitSrc) die(`${unit} is already there and isn't a link to ${unitSrc}; move it away first (it isn't overwritten)`);
+        console.log(`unit already linked: ${unit} -> ${unitSrc}`);
+      } else { fs.mkdirSync(unitDir, { recursive: true }); fs.symlinkSync(unitSrc, unit); console.log(`linked ${unit} -> ${unitSrc}`); }
+      if (path.resolve(ROOT) !== path.join(process.env.HOME || "", "Work", "hyprpi")) console.log(`note: the unit runs %h/Work/hyprpi/mcp-gateway/gateway.mjs, but hyprpi is at ${ROOT}; edit its ExecStart`);
+      const cfgFile = process.env.MCP_GATEWAY_CONFIG || path.join(process.env.HOME || "", ".config", "mcp-gateway", "servers.json");
+      if (!fs.existsSync(cfgFile)) console.log(`note: no config yet: copy ${path.join(ROOT, "mcp-gateway", "servers.example.json")} to ${cfgFile} and list your servers`);
+      sc("daemon-reload");
+      const r = sc("enable", "--now", "mcp-gateway.service");
+      if (r.status !== 0) die(`systemctl --user enable --now mcp-gateway failed: ${(r.stderr || "").trim()}`);
+      console.log(`mcp-gateway: ${state()}`);
+      return;
+    }
+    if (sub === "status") {
+      let link = "not installed";
+      try { const st = fs.lstatSync(unit); link = st.isSymbolicLink() ? `${unit} -> ${fs.readlinkSync(unit)}` : `${unit} (a plain file, not hyprpi's copy)`; } catch { /* none */ }
+      console.log(`unit: ${link}\nservice: ${state()}`);
+      const pid = sc("show", "-p", "MainPID", "--value", "mcp-gateway.service").stdout.trim();
+      if (pid && pid !== "0") {
+        const kids = spawnSync("ps", ["--ppid", pid, "-o", "rss=,args="], { encoding: "utf8" }).stdout.trim().split("\n").filter(Boolean);
+        console.log(`servers running: ${kids.length}${kids.map((k) => "\n  " + k.trim().replace(/^(\d+)\s+/, (_m, r) => `${Math.round(r / 1024)} MB  `).slice(0, 140)).join("")}`);
+      }
+      return;
+    }
+    die("usage: hyprpi mcp-gateway [install|status]");
+  },
   help: () => console.log(HELP),
   "--help": () => console.log(HELP),
   "-h": () => console.log(HELP),

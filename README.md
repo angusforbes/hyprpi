@@ -293,6 +293,15 @@ browser on his tailnet), with world chips to switch. A `systemd --user` service 
 published tailnet-only with `tailscale serve` on :8443; messages go in with `thoughts.send
 {via: "phone"}` (📱 in the thread). Details: [remote-control/README.md](remote-control/README.md).
 
+## MCP gateway (shared, lazy MCP servers)
+
+`mcp-gateway/`: one shared, lazily started copy of each stdio MCP server for all pi agents. pi
+starts every MCP server once per agent; with hyprpi's ~30 parallel agents that was ~100 processes
+and several GB at rest. The gateway runs a server only while it's being used (0 processes idle,
+`perSession` for servers like hyprcu that keep per-agent state). Standalone (plain Node), so it
+works with any pi setup. `hyprpi mcp-gateway install` links and starts its `systemd --user` unit,
+and `hyprpi mcp-gateway status` shows it. Details: [mcp-gateway/README.md](mcp-gateway/README.md).
+
 ## The Stream (panel 2, SUPER+ALT+R)
 
 The room panel is now **the Stream** (Angus 2026-09-30, @hyprpi N40; `lib/stream.mjs`): one

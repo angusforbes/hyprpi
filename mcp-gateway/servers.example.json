@@ -1,0 +1,16 @@
+{
+  "port": 8790,
+  "idleMin": 10,
+  "servers": {
+    "example-shared": {
+      "command": "/path/to/some-mcp-server",
+      "args": ["stdio"]
+    },
+    "example-per-session": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/project", "python", "-m", "server"],
+      "env": { "SOME_FLAG": "1" },
+      "perSession": true
+    }
+  }
+}
