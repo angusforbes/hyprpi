@@ -3,6 +3,7 @@
      Proj and Agnt seems good"): ONE text scale for every tab and the Files app (files.css uses these too).
      Taken from Proj/Agnt: a row's name 16, reading text 15, its secondary line 13.5, small labels 12.5. */
   --fs-row: 16px; --fs-body: 15px; --fs-meta: 13.5px; --fs-small: 12.5px;
+  --fs-btn: 14px; /* J158: text buttons (the selection bar's and the viewer's Send… / Share) */
   --bg: #1a1b26; --fg: #c0caf5; --accent: #7aa2f7; --world: #7aa2f7;
   --dim: color-mix(in srgb, var(--fg) 55%, var(--bg));
   --faint: color-mix(in srgb, var(--fg) 12%, var(--bg));
@@ -235,7 +236,7 @@ ol.opts li { margin: 3px 0; }
 #fvname { font-weight: 650; font-size: var(--fs-row); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #fvdir { font-size: var(--fs-meta); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #fvbar button { flex: none; font: inherit; font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; min-height: 34px; }
-#fvshare, #fvsend { font-size: 14px; padding: 4px 12px; }
+#fvbar #fvshare, #fvbar #fvsend { font-size: var(--fs-btn); padding: 4px 12px; } /* J158: as the selection bar's; #fvbar to beat "#fvbar button { font: inherit }" (that made them 16px) */
 #fvx, #fvback { width: 38px; font-size: 18px; padding: 0; }
 #fvx { color: var(--fg); }
 #fvbody { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }

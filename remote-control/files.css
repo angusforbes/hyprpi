@@ -7,7 +7,7 @@ body.files { display: flex; flex-direction: column; height: 100dvh; }
 #fwhere { flex: 1; min-width: 0; }
 #fname { font-weight: 700; font-size: var(--fs-row); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #fdir { font-size: var(--fs-meta); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
-body.files button, .fbig { flex: none; font: inherit; font-size: 14px; font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; min-height: 34px; padding: 4px 12px; cursor: pointer; }
+body.files button, .fbig { flex: none; font: inherit; font-size: var(--fs-btn); font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; min-height: 34px; padding: 4px 12px; cursor: pointer; }
 #fup, #fhelp { width: 38px; padding: 0; font-size: 18px; }
 #fq { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--fg); background: var(--faint); border: 1px solid var(--line); border-radius: 12px; padding: 5px 10px; }
 #flist { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 4px calc(env(safe-area-inset-right) + 6px) 12px calc(env(safe-area-inset-left) + 6px); }
