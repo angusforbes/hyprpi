@@ -39,7 +39,7 @@ import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, strea
 const completions = (prefix) => view === "board" ? [...new Set([...boardCompletions(prefix), ...cmds.complete(prefix)])] : cmds.complete(prefix);
 // Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
 import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
-import { sentLine } from "../lib/tui/sent.mjs"; // J165
+import { sentLine, SENT_STICKY_MS } from "../lib/tui/sent.mjs"; // J165
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 let worldBar = null;
@@ -91,7 +91,8 @@ const box = createInputBox({
 // Rows of the input (styled, selection highlighted) and the cursor's row / column.
 // Insert text at the cursor, replacing the selection (paste keeps its line breaks). In the board
 // view the sent text is replaced by what you type or paste; ←→ / Backspace first edit it.
-function insertText(t) { box.insert(t); note = ""; focusArea = "input"; render(); }
+// J165: a "✓ Sent to …" line stays SENT_STICKY_MS even while Angus types on (Sentcheck).
+function insertText(t) { box.insert(t); if (!(note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS)) note = ""; focusArea = "input"; render(); }
 function copyInputSel(cut) { box.copySel(cut); render(); }
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
@@ -277,7 +278,9 @@ let batching = false, dirty = false;
 const PROF = process.env.HYPRPI_TUI_PROF; // file: one "ms view" line per frame
 let restarting = false; // re-exec in progress: the child owns the terminal, draw nothing
 function render() { if (restarting) return; if (batching) { dirty = true; return; } if (!PROF) return draw(); const t = performance.now(); draw(); fs.appendFileSync(PROF, `${(performance.now() - t).toFixed(1)} ${view}\n`); }
+let noteSeen = "", noteAt = 0; // when the current note appeared (J165)
 function draw() {
+  if (note !== noteSeen) { noteSeen = note; noteAt = Date.now(); }
   dirty = false;
   const W = process.stdout.columns || 100, H = process.stdout.rows || 30;
   const c = worldFg(room);
