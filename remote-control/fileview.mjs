@@ -22,7 +22,7 @@ let el = null, depth = 0, cur = null, gen = 0;
 function build() {
   el = document.createElement("div");
   el.id = "fv"; el.hidden = true;
-  el.innerHTML = `<header id="fvbar"><button id="fvback" type="button" title="back" hidden>‹</button><div id="fvtitle"><div id="fvname"></div><div id="fvdir"></div></div><button id="fvsend" type="button" title="send to Thoughts or an agent" hidden>Send…</button><button id="fvshare" type="button" title="share">Share</button><button id="fvx" type="button" title="close" aria-label="close">✕</button></header><div id="fvbody"></div><div id="fvnote" hidden></div>`;
+  el.innerHTML = `<header id="fvbar"><button id="fvback" type="button" title="back" hidden>‹</button><div id="fvtitle"><div id="fvname"></div><div id="fvdir"></div></div><span class="fpair"><button id="fvshare" type="button" title="share">Share</button><button id="fvsend" type="button" title="send to Thoughts or an agent" hidden>Send…</button></span><button id="fvx" type="button" title="close" aria-label="close">✕</button></header><div id="fvbody"></div><div id="fvnote" hidden></div>`;
   document.body.append(el);
   el.querySelector("#fvx").addEventListener("click", closeAll);
   el.querySelector("#fvback").addEventListener("click", () => history.back());

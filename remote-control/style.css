@@ -236,7 +236,11 @@ ol.opts li { margin: 3px 0; }
 #fvname { font-weight: 650; font-size: var(--fs-row); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #fvdir { font-size: var(--fs-meta); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #fvbar button { flex: none; font: inherit; font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; min-height: 34px; }
-#fvbar #fvshare, #fvbar #fvsend { font-size: var(--fs-btn); padding: 4px 12px; } /* J158: as the selection bar's; #fvbar to beat "#fvbar button { font: inherit }" (that made them 16px) */
+/* J159 (Angus: "they should look exactly the same … the order of the buttons is reversed"): ONE style for the
+   Share · Send… pair, in the viewer bar and in the selection bar (same order, size, gap, colours). */
+.fpair { flex: none; display: flex; align-items: center; gap: 8px; }
+:is(#fvbar, #fselbar) .fpair > button { flex: none; margin: 0; font-family: inherit; font-size: var(--fs-btn); font-weight: 600; line-height: 1.45; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; min-height: 34px; padding: 4px 12px; cursor: pointer; }
+:is(#fvbar, #fselbar) .fpair > button[hidden] { display: none; }
 #fvx, #fvback { width: 38px; font-size: 18px; padding: 0; }
 #fvx { color: var(--fg); }
 #fvbody { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
