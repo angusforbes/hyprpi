@@ -85,7 +85,9 @@ function render() {
   // then send all of them when ready"): the selection is a basket across folders, filters and searches;
   // while it holds anything, its bar (count → review, Share, Send…, clear) shows everywhere.
   const actable = list.some((e) => !e.dir) || (k.length >= 2 && ev.q === k && ev.items.some((e) => !e.dir));
-  if (!actable && selecting) { selecting = false; document.body.classList.remove("selecting"); }
+  // Select mode stays on while the basket holds files (Remote's J148 note: going through a folders-only
+  // view shouldn't make Angus tap Select again before adding the next file); empty, it ends there.
+  if (!actable && selecting && !sel.size) { selecting = false; document.body.classList.remove("selecting"); }
   $("#fsel").hidden = !actable && !selecting;
   $("#fsel").textContent = selecting ? "Done" : "Select";
   $("#fcount").textContent = `${sel.size} selected`;
