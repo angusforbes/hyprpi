@@ -418,6 +418,21 @@ const commands = {
     const r = await request("voice.dictate", { text, ...(to ? { to } : {}), ...(room ? { room } : {}) });
     console.log(r.to === "agent" ? `→ ${r.agent}` : r.to === "project" ? `→ ${r.project} (${(r.told || []).join(", ")})` : `→ ${r.thoughts}`);
   },
+  // J98 v3: the voice widget's targets as JSON: the world you're on, its Thoughts, then agents and
+  // projects (this world first, then the others). Built from list + board.get (no daemon change).
+  "voice-targets": async () => {
+    const l = await request("list"), world = l.active_room || "";
+    const rooms = [...new Set([world, ...(l.rooms || []).map((r) => r.id)].filter(Boolean))];
+    const first = (r) => (r === world ? 0 : 1);
+    const agents = (l.agents || []).filter((a) => !a.parked).map((a) => ({ id: "hp:" + a.id, name: a.display, icon: a.icon || "🤖", room: a.room, status: a.status, ws: a.workspace_label || "" }))
+      .sort((x, y) => first(x.room) - first(y.room) || String(x.room).localeCompare(String(y.room)) || x.name.localeCompare(y.name));
+    const projects = [];
+    for (const r of rooms) {
+      const b = await request("board.get", { room: r }).catch(() => null);
+      for (const p of b?.projects || []) if (p.status !== "archived" && b.room === r) projects.push({ id: "proj:" + p.name, name: "@" + p.name, icon: p.icon || "📋", room: r, owner: b.names?.[p.writer] || "" });
+    }
+    console.log(JSON.stringify({ world, thoughts: { id: "thoughts", name: `Thoughts (current world${world ? " " + world : ""})`, room: world }, agents, projects }));
+  },
   send: async () => {
     const who = args.shift(); const text = args.join(" ");
     if (!who || !text.trim()) die("usage: hyprpi send AGENT TEXT");
