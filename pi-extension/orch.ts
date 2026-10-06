@@ -3,7 +3,8 @@
  * wait_report, close_agent, extend_budget, escalate_agent, my_children. Events from the daemon:
  * orch.report (a child's report, as a message), orch.close (close this agent at its next idle moment),
  * orch.budget (a new budget / resumed), orch.orphaned (its parent went away).
- * Budgets (spawned agents only): token use (input + output + cache writes of its own model calls) and wall
+ * Budgets (spawned agents only): token use (input + output + cache writes of its own model calls; cache READS
+ * aren't counted, so a cap counts fresh tokens, not the context re-read on every call) and wall
  * time since it was spawned. At a cap: one steer to stop, report and wait; tools other than report_to_parent
  * are blocked until extend_budget.
  */
@@ -32,14 +33,19 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx }: Deps) {
     const u = m.usage || {};
     tokens += (u.input || 0) + (u.output || 0) + (u.cacheWrite || 0);
     if (Date.now() - lastSent > 15000) { lastSent = Date.now(); call("orch.usage", { tokens }).catch(() => {}); }
-    const what = over();
-    if (what && !stopped) {
-      stopped = true;
-      call("orch.usage", { tokens }).catch(() => {});
-      call("orch.budgetHit", { what }).catch(() => {});
-      inject({ customType: "hyprpi-orch", display: true, content: `[hyprpi · budget reached: ${what}]\nStop now. Call report_to_parent with what you have so far, what's left and what you'd need to finish (not final unless it's done), then end your turn. Other tools are blocked until your parent extends your budget.`, details: { request_id: `orch-budget-${Date.now()}` } }, true);
-    }
+    checkCap();
   });
+  function checkCap() {
+    const what = over();
+    if (!what || stopped) return;
+    stopped = true;
+    call("orch.usage", { tokens }).catch(() => {});
+    call("orch.budgetHit", { what }).catch(() => {});
+    inject({ customType: "hyprpi-orch", display: true, content: `[hyprpi · budget reached: ${what}]\nStop now. Call report_to_parent with what you have so far, what's left and what you'd need to finish (not final unless it's done), then end your turn. Other tools are blocked until your parent extends your budget.`, details: { request_id: `orch-budget-${Date.now()}` } }, true);
+  }
+  // The time cap also while one long tool call runs (Knock's J130 finding 4): the steer lands at its end, and
+  // the tools after it are blocked.
+  setInterval(() => { if (me?.budget?.minutes) checkCap(); }, 30000).unref?.();
   pi.on("tool_call", async (e: any) => {
     if (!stopped) return;
     const n = e?.toolName || e?.name || "";
@@ -79,7 +85,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx }: Deps) {
   pi.registerTool({
     name: "spawn_agent",
     label: "Spawn an agent",
-    description: "Open a new hyprpi agent (your CHILD) in its own window for a bounded job, silently (Angus's focus never moves). Give it a complete prompt: goal, files it may touch, done-when, and to report_to_parent. Its model: an explicit model wins; else complexity picks one from the routing rules in ~/.config/hyprpi/hyprpi.jsonc (simple / ordinary / hard / review); else the default. fork: true starts it from YOUR conversation (a twin with your context). Returns its id; its reports come back to you as messages, or block on them with wait_report. Close it with close_agent when done. Your world's Thoughts is told automatically.",
+    description: "Open a new hyprpi agent (your CHILD) in its own window for a bounded job, silently (Angus's focus never moves). Budget: tokens count fresh input + output + cache writes (cached context re-reads don't count) and minutes since spawn. Give it a complete prompt: goal, files it may touch, done-when, and to report_to_parent. Its model: an explicit model wins; else complexity picks one from the routing rules in ~/.config/hyprpi/hyprpi.jsonc (simple / ordinary / hard / review); else the default. fork: true starts it from YOUR conversation (a twin with your context). Returns its id; its reports come back to you as messages, or block on them with wait_report. Close it with close_agent when done. Your world's Thoughts is told automatically.",
     promptSnippet: "Open a child agent for a bounded job (silent; reports back to you)",
     parameters: Type.Object({
       prompt: Type.String({ description: "the child's whole brief: goal, limits, done-when, how to report" }),
