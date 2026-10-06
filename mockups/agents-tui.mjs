@@ -66,7 +66,19 @@ const cmds = createCommands({
   },
 });
 
-const hereLive = () => agents.filter((a) => a.room === room);
+// J130 links in the list (Angus: show agent creation / subagent delegation): a spawned child sits right under
+// its parent, indented with ↳ (a grandchild one step further); a child whose parent isn't listed here says
+// "↳ child of X". depthOf: agent id -> its depth under a listed parent (0 = top level).
+const depthOf = new Map();
+function treeOrder(list) {
+  const ids = new Set(list.map((a) => a.id)), kids = new Map(), roots = [], out = [], seen = new Set();
+  for (const a of list) { if (a.parent_id && a.parent_id !== a.id && ids.has(a.parent_id)) (kids.get(a.parent_id) || kids.set(a.parent_id, []).get(a.parent_id)).push(a); else roots.push(a); }
+  const walk = (a, d) => { if (seen.has(a.id)) return; seen.add(a.id); depthOf.set(a.id, d); out.push(a); for (const k of kids.get(a.id) || []) walk(k, Math.min(d + 1, 3)); };
+  for (const r of roots) walk(r, 0);
+  for (const a of list) if (!seen.has(a.id)) { depthOf.set(a.id, 0); out.push(a); } // a link loop: just list it
+  return out;
+}
+const hereLive = () => treeOrder(agents.filter((a) => a.room === room));
 const hereParked = () => showMode >= 1 ? agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)) : [];
 const hereDormant = () => dormant.filter((a) => a.room === room && (a.kind !== "closed" || showMode >= 1));
 const listHere = () => [...hereLive(), ...hereParked(), ...hereDormant()];
@@ -221,7 +233,9 @@ function draw() {
     const boxed = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
     const hl = helpersLine(a);
     const cp = a.compactions >= 1 ? dot + "⟳" + a.compactions : ""; // J117: compactions of its session
-    const rest = boxed + ws + cp + (hl ? dot + hl : "") + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    const depth = depthOf.get(a.id) || 0, tree = depth ? "  ".repeat(depth - 1) + "↳ " : ""; // J130: under its parent
+    const away = a.parent && !depth ? dot + `↳ child of ${a.parent}` : ""; // its parent isn't in this list
+    const rest = boxed + ws + away + cp + (hl ? dot + hl : "") + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
       // J78: a crash leftover says when it was lost ("lost in the 9/30 crash"); others stay "closed".
@@ -233,9 +247,9 @@ function draw() {
     let styled = a.name_markup && !name.endsWith("…") && !unnamed(a.name) ? bold(markupFg(a.name_markup, a.color)) : nameFg(a.name, a.color, bare);
     if (a.id === cursorId && nameBg) styled = `${ESC}48;2;${rgb(nameBg)}m${styled}${ESC}49m`;
     else if (a.id === cursorId || a.focused) styled = `${ESC}4m${styled}${ESC}24m`;
-    styled = iconCol(a) + styled;
+    styled = dim(tree) + iconCol(a) + styled;
     if (closing.has(a.id)) return { text: `  ${mark(a)} ${iconCol(a)}${name} · ${closing.get(a.id) === "kill" ? "killing" : "closing"}…`, prefixW: 2 + width(mark(a)) + 1 + ICON_W, style: dim };
-    return { text: ` ${fg(c, bold(mark(a)))} ${styled}${rest}`, prefixW: 1 + width(mark(a)) + 1 + ICON_W, style: (l) => l };
+    return { text: ` ${fg(c, bold(mark(a)))} ${styled}${rest}`, prefixW: 1 + width(mark(a)) + 1 + width(tree) + ICON_W, style: (l) => l };
   };
   const agentLines = (a) => {
     const r = agentRow(a);
