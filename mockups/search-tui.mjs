@@ -22,7 +22,7 @@ import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
-import { createCommands } from "../lib/tui/command-line.mjs";
+import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
@@ -252,7 +252,12 @@ function enter() {
     api.call("thoughts.ignore", { room, text: raw }).catch((e) => { note = "✗ " + e.message; render(); });
     return render();
   }
-  if (raw.startsWith("/") && !raw.startsWith("//")) return command(raw);
+  if (raw.startsWith("/") && !raw.startsWith("//")) {
+    // Not a /command at all (a first word with another "/" in it, e.g. a /home/… path, J108): say so and
+    // keep the text in the box, instead of clearing it and sending nothing.
+    if (!parseCommand(raw)) { note = "✗ not a /command (a path?) · to send it as it is, start with //"; return render(); }
+    return command(raw);
+  }
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text) { note = "type to Thoughts (or /keyword WORDS, /ask QUESTION), then ⏎"; return render(); }
   setBox(""); return sendThought(text, imagePaths(text));
