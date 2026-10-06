@@ -65,7 +65,7 @@ function entryHtml(e, i, list) {
   switch (kind) {
     case "hidden": return "";
     case "full": {
-      if (e.role === "you") return `<div class="msg you">${esc(e.text)}${e.via === "phone" ? `<span class="via">📱</span>` : ""}${images(e)}</div>`;
+      if (e.role === "you") return `<div class="msg you">${esc(e.text)}${e.via === "phone" ? `<span class="via">📱</span>` : e.via === "voice" ? `<span class="via">🎤</span>` : ""}${images(e)}</div>`;
       const { lead, body } = splitLead(e);
       const raw = lead && list ? hiddenBefore(list, i, lead) : [];
       const leadHtml = !lead ? "" : raw.length

@@ -529,7 +529,7 @@ function render() {
     const tw = Math.max(10, W - 5);
     function buildThread() {
       const flat = [], items = [];
-    const who = (e) => e.role === "you" ? fg(c, bold("you")) : e.role === "thoughts" ? bold(`💭 Thoughts-${room}`) : "";
+    const who = (e) => e.role === "you" ? fg(c, bold("you")) + (e.via === "voice" ? " 🎤" : e.via === "phone" ? " 📱" : "") : e.role === "thoughts" ? bold(`💭 Thoughts-${room}`) : "";
     // Every entry through mdRows: Markdown, and links / file paths clickable (Angus: all links and
     // paths must be clickable). x.links: [{ x0, x1, target }] in the row's own columns.
     const md = (text, n, pre, style = (l) => l) => mdRows(text, n, wrap, gw).map((r) => ({ l: pre + style(r.line), links: r.links.map((q) => ({ ...q, x0: q.x0 + pre.length, x1: q.x1 + pre.length })) }));

@@ -21,6 +21,9 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi list [--json]        live agents and rooms
   hyprpi post [--room R] TEXT post to a room as Angus (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
+  hyprpi thoughts [--room R] [--via voice] TEXT   a message to a world's Thoughts (default: the world you're on); --via voice marks it 🎤 (dictation)
+  hyprpi dictate [--to hp:ID|proj:NAME] TEXT   a dictation: the focused world's Thoughts (🎤), or the agent /
+                              project it starts with ("Knock, …", "project system, …")
   hyprpi tinker [W:] TEXT     drop a friction fix off in the workshop world: one free agent
                               there gets it, or a new one opens. "D: TEXT" also makes world D
                               the workshop from now on (remembered)
@@ -397,6 +400,23 @@ const commands = {
     if (!text.trim()) die("usage: hyprpi post [--room R] TEXT");
     const r = await request("room.post", { room, text, as_human: true, via });
     console.log(`Room ${r.room} #${r.sequence} → ${r.delivered.length ? r.delivered.join(", ") : "no agents"}`);
+  },
+  // J98: a message to a world's Thoughts (default: the world you're on), e.g. dictation: --via voice marks it 🎤.
+  thoughts: async () => {
+    const room = opt("--room"), via = opt("--via") || "";
+    const text = args.join(" ");
+    if (!text.trim()) die("usage: hyprpi thoughts [--room R] [--via voice|phone] TEXT");
+    const r = await request("thoughts.send", { ...(room ? { room } : {}), text, ...(via ? { via } : {}) });
+    console.log(`Thoughts-${r.room}${r.busy ? " (thinking)" : ""}`);
+  },
+  // J98 v2: a dictation (voice-agent): the focused world's Thoughts, or a spoken addressee at the start
+  // ("Knock, …" / "project system, …"), or --to hp:<id> | proj:<name> (the picker's sticky target). 🎤
+  dictate: async () => {
+    const to = opt("--to") || "", room = opt("--room");
+    const text = args.join(" ");
+    if (!text.trim()) die("usage: hyprpi dictate [--to hp:ID|proj:NAME] [--room R] TEXT");
+    const r = await request("voice.dictate", { text, ...(to ? { to } : {}), ...(room ? { room } : {}) });
+    console.log(r.to === "agent" ? `→ ${r.agent}` : r.to === "project" ? `→ ${r.project} (${(r.told || []).join(", ")})` : `→ ${r.thoughts}`);
   },
   send: async () => {
     const who = args.shift(); const text = args.join(" ");
