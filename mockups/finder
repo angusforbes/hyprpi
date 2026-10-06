@@ -48,8 +48,8 @@ const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
 // The agents panel's marks (Angus): ● working · × needs you · ✓ finished (unseen) · ○ idle; ◌ parked.
 // A project's mark comes from its live members, most urgent first (◌ when none is live).
-const markOf = (a) => a.parked ? "◌" : a.status === "working" ? "●" : a.status === "blocked" ? "×" : a.status === "done" && !a.seen ? "✓" : "○";
-const projMark = (p, byId) => { const ms = (p.members || []).map((id) => byId[id]).filter((a) => a && !a.parked).map(markOf); return ms.length ? ["×", "●", "✓"].find((k) => ms.includes(k)) || "○" : "◌"; };
+const markOf = (a) => a.parked ? "◌" : a.status === "working" ? "●" : a.status === "background" ? "◐" : a.status === "blocked" ? "×" : a.status === "done" && !a.seen ? "✓" : "○";
+const projMark = (p, byId) => { const ms = (p.members || []).map((id) => byId[id]).filter((a) => a && !a.parked).map(markOf); return ms.length ? ["×", "●", "◐", "✓"].find((k) => ms.includes(k)) || "○" : "◌"; };
 const clean = (s) => String(s ?? "").replace(/[\t\n\r\x00-\x1f\x7f]+/g, " ").trim();
 
 // When each agent last changed state (Angus: "order the whole thing by most recently worked", so
@@ -183,7 +183,7 @@ async function rows() {
   // agents, then finished agents, then idle agents. I find myself looking for who is working more often than
   // who is done"; was × ✓ ● ○ ◌). A project's mark is its most urgent live member's (× ● ✓). "Recent": agents
   // their last turn event, projects their card's last change. Ties A–Z. (The SUPER+S pop-up has its own order.)
-  const CAT = { "×": 0, "●": 1, "✓": 2, "○": 3, "◌": 4 };
+  const CAT = { "×": 0, "●": 1, "◐": 2, "✓": 3, "○": 4, "◌": 5 }; // ◐ background (J93): its turn ended, subagents still running
   const cat = (r) => CAT[r.mark] ?? 3;
   const KIND = { agent: 0, panel: 1, app: 2, project: 3 };
   out.sort((x, y) => KIND[x.kind] - KIND[y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));

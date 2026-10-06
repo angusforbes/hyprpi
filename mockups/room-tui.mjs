@@ -139,6 +139,7 @@ let api = null;
 function mark(a) {
   // Same marks as the room window: ● working · ✓ done (unseen) · × blocked · ○ idle
   if (a.status === "working") return "●";
+  if (a.status === "background") return "◐"; // J93
   if (a.status === "blocked") return "×";
   if (a.status === "done" && !a.seen) return "✓";
   return "○";

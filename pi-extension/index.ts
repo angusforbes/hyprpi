@@ -242,6 +242,7 @@ export default function hyprpi(pi: ExtensionAPI) {
       if (me) showSelf({ name: me.name || "", display: me.name || `pi\u00b7${String(AGENT_ID).slice(-4)}`, icon: me.icon || "", color: me.color || "", room: me.room || "" });
       // Re-state where this agent is (a turn may have started or ended while the daemon was down).
       if (myStatus !== "idle") conn.call("agent.update", { status: myStatus, resync: true }).catch(() => {});
+      if (helpers.size) conn.call("agent.update", { helpers: helperList() }).catch(() => {}); // J93
     } catch {
       conn?.close(); conn = null; schedule();
     } finally { connecting = false; }
@@ -265,6 +266,27 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
   let myStatus = "idle"; // last status this agent reported (re-sent after a reconnect)
   const update = (p: any) => { if (p?.status) myStatus = p.status; if (conn && !conn.closed) conn.call("agent.update", p).catch(() => {}); };
+  // J93 ◐ background: this agent's running subagents (@tintinweb/pi-subagents' lifecycle events: top-level
+  // Agent runs, foreground or background, RPC and scheduled spawns; a SubagentWorkflow's children emit none).
+  // Lost on a reload or crash, which falls back to the plain state.
+  const helpers = new Map<string, { id: string; type: string; description: string; startedAt: number }>();
+  const helperList = () => [...helpers.values()];
+  const helperStarted = (d: any) => {
+    if (!d?.id) return;
+    helpers.set(String(d.id), { id: String(d.id), type: String(d.type || ""), description: String(d.description || ""), startedAt: Date.now() });
+    if (myStatus === "done" || myStatus === "idle") update({ status: "background", helpers: helperList() });
+    else update({ helpers: helperList() });
+  };
+  const helperEnded = (d: any) => {
+    if (!d?.id || !helpers.delete(String(d.id))) return;
+    if (!helpers.size && myStatus === "background") { unseen = true; update({ status: "done", helpers: [] }); }
+    else update({ helpers: helperList() });
+  };
+  try {
+    pi.events.on("subagents:started", helperStarted);
+    pi.events.on("subagents:completed", helperEnded);
+    pi.events.on("subagents:failed", helperEnded);
+  } catch { /* no event bus: no ◐ */ }
 
   // Typing in this window marks a finished turn (\u2713 in the room window) as
   // seen, like a click in it (Hyprland hook). One call per finish, not per key.
@@ -325,7 +347,9 @@ export default function hyprpi(pi: ExtensionAPI) {
       }, 50);
       return;
     }
-    unseen = true; update({ status: "done" });
+    // J93: subagents still running → ◐ background; the ✓ (and its chime) comes when the last one ends.
+    if (helpers.size) { unseen = false; update({ status: "background", helpers: helperList() }); }
+    else { unseen = true; update({ status: "done" }); }
     if (afterAbort) { held.unshift(afterAbort); afterAbort = null; if (afterAbortTimer) { clearTimeout(afterAbortTimer); afterAbortTimer = null; } } // the abort came too late to stop the run
     setTimeout(releaseHeld, 50); // a held message starts the next turn
   });

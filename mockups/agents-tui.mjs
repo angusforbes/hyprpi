@@ -88,7 +88,7 @@ function projMark(p) {
   const live = (p.members || []).map((id) => agents.find((a) => a.id === id)).filter(Boolean);
   if (!live.length) return "◌";
   const ms = live.map(mark);
-  return ["×", "●", "✓"].find((k) => ms.includes(k)) || "○";
+  return ["×", "●", "◐", "✓"].find((k) => ms.includes(k)) || "○";
 }
 const openDecides = (p) => (p.items || []).filter((it) => it.sec === "decide").length;
 function hereProjects() {
@@ -105,9 +105,17 @@ async function loadBoard() {
 
 function mark(a) { // same marks as the room window
   if (a.status === "working") return "●";
+  if (a.status === "background") return "◐"; // J93: its turn ended, subagents still running
   if (a.status === "blocked") return "×";
   if (a.status === "done" && !a.seen) return "✓";
   return "○";
+}
+// J93: what a ◐ agent's subagents are doing: "◐ 2 subagents: research (Explore, 4 min), …"
+function helpersLine(a) {
+  const hs = Array.isArray(a.helpers) ? a.helpers : [];
+  if (a.status !== "background" && !hs.length) return "";
+  const each = hs.map((h) => `${h.description || h.type || "?"} (${[h.type, h.startedAt ? Math.max(1, Math.round((Date.now() - h.startedAt) / 60000)) + " min" : ""].filter(Boolean).join(", ")})`);
+  return `◐ ${hs.length} subagent${hs.length === 1 ? "" : "s"}${each.length ? ": " + each.join(", ") : ""}`;
 }
 
 // Word-wrap a styled row (Angus via Thoughts-C, N42: long project/agent rows wrap instead of
@@ -211,7 +219,8 @@ function draw() {
     const dot = " · ";
     const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
     const boxed = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
-    const rest = boxed + ws + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    const hl = helpersLine(a);
+    const rest = boxed + ws + (hl ? dot + hl : "") + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
       // J78: a crash leftover says when it was lost ("lost in the 9/30 crash"); others stay "closed".

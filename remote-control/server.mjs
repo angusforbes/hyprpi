@@ -252,7 +252,7 @@ function boardSummary(b) {
 // closed ones are its ^O view, left out here. Mark: as agents-tui mark() (● working · × blocked
 // = needs Angus · ✓ done, unseen · ○ idle) and ◌ for one that isn't open.
 // Each agent's summary (read-only): status, topic, current job, projects, model, last room posts.
-const agentMark = (a) => a.dormant || a.parked ? "◌" : a.status === "working" ? "●" : a.status === "blocked" ? "×" : a.status === "done" && !a.seen ? "✓" : "○";
+const agentMark = (a) => a.dormant || a.parked ? "◌" : a.status === "working" ? "●" : a.status === "background" ? "◐" : a.status === "blocked" ? "×" : a.status === "done" && !a.seen ? "✓" : "○";
 async function agentsSummary(r) {
   const l = await api.call("list");
   const here = [...(l.agents || []).filter((a) => a.room === r && !a.parked), ...(l.dormant || []).filter((a) => a.room === r && a.kind !== "closed").map((a) => ({ ...a, dormant: true }))];
@@ -271,6 +271,7 @@ async function agentsSummary(r) {
       return {
         id: a.id, name, icon: a.icon || "", color: a.color || "", mark: agentMark(a),
         status: a.dormant ? (a.kind === "restart" ? "lost to a restart" : "closed") : a.status || "idle",
+        helpers: (a.helpers || []).map((h) => ({ description: h.description || "", type: h.type || "", startedAt: h.startedAt || 0 })), // J93 ◐
         topic: a.topic || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, size) : "",
         active: a.last_did?.ts || a.left || null, // its last finished turn (since resets on a daemon restart)
         did: a.last_did?.text || "",

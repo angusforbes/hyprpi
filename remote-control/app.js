@@ -516,9 +516,9 @@ function renderAgents({ keepScroll = false } = {}) {
     if (!l.agents.length && l.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
   } else {
     const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
-    const status = { "●": "working", "×": "needs you", "✓": "finished (not seen yet)", "○": "idle", "◌": a.status }[a.mark] || a.status;
+    const status = { "●": "working", "◐": "background (subagents still running)", "×": "needs you", "✓": "finished (not seen yet)", "○": "idle", "◌": a.status }[a.mark] || a.status;
     html.push(`<div class="psum"><div class="phead ptoggle" title="back to the agents">` + agentRow(a, "agent open") + `</div>` // its row is the header: one tap target back to the list (J48)
-      + sec("Status", `<div>${esc(a.mark)} ${esc(status)}${a.active ? ` <span class="small">· last turn ${ago(a.active)} ago</span>` : ""}</div>${a.topic ? `<div class="md"><i>${esc(a.topic)}</i></div>` : ""}${a.did ? `<div class="small clip">${inline(a.did)}</div>` : ""}`)
+      + sec("Status", `<div>${esc(a.mark)} ${esc(status)}${(a.helpers || []).length ? ` <span class="small">· ${a.helpers.map((h) => esc(`${h.description || h.type || "?"} (${[h.type, h.startedAt ? Math.max(1, Math.round((Date.now() - h.startedAt) / 60000)) + " min" : ""].filter(Boolean).join(", ")})`)).join(", ")}</span>` : ""}${a.active ? ` <span class="small">· last turn ${ago(a.active)} ago</span>` : ""}</div>${a.topic ? `<div class="md"><i>${esc(a.topic)}</i></div>` : ""}${a.did ? `<div class="small clip">${inline(a.did)}</div>` : ""}`)
       + sec("Current job", a.job ? `<div>⟦${esc(a.job.id)} v${esc(a.job.version)} · ${esc(a.job.state)}⟧${a.job.project ? ` <span class="small">@${esc(a.job.project)}</span>` : ""}</div><div class="md">${md(a.job.goal)}</div>` : "")
       + sec("Projects", a.projects.length ? `<div>${a.projects.map((p) => `${esc(p.icon)} @${esc(p.name)}${p.writer ? ` <span class="small">(owner)</span>` : ""}`).join("<br>")}</div>` : "")
       + sec("Model", a.model ? `<div>${esc(a.model)}${a.thinking ? ` <span class="small">· thinking ${esc(a.thinking)}</span>` : ""}</div>` : "")
