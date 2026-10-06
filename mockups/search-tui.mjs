@@ -128,7 +128,7 @@ function evFilter(text) {
 // by project (the daemon's thoughts.digest; the Stream panel's filter syntax, lib/stream.mjs).
 function digest(text) {
   if (!api) { note = "✗ daemon offline"; return render(); }
-  note = ""; TH.scroll = 0; render();
+  note = ""; follow(); render();
   api.call("thoughts.digest", { room, filter: String(text || "").trim() }, { timeoutMs: 60000 })
     .then((r) => { note = r.total ? "" : `no Stream lines for "${r.label}"`; render(); })
     .catch((e) => { note = "✗ " + e.message; render(); });
@@ -138,7 +138,7 @@ function evidence(kind, text, n = 10) {
   if (!f.words) { note = kind === "ask" ? "/ask QUESTION" : "/keyword WORDS"; return render(); }
   if (!api) { note = "✗ daemon offline"; return render(); }
   const gen = ++EV.gen; // Esc bumps it: a cancelled request's late reply is ignored here too
-  EV.busy = kind; EV.startedAt = Date.now(); EV.last = { kind, text, n }; note = ""; TH.scroll = 0; render();
+  EV.busy = kind; EV.startedAt = Date.now(); EV.last = { kind, text, n }; note = ""; follow(); render();
   api.call("thoughts.evidence", { room, kind, query: f.words, n, agents: f.ids }, { timeoutMs: 180000 })
     .then(() => { if (gen === EV.gen) { EV.busy = ""; render(); } })
     .catch((e) => { if (gen === EV.gen) { EV.busy = ""; note = "✗ " + e.message; render(); } });
@@ -151,7 +151,12 @@ function evidence(kind, text, n = 10) {
 let thoughtsOn = true; // always (no modes any more)
 let linkRows = {}; // screen row -> [{ x0, x1, target }] (1-based rows, 0-based columns): clickable links in the thread
 const linkAt = (x, y) => (linkRows[y] || []).find((q) => x - 1 >= q.x0 && x - 1 < q.x1)?.target || null;
-const TH = { room: "", entries: [], busy: false, scroll: 0 }; // scroll: rows up from the bottom
+const TH = { room: "", entries: [], busy: false, scroll: 0, pinned: false, unseen: 0, rows: null, key: "", max: 0 }; // scroll: rows up from the bottom
+// J121 (Angus: "i want to be able to 'pin' your stream so you don't auto-move on update until i scroll back
+// down again"): scrolling up PINS the view: new entries, the thinking… lines and re-renders keep the same
+// lines on screen (render adds the growth to scroll) and the status line says "↓ N new · End to follow".
+// Back at the bottom (End / ^End, PgDn, ^↓, the wheel) or sending/searching yourself follows again.
+function follow() { TH.scroll = 0; TH.pinned = false; TH.unseen = 0; }
 // Thread build cache (Angus via Thoughts-C 2026-09-30: typing re-wrapped the whole thread on
 // every keystroke, ~170 ms on the long world-C thread). The per-entry wrapped lines and their
 // items are rebuilt only on a width change, new/changed entries (bumpThread), a world switch,
@@ -165,7 +170,7 @@ function loadThoughts() {
   const r = room;
   api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; seedThoughtsHistory(r); bumpThread(); render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
-function setThoughts(on) { thoughtsOn = on; TH.scroll = 0; note = ""; if (on) loadThoughts(); render(); }
+function setThoughts(on) { thoughtsOn = on; follow(); note = ""; if (on) loadThoughts(); render(); }
 // Pasted screenshots (Angus, N54: like pi's own windows): Ctrl+V / SUPER+V with an image on the
 // clipboard saves it as ~/Screenshots/pi-clipboard-<id>.png (/tmp if that folder is missing; J71) and puts its PATH in the box at the cursor, next
 // to what it's about. On ⏎ every image path in the text that exists goes to Thoughts as an image,
@@ -185,7 +190,7 @@ function sendThought(text, images = []) {
   const t = String(text || "").trim();
   if ((!t && !images.length) || !api) return;
   api.call("thoughts.send", { room, text: t, images }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
-  TH.scroll = 0; TH.busy = true; render();
+  follow(); TH.busy = true; render();
 }
 
 // Commands: the search panel's own (/search, /ai, /ask) plus the ones every panel has (/help,
@@ -224,7 +229,7 @@ function cycle(d) {
   const i = Math.max(0, rooms.indexOf(room));
   room = rooms[(i + d + rooms.length) % rooms.length];
   top = 0; note = "";
-  S.reset(); if (thoughtsOn) { TH.entries = []; TH.scroll = 0; bumpThread(); loadThoughts(); } render();
+  S.reset(); if (thoughtsOn) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } render();
 }
 // Tab on an @word: complete it from this room's agents (again: the next match).
 let atCycle = null; // completeAt's state: Tab again steps through the same matches
@@ -516,7 +521,7 @@ function render() {
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
   const bottom = [];
   // One animation only (Angus): "thinking…" / "searching…" in the thread; this line stays still.
-  bottom.push(" " + (note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
+  bottom.push(" " + (note ? statusStyled : thoughtsOn && TH.pinned && TH.scroll > 0 ? fg(c, `↓ ${TH.unseen ? `${TH.unseen} new` : "more below"} · End to follow`) : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
   bottom.push(fg(c, "─".repeat(W)));
   const boxAt = bottom.length;
   inRows.forEach((l, i) => bottom.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
@@ -613,7 +618,13 @@ function render() {
     if (!TH.entries.length) flat.push({ l: "" }, { l: dim(`   Thoughts-${room} is this world's own agent: think out loud, ask about what's going on,`) }, { l: dim("   have it keep a thought (\"keep this\"), ask an agent, or hand something off. It remembers.") }, { l: dim("   /keyword WORDS searches the history · /ask QUESTION answers from it, with the turns it used.") });
     if (TH.busy) flat.push({ l: "" }, { l: "   " + shimmer("thinking…", c) });
     if (EV.busy) flat.push({ l: "" }, { l: "   " + shimmerAt(EV.busy === "ask" ? "asking the history…" : "searching…", c, EV.startedAt) });
+    // Pinned (J121): whatever was added below (or taken away: the thinking… lines) shifts scroll by as
+    // much, so the same lines stay on screen. Not across a width or world change (the rows re-wrap).
+    const pinKey = `${tw}|${room}|${avail}`;
+    if (TH.pinned && TH.key === pinKey && TH.rows != null && flat.length !== TH.rows) TH.scroll = Math.max(0, TH.scroll + flat.length - TH.rows);
+    TH.key = pinKey; TH.rows = flat.length;
     const maxScroll = Math.max(0, flat.length - avail);
+    TH.max = maxScroll;
     TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
     const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
     // Lines out of view, like the projects panel: "· ↑ N above · ↓ N below".
@@ -717,7 +728,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
-        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; TH.scroll = 0; bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
+        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) TH.unseen++; else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
@@ -744,7 +755,7 @@ const KEY = /\x1b\[<[\d;]+[Mm]|\x1b\[[\d;?]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b[\s\S]|[
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); });
-function move(d) { if (showHelp) return; TH.scroll = Math.max(0, TH.scroll - d * (Math.abs(d) >= 5 ? 1 : 3)); render(); }
+function move(d) { if (showHelp) return; TH.scroll = Math.max(0, Math.min(TH.max, TH.scroll - d * (Math.abs(d) >= 5 ? 1 : 3))); if (TH.scroll > 0) TH.pinned = true; else follow(); render(); } // J121: up pins, the bottom follows
 function onKey(d) {
   // SUPER+C (Omarchy's universal copy = Ctrl+Insert; kitty passes it on when it has no selection of its
   // own): the pane's highlighted selection, if there is one, else the box's (below). @hyprpi N49
@@ -783,8 +794,9 @@ function onKey(d) {
   // Same scheme as the board: plain keys type (⏎ searches); ↑↓ / ^↑↓ move the highlight;
   // ^⏎ acts on it (jumps to that agent's window); ^click on a name jumps too.
   // Plain keys are the box's (↑ start, ↓ end of the one-line box); Ctrl is the pane's.
-  if (d === "\x1b[1;5F") { TH.scroll = 0; return render(); } // Ctrl+End: back to the newest
-  if (d === "\x1b[1;5H") { TH.scroll = 1e9; return render(); } // Ctrl+Home: the oldest
+  if (d === "\x1b[1;5F") { follow(); return render(); } // Ctrl+End: back to the newest (and follow, J121)
+  if (d === "\x1b[1;5H") { TH.scroll = 1e9; TH.pinned = TH.max > 0; return render(); } // Ctrl+Home: the oldest (pinned)
+  if ((d === "\x1b[F" || d === "\x1b[4~" || d === "\x1bOF") && !query && TH.pinned) { follow(); return render(); } // End with an empty box: follow again (J121)
   if (d === "\x1b[1;5A") return move(-1);
   if (d === "\x1b[1;5B") return move(1);
   // ↑↓ like a Pi window (Angus; shared by every panel since N51): within the box first (↑ to its
