@@ -41,6 +41,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
+  hyprpi daemon restart [--reason R] [--ttl MIN]   restart the daemon once everyone is idle (returns at once; never poll for idle) · --status · --cancel
   hyprpi stop                 stop the daemon (it saves what is open first: hyprpi restore brings it back)
   hyprpi restore [all|X] [--list] [--no]   reopen the agents and panels that were open when hyprpi
                               last went down (own workspaces, model and thinking; panels silently);
@@ -385,7 +386,23 @@ const commands = {
   help: () => console.log(HELP),
   "--help": () => console.log(HELP),
   "-h": () => console.log(HELP),
-  daemon: async () => { const { runDaemon } = await import("../lib/daemon.mjs"); await runDaemon(); },
+  daemon: async () => {
+    // J126: `hyprpi daemon restart` files a restart the daemon runs itself once everyone is idle; it returns
+    // at once (never poll for idle yourself). --status / --cancel. Plain `hyprpi daemon` runs the daemon.
+    if (args[0] === "restart") {
+      args.shift();
+      if (!(await alive())) die("the daemon isn't running (hyprpi ensure starts it)");
+      const show = (p) => p ? `pending since ${new Date(p.since).toTimeString().slice(0, 5)}, asked by ${p.reasons.map((r) => r.by + (r.reason ? ` (${r.reason})` : "")).join(", ")}; waiting on: ${p.waiting_on.join(", ") || "nobody (restarts within ~30 s)"}; expires ${new Date(p.expires).toTimeString().slice(0, 5)}` : "no restart pending";
+      if (flag("--status")) { console.log(show((await request("daemon.restartStatus")).pending)); return; }
+      if (flag("--cancel")) { const r = await request("daemon.restartCancel", { agentId: process.env.HYPRPI_AGENT_ID || "" }); console.log(r.cancelled ? "cancelled" : "no restart was pending"); return; }
+      flag("--when-idle"); // the only kind there is
+      const reason = opt("--reason") || "", ttl = opt("--ttl");
+      const r = await request("daemon.restartRequest", { agentId: process.env.HYPRPI_AGENT_ID || "", reason: reason || args.join(" "), ...(ttl ? { ttlMin: Number(ttl) } : {}) });
+      console.log(`${r.merged ? "merged into the pending restart" : "restart queued"}: ${show(r)}. The daemon restarts itself when everyone is idle; you don't need to wait (end your turn).`);
+      return;
+    }
+    const { runDaemon } = await import("../lib/daemon.mjs"); await runDaemon();
+  },
   ensure: async () => { await ensureDaemon(); console.log(socketPath()); },
   stop: async () => { if (await alive()) await request("shutdown"); },
   restore: cmdRestore,
