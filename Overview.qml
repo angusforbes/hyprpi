@@ -273,8 +273,10 @@ Item {
     property int generation: 0
     running: false
     command: ["sh", "-c",
-      "printf '{\"clients\":%s,\"monitors\":%s,\"active\":%s,\"workspaces\":%s}' " +
-      "\"$(hyprctl -j clients)\" \"$(hyprctl -j monitors)\" \"$(hyprctl -j activewindow)\" \"$(hyprctl -j workspaces)\""]
+      "printf '{\"clients\":%s,\"monitors\":%s,\"active\":%s,\"workspaces\":%s,\"hyprpi\":%s}' " +
+      "\"$(hyprctl -j clients)\" \"$(hyprctl -j monitors)\" \"$(hyprctl -j activewindow)\" \"$(hyprctl -j workspaces)\" " +
+      // hyprpi (optional): agents' names and icons for the window labels; null when it isn't installed
+      "\"$(command -v hyprpi >/dev/null 2>&1 && timeout 2 hyprpi list --json 2>/dev/null | grep . || echo null)\""]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.applySnapshot(text, snapshot.generation)
@@ -293,6 +295,26 @@ Item {
     var parts = s.split(".").filter(function(p) { return p.length > 0 })
     while (parts.length > 1 && domainEndings.indexOf(parts[parts.length - 1].toLowerCase()) >= 0) parts.pop()
     return parts.length ? parts[parts.length - 1] : String(cls || "")
+  }
+
+  // The label on a window tile. Usually the short class; hyprpi windows have generic classes
+  // (hyprpi.agent, hyprpi.agents, hyprpi.mockup), so they're named from hyprpi instead: an agent as
+  // "<icon> <Name>" (hyprpi list, else its "π - Name - folder" title), a panel as "📋 Projects D".
+  readonly property var hyprpiPanels: ({ router: ["👥", "Agents"], room: ["💬", "Stream"], search: ["💭", "Thoughts"],
+                                          thoughts: ["💭", "Thoughts"], board: ["📋", "Projects"] })
+  function windowLabel(cl, hp) {
+    var cls = String(cl["class"] || ""), title = String(cl.title || "")
+    if (cls.indexOf("hyprpi.") === 0) {
+      var pm = /^hyprpi-(router|room|search|board|thoughts) (\S+)/.exec(title)
+      if (pm && hyprpiPanels[pm[1]]) return hyprpiPanels[pm[1]][0] + " " + hyprpiPanels[pm[1]][1] + " " + pm[2]
+      var ags = (hp && hp.agents) || []
+      for (var i = 0; i < ags.length; i++)
+        if (ags[i].address === cl.address) return (ags[i].icon || "🤖") + " " + (ags[i].display || ags[i].name || "agent")
+      var am = /^π - (.+) - [^-]*$/.exec(title)
+      if (am) return am[1]
+      if (title) return title
+    }
+    return root.shortenAppNames ? shortClass(cls) : cls
   }
 
   // Wayland toplevel for a Hyprland window address ("0x5579...").
@@ -364,7 +386,7 @@ Item {
       if (!byWorld[w]) byWorld[w] = {}
       if (!byWorld[w][wsId]) byWorld[w][wsId] = []
       byWorld[w][wsId].push({
-        address: cl.address, cls: root.shortenAppNames ? shortClass(cl["class"]) : (cl["class"] || ""), fullClass: cl["class"] || "", title: cl.title || "",
+        address: cl.address, cls: windowLabel(cl, data.hyprpi), fullClass: cl["class"] || "", title: cl.title || "",
         x: cl.at[0] - mon.x, y: cl.at[1] - mon.y, w: cl.size[0], h: cl.size[1],
         floating: cl.floating === true, fullscreen: (cl.fullscreen || 0) !== 0, workspace: wsId
       })
