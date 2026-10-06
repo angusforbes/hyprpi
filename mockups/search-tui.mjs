@@ -597,6 +597,7 @@ function render() {
           const body = it.text != null ? String(it.text).replace(/\s+/g, " ") : null;
           const lines = body != null ? wrap(body, tw - 4).slice(0, 3).map((x) => `        ${x}`) : resultLines({ ...it, name: it.who }, -1, W).slice(1, 4).filter((x) => strip(x).trim()).map((x) => "     " + x.slice(1));
           for (const l of lines) flat.push({ l, meta: { item: ki, textX: 9 } });
+          if (it.link) for (const r of md(`↗ archived thread: ${it.link}`, tw - 4, "        ", dim)) flat.push({ ...r, meta: { item: ki, textX: 9 } }); // J119: open the archived thread
         });
         if (e.answer) { flat.push({ l: "" }); add(md("↳ " + e.answer, tw, "   "), 4); } // the answer prints last, below the evidence
       }
