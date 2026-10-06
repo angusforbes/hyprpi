@@ -1,6 +1,6 @@
 // hyprpi remote control: the page. A chat with one world's Thoughts agent; world chips switch it.
 // Thread entries (lib/thoughts.mjs): { role: you | thoughts | action | reply | agent | note | evidence, text, from?, ts }
-import { threadKind, answerLine, actionPrefix, splitLead } from "/lib/thoughts-lines.mjs";
+import { threadKind, answerLine, actionPrefix, splitLead, phoneHidden } from "/lib/thoughts-lines.mjs";
 import { agentIn } from "/lib/tui/agent-click.mjs"; // the desktop panels' Ctrl+click matcher, shared as-is (J45)
 import { esc, href, link, inline, md } from "/md.mjs";
 import { install as installFileViewer } from "/fileview.mjs";
@@ -71,6 +71,7 @@ function hiddenBefore(list, i, lead) {
   return mine.length ? mine : out;
 }
 function entryHtml(e, i, list) {
+  if (phoneHidden(e)) return ""; // J146: hyprpi's automatic upkeep / orchestration notes stay off the phone
   const kind = threadKind(e);
   switch (kind) {
     case "hidden": return "";
