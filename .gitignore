@@ -1,1 +1,4 @@
 node_modules/
+
+# remote-control thumbnail cache (J151): generated, never committed
+remote-control/.thumbs/

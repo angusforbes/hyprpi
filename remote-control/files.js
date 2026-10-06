@@ -18,6 +18,9 @@ const IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/i;
 const SHARE_MAX = 100e6; // more than this in one Share: links instead of the files
 const fileHref = (p) => "/file?path=" + encodeURIComponent(p);
 const tilde = (p) => String(p || "").replace(HOME, "~");
+// J151: list rows show a small cached WebP made on the laptop (not the full image); v = the image's mtime,
+// so an edited image gets a new URL and an unchanged one is reused from the phone's cache.
+const thumbHref = (e) => `/api/thumb?path=${encodeURIComponent(e.path)}&v=${Math.round(e.mtime || 0)}`;
 
 let cur = { path: "", parent: null, entries: [] }, sort = localStorage.getItem("files.sort") || "date", q = "";
 let selecting = false;
@@ -72,7 +75,7 @@ function render() {
   if (k) list = list.filter((e) => e.name.toLowerCase().includes(k));
   if (cur.path) list.sort((a, b) => (b.dir - a.dir) || (sort === "date" ? b.mtime - a.mtime : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })));
   el.innerHTML = list.length ? list.map((e) => `<div class="fe${e.dir ? " dir" : ""}${sel.has(e.path) ? " on" : ""}" data-p="${esc(e.path)}">
-    <div class="ic">${!e.dir && IMG.test(e.name) && !/\.heic$/i.test(e.name) ? `<img loading="lazy" decoding="async" alt="" src="${esc(fileHref(e.path))}">` : icon(e)}</div>
+    <div class="ic">${!e.dir && IMG.test(e.name) && !/\.heic$/i.test(e.name) ? `<img loading="lazy" decoding="async" alt="" src="${esc(thumbHref(e))}">` : icon(e)}</div>
     <div class="nm"><div class="n1">${esc(e.name)}</div><div class="n2">${e.dir ? (cur.path ? "folder" : tilde(e.path)) : `${size(e.size)} · ${when(e.mtime)}`}${!cur.path && e.name === "Phone" ? " · uploads land here" : ""}</div></div>
     <div class="ck"></div></div>`).join("") + (cur.truncated ? `<div class="fempty">(the first 5000 shown)</div>` : "")
     : k ? (cur.path ? `<div class="fempty fevw">Nothing in this folder matches.</div>` : "") : `<div class="fempty">This folder is empty.</div>`;
@@ -97,7 +100,7 @@ function render() {
 }
 function rowHtml(e, sub) {
   return `<div class="fe${e.dir ? " dir" : ""}${sel.has(e.path) ? " on" : ""}" data-p="${esc(e.path)}"${sub ? ' data-ev="1"' : ""}>
-    <div class="ic">${!e.dir && IMG.test(e.name) && !/\.heic$/i.test(e.name) ? `<img loading="lazy" decoding="async" alt="" src="${esc(fileHref(e.path))}">` : icon(e)}</div>
+    <div class="ic">${!e.dir && IMG.test(e.name) && !/\.heic$/i.test(e.name) ? `<img loading="lazy" decoding="async" alt="" src="${esc(thumbHref(e))}">` : icon(e)}</div>
     <div class="nm"><div class="n1">${esc(e.name)}</div><div class="n2">${sub}</div></div>
     <div class="ck"></div></div>`;
 }

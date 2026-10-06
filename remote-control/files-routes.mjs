@@ -12,13 +12,17 @@
 //   POST /api/files/thoughts {world, note, paths}   a note + files to a world's Thoughts (via phone)
 //   GET  /api/find?q=                a NAME search across all the allowed roots (J142): fd, read-only, clutter
 //                                    skipped, every hit re-checked with fileAllowed; folders first, capped
+//   GET  /api/thumb?path=&v=        a small cached WebP of an image (J151), ~320 px, made by vipsthumbnail on
+//                                    first request into remote-control/.thumbs/ (gitignored; a hidden folder,
+//                                    so /file and /api/ls never serve or list it); v = the image's mtime, and
+//                                    the answer is cached by the phone for a year (a new mtime = a new URL)
 //   POST /api/files/agent {agent, note, paths}      the same to any live agent (J141, the π app's Fils tab):
 //                                    its prompt names the files, as a pasted image does on the desktop
 //
 // Read-side checks (fileAllowed, refusedPart, underRoot) are server.mjs's own (J47/J69), passed in.
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 
 const MB = 1e6;
@@ -244,6 +248,59 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
     });
   }
 
+  // J151 (Angus: "how come the thumbnails take so long to reload, and if i leave the folder and come back, it
+  // looks like it has to reload them all again"): list rows used the full image (/file, screenshots of 0.4–1.2
+  // MB, sent with "cache-control: no-cache" and no validator, so every visit downloaded them all again). Now
+  // a small WebP per image, keyed by its real path + mtime + size (an edited image gets a new one), kept in
+  // THUMBS (Angus: "it go under the remote-control folder there, but make sure it's gitignored"). Prune: files
+  // not used for 30 days, and the oldest beyond 200 MB, once an hour.
+  const THUMBS = path.join(path.dirname(new URL(import.meta.url).pathname), ".thumbs");
+  const THUMB_PX = 320, THUMB_MAX_SRC = 80e6, THUMB_DAYS = 30, THUMB_CAP = 200e6;
+  const making = new Map(); // key -> Promise (one vipsthumbnail per image at a time)
+  let thumbJobs = 0; const thumbQueue = [];
+  const runThumb = (src, out) => new Promise((resolve, reject) => {
+    const go = () => {
+      thumbJobs++;
+      const tmp = out + "." + process.pid + "." + Date.now() + ".tmp.webp";
+      const p = spawn("vipsthumbnail", [src, "--size", `${THUMB_PX}x${THUMB_PX}`, "-o", tmp + "[Q=72,strip]"], { stdio: ["ignore", "ignore", "ignore"] });
+      const done = (ok) => { thumbJobs--; const n = thumbQueue.shift(); if (n) n(); if (ok) { try { fs.renameSync(tmp, out); resolve(out); } catch (e) { reject(e); } } else { try { fs.unlinkSync(tmp); } catch { /* none */ } reject(new Error("thumbnail failed")); } };
+      const t = setTimeout(() => { try { p.kill(); } catch { /* gone */ } }, 20000);
+      p.on("close", (c) => { clearTimeout(t); done(c === 0 && fs.existsSync(tmp)); });
+      p.on("error", () => { clearTimeout(t); done(false); });
+    };
+    thumbJobs < 3 ? go() : thumbQueue.push(go);
+  });
+  function pruneThumbs() {
+    let ents = []; try { ents = fs.readdirSync(THUMBS).filter((f) => f.endsWith(".webp")).map((f) => { const fp = path.join(THUMBS, f); const st = fs.statSync(fp); return { fp, size: st.size, used: st.atimeMs > st.mtimeMs ? st.atimeMs : st.mtimeMs }; }); } catch { return { removed: 0 }; }
+    const now = Date.now(); let removed = 0;
+    for (const e of ents) if (now - e.used > THUMB_DAYS * 864e5) { try { fs.unlinkSync(e.fp); e.gone = true; removed++; } catch { /* busy */ } }
+    let total = ents.filter((e) => !e.gone).reduce((n, e) => n + e.size, 0);
+    for (const e of ents.filter((x) => !x.gone).sort((a, b) => a.used - b.used)) { if (total <= THUMB_CAP) break; try { fs.unlinkSync(e.fp); total -= e.size; removed++; } catch { /* busy */ } }
+    return { removed, total };
+  }
+  setTimeout(() => pruneThumbs(), 60e3).unref?.(); setInterval(() => pruneThumbs(), 3600e3).unref?.();
+  async function thumb(req, res, url) {
+    const real = fileAllowed(String(url.searchParams.get("path") || ""));
+    if (!real || !/\.(png|jpe?g|gif|webp|heic|heif|avif|bmp|tiff?)$/i.test(real)) return json(res, 404, { error: "not found or not allowed" });
+    let st; try { st = fs.statSync(real); } catch { return json(res, 404, { error: "not found" }); }
+    if (!st.isFile() || st.size > THUMB_MAX_SRC) return json(res, 404, { error: "no thumbnail" });
+    const key = createHash("sha1").update(`${real}\0${st.mtimeMs}\0${st.size}\0${THUMB_PX}`).digest("hex");
+    const out = path.join(THUMBS, key + ".webp");
+    if (!fs.existsSync(out)) {
+      try { fs.mkdirSync(THUMBS, { recursive: true }); if (!making.has(key)) making.set(key, runThumb(real, out).finally(() => making.delete(key))); await making.get(key); }
+      catch { return json(res, 415, { error: "can't make a thumbnail" }); }
+    }
+    try { const t = new Date(); fs.utimesSync(out, t, fs.statSync(out).mtime); } catch { /* best effort: marks it used, for pruning */ }
+    const etag = `"${key.slice(0, 20)}"`;
+    // v (the mtime) makes the URL change when the image does, so the phone may keep it for good.
+    const cache = url.searchParams.get("v") === String(Math.round(st.mtimeMs)) ? "private, max-age=31536000, immutable" : "private, max-age=300";
+    if (req.headers["if-none-match"] === etag) { res.writeHead(304, { etag, "cache-control": cache }); return res.end(); }
+    let size = 0; try { size = fs.statSync(out).size; } catch { return json(res, 404, { error: "gone" }); }
+    res.writeHead(200, { "content-type": "image/webp", "content-length": size, "cache-control": cache, etag, "x-content-type-options": "nosniff" });
+    fs.createReadStream(out).on("error", () => res.destroy()).pipe(res);
+  }
+  if (process.env.HYPRPI_THUMB_PRUNE_TEST) Object.assign(globalThis, { __pruneThumbs: pruneThumbs, __THUMBS: THUMBS });
+
   // Returns true when it handled the request.
   return async function handle(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/files/token") { res.setHeader("cache-control", "no-store"); json(res, 200, { token: TOKEN, caps: { fileMB: CAPS.file / MB, batchMB: CAPS.batch / MB, batchFiles: CAPS.batchFiles }, phone: PHONE }); return true; }
@@ -257,6 +314,7 @@ export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underR
       if (q.length < 2 || q.length > 80 || /[\0\n\r]/.test(q)) { json(res, 400, { error: "2 to 80 characters" }); return true; }
       json(res, 200, await find(q)); return true;
     }
+    if (req.method === "GET" && url.pathname === "/api/thumb") { await thumb(req, res, url); return true; }
     if (req.method === "POST" && url.pathname === "/api/upload") { await upload(req, res); return true; }
     if (req.method === "POST" && url.pathname === "/api/files/thoughts") { await toThoughts(req, res); return true; }
     if (req.method === "POST" && url.pathname === "/api/files/agent") { await toAgent(req, res); return true; }
