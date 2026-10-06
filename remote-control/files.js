@@ -76,6 +76,13 @@ function render() {
     <div class="ck"></div></div>`).join("") + (cur.truncated ? `<div class="fempty">(the first 5000 shown)</div>` : "")
     : k ? (cur.path ? `<div class="fempty fevw">Nothing in this folder matches.</div>` : "") : `<div class="fempty">This folder is empty.</div>`;
   if (k.length >= 2) el.insertAdjacentHTML("beforeend", everywhereHtml(k));
+  // J145 (Angus: "if there are no files to select (ie only folders visible) then the select button
+  // should not be visible … same with the send… and share button"): Select, and the Send… / Share bar,
+  // only when this view lists files that can be selected (the folder's own rows; "Everywhere" search
+  // results open, they aren't selectable). A view that turns folders-only leaves select mode.
+  const actable = list.some((e) => !e.dir);
+  $("#fsel").hidden = !actable;
+  if (!actable && selecting) { selecting = false; sel.clear(); $("#fsel").textContent = "Select"; document.body.classList.remove("selecting"); }
   $("#fcount").textContent = `${sel.size} selected`;
   $("#fnormal").hidden = selecting; $("#fselbar").hidden = !selecting;
 }
