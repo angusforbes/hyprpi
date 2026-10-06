@@ -408,7 +408,7 @@ const commands = {
     if (args[0] === "new" && /^[A-Za-z][A-Za-z0-9]*$/.test(args[1] || "")) {
       const handoff = opt("--handoff") || "";
       const r = await request("thoughts.fresh", { room: args[1].toUpperCase(), ...(args.includes("--force") ? { force: true } : {}), ...(handoff ? { handoff: path.resolve(handoff.replace(/^~(?=\/)/, process.env.HOME)) } : {}) }, { timeoutMs: 20000 });
-      console.log(`Thoughts-${r.room}: new session; ${r.files} file(s) archived in ${r.archived}${r.handoff ? `; reading ${r.handoff}` : ""}`);
+      console.log(`Thoughts-${r.room}: new session; ${r.files} file(s) archived in ${r.archived}${r.carried ? `; the last ${r.carried} turn(s) still shown above the divider` : ""}${r.handoff ? `; reading ${r.handoff}` : ""}`);
       return;
     }
     const room = opt("--room"), via = opt("--via") || "";
