@@ -380,7 +380,9 @@ function sessionFile(id) {
 }
 
 // ---- http ------------------------------------------------------------------------------------
-const room = (w) => /^[A-Z]$/.test(String(w || "")) ? String(w) : null;
+// A world letter that exists (one of the daemon's rooms); anything else is refused, so a stray POST
+// can't start a Thoughts for a world that isn't there (J161: a test to "Z" did).
+const room = (w) => /^[A-Z]$/.test(String(w || "")) && (!listing?.rooms || listing.rooms.some((r) => r.id === String(w))) ? String(w) : null;
 const json = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
 async function body(req, max = 1e6) {
   let s = ""; for await (const c of req) { s += c; if (s.length > max) throw new Error("too large"); }
