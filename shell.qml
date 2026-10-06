@@ -33,6 +33,20 @@ ShellRoot {
     function dry(mode: string): void { overview.open(JSON.stringify({ mode: mode, dry: true })) }
     function openTest(mode: string, hintStart: int): void { overview.open(JSON.stringify({ mode: mode, hintStart: hintStart })) }
     function press(key: string): void { overview.press(key) }
+    // Test: build (dry, never shown) from a recorded snapshot (JSON text) instead of live hyprctl (J167):
+    //   qs -p . ipc call hwv feed "$(cat snapshot.json)"
+    function feed(raw: string): string {
+      overview.dry = true; overview.mode = "all"; overview.sessionHints = ({})
+      overview.loadGeneration++
+      overview.applySnapshot(raw, overview.loadGeneration)
+      var e1 = null
+      for (var i = 0; i < overview.rows.length; i++) for (var j = 0; j < overview.rows[i].workspaces.length; j++)
+        if (overview.rows[i].workspaces[j].id === overview.activeWorkspace) e1 = overview.rows[i].workspaces[j]
+      return JSON.stringify({ active: overview.activeWorkspace, special: overview.specialName,
+        specialWindows: overview.specialWindows.map(function(w) { return w.cls }),
+        activeTileWindows: e1 ? e1.windows.map(function(w) { return w.cls + " [" + w.hint + "]" }) : null,
+        hints: Object.keys(overview.hints).length })
+    }
     // Dry: what would typing `seq` do?  jump / wait (ambiguous) / prefix / none
     function would(seq: string): string {
       var isHint = !!overview.hints[seq], longer = overview.hasLonger(seq)

@@ -392,6 +392,22 @@ Item {
       })
     }
 
+    // A special workspace open on this monitor (a scratchpad, Reprieve's parking spot, …) is drawn
+    // by Hyprland ON TOP of the active workspace, which it dims. Show it the same way on the active
+    // tile, so the preview matches the screen (J167: E1's tile showed Prism, which really was on
+    // E1, while the screen showed the special workspace's file manager and Slack over it). These
+    // windows aren't on the workspace, so they get no hints and can't be dragged.
+    var sp = mon.specialWorkspace && mon.specialWorkspace.id < 0 ? mon.specialWorkspace : null
+    root.specialName = sp ? String(sp.name || "").replace(/^special:/, "") : ""
+    var specialWins = []
+    if (sp) for (var sc = 0; sc < clients.length; sc++) {
+      var scl = clients[sc]
+      if (!scl.workspace || scl.workspace.id !== sp.id || !scl.mapped || scl.hidden) continue
+      specialWins.push({ address: scl.address, cls: windowLabel(scl, data.hyprpi), fullClass: scl["class"] || "", title: scl.title || "",
+        x: scl.at[0] - mon.x, y: scl.at[1] - mon.y, w: scl.size[0], h: scl.size[1] })
+    }
+    root.specialWindows = specialWins
+
     // Workspaces that exist but have no windows (e.g. the one you're on after
     // moving everything out) still get a tile.
     var wsl = data.workspaces || []
@@ -598,6 +614,8 @@ Item {
   property var virtualWs: ({})          // world -> [slot, ...]
   property var virtualWorlds: []
   property int keepSelectId: 0
+  property var specialWindows: []       // J167: the open special workspace's windows (drawn over the active tile)
+  property string specialName: ""
   property bool freshOpen: true         // next snapshot is a new open (reset scroll)
   property string notice: ""
   property string lastRaw: ""
@@ -1076,6 +1094,68 @@ Item {
                       opacity: 0.45
                       font.family: root.fontFamily
                       font.pixelSize: 16
+                    }
+
+                    // J167: an open special workspace, drawn over the active tile as Hyprland draws
+                    // it over the screen (dimmed backdrop, its windows on top). Display only.
+                    Item {
+                      anchors.fill: parent
+                      z: 50
+                      visible: wsCol.isActive && root.specialWindows.length > 0
+                      Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.45) }
+                      Repeater {
+                        model: wsCol.isActive ? root.specialWindows : []
+                        Rectangle {
+                          id: spBox
+                          required property var modelData
+                          readonly property var toplevel: root.showPreviews ? root.toplevelFor(modelData.address) : null
+                          x: Math.max(0, modelData.x * overlay.sx)
+                          y: Math.max(0, modelData.y * overlay.sx)
+                          width: Math.max(18, modelData.w * overlay.sx)
+                          height: Math.max(14, modelData.h * overlay.sx)
+                          radius: 4
+                          color: spPreview.hasContent ? "transparent" : Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 1)
+                          border.width: 1.5
+                          border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.6)
+                          Item {
+                            anchors.fill: parent
+                            clip: true
+                            ScreencopyView {
+                              id: spPreview
+                              anchors.fill: parent
+                              captureSource: spBox.toplevel
+                              live: false
+                              constraintSize: Qt.size(Math.max(1, spBox.width), Math.max(1, spBox.height))
+                              visible: spBox.toplevel !== null && hasContent
+                            }
+                          }
+                          Rectangle {
+                            anchors { left: parent.left; bottom: parent.bottom; margins: 3 }
+                            visible: parent.height > 40
+                            width: Math.min(parent.width - 6, spLabel.implicitWidth + 8)
+                            height: spLabel.implicitHeight + 2
+                            radius: 3
+                            color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.85)
+                            Text {
+                              id: spLabel
+                              anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 4; rightMargin: 4 }
+                              text: spBox.modelData.cls
+                              elide: Text.ElideRight
+                              color: root.fg
+                              font.family: root.fontFamily
+                              font.pixelSize: 14
+                            }
+                          }
+                        }
+                      }
+                      Rectangle { // which special workspace this is
+                        anchors { right: parent.right; top: parent.top; margins: 4 }
+                        width: spName.implicitWidth + 10
+                        height: spName.implicitHeight + 4
+                        radius: 4
+                        color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, 0.9)
+                        Text { id: spName; anchors.centerIn: parent; text: "◇ " + root.specialName + " (open on top)"; color: root.fg; font.family: root.fontFamily; font.pixelSize: 12 }
+                      }
                     }
 
                     Repeater {
