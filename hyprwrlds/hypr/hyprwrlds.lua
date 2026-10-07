@@ -289,10 +289,22 @@ local function cur_or_entry()
   if not cur or cur < 1 then cur = (M.current_world() - 1) * SIZE + 1 end
   return cur
 end
+-- The same steps from a GIVEN workspace (J209): the hyprwrlds-vimarchy switcher calls these through
+-- `hyprctl repl` for SUPER+ALT(+CTRL/+SHIFT)+arrows while it holds the keyboard, so the keys and the
+-- switcher share one implementation. M.target: the SUPER+ALT+arrow stop from cur.
+function M.target(cur, dx, dy) return M.step_from(cur, dx, dy, existing_ids()) end
+-- M.intercept(kind, dx, dy) (J209): set by an add-on that holds the keyboard (hyprwrlds-vimarchy's
+-- switcher), whose own key handler never sees these keys because Hyprland's binds still fire under an
+-- exclusive layer. Return true when it took the key; kind = "step" | "raw" | "swap" | "order".
+local function taken(kind, dx, dy)
+  if type(M.intercept) ~= "function" then return false end
+  local ok, r = pcall(M.intercept, kind, dx, dy)
+  return ok and r == true
+end
 -- SUPER + ALT + arrows: move around the grid (stops as above).
-function M.step(dx, dy) focus_id(M.step_from(cur_or_entry(), dx, dy, existing_ids())) end
+function M.step(dx, dy) if taken("step", dx, dy) then return end focus_id(M.target(cur_or_entry(), dx, dy)) end
 -- SUPER + ALT + CTRL + arrows: the adjacent workspace / world, created if needed.
-function M.step_raw(dx, dy) focus_id(M.raw_from(cur_or_entry(), dx, dy)) end
+function M.step_raw(dx, dy) if taken("raw", dx, dy) then return end focus_id(M.raw_from(cur_or_entry(), dx, dy)) end
 
 -- SUPER + ALT + SHIFT + LEFT / RIGHT: swap this workspace's windows with the neighbouring
 -- workspace's (the same world, the adjacent number; wraps 10 <-> 1) and follow. Windows move
@@ -324,18 +336,21 @@ function M.swap_world_in(order, w, dy, stops)
   out[p[w]], out[p[other]] = other, w
   return out, other
 end
-function M.swap_world(dy)
+-- World w (J209: the switcher passes its selected world; the key passes the current one).
+function M.swap_world_of(w, dy)
   local order = M.order()
-  local new, other = M.swap_world_in(order, M.current_world(), dy, M.world_stops(existing_ids(), active_id()))
+  local new, other = M.swap_world_in(order, w, dy, M.world_stops(existing_ids(), active_id()))
   if new then M.save_order(new) end
   return other
 end
-function M.swap(dx)
-  local cur = cur_or_entry()
+function M.swap_world(dy) if taken("order", 0, dy) then return end return M.swap_world_of(M.current_world(), dy) end
+-- Workspace cur's windows with its neighbour's (J209: the switcher passes its selection) -> the neighbour.
+function M.swap_ws(cur, dx)
   local other = M.raw_from(cur, dx, 0)
   M.swap_with(cur, other)
-  focus_id(other)
+  return other
 end
+function M.swap(dx) if taken("swap", dx, 0) then return end focus_id(M.swap_ws(cur_or_entry(), dx)) end
 
 function M.letter(w)
   w = clamp_world(w)

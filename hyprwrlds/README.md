@@ -57,6 +57,12 @@ current world even when they're empty, as before.)
 SUPER+ALT+SHIFT+arrows were Omarchy's "move workspace to the left/right/up/down monitor" (nothing to
 do on one screen).
 
+For add-ons (J209): `hyprwrlds.target(id, dx, dy)`, `raw_from(id, dx, dy)`, `swap_ws(id, dx)` and
+`swap_world_of(world, dy)` are the same steps from a given workspace (the
+[hyprwrlds-vimarchy](https://github.com/angusforbes/hyprwrlds-vimarchy) switcher calls them through
+`hyprctl repl`). An add-on that holds the keyboard can set `hyprwrlds.intercept = function(kind, dx, dy)`
+(`kind`: step / raw / swap / order); when it returns true the bind does nothing else.
+
 **The world order** (`~/.config/hyprwrlds/order`, e.g. `A C B D E F G H I`; edit it by hand or with
 SUPER+ALT+SHIFT+UP/DOWN): the order worlds are shown and walked in, top to bottom. It's positions only:
 world B keeps its letter and its workspaces 11-20 (and hyprpi's room B stays B); it just sits after C.
