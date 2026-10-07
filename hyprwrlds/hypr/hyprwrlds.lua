@@ -153,10 +153,23 @@ function M.world_count()
   return n
 end
 
-function M.cycle_world(delta)
-  local n = M.world_count()
-  local w = ((M.current_world() - 1 + delta) % n) + 1
-  M.world(w)
+local function existing_ids()
+  local ids = {}
+  local ok, all = pcall(hl.get_workspaces)
+  if ok and type(all) == "table" then
+    for _, ws in ipairs(all) do
+      local ok2, id = pcall(function() return ws.id end)
+      if ok2 and type(id) == "number" and id >= 1 then ids[#ids + 1] = id end
+    end
+  end
+  return ids
+end
+function M.cycle_world(delta) -- SUPER+ALT+TAB: the world stops, in the world order (J207)
+  local stops = M.world_stops(existing_ids(), active_id())
+  local cur = M.current_world()
+  local i = 1
+  for k, w in ipairs(stops) do if w == cur then i = k end end
+  M.world(stops[((i - 1 + delta) % #stops) + 1])
 end
 
 -- Cycle through occupied workspaces (plus the current one) of this world.
@@ -182,6 +195,44 @@ end
 -- without a 7: its 6 if it has one, else 5).
 -- Pure (testable): ids = existing workspace ids, cur = the active id.
 local BASE = 5
+-- World ORDER (J207, Angus: "keep the letter the same but just change how they're positioned"):
+-- ~/.config/hyprwrlds/order lists the letters top to bottom, e.g. "A C B D E F G H I" (missing letters
+-- follow in alphabetical order; lines starting with # are comments). Only positions change: windows,
+-- letters, workspace ids (B is always 11-20) and hyprpi's rooms stay as they are. The bar widget and
+-- the hyprwrlds-vimarchy switcher read the same file. SUPER+ALT+SHIFT+UP/DOWN swaps worlds in it.
+local ORDER_FILE = (os.getenv("XDG_CONFIG_HOME") or ((os.getenv("HOME") or "") .. "/.config")) .. "/hyprwrlds/order"
+M.order_file = ORDER_FILE
+function M.parse_order(text)
+  local order, seen = {}, {}
+  for line in tostring(text or ""):gmatch("[^\n]+") do
+    if not line:match("^%s*#") then
+      for ch in line:upper():gmatch("%a") do
+        local w = LETTERS:find(ch, 1, true)
+        if w and w <= MAX_WORLDS and not seen[w] then order[#order + 1] = w; seen[w] = true end
+      end
+    end
+  end
+  for w = 1, MAX_WORLDS do if not seen[w] then order[#order + 1] = w end end
+  return order
+end
+function M.order()
+  if M.order_override then return M.order_override end -- tests
+  local f = io.open(ORDER_FILE, "r")
+  local text = f and f:read("a") or ""
+  if f then f:close() end
+  return M.parse_order(text)
+end
+local function pos_map(order) local pos = {} for i, w in ipairs(order) do pos[w] = i end return pos end
+function M.save_order(order)
+  os.execute("mkdir -p '" .. ORDER_FILE:gsub("/[^/]*$", "") .. "'")
+  local parts = {}
+  for _, w in ipairs(order) do parts[#parts + 1] = M.letter(w) end
+  local f = io.open(ORDER_FILE .. ".tmp", "w")
+  if not f then return false end
+  f:write("# hyprwrlds world order, top to bottom (SUPER+ALT+SHIFT+UP/DOWN swaps; edit freely)\n" .. table.concat(parts, " ") .. "\n")
+  f:close()
+  return os.rename(ORDER_FILE .. ".tmp", ORDER_FILE)
+end
 local function sorted_keys(set) local t = {} for k in pairs(set) do t[#t + 1] = k end table.sort(t) return t end
 function M.col_stops(world, ids, cur)
   local set = {}
@@ -191,13 +242,18 @@ function M.col_stops(world, ids, cur)
   if cur then take(cur) end
   return sorted_keys(set)
 end
+-- Worlds that are stops, top to bottom in the world order: the first MIN_WORLDS positions always,
+-- then any other world in use (or current).
 function M.world_stops(ids, cur)
+  local order = M.order()
   local set = {}
-  for w = 1, MIN_WORLDS do set[w] = true end
+  for i = 1, MIN_WORLDS do set[order[i]] = true end
   local function take(id) local w = world_of(id); if w and w <= MAX_WORLDS then set[w] = true end end
   for _, id in ipairs(ids or {}) do take(id) end
   if cur then take(cur) end
-  return sorted_keys(set)
+  local out = {}
+  for _, w in ipairs(order) do if set[w] then out[#out + 1] = w end end
+  return out
 end
 local function index_of(list, v) for i, x in ipairs(list) do if x == v then return i end end return nil end
 function M.step_from(cur, dx, dy, ids)
@@ -223,19 +279,8 @@ function M.raw_from(cur, dx, dy)
   local w = world_of(cur) or 1
   local col = cur - (w - 1) * SIZE
   col = ((col - 1 + dx) % SIZE) + 1
-  w = ((w - 1 + dy) % MAX_WORLDS) + 1
+  if dy ~= 0 then local order = M.order(); local p = pos_map(order)[w] or 1; w = order[((p - 1 + dy) % #order) + 1] end
   return (w - 1) * SIZE + col
-end
-local function existing_ids()
-  local ids = {}
-  local ok, all = pcall(hl.get_workspaces)
-  if ok and type(all) == "table" then
-    for _, ws in ipairs(all) do
-      local ok2, id = pcall(function() return ws.id end)
-      if ok2 and type(id) == "number" and id >= 1 then ids[#ids + 1] = id end
-    end
-  end
-  return ids
 end
 local function cur_or_entry()
   local cur = active_id()
@@ -263,6 +308,24 @@ function M.swap_with(a, b)
   for _, addr in ipairs(wa) do hl.dispatch(hl.dsp.window.move({ window = "address:" .. addr, workspace = tostring(b), follow = false })) end
   for _, addr in ipairs(wb) do hl.dispatch(hl.dsp.window.move({ window = "address:" .. addr, workspace = tostring(a), follow = false })) end
   return #wa, #wb
+end
+-- SUPER + ALT + SHIFT + UP / DOWN: swap this world with the neighbouring world stop in the ORDER
+-- (positions only; nothing moves). No wrap: at the top / bottom it does nothing.
+function M.swap_world_in(order, w, dy, stops)
+  local i
+  for k, x in ipairs(stops) do if x == w then i = k end end
+  local other = i and stops[i + dy]
+  if not other then return nil end
+  local out, p = {}, pos_map(order)
+  for k, x in ipairs(order) do out[k] = x end
+  out[p[w]], out[p[other]] = other, w
+  return out, other
+end
+function M.swap_world(dy)
+  local order = M.order()
+  local new, other = M.swap_world_in(order, M.current_world(), dy, M.world_stops(existing_ids(), active_id()))
+  if new then M.save_order(new) end
+  return other
 end
 function M.swap(dx)
   local cur = cur_or_entry()
@@ -342,12 +405,15 @@ for _, a in ipairs({ { "LEFT", -1, 0, "Previous workspace in world" }, { "RIGHT"
   hl.unbind("SUPER + ALT + CTRL + " .. a[1])
   o.bind("SUPER + ALT + CTRL + " .. a[1], a[4] .. ", one by one, creating it (hyprwrlds)", function() M.step_raw(a[2], a[3]) end)
 end
--- J207: + SHIFT + Left/Right swaps this workspace with its neighbour (replaces Omarchy's "move
--- workspace to the left/right monitor", a no-op with one monitor). Up/Down (swap worlds) wait for
--- a decision on what a world swap means for hyprpi's rooms.
+-- J207: + SHIFT + Left/Right swaps this workspace with its neighbour; + SHIFT + Up/Down swaps this
+-- world's place in the world order (replaces Omarchy's "move workspace to monitor", a no-op with one monitor).
 for _, a in ipairs({ { "LEFT", -1, "Swap workspace with the previous one" }, { "RIGHT", 1, "Swap workspace with the next one" } }) do
   hl.unbind("SUPER + SHIFT + ALT + " .. a[1])
   o.bind("SUPER + SHIFT + ALT + " .. a[1], a[3] .. " (hyprwrlds)", function() M.swap(a[2]) end)
+end
+for _, a in ipairs({ { "UP", -1, "Move this world up in the world order" }, { "DOWN", 1, "Move this world down in the world order" } }) do
+  hl.unbind("SUPER + SHIFT + ALT + " .. a[1])
+  o.bind("SUPER + SHIFT + ALT + " .. a[1], a[3] .. " (hyprwrlds)", function() M.swap_world(a[2]) end)
 end
 
 hl.unbind("SUPER + ALT + TAB")

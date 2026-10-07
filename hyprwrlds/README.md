@@ -34,6 +34,7 @@ whose agents use one room per world. That folder is the master; this standalone 
 | **SUPER+ALT+UP / DOWN** | **The same workspace in the previous / next world, wrapping** |
 | SUPER+ALT+CTRL+arrows | One step to the adjacent workspace number (1-10) or world (A-I), empty or not; it's created when you get there. Wraps |
 | SUPER+ALT+SHIFT+LEFT / RIGHT | Swap this workspace's windows with the neighbouring workspace's (same world, adjacent number) and follow |
+| SUPER+ALT+SHIFT+UP / DOWN | Move this world up / down in the **world order** (swap places with the world above / below; no wrap). Nothing moves: only the order changes |
 | **SUPER+CTRL+1..9** | **Switch to world A..I (lands on that world's last-used workspace)** |
 | SUPER+CTRL+SHIFT+1..9 | Move window to world A..I (follow) |
 | SUPER+CTRL+ALT+1..9 | Omarchy's "Bar panel N" (moved here from SUPER+CTRL+1..9) |
@@ -51,8 +52,16 @@ i.e. what the bar shows), a world F-I when it has a workspace or you're in it. S
 B7 in use, Right from B5 goes to B7. Each direction wraps. Up/Down keep the column when the target
 world has it, otherwise land on that world's highest stop below it. To get to an empty workspace or
 world outside the base grid, use SUPER+ALT+CTRL+arrows, which steps one by one and creates it.
-SUPER+ALT+SHIFT+LEFT/RIGHT were Omarchy's "move workspace to the left/right monitor" (nothing to do
-on one screen); SUPER+ALT+SHIFT+UP/DOWN still are.
+SUPER+ALT+SHIFT+arrows were Omarchy's "move workspace to the left/right/up/down monitor" (nothing to
+do on one screen).
+
+**The world order** (`~/.config/hyprwrlds/order`, e.g. `A C B D E F G H I`; edit it by hand or with
+SUPER+ALT+SHIFT+UP/DOWN): the order worlds are shown and walked in, top to bottom. It's positions only:
+world B keeps its letter and its workspaces 11-20 (and hyprpi's room B stays B); it just sits after C.
+The bar's world letters, the hyprwrlds-vimarchy switcher's rows, SUPER+ALT(+CTRL)+UP/DOWN and
+SUPER+ALT+TAB all follow it, and the base grid's five rows are the first five worlds in it. Missing
+letters follow alphabetically; lines starting with `#` are comments. hyprpi's panels' Ctrl+Tab still
+goes alphabetically.
 
 ## Bar widget
 

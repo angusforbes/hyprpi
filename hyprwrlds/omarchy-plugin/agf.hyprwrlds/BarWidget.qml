@@ -111,16 +111,46 @@ BarWidget {
     return false
   }
 
+  // The world order (J207): ~/.config/hyprwrlds/order, e.g. "A C B D E" (missing letters follow
+  // alphabetically). Only positions change; the letters' workspaces (B = 11-20) stay.
+  property var worldOrder: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  function parseOrder(text) {
+    var out = [], seen = {}
+    var lines = String(text || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      if (/^\s*#/.test(lines[i])) continue
+      var up = lines[i].toUpperCase()
+      for (var j = 0; j < up.length; j++) {
+        var w = letters.indexOf(up.charAt(j)) + 1
+        if (w >= 1 && w <= maxWorlds && !seen[w]) { out.push(w); seen[w] = true }
+      }
+    }
+    for (var k = 1; k <= maxWorlds; k++) if (!seen[k]) out.push(k)
+    root.worldOrder = out
+  }
+  FileView {
+    id: orderFile
+    path: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/hyprwrlds/order"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: root.parseOrder(text())
+    onLoadFailed: root.parseOrder("")
+  }
+  // A file that didn't exist at load, or one replaced by a rename (the swap key writes it that way),
+  // isn't watched: re-read it every 2 s as well (a tiny file).
+  Timer { interval: 2000; repeat: true; running: true; onTriggered: orderFile.reload() }
+  // Worlds shown, top-to-bottom = left-to-right in the world order: the first `worlds` positions,
+  // plus any further position up to the last world in use or current.
   function worldIds() {
-    var n = Math.max(minWorlds, currentWorld)
+    var pos = {}
+    for (var p = 0; p < worldOrder.length; p++) pos[worldOrder[p]] = p + 1
+    var n = Math.max(minWorlds, pos[currentWorld] || 1)
     var values = Hyprland.workspaces.values
     for (var i = 0; i < values.length; i++) {
       var w = worldOf(values[i].id)
-      if (w > n && w <= maxWorlds) n = w
+      if (w >= 1 && w <= maxWorlds && (pos[w] || 0) > n) n = pos[w]
     }
-    var ids = []
-    for (var k = 1; k <= n; k++) ids.push(k)
-    return ids
+    return worldOrder.slice(0, n)
   }
 
   // Slots 1-5 always, plus any existing workspace of the current world.

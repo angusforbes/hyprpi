@@ -278,10 +278,12 @@ Item {
     property int generation: 0
     running: false
     command: ["sh", "-c",
-      "printf '{\"clients\":%s,\"monitors\":%s,\"active\":%s,\"workspaces\":%s,\"hyprpi\":%s}' " +
+      "printf '{\"clients\":%s,\"monitors\":%s,\"active\":%s,\"workspaces\":%s,\"hyprpi\":%s,\"order\":%s}' " +
       "\"$(hyprctl -j clients)\" \"$(hyprctl -j monitors)\" \"$(hyprctl -j activewindow)\" \"$(hyprctl -j workspaces)\" " +
       // hyprpi (optional): agents' names and icons for the window labels; null when it isn't installed
-      "\"$(command -v hyprpi >/dev/null 2>&1 && timeout 2 hyprpi list --json 2>/dev/null | grep . || echo null)\""]
+      "\"$(command -v hyprpi >/dev/null 2>&1 && timeout 2 hyprpi list --json 2>/dev/null | grep . || echo null)\" " +
+      // J207: the world order (hyprwrlds' ~/.config/hyprwrlds/order), as a JSON string; "" when there's none
+      "\"$(f=\"${XDG_CONFIG_HOME:-$HOME/.config}/hyprwrlds/order\"; [ -r \"$f\" ] && grep -v '^[[:space:]]*#' \"$f\" | tr -cd 'A-Za-z' | sed 's/.*/\"&\"/' || echo '\"\"')\""]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.applySnapshot(text, snapshot.generation)
@@ -435,7 +437,11 @@ Item {
     }
     var out = []
     var ordered = []
-    var worldIds = Object.keys(byWorld).map(Number).sort(function(a, b) { return a - b })
+    // Rows follow the hyprwrlds world order (J207): positions only; letters and workspaces stay.
+    var orderPos = {}, ordStr = String(data.order || "").toUpperCase(), np = 0
+    for (var oc = 0; oc < ordStr.length; oc++) { var ow = "ABCDEFGHI".indexOf(ordStr.charAt(oc)) + 1; if (ow > 0 && !orderPos[ow]) orderPos[ow] = ++np }
+    for (var ow2 = 1; ow2 <= maxWorlds; ow2++) if (!orderPos[ow2]) orderPos[ow2] = ++np
+    var worldIds = Object.keys(byWorld).map(Number).sort(function(a, b) { return orderPos[a] - orderPos[b] })
     for (var wi = 0; wi < worldIds.length; wi++) {
       var world = worldIds[wi]
       var wsIds = Object.keys(byWorld[world]).map(Number).sort(function(a, b) { return a - b })
