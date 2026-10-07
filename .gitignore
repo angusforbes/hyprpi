@@ -2,3 +2,7 @@ node_modules/
 
 # remote-control thumbnail cache (J151): generated, never committed
 remote-control/.thumbs/
+
+# Private sandbox research (Angus: not on GitHub); the files stay local
+docs/sandbox-research.md
+docs/.research/

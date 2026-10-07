@@ -1,8 +1,8 @@
 # Sandboxed (Docker) agents: plan and open questions
 
 Status 2026-09-29: ideas only, nothing below is built (the working part is in [docker/](../docker/README.md)).
-Research and think-through (2026-10-07, J212): [sandbox-research.md](sandbox-research.md): Docker best
-practices, NemoClaw/OpenShell, other environments, use cases, communication design, decisions.
+Research and think-through (2026-10-07, J212): kept private, not in this repo (Angus);
+(Docker best practices, NemoClaw/OpenShell, other environments, use cases, communication design, decisions).
 Board: @pidocker. Angus: "I agree that this really should be an add-on to hyprpi itself"; the security
 checks are to think through first, not to build yet.
 
