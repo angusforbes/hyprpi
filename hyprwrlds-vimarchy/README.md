@@ -52,6 +52,10 @@ its letter, and move windows between workspaces and worlds from the keyboard.
 | a-z, A-Z, aa... | Jump to that window (Hyprland switches to its workspace) |
 | Arrows | Move the selected workspace (dark border, "▸"); wraps at both ends. "‹ 9" / "5 ›" and "▲ G" / "▼ D" name what is just off-screen |
 | Enter | Go to the selected workspace |
+| SUPER+ALT+arrows | Move the selection the way SUPER+ALT+arrows move you outside ([hyprwrlds](https://github.com/angusforbes/hyprwrlds)' grid: Left/Right only the world's active workspaces plus workspace 1, Up/Down the world stops in the world order; wraps). Nothing is focused until Enter |
+| SUPER+ALT+CTRL+arrows | Step to the adjacent workspace / world even when empty: it appears as an empty tile; Enter creates it by going there |
+| SUPER+ALT+SHIFT+Left / Right | Swap the selected workspace's windows with its neighbour's; the selection follows them and the grid redraws |
+| SUPER+ALT+SHIFT+Up / Down | Move the selected world up / down the world order; the rows redraw |
 | Click a window | Jump to it |
 | Ctrl+= / Ctrl+- | Bigger / smaller circles |
 | Esc, Backspace (empty), click the backdrop | Close |
@@ -128,6 +132,11 @@ for ALT+SHIFT+CTRL+SPACE. After updating an already-installed copy, run `omarchy
 - `Overview.qml`: the whole overview, self-contained (reads theme colours and settings itself).
 - `plugin/`: the Omarchy overlay wrapper; summon with
   `omarchy-shell shell summon agf.hyprwrlds-vimarchy '{"mode":"workspace"|"world"|"all"}'`.
+- The SUPER+ALT(+CTRL/+SHIFT)+arrow keys in the switcher use hyprwrlds' own Lua (`hyprctl repl`:
+  `hyprwrlds.target`, `raw_from`, `swap_ws`, `swap_world_of`), so they can't disagree with the keys
+  outside. Hyprland's binds still fire while the switcher holds the keyboard, so hyprwrlds' binds ask
+  `hyprwrlds.intercept` first; `hypr/hyprwrlds-vimarchy.lua` sets it to pass the key to the open
+  switcher (`summon … '{"grid":[dx,dy,ctrl,shift]}'`).
 - `shell.qml`: a standalone Quickshell harness (`qs -p .`) that never touches the bar, with IPC
   for testing without a keyboard: `dry <mode>` (build without showing), `state`, `resolve`,
   `would <keys>`, `pick <hint>`, `dropDigit <n>`, `newWorkspace`, `newWorld`, `rowsSummary`,

@@ -521,7 +521,7 @@ Item {
         }
         row.workspaces.sort(function(a, b) { return a.id - b.id })
       }
-      out.sort(function(a, b) { return a.world - b.world })
+      out.sort(function(a, b) { return orderPos[a.world] - orderPos[b.world] }) // the world order (J207), with added empty worlds too (J209)
     }
 
     // While a window is held (Alt+hold), show every slot (1-9, 0) of each shown
@@ -802,6 +802,72 @@ Item {
     root.close()
   }
 
+  // ---- SUPER+ALT(+CTRL/+SHIFT)+arrows (J209) --------------------------------
+  // The same keys as outside the switcher (hyprwrlds J205-J208), computed by hyprwrlds' OWN Lua in
+  // Hyprland (`hyprctl repl`), from the SELECTED workspace, so the keys and the switcher can't disagree:
+  //   SUPER+ALT+arrows         the selection moves by the J208 stops (hyprwrlds.target)
+  //   SUPER+ALT+CTRL+arrows    the adjacent workspace / world, shown as an empty tile if it doesn't
+  //                            exist yet (hyprwrlds.raw_from; Enter creates it by going there)
+  //   SUPER+ALT+SHIFT+Left/Right  swap the selected workspace's windows with its neighbour's (hyprwrlds.swap_ws)
+  //   SUPER+ALT+SHIFT+Up/Down     move the selected world up / down the world order (hyprwrlds.swap_world_of)
+  // The selection follows; the grid redraws from a fresh snapshot. A target in a world this view
+  // doesn't show switches the view to all worlds. Nothing is focused until Enter, as with plain arrows.
+  property var gridPending: null
+  function gridKey(dx, dy, ctrl, shift) {
+    if (gridProc.running) { root.gridPending = [dx, dy, ctrl, shift]; return }
+    var sel = root.selectedWorkspaceId() || root.activeWorkspace || 1
+    var lua, kind
+    if (shift && !ctrl && dx !== 0) { kind = "swap"; lua = "return hyprwrlds.swap_ws(" + sel + "," + dx + ")" }
+    else if (shift && !ctrl && dy !== 0) { kind = "order"; lua = "return hyprwrlds.swap_world_of(" + worldOf(sel) + "," + dy + ")" }
+    else if (shift) return
+    else if (ctrl) { kind = "select"; lua = "return hyprwrlds.raw_from(" + sel + "," + dx + "," + dy + ")" }
+    else { kind = "select"; lua = "return hyprwrlds.target(" + sel + "," + dx + "," + dy + ")" }
+    gridProc.kind = kind; gridProc.sel = sel
+    gridProc.command = ["hyprctl", "repl", lua]
+    gridProc.running = true
+  }
+  // Select workspace id: a tile shown now, else an empty tile for it (as Alt+N adds), in a view that shows its world.
+  function selectWs(id) {
+    for (var r = 0; r < rows.length; r++)
+      for (var c = 0; c < rows[r].workspaces.length; c++)
+        if (rows[r].workspaces[c].id === id) { selRow = r; selCol = c; ensureVisible(); return }
+    var w = worldOf(id), slot = id - (w - 1) * size
+    if (w < 1 || w > maxWorlds) return
+    if ((root.mode === "world" && w !== (worldOf(activeWorkspace) || 1)) || root.mode === "workspace") root.mode = "all"
+    keepVirtual(w, slot)
+    root.keepSelectId = id
+    root.rebuild()
+  }
+  function keepVirtual(w, slot) {
+    var next = {}
+    for (var k in root.virtualWs) next[k] = root.virtualWs[k].slice()
+    if (!next[w]) next[w] = []
+    if (next[w].indexOf(slot) < 0) next[w].push(slot)
+    root.virtualWs = next
+  }
+  Process {
+    id: gridProc
+    property string kind: ""
+    property int sel: 0
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var v = Number(String(text).trim())
+        if (gridProc.kind === "select" && v > 0) root.selectWs(v)
+        else if (gridProc.kind === "swap" && v > 0) {
+          // both tiles stay on screen (Hyprland drops an empty workspace), the selection follows its windows
+          var a = gridProc.sel, wa = root.worldOf(a), wb = root.worldOf(v)
+          root.keepVirtual(wa, a - (wa - 1) * root.size); root.keepVirtual(wb, v - (wb - 1) * root.size)
+          root.keepSelectId = v; root.refresh()
+        } else if (gridProc.kind === "order") { root.keepSelectId = gridProc.sel; root.refresh() }
+      }
+    }
+    onExited: {
+      if (root.gridPending) { var p = root.gridPending; root.gridPending = null; root.gridKey(p[0], p[1], p[2], p[3]) }
+    }
+  }
+
   // ---- keys ----------------------------------------------------------------
   // Returns the window a key sequence would select (no side effects).
   function resolve(seq) { return root.hints[seq] || null }
@@ -903,6 +969,14 @@ Item {
             // Alt+Esc clears the move list; Esc closes.
             if (alt) { root.heldList = []; root.cancelHold(); root.notice = "" }
             else root.close()
+            event.accepted = true; return
+          }
+          // J209: SUPER+ALT(+CTRL/+SHIFT)+arrows do here what they do outside (hyprwrlds' own Lua).
+          if ((event.modifiers & Qt.MetaModifier) && alt
+              && (event.key === Qt.Key_Left || event.key === Qt.Key_Right || event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+            var gdx = event.key === Qt.Key_Left ? -1 : event.key === Qt.Key_Right ? 1 : 0
+            var gdy = event.key === Qt.Key_Up ? -1 : event.key === Qt.Key_Down ? 1 : 0
+            root.gridKey(gdx, gdy, (event.modifiers & Qt.ControlModifier) !== 0, shift)
             event.accepted = true; return
           }
           if (event.modifiers & Qt.ControlModifier) {

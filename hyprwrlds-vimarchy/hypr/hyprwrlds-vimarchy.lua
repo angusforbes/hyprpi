@@ -27,6 +27,28 @@ hl.unbind("ALT + SPACE")
 o.bind("ALT + SPACE", "Workspace window hints (hyprwrlds-vimarchy)",
   [[omarchy-shell shell summon agf.hyprwrlds-vimarchy '{"mode":"workspace"}']])
 
+-- J209 (Angus: "these ones should work there as well"): while the switcher is open, SUPER+ALT(+CTRL/
+-- +SHIFT)+arrows act IN it (move its selection by the same stops, step into an empty tile, swap the
+-- selected workspace's windows, move the selected world in the order) instead of switching the
+-- workspace hidden behind it. Hyprland's binds still fire under the switcher's exclusive keyboard, so
+-- hyprwrlds' binds ask this hook first; the switcher then calls hyprwrlds' own Lua (hyprctl repl).
+local function switcher_open()
+  local ok, ls = pcall(hl.get_layers)
+  if not ok or type(ls) ~= "table" then return false end
+  for _, l in ipairs(ls) do
+    local o, ns = pcall(function() return l.namespace end)
+    if o and ns == "hyprwrlds-vimarchy" then return true end
+  end
+  return false
+end
+M.intercept = function(kind, dx, dy)
+  if not switcher_open() then return false end
+  local ctrl, shift = kind == "raw", kind == "swap" or kind == "order"
+  hl.dispatch(hl.dsp.exec_cmd(string.format(
+    [[omarchy-shell shell summon agf.hyprwrlds-vimarchy '{"grid":[%d,%d,%s,%s]}']], dx, dy, tostring(ctrl), tostring(shift))))
+  return true
+end
+
 -- Original Vimarchy kept on ALT+SHIFT+CTRL+SPACE for reference (Alt+hold
 -- workspace radial, swap, pair...).
 o.bind("ALT + SHIFT + CTRL + SPACE", "Original Vimarchy window hints",

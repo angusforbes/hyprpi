@@ -11,7 +11,18 @@ Item {
   id: root
   property bool closingFromShell: false
 
-  function open(payloadJson) { overview.open(payloadJson) }
+  function open(payloadJson) {
+    // J209: {"grid":[dx,dy,ctrl,shift]} = a SUPER+ALT(+CTRL/+SHIFT)+arrow pressed while the switcher is
+    // open (hyprwrlds-vimarchy.lua passes it here); never (re)opens.
+    var p = {}
+    try { p = JSON.parse(String(payloadJson || "{}")) } catch (e) { p = {} }
+    if (p && Array.isArray(p.grid)) {
+      if (overview.opened) overview.gridKey(Number(p.grid[0]) || 0, Number(p.grid[1]) || 0, p.grid[2] === true, p.grid[3] === true)
+      else hideShell.running = true // closed meanwhile: keep the shell's open state in sync
+      return
+    }
+    overview.open(payloadJson)
+  }
   function close() {
     root.closingFromShell = true
     overview.close()

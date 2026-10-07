@@ -69,6 +69,12 @@ ShellRoot {
     function rowsSummary(): string {
       return overview.rows.map(function(r) { return r.letter + ":" + r.workspaces.map(function(w) { return (w.slot % 10) + (w.virtual ? "*" : "") + "(" + w.windows.length + ")" }).join(",") }).join("  ")
     }
+    // J209: SUPER+ALT(+CTRL/+SHIFT)+arrows without a keyboard; sel() reads the result.
+    function grid(dx: int, dy: int, ctrl: bool, shift: bool): void { overview.gridKey(dx, dy, ctrl, shift) }
+    function sel(): string {
+      var id = overview.selectedWorkspaceId(), w = overview.worldOf(id)
+      return "sel=" + (id ? "ABCDEFGHI".charAt(w - 1) + (((id - 1) % 10) + 1) : "-") + " (" + id + ") mode=" + overview.mode + " rows=" + overview.rows.map(function(r) { return r.letter }).join("")
+    }
     // Arrow keys for testing: dr/dc = -1, 0, 1
     function move(dr: int, dc: int): string {
       overview.moveSel(dr, dc)
