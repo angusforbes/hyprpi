@@ -30,11 +30,11 @@ whose agents use one room per world. That folder is the master; this standalone 
 | SUPER+TAB / SUPER+SHIFT+TAB | Next / previous occupied workspace in the current world |
 | SUPER+scroll | Cycle occupied workspaces in the current world |
 | SUPER+ALT+TAB / SUPER+ALT+SHIFT+TAB | Next / previous world |
-| **SUPER+ALT+LEFT / RIGHT** | **Previous / next workspace in the current world (the grid, below), wrapping** |
+| **SUPER+ALT+LEFT / RIGHT** | **Previous / next active workspace in the current world (empty ones skipped), wrapping** |
 | **SUPER+ALT+UP / DOWN** | **The same workspace in the previous / next world, wrapping** |
 | SUPER+ALT+CTRL+arrows | One step to the adjacent workspace number (1-10) or world (A-I), empty or not; it's created when you get there. Wraps |
 | SUPER+ALT+SHIFT+LEFT / RIGHT | Swap this workspace's windows with the neighbouring workspace's (same world, adjacent number) and follow |
-| SUPER+ALT+SHIFT+UP / DOWN | Move this world up / down in the **world order** (swap places with the world above / below; no wrap). Nothing moves: only the order changes |
+| SUPER+ALT+SHIFT+UP / DOWN | Move this world up / down in the **world order** (swap places with the world above / below; at the ends it wraps: the first world + Up swaps with the last). Nothing moves: only the order changes |
 | **SUPER+CTRL+1..9** | **Switch to world A..I (lands on that world's last-used workspace)** |
 | SUPER+CTRL+SHIFT+1..9 | Move window to world A..I (follow) |
 | SUPER+CTRL+ALT+1..9 | Omarchy's "Bar panel N" (moved here from SUPER+CTRL+1..9) |
@@ -45,13 +45,14 @@ window in group", and group windows stay reachable with SUPER+ALT+scroll and SUP
 SUPER+ALT+arrows were Omarchy's "move window into the group on the left/right/…"; that move has
 no key now, but SUPER+G (toggle grouping) and SUPER+ALT+G (move out of a group) remain.
 
-**The grid** (SUPER+ALT+arrows): rows are worlds and columns are workspaces. The base grid,
-worlds A-E × workspaces 1-5, is always walked, empty cells included. Beyond it only cells in use
-are stops: workspace 6-10 of a world when it exists (it has windows, or it's the one you're on,
-i.e. what the bar shows), a world F-I when it has a workspace or you're in it. So with B6 empty and
-B7 in use, Right from B5 goes to B7. Each direction wraps. Up/Down keep the column when the target
-world has it, otherwise land on that world's highest stop below it. To get to an empty workspace or
-world outside the base grid, use SUPER+ALT+CTRL+arrows, which steps one by one and creates it.
+**The grid** (SUPER+ALT+arrows) is ragged, like the hyprwrlds-vimarchy switcher: Left/Right
+visit only the world's active workspaces (ones that have windows, or the one you're on), so with B3
+empty, Right from B2 goes to B4; each end wraps. Up/Down visit worlds A-E always and F-I when in
+use, in the world order, wrapping; you land on the same workspace number when the target world has
+it active, otherwise on its highest active workspace below that number (else its lowest one above),
+and in a world with nothing open, on the same number. To reach a gap or a new workspace, use
+SUPER+ALT+CTRL+arrows: one step at a time, creating it. (The bar still shows workspaces 1-5 of the
+current world even when they're empty, as before.)
 SUPER+ALT+SHIFT+arrows were Omarchy's "move workspace to the left/right/up/down monitor" (nothing to
 do on one screen).
 
@@ -59,7 +60,7 @@ do on one screen).
 SUPER+ALT+SHIFT+UP/DOWN): the order worlds are shown and walked in, top to bottom. It's positions only:
 world B keeps its letter and its workspaces 11-20 (and hyprpi's room B stays B); it just sits after C.
 The bar's world letters, the hyprwrlds-vimarchy switcher's rows, SUPER+ALT(+CTRL)+UP/DOWN and
-SUPER+ALT+TAB all follow it, and the base grid's five rows are the first five worlds in it. Missing
+SUPER+ALT+TAB all follow it, and the first five worlds in it are always stops for Up/Down. Missing
 letters follow alphabetically; lines starting with `#` are comments. hyprpi's panels' Ctrl+Tab still
 goes alphabetically.
 

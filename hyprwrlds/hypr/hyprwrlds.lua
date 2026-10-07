@@ -187,12 +187,10 @@ function M.cycle(delta)
 end
 
 -- The grid (J205, v2 J207). Rows = worlds, columns = workspaces 1-10 of a world.
--- SUPER+ALT+arrows: the base grid, worlds A-E x workspaces 1-5, is always walked, empty cells
--- included; beyond it only cells in use are stops: a workspace 6-10 of a world when it exists
--- (it has windows, or it's the one you're on: the ones the bar shows), a world F-I when it has
--- a workspace (or you're in it). Everything wraps. Up/Down keep the column when the target world
--- has it as a stop, otherwise go to that world's highest stop below it (for column 7 in a world
--- without a 7: its 6 if it has one, else 5).
+-- SUPER+ALT+arrows (J208): Left/Right visit only the active workspaces of the world (ragged, like
+-- the switcher); Up/Down visit worlds A-E always and F-I when in use (in the world order), keeping
+-- the column when the target world has it active, else its highest active one below, else its lowest
+-- one above; an empty world: the same column. Everything wraps.
 -- Pure (testable): ids = existing workspace ids, cur = the active id.
 local BASE = 5
 -- World ORDER (J207, Angus: "keep the letter the same but just change how they're positioned"):
@@ -234,9 +232,11 @@ function M.save_order(order)
   return os.rename(ORDER_FILE .. ".tmp", ORDER_FILE)
 end
 local function sorted_keys(set) local t = {} for k in pairs(set) do t[#t + 1] = k end table.sort(t) return t end
+-- J208 (Angus: "I like the raggedness"): a workspace is a Left/Right stop only when it's active,
+-- i.e. it exists (Hyprland keeps a workspace while it has windows or is the one you're on), in 1-5
+-- too: B2 -> B4 when B3 is empty. SUPER+ALT+CTRL+Left/Right still steps into (creates) the gaps.
 function M.col_stops(world, ids, cur)
   local set = {}
-  for c = 1, BASE do set[c] = true end
   local function take(id) if world_of(id) == world then set[id - (world - 1) * SIZE] = true end end
   for _, id in ipairs(ids or {}) do take(id) end
   if cur then take(cur) end
@@ -268,8 +268,10 @@ function M.step_from(cur, dx, dy, ids)
     local ws = M.world_stops(ids, cur)
     local i = index_of(ws, w) or 1
     w = ws[((i - 1 + dy) % #ws) + 1]
+    -- the same column when the target world has it; else its highest active workspace below the
+    -- column, else its lowest one above; a world with no active workspace: the same column (empty).
     local cs = M.col_stops(w, ids, nil)
-    if not index_of(cs, col) then local best = cs[1]; for _, c in ipairs(cs) do if c <= col then best = c end end; col = best end
+    if #cs > 0 and not index_of(cs, col) then local best = cs[1]; for _, c in ipairs(cs) do if c <= col then best = c end end; col = best end
   end
   return (w - 1) * SIZE + col
 end
@@ -310,12 +312,13 @@ function M.swap_with(a, b)
   return #wa, #wb
 end
 -- SUPER + ALT + SHIFT + UP / DOWN: swap this world with the neighbouring world stop in the ORDER
--- (positions only; nothing moves). No wrap: at the top / bottom it does nothing.
+-- (positions only; nothing moves). Wraps (J208): the first world + Up swaps with the last stop, the
+-- last + Down with the first.
 function M.swap_world_in(order, w, dy, stops)
   local i
   for k, x in ipairs(stops) do if x == w then i = k end end
-  local other = i and stops[i + dy]
-  if not other then return nil end
+  if not i or #stops < 2 then return nil end
+  local other = stops[((i - 1 + dy) % #stops) + 1] -- J208: wraps (first + Up swaps with the last)
   local out, p = {}, pos_map(order)
   for k, x in ipairs(order) do out[k] = x end
   out[p[w]], out[p[other]] = other, w
