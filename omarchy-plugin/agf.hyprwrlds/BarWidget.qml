@@ -23,6 +23,9 @@ BarWidget {
   readonly property int maxWorlds: 9
   readonly property string letters: "ABCDEFGHI"
   readonly property int minWorlds: Math.max(1, Math.min(maxWorlds, Number(setting("worlds", 3)) || 3))
+  // Width of each world letter / workspace number cell, in Style.space units (setting "cellWidth",
+  // default 15; ~/.config/omarchy/shell.json, this widget's entry in bar.layout).
+  readonly property int cellWidth: Math.max(8, Math.min(40, Number(setting("cellWidth", 15)) || 15))
   readonly property string focusGlyph: "\uDB85\uDCFB"
 
   // ---- theme palette ------------------------------------------------------
@@ -178,7 +181,7 @@ BarWidget {
           opacity: current || root.worldOccupied(modelData) ? 1 : 0.5
           horizontalMargin: 6
           verticalPadding: 6
-          fixedWidth: root.vertical ? root.barSize : Style.space(15)
+          fixedWidth: root.vertical ? root.barSize : Style.space(root.cellWidth)
           fixedHeight: root.barSize
           // Clicking the world you're already in toggles its hyprpi room widget
           // (~/Work/hyprpi); clicking another world just switches to it.
@@ -209,7 +212,7 @@ BarWidget {
           opacity: root.occupied(workspace) || focused ? 1 : 0.5
           horizontalMargin: 6
           verticalPadding: 6
-          fixedWidth: root.vertical ? root.barSize : Style.space(15)
+          fixedWidth: root.vertical ? root.barSize : Style.space(root.cellWidth)
           fixedHeight: root.barSize
           onPressed: function() { root.focusWorkspace(wsId) }
         }

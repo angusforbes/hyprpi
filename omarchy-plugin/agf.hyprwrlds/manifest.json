@@ -18,7 +18,8 @@
     "defaultSection": "left",
     "allowMultiple": false,
     "defaults": {
-      "worlds": 3
+      "worlds": 3,
+      "cellWidth": 15
     },
     "schema": [
       {
@@ -30,6 +31,16 @@
         "step": 1,
         "defaultValue": 3,
         "description": "Letters always shown in the picker. Higher worlds appear automatically while they hold windows or are focused (up to I)."
+      },
+      {
+        "key": "cellWidth",
+        "type": "integer",
+        "label": "Cell width",
+        "min": 8,
+        "max": 40,
+        "step": 1,
+        "defaultValue": 15,
+        "description": "Width of each world letter and workspace number in the bar (Style.space units). 15 = the compact look; 20 = the original wider one."
       }
     ]
   }

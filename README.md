@@ -48,6 +48,10 @@ window in group", and group windows stay reachable with SUPER+ALT+scroll and SUP
 - Click a letter to switch worlds, scroll over the letters to cycle, click a number to go there.
 - Setting `worlds` (default 3): how many letters are always shown; higher worlds appear while
   they have windows. `omarchy bar set agf.hyprwrlds worlds 5`
+- Setting `cellWidth` (default 15): the width of each letter and number cell (Style.space units;
+  15 is compact, 20 the original wider look, allowed 8–40). `omarchy bar set agf.hyprwrlds cellWidth 12`.
+  Both settings live in `~/.config/omarchy/shell.json`, in this widget's entry under `bar.layout`
+  (`{"id": "agf.hyprwrlds", "worlds": "5", "cellWidth": "15"}`), and apply without a restart.
 
 ## World-coloured window border
 
