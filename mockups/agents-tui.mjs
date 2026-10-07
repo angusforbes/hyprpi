@@ -144,13 +144,13 @@ function wrapStyled(s, n, indentW = 0) {
       const q = params[i] || "0";
       if (q === "0") { act.length = 0; continue; }
       if (q === "22") { drop("1"); drop("2"); continue; }
-      if (q === "23" || q === "24" || q === "27" || q === "29") { drop(q); continue; }
+      if (q === "23" || q === "24" || q === "27" || q === "29") { drop(String(q - 20)); continue; } // ESC[23m ends italic (3), 24 underline (4), …
       if (q === "39") { let j; while ((j = act.findIndex((e) => e.kind === "FG")) >= 0) act.splice(j, 1); continue; }
       if (q === "49") { let j; while ((j = act.findIndex((e) => e.kind === "BG")) >= 0) act.splice(j, 1); continue; }
       if (q === "38" || q === "48") {
-        if (params[i + 1] === "2") { act.push({ code: `${q};2;${params[i + 2] || 0};${params[i + 3] || 0};${params[i + 4] || 0}`, kind: q }); i += 4; continue; }
-        if (params[i + 1] === "5") { act.push({ code: `${q};5;${params[i + 2] || 0}`, kind: q }); i += 2; continue; }
-        act.push({ code: q, kind: q }); continue;
+        if (params[i + 1] === "2") { act.push({ code: `${q};2;${params[i + 2] || 0};${params[i + 3] || 0};${params[i + 4] || 0}`, kind: q === "38" ? "FG" : "BG" }); i += 4; continue; }
+        if (params[i + 1] === "5") { act.push({ code: `${q};5;${params[i + 2] || 0}`, kind: q === "38" ? "FG" : "BG" }); i += 2; continue; }
+        act.push({ code: q, kind: q === "38" ? "FG" : "BG" }); continue;
       }
       act.push({ code: q, kind: (q >= "30" && q <= "39") || (q >= "90" && q <= "97") ? "FG" : (q >= "40" && q <= "49") || (q >= "100" && q <= "107") ? "BG" : q });
     }
