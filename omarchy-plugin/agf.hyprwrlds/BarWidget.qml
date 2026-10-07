@@ -178,7 +178,7 @@ BarWidget {
           opacity: current || root.worldOccupied(modelData) ? 1 : 0.5
           horizontalMargin: 6
           verticalPadding: 6
-          fixedWidth: root.vertical ? root.barSize : Style.space(20)
+          fixedWidth: root.vertical ? root.barSize : Style.space(15)
           fixedHeight: root.barSize
           // Clicking the world you're already in toggles its hyprpi room widget
           // (~/Work/hyprpi); clicking another world just switches to it.
@@ -209,7 +209,7 @@ BarWidget {
           opacity: root.occupied(workspace) || focused ? 1 : 0.5
           horizontalMargin: 6
           verticalPadding: 6
-          fixedWidth: root.vertical ? root.barSize : Style.space(20)
+          fixedWidth: root.vertical ? root.barSize : Style.space(15)
           fixedHeight: root.barSize
           onPressed: function() { root.focusWorkspace(wsId) }
         }
