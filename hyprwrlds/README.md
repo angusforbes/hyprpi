@@ -39,8 +39,8 @@ whose agents use one room per world. That folder is the master; this standalone 
 These replace Omarchy's defaults on the same chords. Notably SUPER+CTRL+1..9 was Omarchy's
 "Bar panel N", which now lives on SUPER+CTRL+ALT+1..9; SUPER+ALT+TAB was Omarchy's "next
 window in group", and group windows stay reachable with SUPER+ALT+scroll and SUPER+ALT+1..5.
-SUPER+ALT+arrows were Omarchy's "move window into the group on the left/right/…"; window groups
-are still there through SUPER+G and SUPER+ALT+G.
+SUPER+ALT+arrows were Omarchy's "move window into the group on the left/right/…"; that move has
+no key now, but SUPER+G (toggle grouping) and SUPER+ALT+G (move out of a group) remain.
 
 **The grid** (SUPER+ALT+arrows): rows are worlds and columns are workspaces. By default it's 5×5
 (worlds A-E, workspaces 1-5). When any world uses a higher workspace (say B7), every world gets
