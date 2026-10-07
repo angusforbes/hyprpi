@@ -13,11 +13,11 @@ let fromLink = false; // J144: the open viewer came from a file link in another 
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const HOME = "/home/agf";
+let HOME = localStorage.getItem("hp.home") || ""; // J190: from /api/state (was hard-coded)
 const IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/i;
 import { MAX as SHARE_MAX, loadBlob, shareFiles, asFile, download, mb } from "/share.mjs"; // J173: real files to the share sheet (MAX: in one Share, held in memory)
 const fileHref = (p) => "/file?path=" + encodeURIComponent(p);
-const tilde = (p) => String(p || "").replace(HOME, "~");
+const tilde = (p) => String(p || "").replace(HOME || "\u0000", "~");
 // J151: list rows show a small cached WebP made on the laptop (not the full image); v = the image's mtime,
 // so an edited image gets a new URL and an unchanged one is reused from the phone's cache.
 const thumbHref = (e) => `/api/thumb?path=${encodeURIComponent(e.path)}&v=${Math.round(e.mtime || 0)}`;
@@ -28,7 +28,7 @@ let selecting = false;
 // laptop). { q, loading, items, total, truncated, ms, error }
 let ev = { q: "", loading: false, items: [], total: 0 }, evTimer = null, evSeq = 0;
 const sel = new Map(); // path -> { entry, blob|null, loading: Promise }
-let token = null, caps = null, phoneDir = HOME + "/Phone", worlds = [], lastWorld = localStorage.getItem("files.world") || "", agents = [];
+let token = null, caps = null, phoneDir = "", worlds = [], lastWorld = localStorage.getItem("files.world") || "", agents = [];
 if (EMBED) { const w = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w || "")) lastWorld = w; }
 
 function note(t, ms = 3000) { const n = $("#fnote"); n.textContent = t; n.hidden = !t; if (t) setTimeout(() => { if (n.textContent === t) n.hidden = true; }, ms); }
@@ -51,6 +51,7 @@ async function postJSON(url, payload) {
 
 // Theme and worlds, as the main app (colours follow the desktop).
 getJSON("/api/state").then((s) => {
+  if (s.home) { HOME = s.home; localStorage.setItem("hp.home", HOME); }
   for (const [k, v] of Object.entries(s.theme || {})) document.documentElement.style.setProperty("--" + k, v);
   if (s.theme?.bg) document.querySelector("meta[name=theme-color]").content = s.theme.bg;
   worlds = (s.worlds || []).filter((w) => w.shown !== false);

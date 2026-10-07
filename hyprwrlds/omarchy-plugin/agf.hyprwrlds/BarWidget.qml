@@ -138,7 +138,8 @@ BarWidget {
 
   function run(cmd) { if (root.bar) root.bar.run(cmd) }
   function selectWorld(w) { run("hyprctl eval " + Util.shellQuote("hyprwrlds.world(" + w + ")")) }
-  function toggleRoom() { run(Quickshell.env("HOME") + "/Work/hyprpi/bin/hyprpi room --toggle") }
+  // hyprpi (optional): `hyprpi` on PATH (hyprpi integration install path), else the default checkout.
+  function toggleRoom() { run("command -v hyprpi >/dev/null && exec hyprpi room --toggle || exec \"$HOME/Work/hyprpi/bin/hyprpi\" room --toggle") }
   function cycleWorld(delta) { run("hyprctl eval " + Util.shellQuote("hyprwrlds.cycle_world(" + delta + ")")) }
   function focusWorkspace(id) {
     run("hyprctl dispatch " + Util.shellQuote("hl.dsp.focus({ workspace = \"" + id + "\" })"))
@@ -184,7 +185,7 @@ BarWidget {
           fixedWidth: root.vertical ? root.barSize : Style.space(root.cellWidth)
           fixedHeight: root.barSize
           // Clicking the world you're already in toggles its hyprpi room widget
-          // (~/Work/hyprpi); clicking another world just switches to it.
+          // (hyprpi, if installed); clicking another world just switches to it.
           onPressed: function() { current ? root.toggleRoom() : root.selectWorld(modelData) }
           onWheelMoved: function(delta) { root.cycleWorld(delta < 0 ? 1 : -1) }
         }

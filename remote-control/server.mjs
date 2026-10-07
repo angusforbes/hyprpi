@@ -27,7 +27,7 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { connect } from "../lib/client.mjs";
-import { socketPath, runtimeDir, loadConfig, wsLabel } from "../lib/paths.mjs";
+import { socketPath, runtimeDir, loadConfig, wsLabel, expandHome } from "../lib/paths.mjs";
 import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
 import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames, filterStream } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49) and @Name filter
 import { worldHex, theme } from "../lib/tui/term.mjs";
@@ -39,10 +39,13 @@ const HOME = os.homedir();
 const PORT = Number(process.env.HYPRPI_REMOTE_PORT) || 8897;
 // /file: read-only, only under these folders (J47 added Downloads and Documents, J69 Screenshots,
 // J74 Phone: the Files app's upload inbox, its only write), real paths.
-try { fs.mkdirSync(path.join(HOME, "Phone"), { recursive: true }); } catch { /* there */ }
-const FILE_ROOTS = ["Obsidian", "Work", "Downloads", "Documents", "Screenshots", "Phone"]
-  .filter((d) => d !== "Phone" || (() => { try { return !fs.lstatSync(path.join(HOME, d)).isSymbolicLink(); } catch { return false; } })()) // the upload inbox: never through a link
-  .map((d) => { try { return fs.realpathSync(path.join(HOME, d)); } catch { return path.join(HOME, d); } });
+// J190: the folders come from ~/.config/hyprpi/config.json "phone" (defaults: Angus's layout); read at start.
+const PHONE_CFG = loadConfig().phone || {};
+const UPLOAD_DIR = expandHome(PHONE_CFG.uploadDir || "~/Phone");
+try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch { /* there */ }
+const FILE_ROOTS = [...new Set([...(PHONE_CFG.folders || []), PHONE_CFG.uploadDir || "~/Phone"].map(expandHome))]
+  .filter((d) => d !== UPLOAD_DIR || (() => { try { return !fs.lstatSync(d).isSymbolicLink(); } catch { return false; } })()) // the upload inbox: never through a link
+  .map((d) => { try { return fs.realpathSync(d); } catch { return d; } });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 // ---- who may use it --------------------------------------------------------------------------
@@ -181,6 +184,7 @@ function directory() {
 }
 function state() {
   return {
+    home: HOME, // J190: the web pages show paths as ~/… with this (was hard-coded)
     directory: directory(),
     worlds: worlds(),
     active: listing?.active_room || "A",
@@ -460,7 +464,7 @@ function fileAllowed(p) {
 }
 
 // The vault's files by name, for /wiki (rebuilt at most once a minute; hidden folders skipped).
-const VAULT = path.join(HOME, "Obsidian");
+const VAULT = expandHome(PHONE_CFG.vault || "~/Obsidian");
 let vaultIdx = null, vaultAt = 0;
 function vaultIndex() {
   if (vaultIdx && Date.now() - vaultAt < 60000) return vaultIdx;
@@ -489,7 +493,7 @@ function wikiFind(name, from) {
   return hits[0];
 }
 
-const filesHandle = filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underRoot, json, body, log, getApi: () => api, room });
+const filesHandle = filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refusedPart, underRoot, json, body, log, getApi: () => api, room });
 
 const server = http.createServer(async (req, res) => {
   // A malformed path ("//", "//x") made new URL() throw outside any try, which killed the server

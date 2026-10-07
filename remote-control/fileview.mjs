@@ -10,7 +10,7 @@
 // Share: navigator.share with the file itself (the blob, fetched when the viewer opens, so the tap
 // still counts as the user's gesture), so iOS offers Messages, Save Image, Copy; else the URL; else
 // a download. The server's /file guard (J47, J69) decides what can be read, as before.
-const HOME = "/home/agf";
+const HOMEDIR = () => localStorage.getItem("hp.home") || ""; // J190: saved from /api/state by the page (was hard-coded)
 const IMG = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/i;
 const AUDIO = /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus)$/i, MEDIA = /\.(mp4|m4v|mov|webm|mp3|m4a|aac|wav|ogg|oga|flac|opus)$/i; // J175
 const MDX = /\.(md|markdown)$/i;
@@ -97,7 +97,7 @@ async function show(href) {
   url = "/file?path=" + encodeURIComponent(p);
   cur = { url, name, path: p, blob: null, ready: null };
   el.querySelector("#fvname").textContent = name;
-  el.querySelector("#fvdir").textContent = p.replace(/\/[^/]*$/, "").replace(HOME, "~");
+  el.querySelector("#fvdir").textContent = p.replace(/\/[^/]*$/, "").replace(HOMEDIR() || "\u0000", "~");
   // The file itself, fetched now so Share has it at the tap (iOS needs the share in the gesture).
   const c = cur;
   // (Markdown: /file serves the viewer page, so the text itself comes with raw=1.)

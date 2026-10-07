@@ -35,8 +35,8 @@ export const CAPS = {
 };
 const IMG = /\.(png|jpe?g|gif|webp)$/i;
 
-export function filesRoutes({ HOME, FILE_ROOTS, fileAllowed, refusedPart, underRoot, json, body, log, getApi, room }) {
-  const PHONE = path.join(HOME, "Phone");
+export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refusedPart, underRoot, json, body, log, getApi, room }) {
+  const PHONE = UPLOAD_DIR || path.join(HOME, "Phone"); // J190: config.json phone.uploadDir
   const LOG = path.join(HOME, ".local/state/hyprpi/phone-uploads.log");
   const TOKEN = randomBytes(24).toString("hex");
   const batches = new Map(); // id -> { bytes, files, at }

@@ -7,7 +7,7 @@ import { esc, md, setBase } from "/md.mjs";
 
 const $ = (s) => document.querySelector(s);
 const docPath = new URLSearchParams(location.search).get("path") || "";
-const HOME = "/home/agf";
+let HOME = localStorage.getItem("hp.home") || ""; // J190: from /api/state (was hard-coded)
 let text = "", raw = false;
 
 function show() {
@@ -20,16 +20,18 @@ function show() {
 $("#vraw").addEventListener("click", () => { raw = !raw; show(); window.scrollTo(0, 0); });
 
 // The colours follow the desktop theme, like the app.
-fetch("/api/state", { cache: "no-store" }).then((r) => r.json()).then((s) => {
+const stateP = fetch("/api/state", { cache: "no-store" }).then((r) => r.json()).then((s) => {
+  if (s.home) { HOME = s.home; localStorage.setItem("hp.home", HOME); }
   for (const [k, v] of Object.entries(s.theme || {})) document.documentElement.style.setProperty("--" + k, v);
   if (s.theme?.bg) document.querySelector("meta[name=theme-color]").content = s.theme.bg;
 }).catch(() => {});
 
 (async () => {
+  if (!HOME) await stateP.catch(() => {}); // J190: the first visit learns HOME from the server
   const name = docPath.split("/").pop() || "document";
   document.title = name.replace(/\.(md|markdown)$/i, "");
   $("#vname").textContent = document.title;
-  $("#vdir").textContent = docPath.replace(/\/[^/]*$/, "").replace(HOME, "~");
+  $("#vdir").textContent = docPath.replace(/\/[^/]*$/, "").replace(HOME || "\u0000", "~");
   try {
     const r = await fetch(`/file?path=${encodeURIComponent(docPath)}&raw=1`, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status === 404 ? "not found, or not allowed" : r.statusText);

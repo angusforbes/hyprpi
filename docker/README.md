@@ -32,7 +32,7 @@ Run the script from the folder the agent may work in (only that folder is mounte
 
 In its own hyprpi window, without moving you (here on workspace 12):
 
-`hyprctl dispatch "hl.dsp.exec_cmd('env AGENT_ID=hp-mybox WS=12 kitty --class hyprpi.agent -d /path/to/project /home/agf/Work/hyprpi/docker/run-hyprpi-agent.sh', { workspace = '12 silent' })"`
+`hyprctl dispatch "hl.dsp.exec_cmd('env AGENT_ID=hp-mybox WS=12 kitty --class hyprpi.agent -d /path/to/project /path/to/hyprpi/docker/run-hyprpi-agent.sh', { workspace = '12 silent' })"`
 
 Options (environment variables):
 

@@ -1,9 +1,19 @@
--- hyprpi (~/Work/hyprpi): Hyprland side of hyprpi. Loaded from ~/.config/hypr/hyprland.lua
--- with require("hypr.hyprpi"), after require("hypr.bindings").
--- Install: ln -s ~/Work/hyprpi/hypr/hyprpi.lua ~/.config/hypr/hyprpi.lua (see README).
--- The hyprpi checkout defaults to ~/Work/hyprpi; set HYPRPI_HOME in Hyprland's environment
--- to use another path.
-local HYPRPI_ROOT = os.getenv("HYPRPI_HOME") or ((os.getenv("HOME") or "") .. "/Work/hyprpi")
+-- hyprpi: the Hyprland side of hyprpi. Loaded from ~/.config/hypr/hyprland.lua with
+-- require("hypr.hyprpi"), after require("hypr.bindings").
+-- Install: `hyprpi integration install hypr` (links this file as ~/.config/hypr/hyprpi.lua and adds
+-- the require). The checkout is found from this file's real path (the link points into it), so hyprpi
+-- can be cloned anywhere; HYPRPI_HOME in Hyprland's environment overrides it.
+local function hyprpi_root()
+  local env = os.getenv("HYPRPI_HOME")
+  if env and env ~= "" then return env end
+  local src = debug.getinfo(1, "S").source:gsub("^@", "")
+  local p = io.popen("readlink -f '" .. src:gsub("'", "'\\''") .. "' 2>/dev/null")
+  local real = p and p:read("*l") or ""
+  if p then p:close() end
+  local root = real:match("^(.*)/hypr/hyprpi%.lua$")
+  return root or ((os.getenv("HOME") or "") .. "/Work/hyprpi")
+end
+local HYPRPI_ROOT = hyprpi_root()
 local HYPRPI_BIN = HYPRPI_ROOT .. "/bin/hyprpi"
 -- hyprpi add-on switches from ~/.config/hyprpi/config.json (a JSON "key": true/false; a missing
 -- file or key = the default). Only these flags are read here, by pattern, so no JSON parser needed.
@@ -29,16 +39,16 @@ end
 --   SUPER + CTRL + ALT + P  all four panels here (opened if needed), tiled as a 2x2 grid
 --   SUPER + ALT + /    search TUI (kitty) for the current world's room
 o.bind("SUPER + A", "Pi agent (hyprpi)", HYPRPI_BIN .. " new")
-o.bind("SUPER + ALT + A", "hyprpi agent panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 1")
-o.bind("SUPER + ALT + R", "hyprpi Stream panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 2")
-o.bind("SUPER + CTRL + ALT + P", "hyprpi panels here as a 2x2 grid", "/home/agf/Work/hyprpi/mockups/panels")
+o.bind("SUPER + ALT + A", "hyprpi agent panel (current world)", HYPRPI_ROOT .. "/mockups/panels --only 1")
+o.bind("SUPER + ALT + R", "hyprpi Stream panel (current world)", HYPRPI_ROOT .. "/mockups/panels --only 2")
+o.bind("SUPER + CTRL + ALT + P", "hyprpi panels here as a 2x2 grid", HYPRPI_ROOT .. "/mockups/panels")
 -- Omarchy binds SUPER + ALT + / to "Monitor scaling down"; both fired on one press. Take the key
 -- for search and move scaling down to SUPER + SHIFT + / (scaling up stays on SUPER + /).
 hl.unbind("SUPER + ALT + SLASH")
 o.bind("SUPER + SHIFT + SLASH", "Monitor scaling down", "omarchy-hyprland-monitor-scaling down")
 -- The board panel is the projects panel on SUPER + ALT + P (Angus, 2026-09-29); SUPER + ALT + B is free.
-o.bind("SUPER + ALT + P", "hyprpi projects panel (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 4")
-o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", "/home/agf/Work/hyprpi/mockups/panels --only 3")
+o.bind("SUPER + ALT + P", "hyprpi projects panel (current world)", HYPRPI_ROOT .. "/mockups/panels --only 4")
+o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", HYPRPI_ROOT .. "/mockups/panels --only 3")
 -- Add-on: the finder (on by default; "finder": false in ~/.config/hyprpi/config.json turns it off
 -- and leaves Omarchy's keys as they were). SUPER+SHIFT+SPACE opens the Omarchy menu, like the apps
 -- menu on SUPER+ALT+SPACE, listing every world's agents and projects; Enter jumps to the agent or
@@ -55,7 +65,7 @@ end
 --   SUPER+D          dismiss the focused agent (a hyprpi panel: closed)
 --   SUPER+ALT+D      dismiss all: everything hyprpi on this workspace except pinned windows and the focused one
 --   SUPER+ALT+S      pin / unpin the focused agent or panel (light blue border while pinned)
--- SUPER+S was Reprieve's show/hide parked; that moved to SUPER+SHIFT+CTRL+S (~/.config/hypr/bindings.lua).
+-- SUPER+S: Omarchy's scratchpad key (Reprieve's show/hide parked once); hyprpi's summon takes it.
 hl.unbind("SUPER + S")
 o.bind("SUPER + S", "hyprpi: summon agents here", HYPRPI_ROOT .. "/mockups/summon")
 o.bind("SUPER + D", "hyprpi: dismiss the focused agent", HYPRPI_ROOT .. "/mockups/guest dismiss")
