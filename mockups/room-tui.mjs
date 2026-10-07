@@ -75,6 +75,7 @@ function inputSel() { if (selA == null || selA === ic) return null; return selA 
 // bind: every box operation reads them first and writes them back after (Angus, N55: no glue here).
 const box = createInputBox({
   onChange: () => render(), copy: (t) => copy(t), multiline: true,
+  drafts: `stream-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   bind: {
     read: () => ({ text: input, cursor: ic, anchor: selA, sent: view === "board" ? sentText : null, touched: sentTouched }),
     write: (st) => {
@@ -733,13 +734,14 @@ async function send() {
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 // Input arrives in chunks (held keys, pastes): split into single keys first.
-const KEY = /\x1b[bfsS\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bfsSz\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) render(); } });
 function onKey(d) {
   // SUPER+C (Omarchy's universal copy = Ctrl+Insert; kitty passes it on when it has no selection of its
   // own): the pane's highlighted selection, if there is one, else the box's (below). @hyprpi N49
   if (d === "\x1b[2;5~" && sel && selRange()) { copy(selectedText()); note = "copied"; return render(); }
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
+  if (d === "\x1a" || d === "\x1f" || d === "\x19" || d === "\x1b[122;6u" || d === "\x1bz") { box.key(d); note = box.note || ""; return render(); } // J194: Ctrl+Z undo · Ctrl+Y redo · Alt+Z cleared drafts
   // Key model: TOP agent list = Shift (⇧↑↓ cursor, ⇧Space mark) · MIDDLE pane = Ctrl (^↑↓, PgUp/PgDn,
   // ^Home/End) · BOTTOM message box = plain keys (multi-line: ↑↓ lines, ⇧⏎ newline, ⇧←→ select).
   // Ctrl+/ opens the search panel (panel 3) — this panel does not search.
@@ -988,5 +990,6 @@ try {
     if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); if (k.sent) sentText = input; }
   }
 } catch { /* start in the stream */ }
+box.restore(); // J194: an unsent draft from before a close / crash
 render();
 start();

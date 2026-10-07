@@ -382,6 +382,7 @@ function seedThoughtsHistory(r) {
 // operation reads them first and writes them back after (Angus, N55: no glue here).
 const box = createInputBox({
   onChange: () => render(), copy: (t) => copy(t), multiline: false,
+  drafts: `thoughts-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   bind: { read: () => ({ text: query, cursor: qc, anchor: selA }), write: (st) => { query = st.text; qc = st.cursor; selA = st.anchor; } },
   // Everything typed here, /commands too (Angus: recall /ask, /keyword …), like every panel's box:
   // STATE/input-history/thoughts.json, one list for every world's Thoughts window; each world's
@@ -762,6 +763,7 @@ function onKey(d) {
   // own): the pane's highlighted selection, if there is one, else the box's (below). @hyprpi N49
   if (d === "\x1b[2;5~" && sel && selRange()) { copy(selectedText()); note = "copied"; return render(); }
   if (sel && !d.startsWith("\x1b[<")) sel = null; // a pane selection lasts until the next key
+  if (d === "\x1a" || d === "\x1f" || d === "\x19" || d === "\x1b[122;6u" || d === "\x1bz") { box.key(d); note = box.note || ""; return render(); } // J194: Ctrl+Z undo · Ctrl+Y redo · Alt+Z cleared drafts
   // Bracketed paste (SUPER+V / Ctrl+Shift+V): inserted as text (line breaks become spaces).
   if (d === "\x1b[200~") { pasting = true; return; }
   if (d === "\x1b[201~") { pasting = false; return render(); }
@@ -882,5 +884,6 @@ out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h${ESC}?1004h`);
   try { const k = sf && JSON.parse(fs.readFileSync(sf, "utf8") || "null"); if (sf) fs.writeFileSync(sf, "");
     if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); } } catch { /* fresh */ }
 }
+box.restore(); // J194: an unsent draft from before a close / crash
 render();
 start();

@@ -52,6 +52,7 @@ function copy(text) {
 // ↑↓ are the box's, as in every panel (Angus, N51): its start / end first, then your earlier
 // commands (STATE/input-history/agents.json); the list cursor moves with Ctrl+↑↓.
 const box = createInputBox({ onChange: () => { if (!note.startsWith("✗")) note = ""; render(); }, copy, multiline: false,
+  drafts: `agents-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   history: createHistory("agents"), historyNotes: { first: "that's your first command here", none: "no earlier commands yet" } });
 const cmds = createCommands({
   commands: [],
@@ -494,7 +495,7 @@ process.stdin.resume();
 process.stdin.setEncoding("utf8");
 // Input arrives in chunks (held keys, pastes, press + release): split into single keys first
 // (the same splitter as the room panel).
-const KEY = /\x1b[bfsS\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bfsSz\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => {
   batching = true;
   try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); }
@@ -510,6 +511,7 @@ function onKey(d) {
   // paste the clipboard itself, so these arrive only without a kitty selection / in an older window):
   // the box copies its selection, or pastes. @hyprpi N49
   if (d === "\x1b[2;5~" || d === "\x1b[2;2~") { showHelp = false; box.key(d); return; }
+  if (d === "\x1a" || d === "\x1f" || d === "\x19" || d === "\x1b[122;6u" || d === "\x1bz") { box.key(d); note = box.note || ""; return render(); } // J194: Ctrl+Z undo · Ctrl+Y redo · Alt+Z cleared drafts
   const typing = box.text.length > 0;
   if (d === "\x11") return quit();                            // Ctrl+Q
   if (d === "\x03") { if (box.key(d)) return; return quit(); } // Ctrl+C: the box's copy / clear, else quit
@@ -611,5 +613,6 @@ setInterval(() => {
 }, 3000);
 
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse + bracketed paste
+box.restore(); // J194: an unsent draft from before a close / crash
 render();
 start();

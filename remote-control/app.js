@@ -318,6 +318,15 @@ function listen() {
 const touch = matchMedia("(pointer: coarse)").matches;
 function grow() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight + 2, innerHeight * 0.4) + "px"; }
 input.addEventListener("input", grow);
+// J194 (Angus: "I never want to be able to delete a prompt and not be able to recover it"): each composer
+// keeps its unsent text in localStorage (this phone only) until it is sent, so a reload, a closed tab or
+// iOS dropping the page doesn't lose it.
+function keepDraft(el, key, after = () => {}) {
+  try { const t = localStorage.getItem(key); if (t && !el.value) { el.value = t; after(); } } catch { /* none */ }
+  el.addEventListener("input", () => { try { if (el.value) localStorage.setItem(key, el.value); else localStorage.removeItem(key); } catch { /* full */ } });
+}
+const dropDraft = (key) => { try { localStorage.removeItem(key); } catch { /* none */ } };
+keepDraft(input, "hyprpi-rc.draft", grow);
 // The box as a chat input (J59, Angus via Thoughts-E: "make the box a chat input:
 // enterkeyhint="send", so the keyboard's Return key sends the message (and closes the keyboard)").
 // Return sends: on the phone always (there's no Shift+Enter there) and then the keyboard closes;
@@ -337,7 +346,7 @@ let sending = false;
 async function sendMessage() {
   const text = input.value.trim(); if (!text || !world || sending) return;
   sending = true; sendBtn.disabled = true;
-  try { await call("POST", "/api/send", { world, text }); input.value = ""; grow(); busy = true; renderTop(); note(""); toEnd(); }
+  try { await call("POST", "/api/send", { world, text }); input.value = ""; dropDraft("hyprpi-rc.draft"); grow(); busy = true; renderTop(); note(""); toEnd(); }
   catch (err) { note("✗ not sent: " + err.message); }
   finally { sending = false; sendBtn.disabled = false; }
 }
@@ -950,7 +959,7 @@ async function sessSend(how) {
     const r = await call("POST", how === "interrupt" ? "/api/agent/interrupt" : "/api/agent/send", { agent: sess.agent, text });
     note(r.slash ? (r.queued ? `${text.split(/\s/)[0]}: runs when its turn ends` : `${text.split(/\s/)[0]}: sent as typed`)
       : how === "interrupt" ? "interrupted: your message is its next turn" : r.queued ? "queued: it reads this after its current turn" : "sent");
-    sinput.value = ""; sinput.style.height = "auto"; setTimeout(() => note(""), 3000);
+    sinput.value = ""; dropDraft("hyprpi-rc.sdraft"); sinput.style.height = "auto"; setTimeout(() => note(""), 3000);
     if (touch) sinput.blur();
   } catch (err) { note("✗ not sent: " + err.message); }
   finally { ssend.disabled = sint.disabled = false; }
@@ -959,6 +968,7 @@ ssend.addEventListener("click", () => sessSend("send"));
 sint.addEventListener("click", () => sessSend("interrupt"));
 sinput.addEventListener("input", () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; });
 chatKeys(sinput, () => sessSend("send"));
+keepDraft(sinput, "hyprpi-rc.sdraft", () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; }); // J194
 sinput.addEventListener("touchend", (e) => { if (document.activeElement === sinput) return; e.preventDefault(); sinput.focus({ preventScroll: true }); }, { passive: false });
 sinput.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(fitViewport); });
 

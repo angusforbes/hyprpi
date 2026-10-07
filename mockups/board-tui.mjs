@@ -58,6 +58,7 @@ const box = createInputBox({
   // ↑↓ as in every panel (Angus, N51): the box's start / end, then your earlier entries.
   history: createHistory("projects"), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
   copy: (t) => copy(t),
+  drafts: `projects-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   tint: atTint((n) => {
     const k = n.toLowerCase();
     if (hereProjects().some((p) => p.name === k || p.id === k)) return { project: true };
@@ -288,7 +289,7 @@ function applyKey(r) {
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding("utf8");
 // Chunks → single keys (Alt+1..9 and Alt+letters whole, SGR mouse, CSI, SS3, bracketed paste).
-const KEY = /\x1b[bfsSlL\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
+const KEY = /\x1b[bfsSlLz\x7f1-9]|\x1b\[<[\d;]+[Mm]|\x1b\[[\d;]*[A-Za-z~]|\x1bO[A-Za-z]|\x1b|[\s\S]/gu;
 process.stdin.on("data", (chunk) => { batching = true; try { for (const [k] of String(chunk).matchAll(KEY)) onKey(k); } finally { batching = false; if (dirty) render(); } });
 const CTRL_TAB = new Set(["\x1b[9;5u", "\x1b[27;5;9~"]), CTRL_SHIFT_TAB = new Set(["\x1b[9;6u", "\x1b[27;6;9~", "\x1b[1;5Z"]);
 let pasting = false; // inside a bracketed paste: everything goes to the box (a pasted line break doesn't send)
@@ -300,6 +301,7 @@ function onKey(d) {
   if (d === "\x1b[2;5~" && sel && selRange()) { copy(selectedText()); note = "copied"; return render(); }
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x11") return quit(); // Ctrl+Q
+  if (d === "\x1a" || d === "\x1f" || d === "\x19" || d === "\x1b[122;6u" || d === "\x1bz") { box.key(d); note = box.note || ""; return render(); } // J194: Ctrl+Z undo · Ctrl+Y redo · Alt+Z cleared drafts
   if (d.startsWith("\x1b[<")) return mouse(d);
   // (No Ctrl+B here: it pulled the room panel onto this workspace. Angus: removed.)
   if (CTRL_TAB.has(d)) return cycle(1);
@@ -427,5 +429,6 @@ try { // back where we were after a restart
 } catch { /* start fresh */ }
 process.stdout.on("resize", render);
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse + bracketed paste
+box.restore(); // J194: an unsent draft from before a close / crash
 render();
 start();

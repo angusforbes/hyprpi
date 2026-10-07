@@ -19,11 +19,13 @@ import { upkeepAgent } from "./upkeep.ts";
 import { codeVersion } from "../lib/codever.mjs";
 import { loadPolicy } from "../lib/policy.mjs";
 import { orchAgent } from "./orch.ts";
+import { draftStore } from "../lib/tui/input-box.mjs";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
 export default function hyprpi(pi: ExtensionAPI) {
   const ignoreNote = ignoreNotes(pi); // /ignore works in any window that loads this extension
+  agentDrafts(pi); // J194: the editor's unsent text survives a closed / crashed / restarted window
   const AGENT_ID = process.env.HYPRPI_AGENT_ID;
   if (!AGENT_ID) return;
   laterModes(pi); // /notnow and /discuss (J46): hyprpi agent windows only (they file on the board)
@@ -937,4 +939,25 @@ function ignoreNotes(pi: ExtensionAPI) {
   pi.on("agent_settled", async () => flush());
   // For text that arrives another way (a prompt from hyprpi): the same note, now or when the run settles.
   return (text: string, isIdle: boolean) => { if (isIdle) add(text); else held.push(text); };
+}
+
+// J194 (Angus: "I never want to be able to delete a prompt and not be able to recover it"): the agent window's
+// unsent editor text is saved (STATE/drafts/agent-<id>.current.json, polled every 1.5 s) and put back into an
+// empty editor when the window opens again (a restore, /restart, a crash). Submitting clears it. Within the
+// window pi's own keys recover text: Ctrl+Z undo, Ctrl+Y yank (what Ctrl+U/K/W deleted); app.clear is off here.
+function agentDrafts(pi: ExtensionAPI) {
+  const id = process.env.HYPRPI_AGENT_ID;
+  if (!id) return;
+  let D: any = null, last = "", timer: ReturnType<typeof setInterval> | null = null, ctxD: any = null, restored = false;
+  pi.on("session_start", async (_e: any, ctx: any) => {
+    if (ctx?.mode !== "tui" || typeof ctx?.ui?.getEditorText !== "function") return;
+    ctxD = ctx; D ||= draftStore(`agent-${id}`);
+    if (!restored) {
+      restored = true;
+      const t = D.current();
+      if (t && !ctx.ui.getEditorText()) { try { ctx.ui.setEditorText(t); last = t; ctx.ui.notify("🧹 your unsent draft is back (from before this window closed)", "info"); } catch { /* fine */ } }
+    }
+    if (!timer) { timer = setInterval(() => { try { const t = String(ctxD?.ui?.getEditorText?.() ?? ""); if (t !== last) { last = t; D.save(t); } } catch { /* fine */ } }, 1500); timer.unref?.(); }
+  });
+  pi.on("input", () => { if (D) { last = ""; D.save(""); D.flush(); } return { action: "continue" }; });
 }
