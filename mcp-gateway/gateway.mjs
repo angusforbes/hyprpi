@@ -81,7 +81,17 @@ class Upstream {
       }
     });
     child.on("exit", (code, sig) => { if (this.child === child) { log(`${this.name}: exited (${sig || code})`); this.child = null; this.ready = null; for (const [, p] of this.pending) p.reject(new Error(`${this.name} exited`)); this.pending.clear(); } });
-    child.on("error", (e) => log(`${this.name}: spawn failed: ${e.message}`));
+    // J190: a server that can't start (command not found, …) fails its callers at once with a JSON-RPC
+    // error naming the command, instead of a hung or empty reply.
+    child.on("error", (e) => {
+      log(`${this.name}: spawn failed: ${e.message}`);
+      if (this.child !== child) return;
+      this.child = null;
+      const err = new Error(`mcp-gateway: couldn't start ${this.name} (${s.command}): ${e.code === "ENOENT" ? "command not found" : e.message}; check ~/.config/mcp-gateway/servers.json`);
+      for (const [, p] of this.pending) p.reject(err);
+      this.pending.clear();
+    });
+    child.stdin.on("error", () => {}); // a dead child's pipe: handled by "error" / "exit" above
     this.ready = (async () => {
       const init = await this.request("initialize", clientInit || { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "mcp-gateway", version: "1" } }, 120000);
       if (init.error) throw new Error(`${this.name}: initialize failed: ${init.error.message}`);
