@@ -52,9 +52,10 @@ const boardHere = () => (board.room === room ? board : null);
 
 // The box: @names tinted (projects in the world colour, agents in theirs); sent text in the
 // world colour until edited (the first typed key replaces it).
+let boxSeen = "", boxEditAt = 0; // J203: when the box's text last changed (^Z: a box edit or the last drop, whichever came last)
 const box = createInputBox({
   // J165: a "✓ Sent to …" line stays SENT_STICKY_MS even while Angus types on (then the next keystroke clears it).
-  onChange: () => { note = note.startsWith("✗") || (note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS) ? note : ""; render(); },
+  onChange: () => { if (box.text !== boxSeen) { boxSeen = box.text; boxEditAt = Date.now(); } note = note.startsWith("✗") || (note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS) ? note : ""; render(); },
   // ↑↓ as in every panel (Angus, N51): the box's start / end, then your earlier entries.
   history: createHistory("projects"), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
   copy: (t) => copy(t),
@@ -280,6 +281,18 @@ async function send() {
   } catch (e) { note = "✗ " + e.message; }
   render();
 }
+// ^Z (J203): the box's undo and the board's "undo drop" share the key, so it undoes whichever came last:
+// a drop / archive made here when the box hasn't changed since (or ^Z has taken it back to what it held at the
+// drop), else the box's edits (and once the box has nothing left to undo, the drop). Before J203 the box took
+// every ^Z and "^Z undo drop" was never reached.
+function undoKey() {
+  const last = mode === "decisions" ? null : bv.st.drops[bv.st.drops.length - 1];
+  if (last && Math.max(last.at || 0, last.reachedAt || 0) >= boxEditAt) return applyKey(bv.key("\x1a", { empty: !box.text, api, room, board: boardHere() }));
+  box.key("\x1a");
+  if (last && last.boxText != null && box.text === last.boxText) last.reachedAt = Date.now(); // undone back to the drop: next ^Z is the drop's
+  if (last && /^nothing to undo/.test(box.note || "")) return applyKey(bv.key("\x1a", { empty: !box.text, api, room, board: boardHere() }));
+  note = box.note || ""; render(); return true;
+}
 // Apply what bv.key returned: true (redraw) or a promise of { note?, input? }.
 function applyKey(r) {
   if (r === true) { note = ""; render(); return true; }
@@ -305,14 +318,15 @@ function onKey(d) {
   if (d === "\x1b[2;5~" && sel && selRange()) { copy(selectedText()); note = "copied"; return render(); }
   if (sel && !d.startsWith("\x1b[<")) { sel = null; dirty = true; }
   if (d === "\x11") return quit(); // Ctrl+Q
-  if (d === "\x1a" || d === "\x1f" || d === "\x19" || d === "\x1b[122;6u" || d === "\x1bz") { box.key(d); note = box.note || ""; return render(); } // J194: Ctrl+Z undo · Ctrl+Y redo · Alt+Z cleared drafts
+  if (d === "\x1a") return undoKey(); // ^Z: the last drop here, or the box's undo (J203)
+  if (d === "\x1f" || d === "\x19" || d === "\x1b[122;6u" || d === "\x1bz") { box.key(d); note = box.note || ""; return render(); } // J194: Ctrl+Z undo · Ctrl+Y redo · Alt+Z cleared drafts
   if (d.startsWith("\x1b[<")) return mouse(d);
   // (No Ctrl+B here: it pulled the room panel onto this workspace. Angus: removed.)
   if (CTRL_TAB.has(d)) return cycle(1);
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
   if (d === "\x06") return setMode(mode === "decisions" ? "cards" : "decisions"); // ^F: cards ⇄ decisions (N68)
   if (mode === "decisions" && decisionKey(d)) return;
-  const ctx = () => ({ empty: !box.text, api, room, board: boardHere() });
+  const ctx = () => ({ empty: !box.text, api, room, board: boardHere(), boxText: box.text });
   // Enter: the box's text is sent; with an empty box (or Ctrl+Enter, whatever is typed) it is the
   // board's ⏎: open the highlighted card, back to all projects, or an item's handle into the box.
   if (d === "\x1b[13;5u" && mode === "decisions") return send();

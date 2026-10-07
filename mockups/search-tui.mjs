@@ -244,7 +244,6 @@ function completeName(dir = 1) {
   note = r.options.length > 1 ? r.options.map((o) => (o === r.pick ? "▸@" + o : "@" + o)).join("  ") : "";
   render(); return true;
 }
-function toggleMode() { note = "one window now: type to Thoughts · /keyword WORDS · /ask QUESTION"; render(); }
 
 function enter() {
   const raw = query.trim();
@@ -333,7 +332,7 @@ function helpLines() {
     k("Ctrl+V · SUPER+V", "paste text, or a screenshot: its path goes in at the cursor, and it is sent with the message"),
     k("click · ^click", "open a link / file path · ^click an agent's name or an evidence line: that agent's window"),
     k("mouse", "drag = text · Shift+drag or Shift+click = whole items · double-click = word · triple-click = whole item · each copies"),
-    k("Esc · Ctrl+U · Ctrl+Q", "clear the box · clear the box · quit"),
+    k("Esc · Ctrl+U · Ctrl+Q", "stop what's running (else close this help) · clear the box · quit"), // J203: Esc never touches the box
     "",
     ...cmds.help().map(([c, d]) => k(c, d)),
   ];
@@ -780,12 +779,11 @@ function onKey(d) {
     return;
   }
   // Ctrl+C: copy the box's selection, else the whole box; it never deletes it (Angus) and never
-  // quits (Ctrl+Q does). Esc or Ctrl+U clears the box.
+  // quits (Ctrl+Q does). Ctrl+U clears the box.
   if (d === "\x03") { if (copyBoxSel(false)) return; if (query) { copy(query); note = "copied the search"; } return render(); }
   if (d === "\x1b[2;5~") { copyBoxSel(false); return; } // SUPER+C (Ctrl+Insert, passed on when kitty has no selection)
   if (d === "\x18") { copyBoxSel(true); return; } // Ctrl+X: cut
   if (d === "\x16" || d === "\x1b[2;2~") { box.paste(); return; } // Ctrl+V / Shift+Insert: text, or a screenshot's path at the cursor (the shared box)
-  if (d === "\x1f" || d === "\x14") return toggleMode(); // Ctrl+/ or Ctrl+T: keyword ⇄ AI
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world:
   // it completes a /command or an @name (again: next match; Shift+Tab: back).
   if (CTRL_TAB.has(d)) return cycle(1);

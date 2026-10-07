@@ -744,7 +744,7 @@ function onKey(d) {
   if (d === "\x1a" || d === "\x1f" || d === "\x19" || d === "\x1b[122;6u" || d === "\x1bz") { box.key(d); note = box.note || ""; return render(); } // J194: Ctrl+Z undo · Ctrl+Y redo · Alt+Z cleared drafts
   // Key model: TOP agent list = Shift (⇧↑↓ cursor, ⇧Space mark) · MIDDLE pane = Ctrl (^↑↓, PgUp/PgDn,
   // ^Home/End) · BOTTOM message box = plain keys (multi-line: ↑↓ lines, ⇧⏎ newline, ⇧←→ select).
-  // Ctrl+/ opens the search panel (panel 3) — this panel does not search.
+  // Search lives in the Thoughts panel (SUPER+ALT+/); Ctrl+/ (like Ctrl+-) is the box's undo (J194/J203).
   // Bracketed paste (Super+V / Ctrl+Shift+V): inserted as text, line breaks kept.
   if (d === "\x1b[200~") { pasting = true; return; }
   if (d === "\x1b[201~") { pasting = false; return render(); }
@@ -831,12 +831,6 @@ function onKey(d) {
   }
   if (d === "\r") { selA = null; return send(); }
   if (d === "\x1b[13;2u") return insertText("\n"); // Shift+Enter: new line in the message
-  if (d === "\x1bs" || d === "\x1bS") return setView(view === "search" ? "stream" : "search"); // Alt+S (still works)
-  if (d === "\x1f") { // Ctrl+/: the search panel, on this room
-    const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
-    spawn(new URL("./search-tui", import.meta.url).pathname, [room], { detached: true, stdio: "ignore", env }).unref();
-    note = "search panel → room " + room; return render();
-  }
   if (view === "board" && d === "\x1b" && !inputSel() && (bv.focused || bv.st.help)) { // Esc: the whole board again
     if (bv.st.help) bv.st.help = false; else bv.focus(null);
     note = ""; return render();
