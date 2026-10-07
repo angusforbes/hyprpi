@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+// Jump to this world's hyprpi panel (J195, Angus): SUPER+SHIFT+ALT+P / R / slash go to the workspace
+// where that panel is and focus it, where SUPER+ALT+P / R / slash bring it here (mockups/panels --only N).
+// A panel that isn't open, or is parked in Reprieve, is brought here the usual way instead (there's
+// nowhere to jump to).
+//
+//   ~/Work/hyprpi/mockups/panel-jump 1|2|3|4 [ROOM] [--dry]     (1 Agents · 2 Stream · 3 Thoughts · 4 Projects)
+import { spawn } from "node:child_process";
+import * as hypr from "../lib/hypr.mjs";
+import { request } from "../lib/client.mjs";
+
+const args = process.argv.slice(2), dry = args.includes("--dry");
+const [n, roomArg] = args.filter((a) => !a.startsWith("--"));
+const KIND = { 1: "router", 2: "room", 3: "(?:search|thoughts)", 4: "board" };
+if (!KIND[n]) { console.error("usage: panel-jump 1|2|3|4 [ROOM] [--dry]"); process.exit(2); }
+const room = roomArg || (await request("room.current", {}).catch(() => ({}))).room || "";
+const re = new RegExp(`^hyprpi-${KIND[n]} ${room}$`);
+// Two of the same panel (one summoned elsewhere): the one in its own world first.
+const size = (await import("../lib/paths.mjs")).loadConfig().worldSize || 10, L = (await import("../lib/paths.mjs")).WORLD_LETTERS;
+const all = room ? (await hypr.clients().catch(() => [])).filter((w) => re.test(w.title || "") && w.workspace?.id > 0) : [];
+const c = all.find((w) => L[Math.floor((w.workspace.id - 1) / size)] === room) || all[0];
+if (dry) { console.log(c ? `jump ${c.address} ws ${c.workspace.id} (${c.title})` : `bring ${n} ${room} (not open on a workspace)`); process.exit(0); }
+if (c) await hypr.focusWindow(c.address);
+else {
+  const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+  spawn(new URL("./panels", import.meta.url).pathname, [...(room ? [room] : []), "--only", n], { detached: true, stdio: "ignore", env }).unref();
+}

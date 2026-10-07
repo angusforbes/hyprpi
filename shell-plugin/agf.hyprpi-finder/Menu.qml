@@ -45,9 +45,9 @@ Item {
 
     if (payload.fontFamily) root.fontFamily = payload.fontFamily
     // hyprpi: a dry open (tests) only proves the plugin loads and answers; nothing is shown.
-    // "dry N rank-d K rank-1 M": N options, K / M of them for the queries "d" / "1" (FinderRank, J17: proves the loaded QML is current).
+    // "dry N rank-d K rank-1 M … top-d-home W": N options (W: the world of the top "d" row, J195), K / M of them for the queries "d" / "1" (FinderRank, J17: proves the loaded QML is current).
     if (payload.dry) {
-      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d").length + " rank-1 " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "1").length + " sub slot multi") + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
+      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d").length + " rank-1 " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "1").length + " sub slot multi" + " top-d-home " + (function(p) { var o = FinderRank.rank(p, "d"); return o.length ? (p[o[0]].home || "-") : "-" })(root.parseDmenuOptions(payload.options || []))) + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
       return
     }
 
@@ -562,17 +562,17 @@ Item {
       if (opt && typeof opt === "object") {
         var icon = String(opt.icon || ""), label = String(opt.label || ""), detail = String(opt.detail || "")
         rich = String(opt.rich || ""); value = String(opt.value || "")
-        var worlds = String(opt.worlds || ""), ws = Number(opt.ws || 0), name = String(opt.name || "") // hyprpi: FinderRank's keys
+        var worlds = String(opt.worlds || ""), ws = Number(opt.ws || 0), name = String(opt.name || ""), home = String(opt.home || "") // hyprpi: FinderRank's keys (home: J195)
         var slot = Number(opt.slot || 0), recent = Number(opt.recent || 0) // hyprpi: the digit ranking and its time tiebreak (they were dropped here, so "1" found nothing)
         var subtitle = String(opt.subtitle || "") // hyprpi: the small line under the name (J23)
       } else {
-      var worlds = "", ws = 0, name = "", subtitle = "", slot = 0, recent = 0 // hyprpi
+      var worlds = "", ws = 0, name = "", subtitle = "", slot = 0, recent = 0, home = "" // hyprpi
       var parts = String(opt || "").split("\t")
       var icon = parts.length > 1 ? parts.shift() : ""
       var label = parts.shift() || ""
       var detail = parts.join("\t")
       }
-      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, slot: slot, recent: recent, name: name, subtitle: subtitle }) // hyprpi
+      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, home: home, slot: slot, recent: recent, name: name, subtitle: subtitle }) // hyprpi
     }
     return parsed
   }

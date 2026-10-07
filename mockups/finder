@@ -155,13 +155,19 @@ async function rows() {
         subtitle: clean(p.short || p.where?.text || p.title || "") }); // its "where" summarised (the agents panel's projects line), else where / title
     }
   }
-  // Summon: this world's hyprpi panels (by the workspace they are on), after the agents.
-  if (SUMMON) for (const c of clients) {
+  // hyprpi panels (TUIs) by the workspace they are on. Summon: this world's, after the agents. The
+  // finder (J195, Angus: "there is no way to jump to them … only to bring them to us"): every world's,
+  // after the projects; Enter jumps to it. Named with a leading ">" the way projects lead with "@"
+  // (Angus: "so that they are easier to search for"), so typing ">" lists only panels:
+  // >Agents D, >Stream D, >Thoughts D, >Projects D.
+  for (const c of clients) {
     const m = /^hyprpi-(router|room|search|board|thoughts) (\S+)/.exec(c.title || ""), ws = c.workspace?.id;
-    if (!m || !(ws > 0) || WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] !== S.room) continue;
-    const [icon, what] = PANEL_KIND[m[1]], loc = wsLabel(ws, WORLD_SIZE), nm = `${what} ${m[2]}`;
-    out.push({ kind: "panel", id: c.address, room: S.room, sort: nm, recent: 0, mark: "▫", glyph: "▫", label: `${icon} ${nm} · ${loc}`,
-      rich: esc(icon) + " " + esc(nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "", worlds: S.room, ws, subtitle: ws === S.workspace ? "already here" : "" });
+    const wsWorld = ws > 0 ? WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] : "";
+    if (!m || !(ws > 0) || (SUMMON && wsWorld !== S.room)) continue;
+    const [icon, what] = PANEL_KIND[m[1]], loc = wsLabel(ws, WORLD_SIZE), nm = `>${what} ${m[2]}`;
+    out.push({ kind: "panel", id: c.address, room: SUMMON ? S.room : m[2], sort: nm, recent: 0, mark: "▫", glyph: "▫", label: `${icon} ${nm} · ${loc}`,
+      rich: esc(icon) + " " + font(worldColor(m[2][0]), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
+      worlds: [...new Set([wsWorld, m[2][0]])].join(""), ws, subtitle: SUMMON && ws === S.workspace ? "already here" : "" });
   }
   // Summon: this world's app windows (Angus, J28: "apply this summon logic to all apps"), two lines each:
   // app + a stable tag (profile, vault, folder, cwd) · workspace · last used; below, what it shows now.
@@ -185,7 +191,7 @@ async function rows() {
   // their last turn event, projects their card's last change. Ties A–Z. (The SUPER+S pop-up has its own order.)
   const CAT = { "×": 0, "●": 1, "◐": 2, "✓": 3, "○": 4, "◌": 5 }; // ◐ background (J93): its turn ended, subagents still running
   const cat = (r) => CAT[r.mark] ?? 3;
-  const KIND = { agent: 0, panel: 1, app: 2, project: 3 };
+  const KIND = SUMMON ? { agent: 0, panel: 1, app: 2, project: 3 } : { agent: 0, project: 1, panel: 2 }; // finder: panels last (J195)
   out.sort((x, y) => KIND[x.kind] - KIND[y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
@@ -199,6 +205,7 @@ async function rows() {
 }
 
 async function act(r) {
+  if (r.kind === "panel") return hypr.focusWindow(r.id); // J195: go to its workspace and focus it
   if (r.kind === "agent") {
     if (r.parked) return request("agent.unpark", { agent: r.id });
     return request("agent.focus", { agent: r.id });
@@ -248,6 +255,7 @@ const main = async () => {
   let rs;
   try { if (SUMMON) S = await request("room.current", {}); rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
   const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`; // "" glyph → a row without an icon
+  if (list && process.argv.includes("--options")) { console.log(JSON.stringify(optionsOf(rs))); return; }
   if (list) {
     const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
     for (const r of rs) console.log(row(r) + (process.argv.includes("--ages") ? `\t(${r.recent ? ago(r.recent) : "?"})` : "") + (process.argv.includes("--rich") ? `\n    ${r.rich}` : ""));
@@ -288,12 +296,15 @@ const main = async () => {
   child.on("close", (code) => { clearTimeout(t); onPick(code, out); });
 };
 
+// The plugin's options (also --list --options, for tests).
+const optionsOf = (rs) => rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, home: r.ws ? WORLD_LETTERS[Math.floor((r.ws - 1) / WORLD_SIZE)] || "" : "", slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0, subtitle: r.subtitle || "" })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
+
 // The plugin pop-up: omarchy-menu-select's protocol (a selection file, then a done file), with the
 // rows as objects so the label can be coloured; the pick comes back as the row's key. false when
 // the plugin isn't there or not enabled (the caller falls back to the plain menu).
 function pluginSelect(rs, onPick) {
   const dir = fs.mkdtempSync(path.join(runtimeDir(), "finder-")), sel = path.join(dir, "pick"), done = path.join(dir, "done");
-  const options = rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0, subtitle: r.subtitle || "" })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
+  const options = optionsOf(rs);
   const payload = JSON.stringify({ mode: "select", prompt: SUMMON ? `Summon to ${wsLabel(S.workspace, WORLD_SIZE)}` : "Agents", ...(SUMMON ? { multi: true, noFilter: true } : {}), options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
   const clean = () => fs.rmSync(dir, { recursive: true, force: true });
   return new Promise((resolve) => {

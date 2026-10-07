@@ -49,6 +49,11 @@ o.bind("SUPER + SHIFT + SLASH", "Monitor scaling down", "omarchy-hyprland-monito
 -- The board panel is the projects panel on SUPER + ALT + P (Angus, 2026-09-29); SUPER + ALT + B is free.
 o.bind("SUPER + ALT + P", "hyprpi projects panel (current world)", HYPRPI_ROOT .. "/mockups/panels --only 4")
 o.bind("SUPER + ALT + slash", "hyprpi search TUI (current world)", HYPRPI_ROOT .. "/mockups/panels --only 3")
+-- Jump to a panel instead of bringing it here (J195, Angus): its workspace, focused; not open → brought
+-- here as above. SUPER+SHIFT+ALT+A (the agents panel) is Omarchy's Grok web app, so it has no jump key yet.
+o.bind("SUPER + SHIFT + ALT + R", "hyprpi: jump to the Stream panel", HYPRPI_ROOT .. "/mockups/panel-jump 2")
+o.bind("SUPER + SHIFT + ALT + P", "hyprpi: jump to the projects panel", HYPRPI_ROOT .. "/mockups/panel-jump 4")
+o.bind("SUPER + SHIFT + ALT + slash", "hyprpi: jump to the search / Thoughts panel", HYPRPI_ROOT .. "/mockups/panel-jump 3")
 -- Add-on: the finder (on by default; "finder": false in ~/.config/hyprpi/config.json turns it off
 -- and leaves Omarchy's keys as they were). SUPER+SHIFT+SPACE opens the Omarchy menu, like the apps
 -- menu on SUPER+ALT+SPACE, listing every world's agents and projects; Enter jumps to the agent or

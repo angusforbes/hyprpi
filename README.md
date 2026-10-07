@@ -53,6 +53,7 @@ installing that part on its own.
 | SUPER+ALT+A | Agents panel for the current world, brought here (`mockups/panels --only 1`) |
 | click the current world in the bar | Agents panel for the current world: jump to it wherever it is, or open it here in the top-left slot (`hyprpi room --toggle` → `mockups/agents-here`) |
 | SUPER+ALT+/ | Toggle the search window for the current world's room |
+| SUPER+SHIFT+ALT+P / R / / | Jump to the current world's projects / Stream / search (Thoughts) panel: its workspace, focused (`mockups/panel-jump`); not open → brought here like SUPER+ALT+P / R / /. (No jump key for the agents panel: SUPER+SHIFT+ALT+A is Omarchy's Grok; clicking the world in the bar jumps to it) |
 | SUPER+SHIFT+A | Claude (moved here from SUPER+A; a personal binding in `~/.config/hypr/bindings.lua`, not part of hyprpi) |
 | SUPER+S | Summon: a pop-up of this world's agents, panels, app windows (two lines: app + profile / vault / folder / cwd, then the page / note / file / command) and projects; Tab marks several, Enter brings them to the workspace you're on. Every unpinned window there, apps included and the focused one too, is dismissed first |
 | SUPER+D | Dismiss the focused agent or app window (to its home, or the nearest workspace with room); a hyprpi panel is closed. App windows are only ever moved, never closed. Refused when pinned |
@@ -237,10 +238,15 @@ next reload (`hyprctl reload`).
 ### Finder (on by default)
 
 **SUPER+SHIFT+SPACE** opens the Omarchy menu (the same one as the apps menu on SUPER+ALT+SPACE)
-listing every world's live and parked agents, then its open projects, each with where it is:
-`Sankey · C3`, `@hyprpi · C1` (a project sits where its writer is, else where its world's projects
-panel is). Type to filter, ↑↓, Enter, Esc. Enter on an agent jumps to its window (a parked one is
-brought back here); on a project it opens its card in the projects panel. The key again closes it.
+listing every world's live and parked agents, then its open projects, then the hyprpi panels, each
+with where it is: `Sankey · C3`, `@hyprpi · C1` (a project sits where its writer is, else where its
+world's projects panel is), `>Thoughts D · D6`. Panels start with ">" as projects start with "@", so
+">" lists only panels (`>Agents`, `>Stream`, `>Thoughts`, `>Projects` + their world). Type to
+filter, ↑↓, Enter, Esc. Enter on an agent jumps to its window (a parked one is brought back here); on
+a project it opens its card in the projects panel; on a panel it jumps to it. The key again closes it.
+One letter A–I lists that world first (J17, J195): what's on its workspaces (by workspace, name,
+time), then what belongs to it but sits elsewhere (a board-D project whose writer is on C5), then
+names starting with the letter, then the other matches. A digit 1–0 lists every world's workspace N first.
 Also `hyprpi finder` (or `mockups/finder --list` to print the rows).
 
 It takes Omarchy's "Toggle top bar" key, so the bar toggle moves to **SUPER+ALT+B**.
