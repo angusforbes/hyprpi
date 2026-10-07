@@ -173,32 +173,57 @@ function M.cycle(delta)
   focus_id(ids[((idx - 1 + delta) % #ids) + 1])
 end
 
--- The grid (J205): rows = worlds (at least MIN_WORLDS, more when a higher world is in use or
--- current), columns = at least MIN_COLUMNS workspaces, widened for EVERY world to the highest
--- workspace number any world uses. Pure (testable): ids = existing workspace ids, cur = active id.
-local MIN_COLUMNS = 5
-function M.grid_for(ids, cur)
-  local rows, cols = MIN_WORLDS, MIN_COLUMNS
-  local function take(id)
-    local w = world_of(id)
-    if not w or w > MAX_WORLDS then return end
-    if w > rows then rows = w end
-    local slot = id - (w - 1) * SIZE
-    if slot > cols then cols = slot end
-  end
+-- The grid (J205, v2 J207). Rows = worlds, columns = workspaces 1-10 of a world.
+-- SUPER+ALT+arrows: the base grid, worlds A-E x workspaces 1-5, is always walked, empty cells
+-- included; beyond it only cells in use are stops: a workspace 6-10 of a world when it exists
+-- (it has windows, or it's the one you're on: the ones the bar shows), a world F-I when it has
+-- a workspace (or you're in it). Everything wraps. Up/Down keep the column when the target world
+-- has it as a stop, otherwise go to that world's highest stop below it (for column 7 in a world
+-- without a 7: its 6 if it has one, else 5).
+-- Pure (testable): ids = existing workspace ids, cur = the active id.
+local BASE = 5
+local function sorted_keys(set) local t = {} for k in pairs(set) do t[#t + 1] = k end table.sort(t) return t end
+function M.col_stops(world, ids, cur)
+  local set = {}
+  for c = 1, BASE do set[c] = true end
+  local function take(id) if world_of(id) == world then set[id - (world - 1) * SIZE] = true end end
   for _, id in ipairs(ids or {}) do take(id) end
-  take(cur)
-  return rows, cols
+  if cur then take(cur) end
+  return sorted_keys(set)
 end
--- The workspace one step (dx: -1/+1 = previous/next workspace in this world; dy: -1/+1 = the
--- same column in the previous/next world) from cur, wrapping at the ends; empty workspaces count.
+function M.world_stops(ids, cur)
+  local set = {}
+  for w = 1, MIN_WORLDS do set[w] = true end
+  local function take(id) local w = world_of(id); if w and w <= MAX_WORLDS then set[w] = true end end
+  for _, id in ipairs(ids or {}) do take(id) end
+  if cur then take(cur) end
+  return sorted_keys(set)
+end
+local function index_of(list, v) for i, x in ipairs(list) do if x == v then return i end end return nil end
 function M.step_from(cur, dx, dy, ids)
-  local rows, cols = M.grid_for(ids, cur)
   local w = world_of(cur) or 1
   local col = cur - (w - 1) * SIZE
-  if col > cols then col = cols end
-  if dx ~= 0 then col = ((col - 1 + dx) % cols) + 1 end
-  if dy ~= 0 then w = ((w - 1 + dy) % rows) + 1 end
+  if dx ~= 0 then
+    local stops = M.col_stops(w, ids, cur)
+    local i = index_of(stops, col) or 1
+    col = stops[((i - 1 + dx) % #stops) + 1]
+  end
+  if dy ~= 0 then
+    local ws = M.world_stops(ids, cur)
+    local i = index_of(ws, w) or 1
+    w = ws[((i - 1 + dy) % #ws) + 1]
+    local cs = M.col_stops(w, ids, nil)
+    if not index_of(cs, col) then local best = cs[1]; for _, c in ipairs(cs) do if c <= col then best = c end end; col = best end
+  end
+  return (w - 1) * SIZE + col
+end
+-- SUPER+ALT+CTRL+arrows: one step to the adjacent workspace number (Left/Right, 1-10) or world
+-- (Up/Down, A-I, keeping the column), empty or not; Hyprland creates it when you go there. Wraps.
+function M.raw_from(cur, dx, dy)
+  local w = world_of(cur) or 1
+  local col = cur - (w - 1) * SIZE
+  col = ((col - 1 + dx) % SIZE) + 1
+  w = ((w - 1 + dy) % MAX_WORLDS) + 1
   return (w - 1) * SIZE + col
 end
 local function existing_ids()
@@ -212,11 +237,38 @@ local function existing_ids()
   end
   return ids
 end
--- SUPER + ALT + arrows: move around the grid.
-function M.step(dx, dy)
+local function cur_or_entry()
   local cur = active_id()
   if not cur or cur < 1 then cur = (M.current_world() - 1) * SIZE + 1 end
-  focus_id(M.step_from(cur, dx, dy, existing_ids()))
+  return cur
+end
+-- SUPER + ALT + arrows: move around the grid (stops as above).
+function M.step(dx, dy) focus_id(M.step_from(cur_or_entry(), dx, dy, existing_ids())) end
+-- SUPER + ALT + CTRL + arrows: the adjacent workspace / world, created if needed.
+function M.step_raw(dx, dy) focus_id(M.raw_from(cur_or_entry(), dx, dy)) end
+
+-- SUPER + ALT + SHIFT + LEFT / RIGHT: swap this workspace's windows with the neighbouring
+-- workspace's (the same world, the adjacent number; wraps 10 <-> 1) and follow. Windows move
+-- silently with Hyprland's own move; hyprpi picks up its agents' new workspaces from the windows.
+local function windows_on(id)
+  local out = {}
+  local ok, list = pcall(hl.get_workspace_windows, id)
+  if ok and type(list) == "table" then
+    for _, w in ipairs(list) do local o, a = pcall(function() return w.address end); if o and a then out[#out + 1] = a end end
+  end
+  return out
+end
+function M.swap_with(a, b)
+  local wa, wb = windows_on(a), windows_on(b)
+  for _, addr in ipairs(wa) do hl.dispatch(hl.dsp.window.move({ window = "address:" .. addr, workspace = tostring(b), follow = false })) end
+  for _, addr in ipairs(wb) do hl.dispatch(hl.dsp.window.move({ window = "address:" .. addr, workspace = tostring(a), follow = false })) end
+  return #wa, #wb
+end
+function M.swap(dx)
+  local cur = cur_or_entry()
+  local other = M.raw_from(cur, dx, 0)
+  M.swap_with(cur, other)
+  focus_id(other)
 end
 
 function M.letter(w)
@@ -286,6 +338,16 @@ for _, a in ipairs({ { "LEFT", -1, 0, "Previous workspace in world" }, { "RIGHT"
                      { "UP", 0, -1, "Same workspace in previous world" }, { "DOWN", 0, 1, "Same workspace in next world" } }) do
   hl.unbind("SUPER + ALT + " .. a[1])
   o.bind("SUPER + ALT + " .. a[1], a[4] .. " (hyprwrlds grid, wraps)", function() M.step(a[2], a[3]) end)
+  -- J207: + CTRL steps one by one, empty ones too, creating the next workspace / world.
+  hl.unbind("SUPER + ALT + CTRL + " .. a[1])
+  o.bind("SUPER + ALT + CTRL + " .. a[1], a[4] .. ", one by one, creating it (hyprwrlds)", function() M.step_raw(a[2], a[3]) end)
+end
+-- J207: + SHIFT + Left/Right swaps this workspace with its neighbour (replaces Omarchy's "move
+-- workspace to the left/right monitor", a no-op with one monitor). Up/Down (swap worlds) wait for
+-- a decision on what a world swap means for hyprpi's rooms.
+for _, a in ipairs({ { "LEFT", -1, "Swap workspace with the previous one" }, { "RIGHT", 1, "Swap workspace with the next one" } }) do
+  hl.unbind("SUPER + SHIFT + ALT + " .. a[1])
+  o.bind("SUPER + SHIFT + ALT + " .. a[1], a[3] .. " (hyprwrlds)", function() M.swap(a[2]) end)
 end
 
 hl.unbind("SUPER + ALT + TAB")
