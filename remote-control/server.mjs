@@ -12,7 +12,8 @@
 //   GET  /                     the page (index.html), manifest, icon
 //   GET  /api/state            worlds (colours, Thoughts busy), the desktop's active world
 //   GET  /api/thoughts?world=C the thread
-//   POST /api/send   {world, text}   to Thoughts, marked via "phone"
+//   POST /api/send   {world, text, images?}   to Thoughts, marked via "phone" (images: ~/Phone photos, J219)
+//   POST /api/decide {world, project, h, answer, typed?}   answer a Decide item (board.item decide, J219)
 //   POST /api/stop   {world, ask?}   interrupt Thoughts (ask: it then says what got cut off)
 //   GET  /lib/thoughts-lines.mjs     the thread's display rule, shared with the desktop
 //   GET  /api/board?world=C    the Proj tab: each project's summary (open items only)
@@ -509,7 +510,7 @@ const server = http.createServer(async (req, res) => {
     // The POSTs that act on agents or Thoughts (J161, Pocket's review) must PROVE they come from this page:
     // a same-host Origin, or Sec-Fetch-Site: same-origin. (Browsers always send Origin on cross-site POSTs,
     // so this mostly shuts out non-browser requests that carry no Origin at all.)
-    if (/^\/api\/(agent\/|send$|stop$)/.test(url.pathname)) {
+    if (/^\/api\/(agent\/|send$|stop$|decide$)/.test(url.pathname)) {
       const sfs = req.headers["sec-fetch-site"];
       if (!(origin && oh === req.headers.host) && sfs !== "same-origin") return json(res, 403, { error: "bad origin" });
     }
@@ -593,12 +594,27 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       const b = await body(req), r = room(b.world), text = String(b.text || "").trim();
-      if (!r || !text) return json(res, 400, { error: "world and text needed" });
+      // J219 (a): photos from the phone (already uploaded to ~/Phone by /api/upload) go with the message;
+      // each must be a readable image under the allowed folders (fileAllowed, the J47 guard).
+      const asked = Array.isArray(b.images) ? b.images.slice(0, 8) : [], images = [];
+      for (const p of asked) { const real = typeof p === "string" ? fileAllowed(p) : null; if (real && /\.(png|jpe?g|gif|webp)$/i.test(real)) { try { const st = fs.statSync(real); if (st.isFile()) { if (st.size > 10e6) return json(res, 413, { error: `${path.basename(real)} is over 10 MB` }); images.push(real); } } catch { /* gone */ } } }
+      if (asked.length && images.length !== asked.length) return json(res, 404, { error: "a photo is not found or not allowed" });
+      if (!r || (!text && !images.length)) return json(res, 400, { error: "world and text needed" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       log("send", r, JSON.stringify(text.slice(0, 80)));
       // "/ignore …": a signpost in the thread, given to Thoughts with his next message; no reply now (N52).
       if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 200, { ...(await api.call("thoughts.ignore", { room: r, text })), ignored: true });
-      return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone" }));
+      return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone", ...(images.length ? { images } : {}) }));
+    }
+    // J219 (b): answer a decide item from the phone, as the desktop panel does (board.item decide; this
+    // connection isn't an agent, so the daemon records Angus as the one who decided).
+    if (req.method === "POST" && url.pathname === "/api/decide") {
+      const b = await body(req), r = room(b.world), answer = String(b.answer || "").trim().slice(0, 2000);
+      if (!r || !b.project || !b.h || !answer) return json(res, 400, { error: "world, project, h and answer needed" });
+      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      log("decide", r, b.project, b.h, JSON.stringify(answer.slice(0, 60)));
+      try { return json(res, 200, await api.call("board.item", { action: "decide", room: r, project: String(b.project), h: String(b.h), answer, ...(b.typed ? { typed: true } : {}) })); }
+      catch (e) { return json(res, 409, { error: e.message }); }
     }
     if (req.method === "POST" && url.pathname === "/api/stop") {
       const b = await body(req), r = room(b.world); if (!r) return json(res, 400, { error: "world?" });

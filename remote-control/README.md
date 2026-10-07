@@ -84,7 +84,8 @@ The Tailscale app must be connected. Open the address in Safari. To make it an a
 | `POST /api/agent/send\|interrupt\|stop {agent, text}` | a message from the phone (queued if it's working), Interrupt (stop its turn; the message is its next turn), Stop (like Esc); daemon `agent.interrupt` |
 | `GET /lib/tui/agent-click.mjs` | the desktop panels' Ctrl+click name matcher, as-is: names in the page become links (agent → Agnt, @project → Proj, Thoughts-X → Thgt, switching world) |
 | `GET /lib/thoughts-lines.mjs` | the thread's display rule, the same module the desktop Thoughts window uses |
-| `POST /api/send {world, text}` | to Thoughts (`thoughts.send`, via phone) |
+| `POST /api/send {world, text, images?}` | to Thoughts (`thoughts.send`, via phone); `images`: up to 8 photos already uploaded to ~/Phone (📎 on the Thgt box, J219: shrunk to ≤ 2048 px JPEG on the phone first; each must be an allowed image ≤ 10 MB) |
+| `POST /api/decide {world, project, h, answer, typed?}` | answer a Decide item (`board.item decide`, as the desktop panel; Angus is the decider). The Proj tab: tap an option or "Answer in my own words…" → a confirm sheet → this (J219) |
 | `POST /api/stop {world}` | interrupt Thoughts |
 | `GET /events` | SSE: `state`, `thoughts {room, entry?, busy?}` |
 | `GET /file?path=X.md` | the document viewer (viewer.html/viewer.js): the file rendered with md.mjs, a raw toggle; `&raw=1` gives the text (same guard) |

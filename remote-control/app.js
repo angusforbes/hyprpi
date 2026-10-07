@@ -337,18 +337,82 @@ function chatKeys(el, send) {
     if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return; // IME: not ours
     if (e.shiftKey && !touch && el.tagName === "TEXTAREA") return; // desktop: a new line
     e.preventDefault();
-    if (!el.value.trim()) return; // nothing to send
+    if (!el.value.trim() && !(el === input && atts.some((a) => a.path))) return; // nothing to send (J219: photos alone are something)
     send();
     if (touch) el.blur(); // the keyboard closes
   });
 }
+// ---- J219 (a): 📎 photos with a message to Thoughts. Each picked photo is uploaded at once into
+// ~/Phone (the Files app's route and rules: no overwrite, caps; a stale token is refreshed once, J143),
+// shown as a small tile with ✕; ➤ sends the text with their paths (the daemon gives Thoughts the images).
+// Waiting photos are kept like the draft (J194): a reload or a failed send doesn't lose them.
+const attsEl = $("#atts"), attfile = $("#attfile"), ATT_KEY = "hyprpi-rc.atts";
+let atts = []; try { atts = JSON.parse(localStorage.getItem(ATT_KEY) || "[]").filter((a) => a.path); } catch { atts = []; }
+const saveAtts = () => { try { const done = atts.filter((a) => a.path).map(({ name, path }) => ({ name, path })); done.length ? localStorage.setItem(ATT_KEY, JSON.stringify(done)) : localStorage.removeItem(ATT_KEY); } catch { /* full */ } };
+function renderAtts() {
+  attsEl.hidden = !atts.length || (typeof view !== "undefined" && view !== "thoughts");
+  attsEl.innerHTML = atts.map((a, i) => `<div class="att${a.err ? " err" : ""}" data-i="${i}"><img alt="" src="${esc(a.local || (a.path ? "/api/thumb?path=" + encodeURIComponent(a.path) : ""))}">${a.path ? "" : `<div class="ap">${a.err ? "✗" : (a.pct || 0) + "%"}</div>`}<button type="button" class="ax" aria-label="remove">✕</button></div>`).join("");
+  sendBtn.disabled = sending || atts.some((a) => !a.path && !a.err);
+}
+let upToken = null;
+async function uploadToken(fresh = false) { if (!upToken || fresh) upToken = (await call("GET", "/api/files/token")).token; return upToken; }
+function putPhoto(file, batch, token, onPct) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest(); x.open("POST", "/api/upload");
+    x.setRequestHeader("x-upload-token", token); x.setRequestHeader("x-file-name", encodeURIComponent(file.name || "photo.jpg"));
+    x.setRequestHeader("x-batch", batch); x.setRequestHeader("content-type", "application/octet-stream");
+    x.upload.onprogress = (e) => e.total && onPct(Math.floor(e.loaded / e.total * 100));
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch { /* none */ } x.status === 200 ? resolve(j) : reject(Object.assign(new Error(j.error || x.statusText || "failed"), { status: x.status })); };
+    x.onerror = () => reject(new Error("network error"));
+    x.send(file);
+  });
+}
+// A phone photo can be 5–15 MB (the model takes ≤ ~5 MB an image; the daemon skips > 10 MB, silently),
+// so it goes up as a JPEG of at most 2048 px on the long side; a small png/jpeg/webp/gif goes as it is.
+async function shrink(f) {
+  if (f.size <= 1.5e6 && /^image\/(png|jpeg|webp|gif)$/.test(f.type)) return f;
+  try {
+    const bm = await createImageBitmap(f, { imageOrientation: "from-image" }), k = Math.min(1, 2048 / Math.max(bm.width, bm.height));
+    const c = document.createElement("canvas"); c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k);
+    c.getContext("2d").drawImage(bm, 0, 0, c.width, c.height); bm.close?.();
+    const b = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85)); if (!b) return f;
+    return new File([b], (f.name || "photo").replace(/\.[^.]*$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch { return f; } // can't decode it here: send as is (the server says if it's no good)
+}
+async function addPhotos(files) {
+  const batch = crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now();
+  const items = files.map((f) => ({ name: f.name, local: URL.createObjectURL(f), file: f, pct: 0 }));
+  atts.push(...items); renderAtts();
+  for (const a of items) {
+    try {
+      a.file = await shrink(a.file);
+      let r; try { r = await putPhoto(a.file, batch, await uploadToken(), (p) => { a.pct = p; renderAtts(); }); }
+      catch (e) { if (e.message !== "bad token") throw e; r = await putPhoto(a.file, batch, await uploadToken(true), (p) => { a.pct = p; renderAtts(); }); }
+      a.path = r.path; delete a.file;
+    } catch (e) { a.err = e.message; note("✗ photo not uploaded: " + e.message); }
+    renderAtts(); saveAtts();
+  }
+}
+$("#attach").addEventListener("click", () => attfile.click());
+attfile.addEventListener("change", () => { const f = [...attfile.files]; attfile.value = ""; if (f.length) addPhotos(f); });
+attsEl.addEventListener("click", (e) => { const x = e.target.closest(".ax"); if (!x) return; const i = +x.closest(".att").dataset.i; const a = atts[i]; if (a?.local) URL.revokeObjectURL(a.local); atts.splice(i, 1); renderAtts(); saveAtts(); });
+queueMicrotask(renderAtts); // after the rest of the module has set up (view)
+
 let sending = false;
 async function sendMessage() {
-  const text = input.value.trim(); if (!text || !world || sending) return;
+  const text = input.value.trim(), images = atts.filter((a) => a.path).map((a) => a.path);
+  if ((!text && !images.length) || !world || sending) return;
+  if (atts.some((a) => !a.path && !a.err)) return note("A photo is still uploading…");
   sending = true; sendBtn.disabled = true;
-  try { await call("POST", "/api/send", { world, text }); input.value = ""; dropDraft("hyprpi-rc.draft"); grow(); busy = true; renderTop(); note(""); toEnd(); }
-  catch (err) { note("✗ not sent: " + err.message); }
-  finally { sending = false; sendBtn.disabled = false; }
+  try {
+    await call("POST", "/api/send", { world, text, ...(images.length ? { images } : {}) });
+    input.value = ""; dropDraft("hyprpi-rc.draft"); grow();
+    for (const a of atts) if (a.local) URL.revokeObjectURL(a.local);
+    atts = []; saveAtts(); renderAtts();
+    busy = true; renderTop(); note(""); toEnd();
+  }
+  catch (err) { note("✗ not sent: " + err.message); } // the text and the photos stay
+  finally { sending = false; renderAtts(); }
 }
 chatKeys(input, sendMessage);
 sendBtn.addEventListener("click", () => { sendMessage(); if (touch) input.blur(); });
@@ -445,15 +509,19 @@ function renderProjects({ keepScroll = false } = {}) {
     const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
     const by = (it) => it.by ? ` <span class="small">(${esc(it.by)})</span>` : ""; // who added it, as on the desktop card
     const items = (list, done) => list.length ? `<ul class="items">${list.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}${by(it)}</div>${done && it.verified ? `<div class="small clip">✓ ${inline(it.verified)}</div>` : ""}${it.resolution ? `<div class="small">→ decided: ${inline(it.resolution)}</div>` : ""}</li>`).join("")}</ul>` : "";
-    const decide = p.decide.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}${by(it)}</div>${(it.options || []).length ? `<ol class="opts">${it.options.map((o) => `<li><b>${esc(o.key)})</b> ${inline(o.text)}${o.key === it.default ? ` <span class="small">(default)</span>` : ""}${o.key === it.recommend ? ` <span class="rec">★ recommended</span>` : ""}</li>`).join("")}</ol>` : ""}</li>`).join("");
+    // J219 (b): each option is tappable (a confirm sheet, then it's answered as from the desktop panel);
+    // "Answer in my own words…" for an answer that isn't one of them.
+    const decide = p.decide.map((it) => `<li><span class="h">${esc(it.h)}</span> <div class="md">${md(it.text)}${by(it)}</div>${(it.options || []).length ? `<ol class="opts">${it.options.map((o) => `<li class="opt" data-p="${esc(p.id)}" data-h="${esc(it.h)}" data-k="${esc(o.key)}"><b>${esc(o.key)})</b> ${inline(o.text)}${o.key === it.default ? ` <span class="small">(default)</span>` : ""}${o.key === it.recommend ? ` <span class="rec">★ recommended</span>` : ""}</li>`).join("")}</ol>` : ""}<button type="button" class="ownans" data-p="${esc(p.id)}" data-h="${esc(it.h)}">Answer in my own words…</button></li>`).join("");
     html.push(`<div class="psum">` // no back button (J41 v2): the title, or Proj in the top bar, goes back to the list
       // The header (J48): icon, name, badge, title and owner/members as ONE tap target, the full width,
       // that goes back to the list. Names in it are not links (the J45 pass skips .phead): the
       // name used to be a link to this same project, which took the tap and re-opened it.
       + `<div class="phead ptoggle" title="back to the projects"><h2><span class="pic">${esc(p.icon)}</span><span>@${esc(p.name)} ${badge(p.status)}</span></h2>`
       + `${p.title ? `<div class="ptitle">${esc(p.title)}</div>` : ""}`
-      + (p.writer || p.members?.length ? `<div class="ppeople">${p.writer ? `owner ${esc(p.writer)}` : ""}${(p.members || []).filter((m) => m !== p.writer).length ? `${p.writer ? " · " : ""}members ${(p.members || []).filter((m) => m !== p.writer).map(esc).join(", ")}` : ""}</div>` : "")
       + `</div>`
+      // J219 (c): owner and members just below the header (outside its back-tap, J48), each a link to
+      // that agent's session page when it's a listed agent; plain text otherwise.
+      + (p.writer || p.members?.length ? `<div class="ppeople">${p.writer ? `owner ${personLink(p.writer)}` : ""}${(p.members || []).filter((m) => m !== p.writer).length ? `${p.writer ? " · " : ""}members ${(p.members || []).filter((m) => m !== p.writer).map(personLink).join(", ")}` : ""}</div>` : "")
       + sec("Where", p.where ? `<div class="md">${md(p.where)}</div>` : "")
       + (p.decide.length ? `<details class="needs"${needsOpen ? " open" : ""}><summary>Needs you <span class="cnt">${p.decide.length}</span></summary><ul class="items">${decide}</ul></details>` : "")
       + sec("Next", items(p.next)) + sec("Done", items(p.done, true))
@@ -477,6 +545,7 @@ function setView(v) {
   view = v;
   $("#thread").hidden = v !== "thoughts"; $("#composer").hidden = v !== "thoughts"; projectsEl.hidden = v !== "projects"; agentsEl.hidden = v !== "agents"; streamEl.hidden = v !== "stream"; sbar.hidden = v !== "stream";
   filsEl.hidden = v !== "files"; if (v === "files") filsFrame();
+  attsEl.hidden = v !== "thoughts" || !atts.length; // J219: waiting photos belong to the Thgt box
   sessEl.hidden = v !== "session"; $("#scomp").hidden = v !== "session"; if (v !== "session") sess.agent = null; // J161
   renderTop();
   if (v === "projects") { renderProjects(); fetchBoard(world).catch(() => {}); }
@@ -484,7 +553,40 @@ function setView(v) {
   else if (v === "stream") { renderStream({ restore: true }); fetchStream(world).catch(() => {}); }
   else render({ keep: "restore" });
 }
+// J219 (c): a person in a project's owner/members line → that agent's session page (its world too).
+const agentByName = (n) => dirAgents.find((a) => a.kind === "agent" && (a.display === n || a.name === n));
+const personLink = (n) => agentByName(n) ? `<a class="pagent" href="#" data-name="${esc(n)}">${esc(n)}</a>` : esc(n);
+// J219 (b): answering a decision from the phone. A tap on an option (or "own words") opens a confirm
+// sheet with an optional note; Answer sends it like the desktop panel (board.item decide: the item becomes
+// a Next item holding the answer, and its raiser and the card's owner are told). Nothing is sent without
+// the confirm.
+function decideSheet(pid, h, key) {
+  const b = boardOf(world), p = b.projects.find((x) => x.id === pid), it = p?.decide.find((x) => x.h === h); if (!it) return;
+  const o = key ? it.options.find((x) => x.key === key) : null;
+  const sh = document.createElement("div"); sh.id = "dsheet";
+  sh.innerHTML = `<div class="dpanel" role="dialog"><div class="small">@${esc(p.name)} ${esc(h)}</div><div class="dq">${inline(it.text)}</div>`
+    + (o ? `<div class="dchoice"><b>${esc(o.key)})</b> ${inline(o.text)}</div>` : "")
+    + `<textarea id="dwords" rows="2" placeholder="${o ? "add a note (optional)" : "your answer"}"></textarea>`
+    + `<div class="dact"><button type="button" class="dno">Cancel</button><button type="button" class="dyes">${o ? `Answer ${esc(o.key)}` : "Answer"}</button></div></div>`;
+  document.body.append(sh);
+  const close = () => sh.remove();
+  sh.addEventListener("click", (e) => { if (e.target === sh || e.target.closest(".dno")) close(); });
+  sh.querySelector(".dyes").addEventListener("click", async (e) => {
+    const words = sh.querySelector("#dwords").value.trim();
+    if (!o && !words) return sh.querySelector("#dwords").focus();
+    e.target.disabled = true;
+    try {
+      const r = await call("POST", "/api/decide", { world, project: pid, h, ...(o ? { answer: words ? `${o.key} ${words}` : o.key } : { answer: words, typed: true }) });
+      close(); note(`${h} answered${r.told?.length ? " → " + r.told.join(", ") + " told" : ""}`); setTimeout(() => note(""), 4000);
+      fetchBoard(world).catch(() => {});
+    } catch (err) { e.target.disabled = false; note("✗ not answered: " + err.message); }
+  });
+}
 projectsEl.addEventListener("click", (e) => {
+  const op = e.target.closest(".opt, .ownans");
+  if (op && !e.target.closest("a")) return decideSheet(op.dataset.p, op.dataset.h, op.dataset.k || "");
+  const pa = e.target.closest(".pagent");
+  if (pa) { e.preventDefault(); const a = agentByName(pa.dataset.name); if (a) { if (a.room && a.room !== world) setWorld(a.room); openSession(a.id); } return; }
   const pr = e.target.closest(".proj"); if (pr) { openProject.set(world, pr.dataset.p); return renderProjects(); }
   if (e.target.closest(".phead")) { openProject.delete(world); return renderProjects(); } // the header: back to the list
   const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open");
@@ -598,7 +700,7 @@ function matchWord(word) {
 }
 function linkNames(root) {
   if (!namesRe) return;
-  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => namesRe.test(n.data) && !n.parentElement?.closest("a, code, pre, .nl, .tx, .phead, button, textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => namesRe.test(n.data) && !n.parentElement?.closest("a, code, pre, .nl, .tx, .phead, .ppeople, button, textarea") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
   const nodes = []; while (walk.nextNode()) nodes.push(walk.currentNode);
   for (const n of nodes) {
     const parts = n.data.split(/(\s+)/); let changed = false;

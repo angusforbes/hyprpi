@@ -39,7 +39,9 @@
   <div class="srow"><span class="sicon">🔍</span><input id="sq" type="search" enterkeyhint="search" inputmode="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="filter: words · @Name · 3h · today" aria-label="filter the stream"><button id="sx" type="button" hidden title="clear the filter">✕</button></div>
 </div>
 <div id="note" hidden></div>
+<div id="atts" hidden></div><!-- J219 (a): photos waiting to go with the next message -->
 <div id="composer"><!-- not a <form> (J59): Safari's form bar has less to step through -->
+  <button type="button" id="attach" title="add photos">📎</button><input id="attfile" type="file" accept="image/*" multiple hidden>
   <textarea id="input" rows="1" enterkeyhint="send" inputmode="text" autocapitalize="sentences" autocorrect="on" spellcheck="true" autocomplete="off" aria-label="message to Thoughts"></textarea>
   <button type="button" id="stop" hidden title="stop Thoughts">■</button>
   <button type="button" id="send" title="send">➤</button>
