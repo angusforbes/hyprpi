@@ -19,6 +19,14 @@ Herdr and hyprpi run side by side for now; hyprpi is meant to replace Herdr even
   one shows up at once.
 - **Safety, both:** file swaps keep the mode (`git show --summary HEAD | grep mode`; mockups/panels is
   755), the daemon is restarted only when nobody is mid-turn, and only your own files are committed.
+- **Push after each verified change** (J211, Angus 2026-10-07: "yes push after each verified change"; all
+  agents, all worlds, this repo and Angus's other repos agents work on). Once a change is verified (an
+  independent tester passed it, or Thoughts recorded it verified), the agent that committed it pushes the
+  branch to origin right away. Safety: only your own commits, from a tree where nobody else's work is
+  committed by you; scan the diff since origin for personal data first (`git diff @{u}..HEAD`); author
+  angus.forbes@gmail.com; fast-forward only: no force-push, no history rewrite. If the push is rejected,
+  `git pull --rebase` only when that's trivial (no conflicts), else stop and report. One pusher at a time:
+  if another agent is pushing the same repo, wait for it.
 
 ## Current state (all committed and pushed)
 
