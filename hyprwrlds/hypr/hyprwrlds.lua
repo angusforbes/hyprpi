@@ -336,10 +336,11 @@ function M.swap_world_in(order, w, dy, stops)
   out[p[w]], out[p[other]] = other, w
   return out, other
 end
--- World w (J209: the switcher passes its selected world; the key passes the current one).
-function M.swap_world_of(w, dy)
+-- World w (J209: the switcher passes its selected world and workspace, so an empty world it just
+-- stepped into counts as a stop; the key passes the current one).
+function M.swap_world_of(w, dy, cur)
   local order = M.order()
-  local new, other = M.swap_world_in(order, w, dy, M.world_stops(existing_ids(), active_id()))
+  local new, other = M.swap_world_in(order, w, dy, M.world_stops(existing_ids(), cur or active_id()))
   if new then M.save_order(new) end
   return other
 end

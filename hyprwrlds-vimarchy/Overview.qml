@@ -818,7 +818,7 @@ Item {
     var sel = root.selectedWorkspaceId() || root.activeWorkspace || 1
     var lua, kind
     if (shift && !ctrl && dx !== 0) { kind = "swap"; lua = "return hyprwrlds.swap_ws(" + sel + "," + dx + ")" }
-    else if (shift && !ctrl && dy !== 0) { kind = "order"; lua = "return hyprwrlds.swap_world_of(" + worldOf(sel) + "," + dy + ")" }
+    else if (shift && !ctrl && dy !== 0) { kind = "order"; lua = "return hyprwrlds.swap_world_of(" + worldOf(sel) + "," + dy + "," + sel + ")" }
     else if (shift) return
     else if (ctrl) { kind = "select"; lua = "return hyprwrlds.raw_from(" + sel + "," + dx + "," + dy + ")" }
     else { kind = "select"; lua = "return hyprwrlds.target(" + sel + "," + dx + "," + dy + ")" }
@@ -853,6 +853,7 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (!root.opened && !root.dry) return // closed meanwhile: a rebuild would show it again (J209check)
         var v = Number(String(text).trim())
         if (gridProc.kind === "select" && v > 0) root.selectWs(v)
         else if (gridProc.kind === "swap" && v > 0) {
@@ -864,6 +865,7 @@ Item {
       }
     }
     onExited: {
+      if (!root.opened && !root.dry) { root.gridPending = null; return }
       if (root.gridPending) { var p = root.gridPending; root.gridPending = null; root.gridKey(p[0], p[1], p[2], p[3]) }
     }
   }
