@@ -6,6 +6,9 @@
 # shell restarts: run `omarchy-restart-shell` after updating.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ ! -f "$HOME/.config/hypr/hyprland.lua" ]]; then
+  echo "${0##*/}: ~/.config/hypr/hyprland.lua not found: this needs Hyprland 0.56+ with its Lua config (Omarchy)" >&2; exit 1
+fi
 hypr="$HOME/.config/hypr"
 dest="$HOME/.config/omarchy/plugins/agf.hyprwrlds-vimarchy"
 backups="$HOME/.local/share/hyprwrlds-backups/$(date +%Y%m%d-%H%M%S)"

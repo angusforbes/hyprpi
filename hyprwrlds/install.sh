@@ -6,6 +6,9 @@
 # Backups of edited files go to ~/.local/share/hyprwrlds-backups/.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ ! -f "$HOME/.config/hypr/hyprland.lua" ]]; then
+  echo "${0##*/}: ~/.config/hypr/hyprland.lua not found: this needs Hyprland 0.56+ with its Lua config (Omarchy)" >&2; exit 1
+fi
 hypr="$HOME/.config/hypr"
 plugins="$HOME/.config/omarchy/plugins"
 shelljson="$HOME/.config/omarchy/shell.json"
