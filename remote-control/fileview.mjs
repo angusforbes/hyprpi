@@ -36,6 +36,17 @@ function build() {
     depth = d; show(e.state.href);
   });
   addEventListener("keydown", (e) => { if (e.key === "Escape" && !el.hidden) closeAll(); });
+  // J221 (Angus: "an image viewer (that's easy to close)"): an image that isn't zoomed closes with a tap
+  // beside it or a swipe down (like ✕; the back gesture already does). Once, here: showImage runs per image.
+  const fvb = el.querySelector("#fvbody"), loose = () => fvb.classList.contains("fvimg") && !fvb.classList.contains("zoomed");
+  fvb.addEventListener("click", (e) => { if (e.target === fvb && loose()) closeAll(); });
+  let sw = null;
+  fvb.addEventListener("touchstart", (e) => { sw = e.touches.length === 1 && loose() ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; }, { passive: true });
+  fvb.addEventListener("touchend", (e) => {
+    if (!sw || e.touches.length || !loose()) { sw = null; return; }
+    const t = e.changedTouches[0], dx = t.clientX - sw.x, dy = t.clientY - sw.y; sw = null;
+    if (dy > 90 && Math.abs(dx) < dy * 0.6) closeAll();
+  });
   // Links inside the framed Markdown viewer come here (viewer.js posts them).
   addEventListener("message", (e) => { if (e.origin === location.origin && e.data?.fvOpen) open(e.data.fvOpen); });
 }
@@ -65,7 +76,7 @@ export function open(href) {
   document.activeElement?.blur?.(); // the keyboard down, if it was up
   show(href);
 }
-function closeAll() { if (depth > 0) history.go(-depth); else hide(); }
+function closeAll() { if (depth > 0) { const d = depth; depth = 0; history.go(-d); } else hide(); } // depth 0 at once: a second call before popstate must not go back further
 function hide() { const was = !el.hidden; gen++; el.hidden = true; el.querySelector("#fvbody").innerHTML = ""; cur = null; if (was) for (const f of closers) try { f(); } catch { /* ignore */ } }
 // J144: told when the viewer closes (✕, Esc or a back-swipe all end here), so a caller can return the
 // user to where the file was opened from.
@@ -88,6 +99,15 @@ async function show(href) {
   el.querySelector("#fvname").textContent = "…"; el.querySelector("#fvdir").textContent = "";
   // A [[wiki link]]: the server finds the file and redirects to /file?path=…
   let url = href;
+  // J221: an image an agent saw that has no file (inline in its session, /api/session/img): shown as
+  // an image, Share from the fetched bytes.
+  if (href.startsWith("/api/session/img?")) {
+    const c = cur = { url: href, name: "image", path: "", blob: null, ready: null, loaded: 0, total: 0 };
+    el.querySelector("#fvname").textContent = "image"; el.querySelector("#fvdir").textContent = "from the agent's session";
+    c.fetch = () => c.ready || (c.ready = loadBlob(href).then((b) => { c.blob = b; c.tooBig = b === null; if (b?.type) c.name = "image." + (b.type.split("/")[1] || "png").replace("jpeg", "jpg"); return b; }));
+    c.fetch().catch(() => {});
+    return showImage(body, href, my);
+  }
   if (href.startsWith("/wiki?")) {
     try { const r = await fetch(href, { cache: "no-store" }); if (!r.ok) throw new Error("not found in the vault"); url = new URL(r.url).pathname + new URL(r.url).search; r.body?.cancel?.(); }
     catch (e) { if (my === gen) fail(e.message); return; }
@@ -191,6 +211,7 @@ function showImage(body, url, my) {
 // browser): download.
 async function share() {
   const c = cur; if (!c) return;
+  if (!c.path && (!navigator.share || c.tooBig)) return window.open(c.url, "_blank", "noopener"); // J221: an image with no file
   if (!navigator.share) return download(c.path, c.name);
   if (c.tooBig) { download(c.path, c.name); return note(`Over ${mb(MAX_BLOB)}: too big to hand to the share sheet, so it's downloading instead`); }
   if (!c.ready) c.fetch(); // J175: media start their Share fetch on the first tap

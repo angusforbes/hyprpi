@@ -3,7 +3,7 @@
 import { threadKind, answerLine, actionPrefix, splitLead, phoneHidden } from "/lib/thoughts-lines.mjs";
 import { agentIn } from "/lib/tui/agent-click.mjs"; // the desktop panels' Ctrl+click matcher, shared as-is (J45)
 import { esc, href, link, inline, md } from "/md.mjs";
-import { install as installFileViewer } from "/fileview.mjs";
+import { install as installFileViewer, open as openViewer } from "/fileview.mjs";
 // J141: a tapped file LINK (/file?path=…) anywhere in π opens in the Fils tab, in its folder, with
 // the viewer on top; this runs before the J70 overlay's own handler. Thumbnails (J63) and [[wiki]]
 // links still open in the overlay, over the tab they're in.
@@ -1006,12 +1006,22 @@ sessEl.addEventListener("scroll", () => { if (sessEl.scrollTop < 300) loadOlder(
 // A file it read: the cached thumbnail (opens in Fils). If the file isn't servable (in /tmp, outside the
 // allowed folders, or deleted since: Pocket's review), the session's own copy of what it saw (the tool
 // result's inline image), else a small label. An inline image: from the session.
+// J221 (Angus: "the images could be bigger, maybe width of the phone when it's held in portrait, and
+// then clicking on it could let you view the image in an image viewer"): images are the screen's width
+// (never upscaled past their own size, capped on a desktop); a file's small cached thumbnail shows first
+// (stretched to that width, class lo) and the full file replaces it once loaded. A tap opens the viewer.
 const sessImgUrl = (im) => `/api/session/img?agent=${encodeURIComponent(sess.agent)}&at=${im.at}&i=${im.i}`;
 const sessThumb = (im, fallback) => im.file
-  ? `<img class="sthumb" loading="lazy" src="/api/thumb?path=${encodeURIComponent(im.file)}" data-file="${esc(im.file)}"${fallback ? ` data-fb="${esc(sessImgUrl(fallback))}"` : ""} alt="" onerror="window.__sthumbFail(this)">`
+  ? `<img class="sthumb lo" loading="lazy" src="/api/thumb?path=${encodeURIComponent(im.file)}" data-file="${esc(im.file)}"${fallback ? ` data-fb="${esc(sessImgUrl(fallback))}"` : ""} alt="" onload="window.__sthumbLoad(this)" onerror="window.__sthumbFail(this)">`
   : `<img class="sthumb" loading="lazy" src="${esc(sessImgUrl(im))}" alt="" onerror="window.__sthumbFail(this)">`;
+window.__sthumbLoad = (img) => {
+  if (!img.dataset.file) { img.classList.remove("lo"); return; }
+  if (!img.dataset.up) { img.dataset.up = "1"; img.src = "/file?path=" + encodeURIComponent(img.dataset.file); return; } // the thumbnail is up: now the full file
+  img.classList.remove("lo");
+};
 window.__sthumbFail = (img) => {
-  if (img.dataset.fb) { img.src = img.dataset.fb; delete img.dataset.fb; delete img.dataset.file; return; } // what it saw, from the session; tap enlarges it in place
+  if (img.dataset.up && img.dataset.file && !img.dataset.lofail) { img.dataset.lofail = "1"; img.src = "/api/thumb?path=" + encodeURIComponent(img.dataset.file); return; } // the full file failed: keep the thumbnail
+  if (img.dataset.fb) { img.classList.remove("lo"); img.src = img.dataset.fb; delete img.dataset.fb; delete img.dataset.file; return; } // what it saw, from the session
   const s = document.createElement("span"); s.className = "small sgone"; s.textContent = "image no longer on disk"; img.replaceWith(s);
 };
 function sessItemHtml(it) {
@@ -1054,7 +1064,7 @@ sessEl.addEventListener("click", async (e) => {
   if (e.target.id === "snew") { sessEl.scrollTop = sessEl.scrollHeight; e.target.hidden = true; return; }
   if (e.target.id === "sstop") { try { await call("POST", "/api/agent/stop", { agent: sess.agent }); note("stopped"); } catch (err) { note("✗ " + err.message); } return; }
   const th = e.target.closest(".sthumb");
-  if (th) { if (th.dataset.file) return openInFils(th.dataset.file); th.classList.toggle("big"); return; } // a file: in Fils; an inline image: bigger in place
+  if (th) return openViewer(th.dataset.file ? "/file?path=" + encodeURIComponent(th.dataset.file) : th.getAttribute("src")); // J221: the viewer over the session (✕, a tap beside it, swipe down or back closes)
   if (e.target.closest("#shead")) { const id = sess.agent, a = sessAgent(); if (a) openAgent.set(world, id); return setView("agents"); } // the header: back to its summary
   const t = e.target.closest(".stool"); if (t && !e.target.closest("a")) { const x = t.querySelector(".stx"); x.hidden = !x.hidden; }
 });
