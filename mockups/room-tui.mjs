@@ -14,10 +14,9 @@
 //
 // The box still sends, as before (Angus): typing + Enter posts to the room as Angus (every agent in
 // it gets it); "@Name text" goes just to them, "@project text" to a project's owner.
-// The project board has its own panel (SUPER+ALT+P, mockups/board-tui.mjs). Ctrl+B used to show it in here (lib/tui/board-view.mjs): Needs-you strip + one card per
-// project; in board mode the box takes @project … and board commands (/help there lists them).
+// The project board has its own panel (SUPER+ALT+P, mockups/board-tui.mjs); the old in-panel board view (Ctrl+B) is gone (J210).
 // Keys: wheel / Shift+↑↓ / PgUp PgDn / Home End scroll · Ctrl+↑↓ select a stream row ·
-// Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · Ctrl+/ opens the search panel on this room ·
+// Ctrl+Tab / Ctrl+Shift+Tab switch world (Tab cycles @projects, Shift+Tab @agents, Tab completes /commands) · search: SUPER+ALT+/ (the Thoughts panel) ·
 // Esc drops a selection · Ctrl+Q quits (Ctrl+C copies).
 // Commands: /stream [FILTER] · /history N|all · /help ·
 // "//text" is only for saying something that starts with a slash (it would otherwise be
@@ -35,15 +34,12 @@ import { createCommands } from "../lib/tui/command-line.mjs";
 import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT } from "../lib/stream.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
 // Commands: the room's own (below, in `command`) plus the ones every panel has (/help, /tinker,
-// /quit), all through lib/tui/command-line.mjs. In board view the board's commands come first.
-const completions = (prefix) => view === "board" ? [...new Set([...boardCompletions(prefix), ...cmds.complete(prefix)])] : cmds.complete(prefix);
-// Ctrl+B: the project board (lib/tui/board-view.mjs draws it and reads what is typed there).
-import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
+// /quit), all through lib/tui/command-line.mjs.
+const completions = (prefix) => cmds.complete(prefix);
 import { sentLine, SENT_STICKY_MS } from "../lib/tui/sent.mjs"; // J165
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 let worldBar = null;
-const bv = createBoardView({ render: () => render() });
 const helpRows = () => {
   const list = cmds.help(), w = Math.max(12, ...list.map(([c]) => c.length));
   return [
@@ -69,29 +65,24 @@ let selA = null;      // selection anchor (grapheme index into input), or null
 let pasting = false;  // inside a bracketed paste (\x1b[200~ … \x1b[201~)
 function inputSel() { if (selA == null || selA === ic) return null; return selA < ic ? [selA, ic] : [ic, selA]; }
 // The editing itself is the shared message box (lib/tui/input-box.mjs, like the board panel):
-// this panel keeps its own variables (input, ic, selA, sentText, sentTouched) and loads them
+// this panel keeps its own variables (input, ic, selA) and loads them
 // into the box before each edit, then reads them back.
-// The box keeps its state in this panel's variables (input, ic, selA, sentText, sentTouched) through
+// The box keeps its state in this panel's variables (input, ic, selA) through
 // bind: every box operation reads them first and writes them back after (Angus, N55: no glue here).
 const box = createInputBox({
   onChange: () => render(), copy: (t) => copy(t), multiline: true,
   drafts: `stream-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   bind: {
-    read: () => ({ text: input, cursor: ic, anchor: selA, sent: view === "board" ? sentText : null, touched: sentTouched }),
-    write: (st) => {
-      input = st.text; ic = st.cursor; selA = st.anchor; sentTouched = st.touched;
-      if (view === "board" && sentText != null && st.sent == null) sentText = null; // typed over: no longer the sent text
-    },
+    read: () => ({ text: input, cursor: ic, anchor: selA }),
+    write: (st) => { input = st.text; ic = st.cursor; selA = st.anchor; },
   },
   // ↑↓ as in every panel (Angus, N51): lines, then the start / end, then your earlier messages.
   history: createHistory("stream"), historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
-  sentStyle: (g) => fg(worldFg(room), g), // sent text (board view only) in the world colour
   tint: atTint((name) => { const r = resolveAt([name], atPool()), a = r.found[0]; return a?.project ? { project: true } : a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => fg(worldFg(room), x), bold, nameFg }),
 });
 // Rows of the input (styled, selection highlighted) and the cursor's row / column.
-// Insert text at the cursor, replacing the selection (paste keeps its line breaks). In the board
-// view the sent text is replaced by what you type or paste; ←→ / Backspace first edit it.
+// Insert text at the cursor, replacing the selection (paste keeps its line breaks).
 // J165: a "✓ Sent to …" line stays SENT_STICKY_MS even while Angus types on (Sentcheck).
 function insertText(t) { box.insert(t); if (!keepSent()) note = ""; focusArea = "input"; render(); }
 const keepSent = () => note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS; // every editing path keeps it (Sentcheck)
@@ -306,8 +297,7 @@ function draw() {
   // Input: a long message wraps onto further lines (all shown), continuation
   // lines indented under the text.
   // The prompt: "C ❯" (a room post goes to everyone; @Name / @project in the text: just them).
-  const bvOpen = view === "board" && hereProjects().find((p) => p.id === bv.focused);
-  const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯" (the board view too)
+  const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯"
   const promptW = width(prompt);
   ic = Math.max(0, Math.min(ic, graphemes(input).length));
   const IL = box.layout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
@@ -316,13 +306,7 @@ function draw() {
   boxArea = { y0: H - inputLines.length, n: inputLines.length, inTop, pw: promptW };
   const bottom = 2 + inputLines.length; // input rule + input line(s) + status bar
   const avail = Math.max(1, H - rows.length - bottom);
-  if (view !== "board") bv.hide(); // the board's shimmer timer runs only while it is shown
-  if (view === "board") {
-    const b = bv.frame({ board: board.room === room ? board : null, room, W, avail, c, agents });
-    rows[ruleAt] = rule(b.label); lastAvail = avail; rowMeta = {}; convoMsgs = b.items;
-    b.rows.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
-    rows.push(...b.rows.map((r) => r.line));
-  } else if (view !== "stream") drawPane(rows, ruleAt, avail, W, c, rule);
+  if (view !== "stream") drawPane(rows, ruleAt, avail, W, c, rule);
   else {
   // Full: the author (time · @project) on its own line, the text below. Compact: one line each.
   const textX = 4, textW = Math.max(10, W - textX + 1 - 1);
@@ -462,15 +446,10 @@ function draw() {
 
   // Input line(s)
   rows.push(fg(c, "─".repeat(W)));
-  const slash = /^\/[^\s/]*$/.test(input) && !note.startsWith("✗") && (view === "board" || cmds.hint(input) !== null) ? completions(input) : null; // typing a command: show the matches (an error about it wins; a hidden command like /ignore: none)
-  // Board: "working…" while a quick command is in flight. "thinking…" (agents working on a
-  // request) shows only on the project's header; what was sent stays in the box (world colour).
-  const bs = view === "board" ? bv.status(c, false) : "";
-  const boardHint = bs ? "  " + bs + (note ? dim("  " + note) : "")
-    : note.startsWith("✓") ? `${ESC}32m${bold(note)}${ESC}39m` : dim(note || bv.cursorHint() || (bvOpen ? `text → @${bvOpen.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · Esc whole board` : "@project text · @project alone opens it · D1 b answers · N2 ? asks · /drop H3 · ↑↓ cursor · /help · ^B stream"));
+  const slash = /^\/[^\s/]*$/.test(input) && !note.startsWith("✗") && cmds.hint(input) !== null ? completions(input) : null; // typing a command: show the matches (an error about it wins; a hidden command like /ignore: none)
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : input ? (bs ? "  " + bs : "") + (note ? (note.startsWith("✓") ? `  ${ESC}32m${bold(note)}${ESC}39m` : dim("  " + note)) : "") : view === "help" ? dim("Esc back")
-    : view === "board" ? boardHint : !confirm && note.startsWith("✓") ? `${ESC}32m${bold(note)}${ESC}39m` : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full / compact / topics / all · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
+    : input ? (note ? (note.startsWith("✓") ? `  ${ESC}32m${bold(note)}${ESC}39m` : dim("  " + note)) : "") : view === "help" ? dim("Esc back")
+    : !confirm && note.startsWith("✓") ? `${ESC}32m${bold(note)}${ESC}39m` : dim(confirm ? confirm.label : note || (W < 72 ? "message the room" : (confirm ? confirm.label : "message the room · /stream @Name 3h words · ^F full / compact / topics / all · ^↑↓ scroll · ⌥↑↓ pick a row · ⇧⏎ new line · / commands · ^Tab world")));
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
@@ -566,7 +545,7 @@ let board = { room: "", projects: [], names: {}, live: {} };
 async function loadBoard() {
   if (!api) return;
   const r = room;
-  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; await bv.refresh(api, r, b); render(); } } catch { /* older daemon */ }
+  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; render(); } } catch { /* older daemon */ }
 }
 const hereProjects = () => (board.room === room ? board.projects : []).filter((p) => p.status !== "archived");
 // Agents and projects, for @completion (projects marked 📋 in the list shown).
@@ -595,7 +574,7 @@ function cycle(d) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + d + rooms.length) % rooms.length].id;
-  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; bv.focus(null); render(); loadRoom(room); loadBoard();
+  note = ""; scroll = 0; lastConvoLen = 0; streamSel = null; confirm = null; render(); loadRoom(room); loadBoard();
 }
 
 // New agent: Ctrl+N, or "/new [DIR]" in the input line. Opens on the current
@@ -654,44 +633,9 @@ function command(text) {
   return cmds.run(text);
 }
 
-// Board mode: what is typed goes to the board (a board command, @project …); anything
-// the board doesn't know (/messages, /history, …) falls through to the panel's own commands.
-// What was last sent from the board stays in the box, in the world colour, until edited; Enter
-// sends it again (several requests can run at once). Angus: the prompt shouldn't disappear.
-let sentText = null, resendAsk = 0, sentTouched = false; // sentTouched: the cursor was moved into the sent text (typing then edits it)
-async function boardSend(raw) {
-  input = raw; ic = graphemes(raw).length; note = ""; selA = null;
-  try {
-    const r = await bv.input(raw, { api, room, board: board.room === room ? board : { projects: [] } });
-    if (r) { sentText = r.confirm ? null : raw; sentTouched = false; if (String(r.note || "").startsWith("✓")) sentNote(r.note); else note = r.note; return render(); } // a confirm prompt (/spinout, /merge) isn't sent yet: ⏎ again runs it
-  } catch (e) { input = raw; ic = graphemes(raw).length; note = "✗ " + e.message; return render(); }
-  if (command(raw)) return;
-  input = raw; ic = graphemes(raw).length; note = "✗ not a board command · /help"; render();
-}
-function toggleBoard() {
-  if (view === "board") { view = "stream"; note = ""; return render(); }
-  // The board has its own panel (panel 4, SUPER+ALT+P) once mockups/board-tui.mjs exists:
-  // Ctrl+B opens / focuses it for this room. Until then the board shows in here.
-  const boardTui = new URL("./board-tui.mjs", import.meta.url).pathname;
-  if (fs.existsSync(boardTui)) {
-    const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
-    try { spawn(new URL("./panels", import.meta.url).pathname, [room, "--only", "4"], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); note = `board ${room} → its own panel (SUPER+ALT+P)`; }
-    catch (e) { note = "✗ " + e.message; }
-    return render();
-  }
-  view = "board"; confirm = null; note = ""; loadBoard(); render();
-}
-
 async function send() {
   const raw = input.trim();
-  // Unchanged sent text + Enter: don't resend by accident (Angus got 3 copies). The first
-  // Enter asks; a second Enter within 4 s sends it again.
-  if (view === "board" && raw && sentText != null && input === sentText) {
-    if (Date.now() - (resendAsk || 0) > 4000) { resendAsk = Date.now(); note = "already sent · ⏎ again to send it again · type to change it"; return render(); }
-    resendAsk = 0;
-  }
   if (raw && !onlyAt(raw.startsWith("//") ? raw.slice(1) : raw)) box.remember(raw); // ↑ brings it back (N51)
-  if (view === "board" && raw) return boardSend(raw);
   if (command(raw)) return;
   if (view === "help") view = "stream";
   input = ""; ic = 0;
@@ -776,42 +720,12 @@ function onKey(d) {
   }
   // Ctrl+Tab / Ctrl+Shift+Tab: next / previous world. Plain Tab never switches world (too
   // easy to hit): it completes an @name (again: the next match; Shift+Tab: back).
-  // (No Ctrl+B: the board has its own panel, SUPER+ALT+P. Angus: removed, it pulled the board panel over.)
-  if (d === "\x02" && view === "board") return toggleBoard(); // only to leave an old in-panel board view
-  // Board mode: ↑↓ always move the board's cursor; Shift+↑↓ move within the message box
-  // (what plain ↑↓ do there in the stream), like search's box vs results.
-  // Board mode, one rule for both panels (Angus): plain keys are the box's (↑↓ move in it,
-  // Shift+↑↓ select), Ctrl is the pane's (^↑↓ move the board highlight).
-  // Ctrl+Enter: the board's Enter (open / leave the highlighted card, or put an item's handle
-  // in the box), whatever is typed. In the stream it sends, like Enter.
-  if (d === "\x1b[13;5u") { if (view !== "board") d = "\r"; else {
-    const r = bv.key("\r", { empty: true, api, room, board: board.room === room ? board : null });
-    if (r === true) { note = ""; return render(); }
-    if (r) { Promise.resolve(r).then((x) => { if (x?.input != null) { input = x.input; ic = graphemes(input).length; selA = null; sentText = null; } if (x?.note != null) note = x.note; render(); }).catch((e) => { note = "✗ " + e.message; render(); }); return render(); }
-    note = "^⏎: highlight a card or item first (^↑↓)"; return render();
-  } }
-  if (view === "board" && d === "\x1b" && inputSel()) { selA = null; return render(); } // Esc on the board: the box's selection first, then the highlight, then the open card / help
-  if (view === "board" && (d === "\x1b[A" || d === "\x1b[B")) { /* the box's: handled below */ }
-  else if (view === "board") { // the board's cursor: ↑↓ / ^↑↓, Space, ⏎, ^D drop, ^T done, ^Z undo, Esc
-    const r = bv.key(d, { empty: !input, api, room, board: board.room === room ? board : null });
-    if (r === true) { note = ""; return render(); }
-    if (r) {
-      Promise.resolve(r).then((x) => { if (x?.input != null) { input = x.input; ic = graphemes(input).length; selA = null; } if (x?.note != null) note = x.note; render(); })
-        .catch((e) => { note = "✗ " + e.message; render(); });
-      return render();
-    }
-  }
+  // (No Ctrl+B: the board has its own panel, SUPER+ALT+P; the in-panel board view is gone, J210.)
+  if (d === "\x1b[13;5u") d = "\r"; // Ctrl+Enter sends, like Enter
   if (CTRL_TAB.has(d)) return cycle(1);
   if (CTRL_SHIFT_TAB.has(d)) return cycle(-1);
   if (d === "\t" || d === "\x1b[Z") {
     const gs = graphemes(input), before = gs.slice(0, ic).join(""), after = gs.slice(ic).join("");
-    const h = view === "board" && d === "\t" && bv.complete(before + after, before.length, board.room === room ? board : null, 1);
-    if (h) { // an item handle after "@project "
-      if (!h.options.length) { note = "no open item by that handle"; return render(); }
-      input = h.text; ic = graphemes(h.text.slice(0, h.cursor)).length; selA = null;
-      note = h.hint || ""; // the handles (with their @project when it isn't obvious), or the item's text
-      return render();
-    }
     // Tab: @projects · Shift+Tab: @agents (Angus). Each key cycles its own list; at a blank
     // spot (empty box, after a space) it starts a new @name. Ctrl+Tab switches world.
     const kind = d === "\t" ? "project" : "agent";
@@ -831,11 +745,6 @@ function onKey(d) {
   }
   if (d === "\r") { selA = null; return send(); }
   if (d === "\x1b[13;2u") return insertText("\n"); // Shift+Enter: new line in the message
-  if (view === "board" && d === "\x1b" && !inputSel() && (bv.focused || bv.st.help)) { // Esc: the whole board again
-    if (bv.st.help) bv.st.help = false; else bv.focus(null);
-    note = ""; return render();
-  }
-  if (view === "board" && d === "\x1b") { confirm = null; note = ""; return render(); } // Esc never leaves the board (^B does)
   if (view !== "stream" && d === "\x1b") { // Esc: back to the stream
     view = "stream"; note = ""; return render();
   }
@@ -845,7 +754,6 @@ function onKey(d) {
     const page = Math.max(1, lastAvail - 2);
     const sc = { "\x1b[1;5A": 1, "\x1b[1;5B": -1, "\x1b[5~": page, "\x1b[6~": -page, "\x1b[1;5H": Infinity, "\x1b[1;5F": -Infinity }[d];
     if (sc !== undefined) {
-      if (view === "board") { bv.scroll(Math.abs(sc) === page ? Math.sign(sc) * bv.page() : sc); return render(); }
       if (view !== "stream") return;
       scroll = sc === Infinity ? 1e9 : sc === -Infinity ? 0 : Math.max(0, scroll + sc);
       focusArea = "stream"; return render();
@@ -881,8 +789,6 @@ function onKey(d) {
       // Left button: press starts a possible selection, motion drags it,
       // release copies it (or, without a drag, counts as a click).
       // (+4 = Shift held; kitty passes Shift through: terminal_select_modifiers.)
-      if (b === 0 && m[4] === "M" && view === "board" && bv.click(rowMeta[y], x)) { sel = null; continue; } // a card's −/+ marker: fold / unfold
-      if (b === 0 && m[4] === "M" && view === "board") bv.pick(rowMeta[y], convoMsgs); // a click puts the board's cursor there
       // Ctrl+click (16): an agent's name under the pointer (@Name, or a name as shown) jumps to
       // its window, wherever it is; a link / file URI opens (kitty's own Ctrl+click is passed on
       // to the panel by the launcher, so the panel opens links itself).
@@ -908,7 +814,7 @@ function onKey(d) {
         continue;
       }
       if (b === 64 || b === 65) { // wheel: agent list or conversation, whichever is under the pointer
-        if (view === "board") bv.scroll(b === 64 ? 3 : -3); else scroll += b === 64 ? 3 : -3;
+        scroll += b === 64 ? 3 : -3;
       }
     }
     return render();
@@ -932,7 +838,7 @@ function ctrlClick(x, y) {
   if (url) { try { spawn("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
   if (!api) return;
   let hit = word ? agentIn(word, agents) : null;
-  if (!hit && view !== "board") {
+  if (!hit) {
     const it = convoMsgs[rowMeta[y]?.msg];
     const id = it?.m?.author?.kind === "agent" ? it.m.author.id : it?.e?.agent?.id;
     hit = id ? agents.find((ag) => ag.id === id) : null;
@@ -947,7 +853,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/board-view.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
@@ -955,8 +861,8 @@ setInterval(() => {
   restarting = true;
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
-  // Keep what Angus was looking at: board or stream, the open card, the stream filter.
-  const keep = JSON.stringify({ view: view === "board" ? "board" : "stream", focus: bv.focused || null, streamArg, sview, input, ic, sent: sentText != null && input === sentText, bvTop: bv.st.top, bvAnchor: bv.st.anchor, bvCur: bv.st.cur });
+  // Keep what Angus was looking at: the stream view and filter, and what is typed.
+  const keep = JSON.stringify({ view: "stream", streamArg, sview, input, ic });
   // The launcher (mockups/room-tui) loops on exit code 75: hand it the state in a file and
   // exit, so restarts don't pile up processes. Older windows (no loop): a child, as before.
   if (process.env.HYPRPI_ROOM_TUI_STATEFILE) {
@@ -969,7 +875,8 @@ setInterval(() => {
 }, 3000);
 process.stdout.on("resize", render);
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
-// After a restart onto new code: back to the same view (the board stays the board).
+// After a restart onto new code: back to the same view. An old saved state from the in-panel board view
+// (gone, J210) opens the normal Stream; its view / card fields are ignored.
 try {
   let raw = process.env.HYPRPI_ROOM_TUI_STATE || "";
   const sf = process.env.HYPRPI_ROOM_TUI_STATEFILE;
@@ -980,8 +887,7 @@ try {
     if (typeof k.streamArg === "string") streamArg = k.streamArg; else if (Array.isArray(k.words)) streamArg = k.words.join(" "); // (older: words)
     if (k.filter === "raw" && !/\braw\b/.test(streamArg)) streamArg = (streamArg + " raw").trim();
     sview = SVIEWS.includes(k.sview) ? k.sview : k.compact ? "compact" : "full"; // (older: compact)
-    if (k.view === "board") { view = "board"; if (k.focus) bv.focus(k.focus); bv.st.top = Number(k.bvTop) || 0; bv.st.anchor = k.bvAnchor || null; bv.st.cur = k.bvCur || null; }
-    if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); if (k.sent) sentText = input; }
+    if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); }
   }
 } catch { /* start in the stream */ }
 box.restore(); // J194: an unsent draft from before a close / crash
