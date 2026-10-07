@@ -145,3 +145,8 @@ MIT
 
 <!-- TODO: screenshots of the three views (ALT+SPACE, ALT+CTRL+SPACE, ALT+SHIFT+SPACE) from a
 staged desktop or a synthetic demo mode; no personal windows/content in the images. -->
+
+## Uninstall
+
+Run `uninstall.sh` (or `hyprpi integration uninstall hyprwrlds-vimarchy`): it removes the require line,
+`~/.config/hypr/hyprwrlds-vimarchy.lua` and the overlay plugin (backups in `~/.local/share/hyprwrlds-backups/`).

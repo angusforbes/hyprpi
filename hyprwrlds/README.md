@@ -87,7 +87,7 @@ Debug: `hyprctl repl 'return hyprwrlds.state()'`. Scripting: `hyprctl eval 'hypr
 
 ## Uninstall
 
-Remove the `require("hypr.hyprwrlds")` line from `hyprland.lua` (Hyprland reloads on save), put
+Run `uninstall.sh` (or `hyprpi integration uninstall hyprwrlds`). By hand: remove the `require("hypr.hyprwrlds")` line from `hyprland.lua` (Hyprland reloads on save), put
 `{"id":"omarchy.workspaces"}` back in place of `{"id":"agf.hyprwrlds"}` in
 `~/.config/omarchy/shell.json`, and delete `~/.config/omarchy/plugins/agf.hyprwrlds`.
 
