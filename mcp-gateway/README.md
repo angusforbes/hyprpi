@@ -33,15 +33,12 @@ Then point pi at the gateway in `~/.pi/agent/mcp.json`, one entry per server, in
 
 ## Install (systemd --user)
 
-`hyprpi mcp-gateway install` links `mcp-gateway.service` into `~/.config/systemd/user/` and runs
-`systemctl --user enable --now mcp-gateway`. It's idempotent: a link that's already correct is left
-alone, and it refuses to overwrite a different file. `hyprpi mcp-gateway status` shows the unit, the
-port and which servers are running.
-
-By hand: `ln -s ~/Work/hyprpi/mcp-gateway/mcp-gateway.service ~/.config/systemd/user/ && systemctl --user enable --now mcp-gateway`
-
-The unit's `%h/Work/hyprpi` path ties it to this checkout; edit `ExecStart` if hyprpi lives
-elsewhere. Without systemd: `node mcp-gateway/gateway.mjs`. Logs go to
+`hyprpi mcp-gateway install` (or `hyprpi integration install gateway`) writes `mcp-gateway.service`
+into `~/.config/systemd/user/` with this checkout's real path and runs
+`systemctl --user enable --now mcp-gateway`. It's idempotent: an up-to-date unit is left alone, and it
+refuses to overwrite a unit that isn't hyprpi's. Re-run it after moving the checkout.
+`hyprpi mcp-gateway status` shows the unit, the service and which servers are running;
+`hyprpi integration uninstall gateway` stops it and removes the unit. Without systemd: `node mcp-gateway/gateway.mjs`. Logs go to
 `journalctl --user -u mcp-gateway`.
 
 Restarting it briefly drops in-flight calls: an agent mid-call (e.g. a hyprcu screenshot) gets an

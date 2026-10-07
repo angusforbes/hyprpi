@@ -1,6 +1,6 @@
 # systemd --user unit: mcp-gateway (one shared, lazily started copy of each stdio MCP server for all
-# pi agents). Install: `hyprpi mcp-gateway install` (see mcp-gateway/README.md). The %h path ties it
-# to the checkout at ~/Work/hyprpi; edit ExecStart if hyprpi lives elsewhere.
+# pi agents). A template: `hyprpi mcp-gateway install` writes it to ~/.config/systemd/user with %h/Work/hyprpi
+# replaced by the checkout's real path (see mcp-gateway/README.md).
 [Unit]
 Description=mcp-gateway: one shared, lazily started copy of each stdio MCP server for all pi agents (hyprpi)
 After=default.target

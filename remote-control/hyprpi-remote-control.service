@@ -1,4 +1,5 @@
-# systemd --user unit: hyprpi remote control (the phone web app). Install: see README.md.
+# systemd --user unit: hyprpi remote control (the phone web app). A template: `hyprpi remote install`
+# writes it to ~/.config/systemd/user with %h/Work/hyprpi replaced by the checkout's real path.
 [Unit]
 Description=hyprpi remote control (web app over Tailscale)
 After=graphical-session.target

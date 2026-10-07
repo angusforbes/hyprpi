@@ -10,7 +10,7 @@ import subprocess
 from kittens.tui.handler import result_handler
 
 # (kitty runs kittens with exec, without __file__: hyprpi's checkout, HYPRPI_ROOT if set)
-AGENT_AT = os.path.join(os.environ.get('HYPRPI_ROOT') or os.path.expanduser('~/Work/hyprpi'), 'mockups', 'agent-at')
+AGENT_AT = os.path.join(os.environ.get('HYPRPI_ROOT') or os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), 'mockups', 'agent-at')
 
 
 def main(args):

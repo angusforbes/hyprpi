@@ -52,12 +52,13 @@ from the page itself (Origin check). There is no shell and no file writing.
 
 ## Run it
 
+- Folders: what it may read, where uploads go and the Obsidian vault are `phone.folders`, `phone.uploadDir` and `phone.vault` in `~/.config/hyprpi/config.json` (see the main README, Config).
 - Service (installed, starts at login): `systemctl --user restart hyprpi-remote-control`
 - Logs: `journalctl --user -u hyprpi-remote-control -f`
-- Install on another machine: `ln -s ~/Work/hyprpi/remote-control/hyprpi-remote-control.service ~/.config/systemd/user/ && systemctl --user enable --now hyprpi-remote-control`
+- Install on another machine: `hyprpi remote install` (or `hyprpi integration install remote`): writes the unit with this checkout's path and enables it; `hyprpi remote status` shows it
 - Publish on the tailnet (once; it persists): `tailscale serve --bg --https=8443 http://127.0.0.1:8897`
 - Stop publishing: `tailscale serve --https=8443 off`
-- By hand: `node ~/Work/hyprpi/remote-control/server.mjs` (port: `HYPRPI_REMOTE_PORT`)
+- By hand: `node <hyprpi>/remote-control/server.mjs` (port: `HYPRPI_REMOTE_PORT`)
 
 ## The icon
 

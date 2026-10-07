@@ -22,9 +22,28 @@ This repo holds hyprpi and the two desktop pieces it is built around:
   [angusforbes/hyprwrlds-vimarchy](https://github.com/angusforbes/hyprwrlds-vimarchy) is frozen; newer
   versions live here.
 
-**Install order:** 1. `hyprwrlds/install.sh` (worlds, keys, bar widget) → 2. `hyprwrlds-vimarchy/install.sh`
-(the overview; needs hyprwrlds) → 3. hyprpi itself (the `hypr/hyprpi.lua` include below, `bin/hyprpi`, the
-pi extension). Each folder's README covers installing that part on its own.
+## Install
+
+First the [requirements](docs/requirements.md) (pi logged in, Node 22+, a terminal: kitty recommended,
+see [docs/terminals.md](docs/terminals.md)). Then, wherever you cloned it:
+
+1. `./install.sh`: hyprpi's recommended pieces: `hypr` (hyprpi.lua linked into `~/.config/hypr` and
+   required from `hyprland.lua`), `path` (`hyprpi` linked into `~/.local/bin`), `bar` (the finder and
+   login-mark shell plugins; Omarchy only) and `kitty` (one include line in your `kitty.conf` for
+   Ctrl+click links).
+2. Optional, in this order: `hyprpi integration install hyprwrlds` (worlds; runs
+   [hyprwrlds/install.sh](hyprwrlds/install.sh)), `hyprpi integration install hyprwrlds-vimarchy`
+   (the overview; needs hyprwrlds), `hyprpi integration install gateway` (shared MCP servers,
+   [mcp-gateway/](mcp-gateway/README.md)), `hyprpi integration install remote` (the phone app,
+   [remote-control/](remote-control/README.md)). `./install.sh all` does everything.
+3. Run `pi` once and `/login`, then SUPER+A for your first agent.
+
+Each piece is opt-in and reversible: `hyprpi integration status` shows what's installed,
+`hyprpi integration uninstall NAME` undoes exactly what its install did (links, the lines it added,
+units it wrote; backups of edited files stay in `~/.local/state/hyprpi/backups/`). Nothing edits your
+shell's rc files: if `~/.local/bin` isn't on your PATH, you're told how to add it. The pieces find
+this checkout wherever it is; nothing assumes `~/Work/hyprpi`. Each subfolder's README also covers
+installing that part on its own.
 
 | Key | Does |
 |---|---|
@@ -42,12 +61,9 @@ SUPER+SHIFT+ALT+S ("keep this window, clear the rest", J18) is gone: SUPER+ALT+D
 
 These keys, the rule that tags agent windows as terminals (so Omarchy's SUPER+C/V copy and
 paste instead of sending Ctrl+C, which Pi treats as clear/interrupt) and the click-to-mark-seen
-handler are in `hypr/hyprpi.lua`. Install it once:
-
-`ln -s ~/Work/hyprpi/hypr/hyprpi.lua ~/.config/hypr/hyprpi.lua`
-
-then add `require("hypr.hyprpi")` to `~/.config/hypr/hyprland.lua` after
-`require("hypr.bindings")`. It finds `bin/hyprpi` under `~/Work/hyprpi` (or `$HYPRPI_HOME`).
+handler are in `hypr/hyprpi.lua` (installed by `hyprpi integration install hypr`). It finds the
+checkout from its own real path, so hyprpi can live anywhere (`$HYPRPI_HOME` in Hyprland's
+environment overrides it).
 
 ## Room window (retired)
 
@@ -122,7 +138,7 @@ unknown `/word` is refused with a hint instead of being posted.
 
 ## Agents
 
-`hyprpi new` runs `<terminal> … pi -e ~/Work/hyprpi/pi-extension/index.ts` with
+`hyprpi new` runs `<terminal> … pi -e <hyprpi>/pi-extension/index.ts` with
 `HYPRPI_AGENT_ID` set. The extension gives the agent the same tools it has
 under Herdr — `room_read`, `room_post`, `room_reply`, `talk`, `demand` — plus
 `talk_reply` for answering `talk`/`demand`. Herdr's own room/peer-chat
@@ -296,7 +312,7 @@ Angus's names (2026-09-28), kept clearly distinct:
   and remembers agents in `~/.local/state/hyprpi/agents.json` (for restarts,
   later).
 - `pi-extension/index.ts` — the agent side (tools, status, delivery).
-- `ui/` — Quickshell room windows (`qs -p ~/Work/hyprpi/ui`, one process per
+- `ui/` — Quickshell room windows (`qs -p <hyprpi>/ui`, one process per
   Hyprland instance, started by `hyprpi room`).
 - `bin/hyprpi` — CLI (symlinked into `~/.local/bin`).
 - `hypr/hyprpi.lua` — Hyprland keys, the agent window rule and click-to-mark-seen
@@ -473,13 +489,29 @@ failed turn.
 - `terminalHelpers` (default true): agent windows also load `terminal-helpers/<terminal>/`
   settings (kitty only for now: `pi.conf`, after your own `kitty.conf`).
 - `terminal`: `"auto"` (default) uses Omarchy's default terminal (`xdg-terminal-exec --print-id`,
-  i.e. `~/.config/xdg-terminals.list`), falling back to foot; or force `"kitty"`, `"foot"`,
+  i.e. `~/.config/xdg-terminals.list`), else the first of kitty, foot, alacritty, ghostty that's
+  installed (a clear message when none is); or force `"kitty"`, `"foot"`,
   `"alacritty"`, `"ghostty"`. Windows always get app-id/class `hyprpi.agent`; kitty windows
   also get `copy_on_select=clipboard`.
 - `terminalCommand`: override for any other terminal, an array with `{class}` `{title}` `{cwd}`
   placeholders; the pi command is appended. E.g.
   `["wezterm", "start", "--class", "{class}", "--cwd", "{cwd}", "--"]`.
 - `piArgs`: extra `pi` flags for new agents (e.g. `["--model", "…"]`).
+- `thoughtsModel` (default `claude-opus-5-5`) and `searchModel` (default `claude-haiku-4-5`): the
+  models Thoughts and the search panel's AI mode use; set them to models your pi login has.
+- **Your folders** (J190; the defaults are the author's layout, each with a fallback):
+  - `cwd` (default `~/Work`): where new agents start when the focused window gives no folder; `~`
+    when it doesn't exist.
+  - `screenshotsDir` (default `~/Screenshots`): where panels save pasted images
+    (`pi-clipboard-*.png`); `/tmp` when the folder doesn't exist.
+  - `notesDir` (default `""`): where /tinker agents write proposals; `""` = `~/Obsidian/Tinker` if that
+    folder exists, else `~/.local/share/hyprpi/notes`.
+  - `jotExtension` (default `~/Work/pi-jot/src/extension.ts`): the pi-jot extension Thoughts loads
+    (`jot_save`) when the file exists.
+  - `phone.folders` (default `["~/Obsidian", "~/Work", "~/Downloads", "~/Documents", "~/Screenshots",
+    "~/Phone"]`): what the phone app may read; `phone.uploadDir` (default `~/Phone`): the only folder it
+    writes (uploads); `phone.vault` (default `~/Obsidian`): where its `[[wiki links]]` resolve. Read
+    when the phone app starts (`systemctl --user restart hyprpi-remote-control`).
 - **AI search** (search panel, AI mode: a short answer + the evidence it used). One
   `searchModel` call reads a slice of the room's history: conversations (what was
   *said*) and the activity stream (what was *done*: tool calls, topics, joins/moves).
