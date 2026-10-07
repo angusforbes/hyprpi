@@ -30,7 +30,7 @@ whose agents use one room per world. That folder is the master; this standalone 
 | SUPER+TAB / SUPER+SHIFT+TAB | Next / previous occupied workspace in the current world |
 | SUPER+scroll | Cycle occupied workspaces in the current world |
 | SUPER+ALT+TAB / SUPER+ALT+SHIFT+TAB | Next / previous world |
-| **SUPER+ALT+LEFT / RIGHT** | **Previous / next active workspace in the current world (empty ones skipped), wrapping** |
+| **SUPER+ALT+LEFT / RIGHT** | **Previous / next active workspace in the current world (empty ones skipped, but workspace 1 is always a stop), wrapping** |
 | **SUPER+ALT+UP / DOWN** | **The same workspace in the previous / next world, wrapping** |
 | SUPER+ALT+CTRL+arrows | One step to the adjacent workspace number (1-10) or world (A-I), empty or not; it's created when you get there. Wraps |
 | SUPER+ALT+SHIFT+LEFT / RIGHT | Swap this workspace's windows with the neighbouring workspace's (same world, adjacent number) and follow |
@@ -46,11 +46,12 @@ SUPER+ALT+arrows were Omarchy's "move window into the group on the left/right/â€
 no key now, but SUPER+G (toggle grouping) and SUPER+ALT+G (move out of a group) remain.
 
 **The grid** (SUPER+ALT+arrows) is ragged, like the hyprwrlds-vimarchy switcher: Left/Right
-visit only the world's active workspaces (ones that have windows, or the one you're on), so with B3
-empty, Right from B2 goes to B4; each end wraps. Up/Down visit worlds A-E always and F-I when in
+visit only the world's active workspaces (ones that have windows, or the one you're on), plus
+workspace 1, which is always a stop even when empty; so with B3 empty, Right from B2 goes to B4;
+each end wraps. Up/Down visit worlds A-E always and F-I when in
 use, in the world order, wrapping; you land on the same workspace number when the target world has
-it active, otherwise on its highest active workspace below that number (else its lowest one above),
-and in a world with nothing open, on the same number. To reach a gap or a new workspace, use
+it as a stop, otherwise on its highest stop below that number (workspace 1 at least, so a world with
+nothing open lands on its 1). To reach a gap or a new workspace, use
 SUPER+ALT+CTRL+arrows: one step at a time, creating it. (The bar still shows workspaces 1-5 of the
 current world even when they're empty, as before.)
 SUPER+ALT+SHIFT+arrows were Omarchy's "move workspace to the left/right/up/down monitor" (nothing to
