@@ -187,10 +187,11 @@ function draw() {
   if (!fits) { const h = clip(hint.replace(/^(\s|\x1b\[[0-9;]*m)+/, (m) => m.replace(/ /g, "")), W - 3); rows[inputRule] = fg(c, "─ ") + h + " " + fg(c, "─".repeat(Math.max(0, W - 3 - width(h)))); }
   inRows.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && fits ? hint : "")));
   // Status bar: the worlds, this one highlighted.
-  const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
+  // J198 (Angus): the footer shows only THIS world's letter (highlighted); Ctrl+Tab / Ctrl+Shift+Tab move between worlds.
+  const tabs = rooms.filter((r) => r.id === room).map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi projects ${online ? "" : "· daemon offline "}`;
   const right = " "; // no clock (Angus)
-  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
+  worldBar = { y: rows.length + 1, x0: width(left) }; // only this world's letter is drawn (J198); a click on it does nothing (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, W - width(left) - width(strip(tabs)) - width(right)))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-board ${room}\x07`);
@@ -369,7 +370,7 @@ function tab(fwd) {
 function mouse(d) {
   for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
     const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]), press = m[4] === "M";
-    const tab = b === 0 && press ? worldTabAt(worldBar, x, y, rooms.map((r) => r.id)) : null;
+    const tab = b === 0 && press ? worldTabAt(worldBar, x, y, [room]) : null;
     if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycle(s); continue; } // a world tab: like Ctrl+Tab
     if (b === 64 || b === 65) { (mode === "decisions" ? dv : bv).scroll(b === 64 ? 3 : -3); continue; } // wheel
     if (b === 16) { if (press) ctrlClick(x, y); continue; }            // Ctrl+click: @agent / link

@@ -682,11 +682,12 @@ function render() {
   while (rows.length < H - 1) rows.push("");
 
   // status bar: rooms as tabs (like the room TUI)
-  const tabs = rooms.map((r) => r === room ? `${ESC}${worldBg(r)};30m ${r} ${ESC}49;39m` : ` ${fg(worldFg(r), r)} `).join("");
+  // J198 (Angus): the footer shows only THIS world's letter (highlighted); Ctrl+Tab / Ctrl+Shift+Tab move between worlds.
+  const tabs = rooms.filter((r) => r === room).map((r) => r === room ? `${ESC}${worldBg(r)};30m ${r} ${ESC}49;39m` : ` ${fg(worldFg(r), r)} `).join("");
   const left = ` hyprpi thoughts ${online ? "" : "· daemon offline "}`;
   const right = `/keyword · /ask · /more · /help · ^Q quit `;
   const mid = W - width(left) - width(strip(tabs)) - width(right);
-  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
+  worldBar = { y: rows.length + 1, x0: width(left) }; // only this world's letter is drawn (J198); a click on it does nothing (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-search ${room}\x07`); // panel identity: mockups/panels finds it by this exact title
@@ -819,7 +820,7 @@ function onKey(d) {
   if (d.startsWith("\x1b[<")) {
     const m = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(d); if (!m) return;
     const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
-    const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, rooms) : null;
+    const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, [room]) : null;
     if (tab) { const s = stepTo(rooms, room, tab); if (s) cycle(s); return; } // a world tab: like Ctrl+Tab
     if (b === 64) return move(-1);
     if (b === 65) return move(1);

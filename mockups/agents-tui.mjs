@@ -357,14 +357,15 @@ function draw() {
   rows.push(...IR.rows);
 
   // status bar: worlds, counts
-  const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
+  // J198 (Angus): the footer shows only THIS world's letter (highlighted); Ctrl+Tab / Ctrl+Shift+Tab move between worlds.
+  const tabs = rooms.filter((r) => r.id === room).map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
   const nClosed = dormant.filter((a) => a.room === room).length;
   const extra = [nParked && `${nParked} parked`, nClosed && `${nClosed} closed`].filter(Boolean).join(" · ");
   const left = ` hyprpi agents ${online ? "" : "· daemon offline "}`; // the same label form in every panel (Angus)
   const right = `${live.length} live${extra ? " · " + extra : ""} `;
   const mid = W - width(left) - width(tabs.replace(/\x1b\[[0-9;]*m/g, "")) - width(right);
-  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
+  worldBar = { y: rows.length + 1, x0: width(left) }; // only this world's letter is drawn (J198); a click on it does nothing (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-router ${room}\x07`); // how `mockups/panels` finds this window
@@ -552,7 +553,7 @@ function onKey(d) {
   const m = d.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/);       // SGR mouse
   if (m) {
     const b = Number(m[1]), y = Number(m[3]), press = m[4] === "M";
-    const tab = b === 0 && press ? worldTabAt(worldBar, Number(m[2]), y, rooms.map((r) => r.id)) : null;
+    const tab = b === 0 && press ? worldTabAt(worldBar, Number(m[2]), y, [room]) : null;
     if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycleRoom(s); return; } // a world tab: like Ctrl+Tab
     if (b === 64 || b === 65) { listTop = Math.max(0, listTop + (b === 64 ? -1 : 1)); return render(); }
     if (b === 0 && press) { // N79: a double / triple click in the box selects a word / the whole line

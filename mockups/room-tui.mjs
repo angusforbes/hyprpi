@@ -475,11 +475,12 @@ function draw() {
   inputLines.forEach((l, i) => rows.push((i === 0 ? prompt : " ".repeat(promptW)) + l + (i === 0 ? hint : "")));
 
   // tmux-style status bar
-  const tabs = rooms.map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
+  // J198 (Angus): the footer shows only THIS world's letter (highlighted); Ctrl+Tab / Ctrl+Shift+Tab move between worlds.
+  const tabs = rooms.filter((r) => r.id === room).map((r) => r.id === room ? `${ESC}${worldBg(r.id)};30m ${r.id} ${ESC}49;39m` : ` ${fg(worldFg(r.id), r.id)} `).join("");
   const left = ` hyprpi stream ${online ? "" : "· daemon offline "}`; // the same label form in every panel (Angus)
   const right = `history ${historyN} `; // no clock (Angus)
   const mid = W - width(left) - width(strip(tabs)) - width(right);
-  worldBar = { y: rows.length + 1, x0: width(left) }; // a click on a world tab switches this panel (lib/tui/world-tabs.mjs)
+  worldBar = { y: rows.length + 1, x0: width(left) }; // only this world's letter is drawn (J198); a click on it does nothing (lib/tui/world-tabs.mjs)
   rows.push(`${ESC}7m${left}${ESC}27m${tabs}${ESC}7m${" ".repeat(Math.max(0, mid))}${right}${ESC}27m`);
 
   out(`\x1b]2;hyprpi-room ${room}\x07`); // not "hyprpi room …": the daemon treats those titles as room windows
@@ -881,7 +882,7 @@ function onKey(d) {
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
       const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
-      const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, rooms.map((r) => r.id)) : null;
+      const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, [room]) : null;
       if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycle(s); continue; } // a world tab: like Ctrl+Tab
       const inList = false; // no agent pane in this panel
       // Left button: press starts a possible selection, motion drags it,
