@@ -40,7 +40,7 @@ import { SENT_STICKY_MS } from "../lib/tui/sent.mjs";
 
 let room = (process.argv[2] || "").toUpperCase(), rooms = [], agents = [], online = false, api = null, note = "";
 let board = { room: "", projects: [], names: {}, live: {} };
-const bv = createBoardView({ render: () => render() });
+const bv = createBoardView({ render: () => render(), note: (t) => { note = t; noteSeen = t; noteAt = Date.now(); render(); } }); // J200: "✓ @p tidied" as each /tidy lands
 // The Decisions view (@hyprpi N68): ^F (or /decisions) switches cards ⇄ decisions, like the Stream's ^F
 // cycles its views. In it the box is the answer box: 1…9 / L / ⏎ act while it is empty.
 const dv = createDecisionsView();
