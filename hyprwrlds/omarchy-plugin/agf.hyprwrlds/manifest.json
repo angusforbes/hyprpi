@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "agf.hyprwrlds",
+  "name": "hyprwrlds",
+  "version": "0.1.0",
+  "author": "agf",
+  "description": "World picker (A B C ...) plus the numbered workspaces of the current world. World A = workspaces 1-10, B = 11-20, C = 21-30, and so on. Keys and logic live in ~/.config/hypr/hyprwrlds.lua; this widget calls it with `hyprctl eval 'hyprwrlds.world(N)'`. Replaces omarchy.workspaces in the bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "hyprwrlds",
+    "description": "World picker + workspaces of the current world",
+    "category": "Workspaces",
+    "defaultSection": "left",
+    "allowMultiple": false,
+    "defaults": {
+      "worlds": 3,
+      "cellWidth": 15
+    },
+    "schema": [
+      {
+        "key": "worlds",
+        "type": "integer",
+        "label": "Worlds always shown",
+        "min": 1,
+        "max": 9,
+        "step": 1,
+        "defaultValue": 3,
+        "description": "Letters always shown in the picker. Higher worlds appear automatically while they hold windows or are focused (up to I)."
+      },
+      {
+        "key": "cellWidth",
+        "type": "integer",
+        "label": "Cell width",
+        "min": 8,
+        "max": 40,
+        "step": 1,
+        "defaultValue": 15,
+        "description": "Width of each world letter and workspace number in the bar (Style.space units). 15 = the compact look; 20 = the original wider one."
+      }
+    ]
+  }
+}
