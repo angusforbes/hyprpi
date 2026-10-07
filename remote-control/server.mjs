@@ -597,8 +597,11 @@ const server = http.createServer(async (req, res) => {
       // J219 (a): photos from the phone (already uploaded to ~/Phone by /api/upload) go with the message;
       // each must be a readable image under the allowed folders (fileAllowed, the J47 guard).
       const asked = Array.isArray(b.images) ? b.images.slice(0, 8) : [], images = [];
-      for (const p of asked) { const real = typeof p === "string" ? fileAllowed(p) : null; if (real && /\.(png|jpe?g|gif|webp)$/i.test(real)) { try { const st = fs.statSync(real); if (st.isFile()) { if (st.size > 10e6) return json(res, 413, { error: `${path.basename(real)} is over 10 MB` }); images.push(real); } } catch { /* gone */ } } }
-      if (asked.length && images.length !== asked.length) return json(res, 404, { error: "a photo is not found or not allowed" });
+      for (const p of asked) {
+        const real = typeof p === "string" ? fileAllowed(p) : null; let ok = false;
+        if (real && /\.(png|jpe?g|gif|webp)$/i.test(real)) { try { const st = fs.statSync(real); if (st.isFile()) { if (st.size > 10e6) return json(res, 413, { error: `${path.basename(real)} is over 10 MB`, bad: p }); images.push(real); ok = true; } } catch { /* gone */ } }
+        if (!ok) return json(res, 404, { error: "a photo is not found or not allowed", bad: typeof p === "string" ? p : "" }); // bad: which tile (the page marks it ✗)
+      }
       if (!r || (!text && !images.length)) return json(res, 400, { error: "world and text needed" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       log("send", r, JSON.stringify(text.slice(0, 80)));
@@ -610,7 +613,8 @@ const server = http.createServer(async (req, res) => {
     // connection isn't an agent, so the daemon records Angus as the one who decided).
     if (req.method === "POST" && url.pathname === "/api/decide") {
       const b = await body(req), r = room(b.world), answer = String(b.answer || "").trim().slice(0, 2000);
-      if (!r || !b.project || !b.h || !answer) return json(res, 400, { error: "world, project, h and answer needed" });
+      if (!r) return json(res, 400, { error: "no such world" });
+      if (!b.project || !b.h || !answer) return json(res, 400, { error: "world, project, h and answer needed" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
       log("decide", r, b.project, b.h, JSON.stringify(answer.slice(0, 60)));
       try { return json(res, 200, await api.call("board.item", { action: "decide", room: r, project: String(b.project), h: String(b.h), answer, ...(b.typed ? { typed: true } : {}) })); }

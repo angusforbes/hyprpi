@@ -47,7 +47,7 @@ function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden
 async function call(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { body: j });
   return j;
 }
 // file:///abs/path (and bare /home/… or ~/…) → /file?path=…, opened read-only by the server.
@@ -411,7 +411,11 @@ async function sendMessage() {
     atts = []; saveAtts(); renderAtts();
     busy = true; renderTop(); note(""); toEnd();
   }
-  catch (err) { note("✗ not sent: " + err.message); } // the text and the photos stay
+  catch (err) { // the text and the photos stay; a photo that's gone from disk is marked ✗ (Pocket's check)
+    const bad = err.body?.bad, a = bad && atts.find((x) => x.path === bad);
+    if (a) { a.err = "gone"; delete a.path; saveAtts(); note(`✗ not sent: ${a.name} is no longer on the laptop; remove it (✕) and send again`); }
+    else note("✗ not sent: " + err.message);
+  }
   finally { sending = false; renderAtts(); }
 }
 chatKeys(input, sendMessage);
