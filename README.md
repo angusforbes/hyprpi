@@ -36,7 +36,9 @@ see [docs/terminals.md](docs/terminals.md)). Then, wherever you cloned it:
    (the overview; needs hyprwrlds), `hyprpi integration install gateway` (shared MCP servers,
    [mcp-gateway/](mcp-gateway/README.md)), `hyprpi integration install remote` (the phone app,
    [remote-control/](remote-control/README.md)). `./install.sh all` does everything.
-3. Run `pi` once and `/login`, then SUPER+A for your first agent.
+3. Run `pi` once and `/login`, then SUPER+A for your first agent. (No pi yet? `./install.sh` offers to
+   install the tested version, [docker/PI_VERSION](docker/PI_VERSION), into `~/.local` without sudo:
+   `hyprpi integration install pi`.)
 
 Each piece is opt-in and reversible: `hyprpi integration status` shows what's installed,
 `hyprpi integration uninstall NAME` undoes exactly what its install did (links, the lines it added,

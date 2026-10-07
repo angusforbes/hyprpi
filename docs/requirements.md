@@ -9,7 +9,11 @@ What hyprpi needs, and what's optional. The install itself is in the
   (`~/.config/hypr/hyprland.lua`). hyprpi's keys and window rules are a Lua file
   ([hypr/hyprpi.lua](../hypr/hyprpi.lua)).
 - **[pi](https://github.com/earendil-works/pi)** 1.0.x, the coding agent hyprpi runs in each window:
-  `npm i -g @earendil-works/pi-coding-agent`, then run `pi` once and log in with `/login`.
+  hyprpi is tested with the version in [docker/PI_VERSION](../docker/PI_VERSION) (also what the docker
+  image uses). `./install.sh` offers to install exactly that one when pi is missing
+  (`hyprpi integration install pi`: npm into `~/.local`, no sudo); an existing pi is never replaced, only
+  warned about when it's a different version. By hand:
+  `npm i -g @earendil-works/pi-coding-agent@<version>`. Then run `pi` once and log in with `/login`.
   - Thoughts (each world's assistant) runs on `claude-opus-5-5` and the search panel's AI mode on
     `claude-haiku-4-5` by default. If you log in to another provider, set `thoughtsModel` and
     `searchModel` in `~/.config/hyprpi/config.json` to models you have (`pi --list-models` lists them).

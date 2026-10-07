@@ -20,7 +20,7 @@ Plans and the security design: [docs/sandbox-plan.md](../docs/sandbox-plan.md).
 
 Build (from this folder; pi-browser builds on pi-sandbox, and both need deb.debian.org):
 
-`docker build -t pi-sandbox -f Dockerfile.pi .`
+`docker build -t pi-sandbox -f Dockerfile.pi .` (the pi version comes from `PI_VERSION` next to it, the same pin hyprpi's installer uses)
 
 `docker build -t pi-browser -f Dockerfile.pi-browser .`
 

@@ -10,7 +10,19 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 command -v node >/dev/null || { echo "install.sh: node (22 or newer) is needed first; see docs/requirements.md" >&2; exit 1; }
 major=$(node -p 'process.versions.node.split(".")[0]')
 (( major >= 22 )) || { echo "install.sh: node $major is too old; hyprpi needs node 22+ (docs/requirements.md)" >&2; exit 1; }
-command -v pi >/dev/null || echo "note: pi isn't installed yet (npm i -g @earendil-works/pi-coding-agent; see docs/requirements.md)"
+# pi: hyprpi is tested with the version in docker/PI_VERSION. Missing: offer to install exactly that one
+# with npm into ~/.local (no sudo). Present: never replaced; a different version only gets a warning.
+want=$(cat "$here/docker/PI_VERSION")
+if ! command -v pi >/dev/null; then
+  ans=n
+  if [[ "${HYPRPI_INSTALL_PI:-}" == 1 ]]; then ans=y
+  elif [[ -t 0 ]]; then read -r -p "pi isn't installed. Install pi $want now (npm into ~/.local, no sudo)? [Y/n] " ans; ans=${ans:-y}; fi
+  if [[ "$ans" == [yY]* ]]; then node "$here/bin/hyprpi" integration install pi
+  else echo "note: pi isn't installed; later: hyprpi integration install pi (or npm i -g @earendil-works/pi-coding-agent@$want)"; fi
+else
+  have=$(pi --version 2>/dev/null | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+  [[ "${have%.*}" == "${want%.*}" ]] || echo "note: pi ${have:-?} is installed; hyprpi is tested with $want (left as is; hyprpi integration install pi says how to switch)"
+fi
 pieces=("$@"); (( ${#pieces[@]} )) || pieces=(recommended)
 # Omarchy's bar plugins only where the Omarchy shell exists.
 if [[ " ${pieces[*]} " == *" recommended "* ]] && ! command -v omarchy-shell >/dev/null; then
