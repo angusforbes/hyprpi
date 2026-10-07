@@ -1,5 +1,8 @@
 # hyprwrlds-vimarchy
 
+Part of **[hyprpi](https://github.com/angusforbes/hyprpi)** (folder `hyprwrlds-vimarchy/`); newer
+versions live there. It builds on [hyprwrlds](https://github.com/angusforbes/hyprpi/tree/master/hyprwrlds).
+
 A [Vimarchy](https://github.com/clickety-clacks/vimarchy)-style window overview for
 **[hyprwrlds](https://github.com/angusforbes/hyprwrlds)** worlds on Omarchy/Hyprland: see your
 workspaces as mini-screens with a live-looking preview of every app, jump to any window by typing
@@ -108,9 +111,11 @@ Requires [hyprwrlds](https://github.com/angusforbes/hyprwrlds), Omarchy's Quicks
 and Hyprland 0.56+ (Lua config).
 
 ```
-git clone https://github.com/angusforbes/hyprwrlds-vimarchy ~/Work/hyprwrlds-vimarchy
-~/Work/hyprwrlds-vimarchy/install.sh
+git clone https://github.com/angusforbes/hyprpi ~/Work/hyprpi
+~/Work/hyprpi/hyprwrlds-vimarchy/install.sh
 ```
+
+(The script works from wherever it is; install hyprwrlds first: `~/Work/hyprpi/hyprwrlds/install.sh`.)
 
 This installs the overlay plugin `agf.hyprwrlds-vimarchy` into `~/.config/omarchy/plugins/`
 (and enables it) and `hypr/hyprwrlds-vimarchy.lua` (the keys above + double-tap support) into

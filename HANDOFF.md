@@ -38,7 +38,7 @@ Herdr and hyprpi run side by side for now; hyprpi is meant to replace Herdr even
 - **Keys** (`~/.config/hypr/bindings.lua`): SUPER+A new agent · SUPER+ALT+A room window ·
   SUPER+ALT+/ search · SUPER+SHIFT+A Claude (moved from SUPER+A; Omarchy's ChatGPT unbound).
 - **Bar**: clicking the *current* world letter in the hyprwrlds bar widget runs
-  `hyprpi room --toggle` (`~/Work/hyprwrlds` commit 9aa5822, pushed).
+  `hyprpi room --toggle` (hyprwrlds commit 9aa5822, pushed; now `hyprwrlds/` in this repo).
 - **Integrations outside this repo** (backups in `~/.local/state/hyprpi/backups/`):
   - `~/.pi/agent/extensions/herdr-room/index.ts`, `peer-chat/index.ts`: `return` early when
     `HYPRPI_AGENT_ID` is set (Pi refuses to start on duplicate tool names).

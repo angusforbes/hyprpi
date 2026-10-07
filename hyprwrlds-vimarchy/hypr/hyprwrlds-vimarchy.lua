@@ -13,7 +13,7 @@ if type(M) ~= "table" then
 end
 
 -- hyprwrlds-vimarchy overview (Omarchy overlay plugin agf.hyprwrlds-vimarchy,
--- source ~/Work/hyprwrlds-vimarchy). Type a window's hint to jump to it;
+-- source ~/Work/hyprpi/hyprwrlds-vimarchy). Type a window's hint to jump to it;
 -- a-z first, then Shift+A-Z; Escape closes.
 o.bind("ALT + CTRL + SPACE", "World overview (hyprwrlds-vimarchy)",
   [[omarchy-shell shell summon agf.hyprwrlds-vimarchy '{"mode":"world"}']])

@@ -14,8 +14,11 @@ workspaces. A world is a block of ten numbered workspaces:
 The current world is simply derived from the focused workspace id, so there is no extra state to
 drift. Everything numeric in Hyprland (window rules, `hyprctl`, other tools) keeps working.
 
-Companion project: **[hyprwrlds-vimarchy](https://github.com/angusforbes/hyprwrlds-vimarchy)**, a
+Companion project: **[hyprwrlds-vimarchy](https://github.com/angusforbes/hyprpi/tree/master/hyprwrlds-vimarchy)**, a
 Vimarchy-style overview of worlds and workspaces with letter hints, previews and keyboard moves.
+
+hyprwrlds lives in the **[hyprpi](https://github.com/angusforbes/hyprpi)** repo (folder `hyprwrlds/`),
+whose agents use one room per world. That folder is the master; this standalone repo is published from it.
 
 ## Keys
 
@@ -68,6 +71,8 @@ git clone https://github.com/angusforbes/hyprwrlds ~/Work/hyprwrlds
 ~/Work/hyprwrlds/install.sh
 ```
 
+Or from a hyprpi checkout: `~/Work/hyprpi/hyprwrlds/install.sh` (the script works from wherever it is).
+
 The script copies `hypr/hyprwrlds.lua` to `~/.config/hypr/`, adds `require("hypr.hyprwrlds")`
 after `require("hypr.bindings")` in `~/.config/hypr/hyprland.lua`, installs and enables the bar
 widget, and swaps it in for `omarchy.workspaces`. Edited files are backed up to
@@ -94,6 +99,15 @@ Remove the `require("hypr.hyprwrlds")` line from `hyprland.lua` (Hyprland reload
 - Vimarchy's own workspace-move radial targets absolute workspaces 1-10 (world A).
 - If an edit to an already-loaded bar widget doesn't show, the shell may be serving a cached
   copy; restart it with `omarchy-restart-shell`.
+
+## Maintaining (for the hyprpi repo)
+
+Edit `hyprwrlds/` inside hyprpi and commit there. To publish the folder to the standalone repo
+(history included, fast-forward only):
+
+`git -C ~/Work/hyprpi subtree push --prefix hyprwrlds https://github.com/angusforbes/hyprwrlds main`
+
+Run the usual secret check on the new commits first; it's a public repo.
 
 ## License
 

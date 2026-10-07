@@ -1,8 +1,30 @@
 # hyprpi
 
 Pi agents in **their own windows**, anywhere in any workspace of any
-[hyprwrld](../hyprwrlds-vimarchy), grouped into **rooms** (one per world by
+[hyprwrld](hyprwrlds/), grouped into **rooms** (one per world by
 default). Meant to replace Herdr eventually; for now the two are separate.
+
+## How the parts fit together
+
+This repo holds hyprpi and the two desktop pieces it is built around:
+
+- **hyprpi** (the top level: `bin/`, `lib/`, `pi-extension/`, `mockups/`, `shell-plugin/`, plus
+  `remote-control/` (the phone app) and `mcp-gateway/` (shared MCP servers)): Pi agents in their own
+  windows, rooms, panels, Thoughts. It works on plain Hyprland (Omarchy) with ordinary workspaces, and
+  gets better with the two below.
+- **[hyprwrlds/](hyprwrlds/)**: worlds for Hyprland, blocks of ten workspaces (A = 1-10, B = 11-20, …)
+  with keys and a bar widget. It stands alone, but it's really the layout hyprpi is designed for: one
+  room per world. Also published on its own as
+  [angusforbes/hyprwrlds](https://github.com/angusforbes/hyprwrlds) (this folder is the master).
+- **[hyprwrlds-vimarchy/](hyprwrlds-vimarchy/)**: a Vimarchy-style overview and switcher for worlds and
+  workspaces (ALT+SPACE and friends). It builds on hyprwrlds; if you only use workspaces 1-10, that is
+  simply one world. The standalone repo
+  [angusforbes/hyprwrlds-vimarchy](https://github.com/angusforbes/hyprwrlds-vimarchy) is frozen; newer
+  versions live here.
+
+**Install order:** 1. `hyprwrlds/install.sh` (worlds, keys, bar widget) → 2. `hyprwrlds-vimarchy/install.sh`
+(the overview; needs hyprwrlds) → 3. hyprpi itself (the `hypr/hyprpi.lua` include below, `bin/hyprpi`, the
+pi extension). Each folder's README covers installing that part on its own.
 
 | Key | Does |
 |---|---|

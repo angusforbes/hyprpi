@@ -2,11 +2,11 @@
 // instance, independent of omarchy-shell (restart it freely; the bar is not
 // touched).
 //
-//   qs -p ~/Work/hyprwrlds-vimarchy            start
-//   qs -p ~/Work/hyprwrlds-vimarchy ipc call hwv open world|all
-//   qs -p ~/Work/hyprwrlds-vimarchy ipc call hwv press a
-//   qs -p ~/Work/hyprwrlds-vimarchy ipc call hwv close
-//   qs -p ~/Work/hyprwrlds-vimarchy kill
+//   qs -p ~/Work/hyprpi/hyprwrlds-vimarchy            start
+//   qs -p ~/Work/hyprpi/hyprwrlds-vimarchy ipc call hwv open world|all
+//   qs -p ~/Work/hyprpi/hyprwrlds-vimarchy ipc call hwv press a
+//   qs -p ~/Work/hyprpi/hyprwrlds-vimarchy ipc call hwv close
+//   qs -p ~/Work/hyprpi/hyprwrlds-vimarchy kill
 //
 // Safety: the overlay grabs the keyboard, so in this harness it closes by
 // itself after 20 s.
