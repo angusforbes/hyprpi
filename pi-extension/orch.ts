@@ -87,6 +87,13 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx }: Deps) {
     label: "Spawn an agent",
     description: "Open a new hyprpi agent (your CHILD) in its own window for a bounded job, silently (Angus's focus never moves). Budget: tokens count fresh input + output + cache writes (cached context re-reads don't count) and minutes since spawn. Give it a complete prompt: goal, files it may touch, done-when, and to report_to_parent. Its model: an explicit model wins; else complexity picks one from the routing rules in ~/.config/hyprpi/hyprpi.jsonc (simple / ordinary / hard / review); else the default. fork: true starts it from YOUR conversation (a twin with your context). Returns its id; its reports come back to you as messages, or block on them with wait_report. Close it with close_agent when done. Your world's Thoughts is told automatically.",
     promptSnippet: "Open a child agent for a bounded job (silent; reports back to you)",
+    // J201 (Angus: "agents should be encouraged to split subtasks into further subtasks and to spawn temporary agents
+    // as needed or to commandeer existing agents … the power to change models and thinking levels on the fly").
+    promptGuidelines: [
+      "Parallel work (Angus): break your task into subtasks, and those into further subtasks, when the parts are independent; spawn temporary helper agents for them with spawn_agent (a complete brief each, done-when, report_to_parent), wait_report for their results, integrate, and close_agent each one when its result is in. Don't split work whose parts depend on each other, or work too small to repay the coordination.",
+      "You may also commandeer an EXISTING agent for a subtask, but only a free one (idle or done, never one mid-turn): ask it with talk/demand so the request is tracked, and say what to report back.",
+      "Pick the model and thinking level per helper: complexity simple (cheap, fast: look-ups, quick checks), ordinary or hard (building, diagnosis), review (another model family, for an independent test of work you or a helper built); an explicit model / thinking wins. Budgets, the orphan cleanup and the independent-tester rule still apply.",
+    ],
     parameters: Type.Object({
       prompt: Type.String({ description: "the child's whole brief: goal, limits, done-when, how to report" }),
       name: Type.Optional(Type.String({ description: "a short purpose name (unique among live agents), e.g. Linkcheck" })),
