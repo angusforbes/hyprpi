@@ -22,7 +22,8 @@ its letter, and move windows between workspaces and worlds from the keyboard.
 - Vimarchy's look: every window gets a colour from Vimarchy's palette (tinted box, coloured
   outline, translucent circle with the letter in full colour). Circle size follows Vimarchy's
   rule; Ctrl+= / Ctrl+- resize all circles (saved). Circles are drawn above every box, so a
-  sub-window never hides a letter; fullscreen/maximized windows sit at the back.
+  sub-window never hides a letter; a fullscreen/maximized window is drawn on top, as on screen, labelled ▣
+  (`fullscreenOnTop`), and the windows beneath keep their letters.
 - World letters and workspace headers use the hyprwrlds world colours from the Omarchy theme.
 - Workspaces with windows are shown (plus any empty workspace that exists, e.g. the one you are
   on). A workspace you empty by moving windows out stays as an empty tile until you close.
@@ -71,6 +72,7 @@ the overview opens; no restart needed.
 | `shortenAppNames` | true | `chrome-web.whatsapp.com__-Default` -> `whatsapp` |
 | `showPreviews` | true | Still capture of each app inside its box |
 | `doubleTap` | true | A quick repeat of a hint's last key (within `doubleTapMs`) toggles fullscreen on the window you jumped to |
+| `fullscreenOnTop` | true | A fullscreen/maximized window is drawn over its workspace's other windows, as on screen (▣ in its label); their hint letters stay on top. `false` = draw it at the back |
 | `doubleTapMode` | `"maximized"` | `"maximized"` (full working area, bar stays; like Vimarchy and SUPER+F) or `"fullscreen"` |
 | `doubleTapMs` | 300 | Double-tap window in ms (120-800) |
 | `shiftRing` | false | Extra ring around uppercase (Shift) hints |

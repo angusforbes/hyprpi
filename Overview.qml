@@ -73,6 +73,10 @@ Item {
   property bool doubleTap: true          // quick repeat of a hint's last key toggles fullscreen
   property string doubleTapMode: "maximized"   // "maximized" (full working area) | "fullscreen"
   property int doubleTapMs: 300
+  // J179 (Angus: "vimarchy not seeing … the fullscreen"): a fullscreen / maximized window is drawn ON TOP
+  // of its workspace's tile, as on screen, tagged ▣; the windows beneath keep their hint circles (they sit
+  // in a layer above every box), so they can still be jumped to. false = the old way (at the back).
+  property bool fullscreenOnTop: true
   property bool badgeBacking: false      // cream disc under each circle (not in Vimarchy)
   property real maxTileWidth: 460        // largest workspace tile width in px (shrinks to fit)
   property real windowTintOpacity: 0.07
@@ -143,6 +147,7 @@ Item {
     root.doubleTap = data.doubleTap !== false
     root.doubleTapMode = data.doubleTapMode === "fullscreen" ? "fullscreen" : "maximized"
     root.doubleTapMs = Math.round(num(data.doubleTapMs, 120, 800, d.doubleTapMs))
+    root.fullscreenOnTop = data.fullscreenOnTop !== false
     root.badgeBacking = data.badgeBacking === true
     root.hintScale = num(data.hintScale, root.minHintScale, root.maxHintScale, d.hintScale)
     root.badgeMin = num(data.badgeMin, 8, 400, d.badgeMin)
@@ -1201,7 +1206,7 @@ Item {
                           border.color: winBox.accent
                         }
                         opacity: matches ? 1 : 0.25
-                        z: modelData.fullscreen ? 0 : (modelData.floating ? 2 : 1)
+                        z: modelData.fullscreen ? (root.fullscreenOnTop ? 3 : 0) : (modelData.floating ? 2 : 1)
 
                         Rectangle {
                           anchors { left: parent.left; bottom: parent.bottom; margins: 3 }
@@ -1214,7 +1219,7 @@ Item {
                           Text {
                             id: appLabel
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 4; rightMargin: 4 }
-                            text: winBox.modelData.cls
+                            text: (winBox.modelData.fullscreen && root.fullscreenOnTop ? "▣ " : "") + winBox.modelData.cls
                             elide: Text.ElideRight
                             color: root.fg
                             font.family: root.fontFamily
