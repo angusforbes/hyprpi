@@ -228,7 +228,8 @@ function draw() {
   const agentRow = (a) => {
     const name = cut(a.display, nameW);
     const bare = name;
-    const model = (a.model || "").replace(/^claude-/, "");
+    // J218 (Angus): the model's short name + thinking, e.g. "gpt-6-astra/high" (ids like "openai/openai/gpt-6-astra" keep their last part).
+    const model = a.model ? String(a.model).split("/").pop().replace(/^claude-/, "") + (a.thinking ? "/" + a.thinking : "") : "";
     const dot = " · ";
     const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
     const boxed = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
