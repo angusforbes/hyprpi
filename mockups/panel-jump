@@ -13,15 +13,22 @@ const args = process.argv.slice(2), dry = args.includes("--dry");
 const [n, roomArg] = args.filter((a) => !a.startsWith("--"));
 const KIND = { 1: "router", 2: "room", 3: "(?:search|thoughts)", 4: "board" };
 if (!KIND[n]) { console.error("usage: panel-jump 1|2|3|4 [ROOM] [--dry]"); process.exit(2); }
-const room = roomArg || (await request("room.current", {}).catch(() => ({}))).room || "";
+// The world comes from the workspace Angus is on, read once (Knock, J195: asking the daemon raced a
+// workspace switch and opened Stream C on D6).
+const P = await import("../lib/paths.mjs"), size = P.loadConfig().worldSize || 10, L = P.WORLD_LETTERS;
+const aw = await hypr.activeWorkspace().catch(() => null);
+const hereWorld = aw?.id > 0 ? L[Math.floor((aw.id - 1) / size)] || "" : "";
+const room = roomArg || hereWorld;
 const re = new RegExp(`^hyprpi-${KIND[n]} ${room}$`);
 // Two of the same panel (one summoned elsewhere): the one in its own world first.
-const size = (await import("../lib/paths.mjs")).loadConfig().worldSize || 10, L = (await import("../lib/paths.mjs")).WORLD_LETTERS;
 const all = room ? (await hypr.clients().catch(() => [])).filter((w) => re.test(w.title || "") && w.workspace?.id > 0) : [];
 const c = all.find((w) => L[Math.floor((w.workspace.id - 1) / size)] === room) || all[0];
-if (dry) { console.log(c ? `jump ${c.address} ws ${c.workspace.id} (${c.title})` : `bring ${n} ${room} (not open on a workspace)`); process.exit(0); }
+// Not open on a workspace: bring it here the usual way, but ONLY when it is this world's panel and
+// we're on a normal workspace; never open a panel of world X on another world's workspace.
+const canBring = !c && room && room === hereWorld;
+if (dry) { console.log(c ? `jump ${c.address} ws ${c.workspace.id} (${c.title})` : canBring ? `bring ${n} ${room} (not open on a workspace)` : `nothing (${room || "?"}'s panel isn't open; you're in ${hereWorld || "no world"})`); process.exit(0); }
 if (c) await hypr.focusWindow(c.address);
-else {
+else if (canBring) {
   const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
   spawn(new URL("./panels", import.meta.url).pathname, [...(room ? [room] : []), "--only", n], { detached: true, stdio: "ignore", env }).unref();
 }
