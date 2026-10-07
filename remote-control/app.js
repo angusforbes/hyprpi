@@ -859,6 +859,7 @@ const sessAgent = () => { for (const l of agentLists.values()) { const a = l.age
 const sessNearEnd = () => sessEl.scrollHeight - sessEl.scrollTop - sessEl.clientHeight < 80;
 async function openSession(id) {
   sess.agent = id; sess.items = []; sess.results = new Map(); sess.before = 0; sess.more = false; sess.end = 0;
+  loadSessDraft(id); // J194: this agent's own unsent draft (or an empty box)
   setView("session");
   sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">loading…</div>`;
   try {
@@ -959,7 +960,7 @@ async function sessSend(how) {
     const r = await call("POST", how === "interrupt" ? "/api/agent/interrupt" : "/api/agent/send", { agent: sess.agent, text });
     note(r.slash ? (r.queued ? `${text.split(/\s/)[0]}: runs when its turn ends` : `${text.split(/\s/)[0]}: sent as typed`)
       : how === "interrupt" ? "interrupted: your message is its next turn" : r.queued ? "queued: it reads this after its current turn" : "sent");
-    sinput.value = ""; dropDraft("hyprpi-rc.sdraft"); sinput.style.height = "auto"; setTimeout(() => note(""), 3000);
+    sinput.value = ""; dropDraft(sdraftKey(sess.agent)); sinput.style.height = "auto"; setTimeout(() => note(""), 3000);
     if (touch) sinput.blur();
   } catch (err) { note("✗ not sent: " + err.message); }
   finally { ssend.disabled = sint.disabled = false; }
@@ -968,7 +969,11 @@ ssend.addEventListener("click", () => sessSend("send"));
 sint.addEventListener("click", () => sessSend("interrupt"));
 sinput.addEventListener("input", () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; });
 chatKeys(sinput, () => sessSend("send"));
-keepDraft(sinput, "hyprpi-rc.sdraft", () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; }); // J194
+// J194: one draft per agent's session page (pi·wpzt: a shared key could send X's draft to Y).
+const sdraftKey = (id) => "hyprpi-rc.sdraft." + String(id || "");
+const sgrow = () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; };
+sinput.addEventListener("input", () => { if (!sess.agent) return; try { if (sinput.value) localStorage.setItem(sdraftKey(sess.agent), sinput.value); else localStorage.removeItem(sdraftKey(sess.agent)); } catch { /* full */ } });
+function loadSessDraft(id) { let t = ""; try { t = localStorage.getItem(sdraftKey(id)) || ""; } catch { /* none */ } sinput.value = t; sgrow(); }
 sinput.addEventListener("touchend", (e) => { if (document.activeElement === sinput) return; e.preventDefault(); sinput.focus({ preventScroll: true }); }, { passive: false });
 sinput.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(fitViewport); });
 

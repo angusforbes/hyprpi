@@ -518,7 +518,7 @@ function onKey(d) {
   if (d === "\x03") { if (box.key(d)) return; return quit(); } // Ctrl+C: the box's copy / clear, else quit
   if (d === "\r") {                                           // ⏎: run the command, else open the agent
     if (!typing) { if (showHelp) { showHelp = false; return render(); } return enter(); }
-    const t = box.text.trim(); box.clear();
+    const t = box.text.trim(); box.take(); // J194: taken to run, not a cleared draft (no ring entry)
     if (cmds.run(t)) { box.remember(t); return render(); }
     box.set(t); note = "✗ commands start with / (Tab completes · /help)"; return render();
   }
