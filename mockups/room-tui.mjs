@@ -307,8 +307,7 @@ function draw() {
   // lines indented under the text.
   // The prompt: "C ❯" (a room post goes to everyone; @Name / @project in the text: just them).
   const bvOpen = view === "board" && hereProjects().find((p) => p.id === bv.focused);
-  const prompt = view === "board" ? fg(c, bold(`${room} board${bvOpen ? " @" + bvOpen.name : ""} ❯ `))
-    : fg(c, bold(`${room} ❯ `));
+  const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯" (the board view too)
   const promptW = width(prompt);
   ic = Math.max(0, Math.min(ic, graphemes(input).length));
   const IL = box.layout(Math.max(10, W - promptW)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));

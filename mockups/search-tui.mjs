@@ -508,7 +508,7 @@ function render() {
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const headLabel = `thoughts ${room}`; // "— thoughts C" (Angus)
   rows.push(rule(headLabel));
-  const prompt = fg(c, bold("💭 "));
+  const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯" (was a 💭)
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
   const hint = slash ? dim("  " + slash) : query ? "" : dim(`talk to Thoughts-${room} · /keyword WORDS · /ask QUESTION · /help`);
   const selOn = theme.selection ? `${ESC}48;2;${rgb(theme.selection)}m` : `${ESC}7m`, selOff = theme.selection ? `${ESC}49m` : `${ESC}27m`;

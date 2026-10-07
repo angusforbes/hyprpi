@@ -159,7 +159,7 @@ function draw() {
   // The box first (its height decides the pane's).
   if (mode === "decisions") dv.sync(boardHere(), agents);
   const dcur = mode === "decisions" ? dv.current() : null;
-  const prompt = fg(c, bold(mode === "decisions" ? `${room} decisions${dcur ? ` ${dcur.p.unfiled ? "unfiled" : "@" + dcur.p.name} ${dcur.it.h}` : ""} ❯ ` : `${room} projects${open ? " @" + open.name : ""} ❯ `)), pw = width(prompt);
+  const prompt = fg(c, bold(`${room} ❯ `)), pw = width(prompt); // J198 (Angus): every panel's prompt is just "D ❯"; the footer says which panel it is
   const L = box.layout(Math.max(10, W - pw)), MAXI = Math.max(3, Math.min(10, Math.floor(H / 3)));
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
