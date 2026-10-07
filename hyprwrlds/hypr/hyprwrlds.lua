@@ -16,6 +16,9 @@
 --   SUPER + CTRL + 1..9              switch to world A..I
 --   SUPER + CTRL + SHIFT + 1..9      move window to world A..I (follow)
 --   SUPER + ALT + TAB                next world  (+SHIFT: previous world)
+--   SUPER + ALT + LEFT / RIGHT       previous / next workspace in this world (wraps; empty ones too)
+--   SUPER + ALT + UP / DOWN          same workspace in the previous / next world (wraps)
+--                                    (replace Omarchy's "move window to group" binds; J205)
 --   SUPER + TAB / SHIFT+TAB / scroll cycle occupied workspaces within the world
 --   SUPER + CTRL + ALT + 1..9        Omarchy's "Bar panel N" (moved here from
 --                                    SUPER + CTRL + 1..9, swapped 2026-09-25)
@@ -170,6 +173,52 @@ function M.cycle(delta)
   focus_id(ids[((idx - 1 + delta) % #ids) + 1])
 end
 
+-- The grid (J205): rows = worlds (at least MIN_WORLDS, more when a higher world is in use or
+-- current), columns = at least MIN_COLUMNS workspaces, widened for EVERY world to the highest
+-- workspace number any world uses. Pure (testable): ids = existing workspace ids, cur = active id.
+local MIN_COLUMNS = 5
+function M.grid_for(ids, cur)
+  local rows, cols = MIN_WORLDS, MIN_COLUMNS
+  local function take(id)
+    local w = world_of(id)
+    if not w or w > MAX_WORLDS then return end
+    if w > rows then rows = w end
+    local slot = id - (w - 1) * SIZE
+    if slot > cols then cols = slot end
+  end
+  for _, id in ipairs(ids or {}) do take(id) end
+  take(cur)
+  return rows, cols
+end
+-- The workspace one step (dx: -1/+1 = previous/next workspace in this world; dy: -1/+1 = the
+-- same column in the previous/next world) from cur, wrapping at the ends; empty workspaces count.
+function M.step_from(cur, dx, dy, ids)
+  local rows, cols = M.grid_for(ids, cur)
+  local w = world_of(cur) or 1
+  local col = cur - (w - 1) * SIZE
+  if col > cols then col = cols end
+  if dx ~= 0 then col = ((col - 1 + dx) % cols) + 1 end
+  if dy ~= 0 then w = ((w - 1 + dy) % rows) + 1 end
+  return (w - 1) * SIZE + col
+end
+local function existing_ids()
+  local ids = {}
+  local ok, all = pcall(hl.get_workspaces)
+  if ok and type(all) == "table" then
+    for _, ws in ipairs(all) do
+      local ok2, id = pcall(function() return ws.id end)
+      if ok2 and type(id) == "number" and id >= 1 then ids[#ids + 1] = id end
+    end
+  end
+  return ids
+end
+-- SUPER + ALT + arrows: move around the grid.
+function M.step(dx, dy)
+  local cur = active_id()
+  if not cur or cur < 1 then cur = (M.current_world() - 1) * SIZE + 1 end
+  focus_id(M.step_from(cur, dx, dy, existing_ids()))
+end
+
 function M.letter(w)
   w = clamp_world(w)
   return LETTERS:sub(w, w)
@@ -229,6 +278,16 @@ end
 
 -- Replaces Omarchy's "Next/Previous window in group" on these chords; group
 -- windows remain reachable with SUPER + ALT + scroll and SUPER + ALT + 1..5.
+-- J205 (Angus: "I never use groups"): SUPER + ALT + arrows walk the worlds x workspaces grid,
+-- replacing Omarchy's "move window to group" binds. Left/Right: previous/next workspace in this
+-- world; Up/Down: the same column in the previous/next world. Everything wraps; empty
+-- workspaces are stops too.
+for _, a in ipairs({ { "LEFT", -1, 0, "Previous workspace in world" }, { "RIGHT", 1, 0, "Next workspace in world" },
+                     { "UP", 0, -1, "Same workspace in previous world" }, { "DOWN", 0, 1, "Same workspace in next world" } }) do
+  hl.unbind("SUPER + ALT + " .. a[1])
+  o.bind("SUPER + ALT + " .. a[1], a[4] .. " (hyprwrlds grid, wraps)", function() M.step(a[2], a[3]) end)
+end
+
 hl.unbind("SUPER + ALT + TAB")
 hl.unbind("SUPER + ALT + SHIFT + TAB")
 o.bind("SUPER + ALT + TAB", "Next world (hyprwrlds)", function() M.cycle_world(1) end)

@@ -30,6 +30,8 @@ whose agents use one room per world. That folder is the master; this standalone 
 | SUPER+TAB / SUPER+SHIFT+TAB | Next / previous occupied workspace in the current world |
 | SUPER+scroll | Cycle occupied workspaces in the current world |
 | SUPER+ALT+TAB / SUPER+ALT+SHIFT+TAB | Next / previous world |
+| **SUPER+ALT+LEFT / RIGHT** | **Previous / next workspace in the current world, wrapping; empty workspaces too** |
+| **SUPER+ALT+UP / DOWN** | **The same workspace in the previous / next world, wrapping** |
 | **SUPER+CTRL+1..9** | **Switch to world A..I (lands on that world's last-used workspace)** |
 | SUPER+CTRL+SHIFT+1..9 | Move window to world A..I (follow) |
 | SUPER+CTRL+ALT+1..9 | Omarchy's "Bar panel N" (moved here from SUPER+CTRL+1..9) |
@@ -37,6 +39,13 @@ whose agents use one room per world. That folder is the master; this standalone 
 These replace Omarchy's defaults on the same chords. Notably SUPER+CTRL+1..9 was Omarchy's
 "Bar panel N", which now lives on SUPER+CTRL+ALT+1..9; SUPER+ALT+TAB was Omarchy's "next
 window in group", and group windows stay reachable with SUPER+ALT+scroll and SUPER+ALT+1..5.
+SUPER+ALT+arrows were Omarchy's "move window into the group on the left/right/…"; window groups
+are still there through SUPER+G and SUPER+ALT+G.
+
+**The grid** (SUPER+ALT+arrows): rows are worlds and columns are workspaces. By default it's 5×5
+(worlds A-E, workspaces 1-5). When any world uses a higher workspace (say B7), every world gets
+that many columns; when a higher world is in use or current (F), it adds a row. Every cell is a stop,
+empty or not, and each direction wraps at the edge.
 
 ## Bar widget
 
