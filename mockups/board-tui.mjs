@@ -176,10 +176,13 @@ function draw() {
   const text = box.text;
   const slash = /^\/[^\s/]*$/.test(text) && !note.startsWith("✗") && cmds.hint(text) !== null ? boardCompletions(text) : null; // a hidden command like /ignore: no hint at all (N52)
   const busy = mode === "decisions" ? "" : bv.status(c, false);
+  // J204 (Angus: "maybe just include that info in the grayed out text after the prompt"): what the
+  // prompt said before J198 ("decisions @hyprpi N2", "projects @hyprpi"), leading the empty box's grey hint.
+  const where = "  " + (mode === "decisions" ? `decisions${dcur ? ` ${dcur.p.unfiled ? "unfiled" : "@" + dcur.p.name} ${dcur.it.h}` : ""}` : `projects${open ? " @" + open.name : ""}`) + " · ";
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
-    : (busy ? "  " + busy : "") + (note ? (note.startsWith("✗") ? `  ${ESC}31m${note}${ESC}39m` : note.startsWith("✓") ? `  ${ESC}32m${bold(note)}${ESC}39m` : dim("  " + note)) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
+    : (busy ? "  " + busy : "") + (note ? (note.startsWith("✗") ? `  ${ESC}31m${note}${ESC}39m` : note.startsWith("✓") ? `  ${ESC}32m${bold(note)}${ESC}39m` : dim("  " + note)) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(where + (mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
       ? `text → @${open.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · ⏎ or Esc: all projects`
-      : "@project text · @project alone opens it · D1 b answers · ^F decisions · ^↑↓ highlight · /help")));
+      : "@project text · @project alone opens it · D1 b answers · ^F decisions · ^↑↓ highlight · /help"))));
   // A hint that doesn't fit after the text (a narrow panel, e.g. in the 2x2 grid) goes on the
   // rule above the box instead of off the edge (Angus: "/assign … doesn't work": it had, but the
   // confirmation was past the right edge).
