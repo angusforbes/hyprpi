@@ -183,6 +183,9 @@ async function cmdNew() {
   const here = flag("--here");
   const dd = args.indexOf("--");
   const piArgs = dd >= 0 ? args.slice(dd + 1) : [];
+  // J190: fail on a missing terminal BEFORE starting a daemon (a test with a broken PATH once started
+  // the live daemon with that PATH).
+  try { terminalCommand(cfg, { title: "pi", cwd }); } catch (e) { die(e.message); }
   await ensureDaemon();
   // The first deliberate entry point after a fresh daemon start offers to restore what was open
   // (once per daemon start; a resume / restore itself passes --id and doesn't ask).
