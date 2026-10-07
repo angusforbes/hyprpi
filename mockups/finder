@@ -76,6 +76,58 @@ function lastTurns() {
   return last;
 }
 
+// The last lines of a JSONL file (the newest `bytes` of it), parsed; [] when missing.
+function tailJson(file, bytes = 96 << 10) {
+  let fd; try { fd = fs.openSync(file, "r"); } catch { return []; }
+  try {
+    const size = fs.fstatSync(fd).size, n = Math.min(size, bytes), buf = Buffer.alloc(n);
+    fs.readSync(fd, buf, 0, n, size - n);
+    const out = [];
+    for (const line of buf.toString("utf8").split("\n")) { if (!line.startsWith("{")) continue; try { out.push(JSON.parse(line)); } catch { /* a cut line */ } }
+    return out;
+  } finally { fs.closeSync(fd); }
+}
+const firstLine = (s) => clean(String(s || "").split("\n").find((l) => l.trim()) || "");
+
+// J196 (Angus: the ">" rows should have "some helpful info like the agents and projects do … the same
+// timestamps … which worlds were inactive … what the current activity is"): per world, the time and
+// one-line subtitle each panel row shows. Read once per world from the files the panels themselves read.
+//   >Thoughts X  the newest entry in its thread (Angus or Thoughts) · Thoughts' last reply, first line
+//   >Stream X    the newest event (a room post or any agent activity, tools too) · the newest room post
+//   >Agents X    the newest turn of an agent in X · "2 working · 1 needs you · 3 idle"
+//   >Projects X  the newest card change on board X · "@name: what it's doing now"
+const panelInfoCache = {};
+function panelInfo(room, kind, ctx) {
+  const k = room + ":" + kind;
+  if (k in panelInfoCache) return panelInfoCache[k];
+  const st = stateDir();
+  let t = 0, sub = "";
+  if (kind === "thoughts") {
+    const th = tailJson(path.join(st, "thoughts", room + ".thread.jsonl"));
+    for (const e of th) if ((e.role === "you" || e.role === "thoughts") && e.ts > t) t = e.ts;
+    const r = [...th].reverse().find((e) => e.role === "thoughts" && String(e.text || "").trim()) || [...th].reverse().find((e) => e.role === "you");
+    if (r) { // its first line (the next one too when the first is a short lead-in like "Done (J192):"), markdown marks off
+      const ls = String(r.text).replace(/^(?:↩ from|↪ to) [^\n]+\n/, "").split("\n").map((x) => x.replace(/^\s*(?:#+|>|[-*•]|\d+\.)\s+/, "").replace(/\*\*|__|`/g, "").trim()).filter(Boolean);
+      sub = clean(ls[0] && ls[0].length < 30 && ls[1] ? ls[0] + " " + ls[1] : ls[0] || "");
+    }
+  } else if (kind === "stream") {
+    const posts = tailJson(path.join(st, "rooms", room + ".jsonl")), act = tailJson(path.join(st, "activity", room + ".jsonl"), 32 << 10);
+    for (const e of [...posts, ...act]) if (e.ts > t) t = e.ts;
+    const p = [...posts].reverse().find((e) => String(e.text || "").trim());
+    if (p) sub = clean(`${p.author?.name || "?"}: ${firstLine(p.text)}`);
+  } else if (kind === "agents") {
+    const as = ctx.agents.filter((a) => a.room === room && !a.parked);
+    for (const a of as) t = Math.max(t, ctx.turns[a.id] || a.since || 0);
+    const n = (m) => as.filter((a) => markOf(a) === m).length;
+    sub = [[n("×"), "needs you"], [n("●") + n("◐"), "working"], [n("✓"), "done"], [n("○"), "idle"]].filter(([c]) => c).map(([c, w]) => `${c} ${w}`).join(" · ") || "no live agents";
+  } else if (kind === "board") {
+    const ps = (ctx.boards[room]?.projects || []).filter((p) => p.status !== "archived");
+    const p = ps.reduce((b, x) => ((x.updated || x.created || 0) > (b?.updated || b?.created || 0) ? x : b), null);
+    if (p) { t = p.updated || p.created || 0; sub = clean(`@${p.name}: ${p.short || p.where?.text || p.title || ""}`); }
+  }
+  return (panelInfoCache[k] = { t, sub });
+}
+
 // The small line under an agent's name (J23, Angus): its current or last topic. (The time is on the
 // top line: "2 mins", or "now" while it works.) A project's: what it is doing now / did last.
 function activeLine(a) {
@@ -127,7 +179,7 @@ async function rows() {
   // A project's place: its writer's workspace (Angus: "wherever the main writer agent is"); with no
   // live writer, the workspace of that world's projects panel (where Enter takes you; Angus), else
   // just the world.
-  const boardWs = {}, clients = await hypr.clients().catch(() => []);
+  const boardWs = {}, boards = {}, clients = await hypr.clients().catch(() => []);
   for (const c of clients) {
     const m = /^hyprpi-board ([A-Z])$/.exec(c.title || "");
     if (m && c.workspace?.id > 0 && !boardWs[m[1]]) boardWs[m[1]] = c.workspace.id;
@@ -142,6 +194,7 @@ async function rows() {
     if (SUMMON && room !== S.room) continue;
     let b; try { b = await request("board.get", { room }); } catch { continue; }
     if (b?.room !== room) continue;
+    boards[room] = b; // J196: the >Projects row's time and line
     for (const p of b.projects || []) {
       if (p.status === "archived") continue;
       if (SUMMON && !(p.members || []).some((id) => byId[id] && byId[id].room === S.room && !byId[id].parked)) continue; // summon: only with someone to bring
@@ -165,9 +218,12 @@ async function rows() {
     const wsWorld = ws > 0 ? WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] : "";
     if (!m || !(ws > 0) || (SUMMON && wsWorld !== S.room)) continue;
     const [icon, what] = PANEL_KIND[m[1]], loc = wsLabel(ws, WORLD_SIZE), nm = `>${what} ${m[2]}`;
-    out.push({ kind: "panel", id: c.address, room: SUMMON ? S.room : m[2], sort: nm, recent: 0, mark: "▫", glyph: "▫", label: `${icon} ${nm} · ${loc}`,
-      rich: esc(icon) + " " + font(worldColor(m[2][0]), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
-      worlds: [...new Set([wsWorld, m[2][0]])].join(""), ws, subtitle: SUMMON && ws === S.workspace ? "already here" : "" });
+    const info = panelInfo(m[2], m[1] === "router" ? "agents" : m[1] === "room" ? "stream" : m[1] === "board" ? "board" : "thoughts", { agents: l.agents || [], turns, boards });
+    const age = since(info.t);
+    out.push({ kind: "panel", id: c.address, room: SUMMON ? S.room : m[2], sort: nm, recent: 0, seen: info.t, // recent 0: the order stays as in J195 (the time is only shown)
+      mark: "▫", glyph: "▫", label: `${icon} ${nm} · ${loc}${age ? " · " + age : ""}`,
+      rich: esc(icon) + " " + font(worldColor(m[2][0]), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""), sub: "",
+      worlds: [...new Set([wsWorld, m[2][0]])].join(""), ws, subtitle: [SUMMON && ws === S.workspace ? "already here" : "", info.sub].filter(Boolean).join(" · ") });
   }
   // Summon: this world's app windows (Angus, J28: "apply this summon logic to all apps"), two lines each:
   // app + a stable tag (profile, vault, folder, cwd) · workspace · last used; below, what it shows now.
