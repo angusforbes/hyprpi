@@ -363,9 +363,11 @@ export default function thoughts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "wait_report",
     label: "Wait for reports",
-    description: "Block until the agents you spawned report (all, or any: true), or the timeout (default 300 s). No polling.",
+    description: "Wait briefly for the agents you spawned to report (all, or any: true): at most 20 s, and it ends at once when Angus writes. Their reports also arrive by themselves as messages, so don't wait long: answer Angus, and handle a report when it comes.",
     parameters: Type.Object({ ids: Type.Optional(Type.Array(Type.String())), timeout_sec: Type.Optional(Type.Number()), any: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { const t = Math.max(1, Math.min(1800, Number(p.timeout_sec) || 300)); const r: any = await call("orch.wait", { ...p, timeout_sec: t, ...T }, (t + 30) * 1000); return out(`${r.timed_out ? "Timed out. " : ""}${r.reports.map((x: any) => `## ${x.name}${x.final ? " · final" : ""}\n${x.text}`).join("\n\n") || "No reports."}${r.still_working.length ? `\n(no report yet: ${r.still_working.map((s: any) => s.name).join(", ")})` : ""}`); },
+    // J248 (Angus: "can you check on Thoughts-D? keeps hanging"): a long wait kept him queued behind a helper
+    // (232 s, 300 + 105 s) and Esc couldn't land until it returned. Capped at 20 s; his message ends it.
+    execute: async (_id: string, p: any) => { const t = Math.max(1, Math.min(20, Number(p.timeout_sec) || 20)); const r: any = await call("orch.wait", { ...p, timeout_sec: t, ...T }, (t + 30) * 1000); return out(`${r.woken ? "Angus just wrote: answer him first; the reports will come to you as messages. " : r.timed_out ? "No report yet (waits are short for Thoughts; the report arrives as a message). " : ""}${r.reports.map((x: any) => `## ${x.name}${x.final ? " · final" : ""}\n${x.text}`).join("\n\n") || "No reports."}${r.still_working.length ? `\n(no report yet: ${r.still_working.map((s: any) => s.name).join(", ")})` : ""}`); },
   });
   pi.registerTool({
     name: "close_agent",
