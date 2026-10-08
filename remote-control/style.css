@@ -67,7 +67,10 @@ a { color: var(--accent); }
   display: flex; flex-direction: column; gap: 8px;
 }
 .tw { display: flex; flex-direction: column; gap: 8px; } /* one world's thread (J45: kept per world) */
-.tw > .msg, .tw > .time { content-visibility: auto; contain-intrinsic-size: auto 60px; } /* lay out only what is on screen: switching is quick on long threads */
+/* J230 (Angus: "the phone app seems jumpy … when i scroll backwards"): no content-visibility here any more.
+   Off-screen entries were guessed at 60 px and grew to their real height as they scrolled into view, so the
+   thread above him kept changing size while he scrolled back, and every change needed a scroll correction
+   (which on iOS stops momentum). Each world's box is drawn once and kept, so laying it all out costs once. */
 .msg { flex: none; max-width: 100%; overflow-wrap: anywhere; } /* flex: none, or overflow:hidden lines shrink to 0 */
 .you { align-self: flex-end; max-width: 85%; background: var(--faint); border: 1px solid var(--line); border-radius: 16px 16px 4px 16px; padding: 7px 12px; white-space: pre-wrap; }
 .you .via { font-size: var(--fs-small); color: var(--dim); margin-left: 6px; }
@@ -130,13 +133,14 @@ details.card[open] summary { margin-bottom: 4px; }
 .md th, .md td { border: 1px solid var(--line); padding: 3px 7px; text-align: left; }
 
 /* ---- the Strm tab (J49): one line per event; a tap opens it in place ---- */
-.ev { padding: 5px 2px; /* J153: no divider line (was border-bottom: 1px solid var(--faint)) */ cursor: pointer; -webkit-tap-highlight-color: transparent; content-visibility: auto; contain-intrinsic-size: auto 30px; }
+.ev { padding: 5px 2px; /* J153: no divider line (was border-bottom: 1px solid var(--faint)) */ cursor: pointer; -webkit-tap-highlight-color: transparent; content-visibility: auto; contain-intrinsic-size: auto 22px; } /* J230: 22 = a closed row's real content height (32 px with the padding; the guess excludes padding). It was 30, so each row shrank 8 px as it scrolled into view and Strm crept while he scrolled back */
 .sline { display: flex; gap: 6px; align-items: baseline; font-size: var(--fs-body); white-space: nowrap; overflow: hidden; }
 .st { flex: none; font-size: var(--fs-small); color: var(--dim); font-variant-numeric: tabular-nums; }
 .swho { flex: none; font-weight: 650; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
 .sone { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
 .k-turn .sone, .k-topic .sone, .k-board .sone, .k-joined .sone, .k-moved .sone { color: var(--dim); }
-.ev.open { background: var(--faint); border-radius: 8px; }
+.ev.open { background: var(--faint); border-radius: 8px; content-visibility: visible; } /* J230: an opened (tall) row is always laid out, never guessed at one line */
+.sline .tx { line-height: 1; } /* J230: a fallback-font glyph (↩︎) made its row 34 px, not 32: the rows' height guess (22 + padding) fits every closed row */
 .ev.open + .ev.open { border-top: 1px solid #fff; } /* J156: one thin white line between two opened posts that touch */
 .ev.open .sone { display: none; }
 .sfull { font-size: var(--fs-body); padding: 4px 2px 2px; white-space: normal; cursor: auto; }

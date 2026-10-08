@@ -105,6 +105,7 @@ function boxOf(w) {
 }
 function threadBox(w) {
   const box = boxOf(w);
+  if (box.hidden) delete placeOf(w).st; // J230: #thread's scrollTop was another world's; its place is by entry, not by pixel
   for (const b of thread.querySelectorAll(":scope > .tw")) b.hidden = b !== box;
   return box;
 }
@@ -179,7 +180,7 @@ function remember() {
   if (p.pinned) { newestBtn.hidden = true; return; }
   const tr = thread.getBoundingClientRect();
   const el = [...box.children].find((e) => e.dataset.k && e.getBoundingClientRect().bottom > tr.top + 1);
-  if (el) { p.k = el.dataset.k; p.off = el.getBoundingClientRect().top - tr.top; }
+  if (el) { p.k = el.dataset.k; p.off = el.getBoundingClientRect().top - tr.top; p.st = thread.scrollTop; }
 }
 thread.addEventListener("scroll", () => { if (Date.now() - lastUser < 1200) { lastUser = Date.now(); remember(); } }, { passive: true }); // his scrolling, momentum included
 function hold() {
@@ -188,8 +189,11 @@ function hold() {
   if (p.pinned) { const to = thread.scrollHeight - thread.clientHeight; if (Math.abs(thread.scrollTop - to) > 1) thread.scrollTop = to; return; }
   const el = p.k && box.querySelector(`[data-k="${CSS.escape(p.k)}"]`);
   if (!el) return;
-  const d = el.getBoundingClientRect().top - thread.getBoundingClientRect().top - p.off;
-  if (Math.abs(d) >= 1) thread.scrollTop += d;
+  // J230: a scroll of his that its scroll event hasn't reported yet (remember() runs on that event, one
+  // frame later) is his, not a layout change: count it, or hold() would scroll him back where he was.
+  const moved = p.st === undefined ? 0 : thread.scrollTop - p.st;
+  const d = el.getBoundingClientRect().top - thread.getBoundingClientRect().top - (p.off - moved);
+  if (Math.abs(d) >= 1) { thread.scrollTop += d; if (p.st !== undefined) p.st += d; }
 }
 const holdRO = new ResizeObserver(() => hold());
 holdRO.observe(thread);
@@ -826,6 +830,11 @@ let shown = []; // the rows on screen (for taps)
 function renderStream({ restore = false } = {}) {
   if (view !== "stream") return;
   const st = streamOf(world), atEnd = streamNearEnd(), was = streamEl.scrollTop;
+  // J230: a live redraw keeps him on the same event at the same offset (the oldest events drop off the
+  // top as new ones come, so a pixel scrollTop alone slid him a row or more each time).
+  const top0 = streamEl.getBoundingClientRect().top;
+  const a0 = !restore && !atEnd && [...streamEl.querySelectorAll(".ev[data-k]")].find((e) => e.getBoundingClientRect().bottom > top0 + 1);
+  const anc = a0 ? { k: a0.dataset.k, off: a0.getBoundingClientRect().top - top0 } : null;
   const on = filtering(st), allOn = on && st.all && st.all.q === st.q && st.all.kinds === [...st.kinds].join(",");
   let list = st.items, f = null, unknown = [], head = "", foot = "";
   if (allOn) {
@@ -851,8 +860,8 @@ function renderStream({ restore = false } = {}) {
   if (st.pinEnd || (restore && st.scroll == null) || (!restore && atEnd)) streamToEnd(); // at the end: follow new events
   else {
     streamEl.scrollTop = restore ? st.scroll : was;
-    const el = restore && st.anchor && streamEl.querySelector(`.ev[data-k="${CSS.escape(st.anchor.k)}"]`);
-    if (el) streamEl.scrollTop += el.getBoundingClientRect().top - streamEl.getBoundingClientRect().top - st.anchor.off;
+    const A = restore ? st.anchor : anc, el = A && streamEl.querySelector(`.ev[data-k="${CSS.escape(A.k)}"]`);
+    if (el) { const d = el.getBoundingClientRect().top - streamEl.getBoundingClientRect().top - A.off; if (Math.abs(d) >= 1) streamEl.scrollTop += d; }
   }
   if (st.pinEnd && st.loaded && !(allOn && st.all.loading)) st.pinEnd = false;
 }
@@ -966,6 +975,7 @@ const sessAgent = () => { for (const l of agentLists.values()) { const a = l.age
 const sessNearEnd = () => sessEl.scrollHeight - sessEl.scrollTop - sessEl.clientHeight < 80;
 async function openSession(id) {
   sess.agent = id; sess.items = []; sess.results = new Map(); sess.before = 0; sess.more = false; sess.end = 0;
+  splace.pinned = true; splace.el = null;
   loadSessDraft(id); // J194: this agent's own unsent draft (or an empty box)
   setView("session");
   sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">loading…</div>`;
@@ -985,25 +995,78 @@ async function pollSession() {
     if (sess.agent !== id) return;
     renderSessionHead();
     if (!r.items.length) { sess.end = r.end; return; }
-    const atEnd = sessNearEnd();
     sess.items.push(...r.items); sess.end = r.end;
-    renderSession({ toEnd: atEnd });
-    if (!atEnd) $("#snew").hidden = false; // he's reading further up: don't move him
+    addSession(r.items, "end"); // J230: added in place (was: the whole page redrawn every poll, images and all)
+    if (!splace.pinned && r.items.some((it) => it.k !== "result")) $("#snew").hidden = false; // he's reading further up: don't move him
   } catch { /* the next poll tries again */ }
 }
 async function loadOlder() {
   if (!sess.more || sess.loading) return;
   sess.loading = true;
-  const id = sess.agent, h0 = sessEl.scrollHeight, t0 = sessEl.scrollTop;
+  const id = sess.agent;
   try {
     const r = await call("GET", `/api/session?agent=${encodeURIComponent(id)}&before=${sess.before}`);
     if (sess.agent !== id) return;
     sess.items = r.items.concat(sess.items); sess.before = r.before; sess.more = r.more;
-    renderSession();
-    sessEl.scrollTop = t0 + (sessEl.scrollHeight - h0); // keep his place
+    // J230: put in front of what's there, and he stays on the same item at the same offset (was: the
+    // scrollTop from before the fetch put back, which undid whatever he had scrolled meanwhile).
+    if (!splace.pinned) sRemember();
+    addSession(r.items, "start");
   } finally { sess.loading = false; }
 }
-sessEl.addEventListener("scroll", () => { if (sessEl.scrollTop < 300) loadOlder(); if (sessNearEnd()) $("#snew") && ($("#snew").hidden = true); }, { passive: true });
+sessEl.addEventListener("scroll", () => {
+  if (Date.now() - sUser < 1200) { sUser = Date.now(); sRemember(); } // his scrolling, momentum included
+  if (sessEl.scrollTop < 300) loadOlder();
+  if (sessNearEnd()) { $("#snew") && ($("#snew").hidden = true); }
+}, { passive: true });
+// J230 (Angus: "the phone app seems jumpy"): the session page keeps his place like the Thgt thread does
+// (hold()): at the end (it follows new turns), or an item and its offset. Anything that moves the
+// layout without him (older turns added in front, images loading, a tool's result filled in) is
+// followed by sHold(), which puts him back. Safari has no scroll anchoring of its own.
+const splace = { pinned: true, el: null, off: 0, st: undefined };
+let sUser = 0;
+for (const t of ["touchstart", "touchmove", "wheel", "pointerdown", "keydown"]) sessEl.addEventListener(t, () => { sUser = Date.now(); }, { passive: true });
+function sRemember() {
+  splace.pinned = sessNearEnd(); if (splace.pinned) return;
+  const tr = sessEl.getBoundingClientRect(), body = sessEl.querySelector(".sbody"); if (!body) return;
+  // the first item that STARTS on screen (an item cut off at the top may still grow, an image in it loading)
+  const kids = [...body.children], el = kids.find((e) => e.getBoundingClientRect().top >= tr.top) || kids.findLast((e) => e.getBoundingClientRect().top < tr.top);
+  if (el) { splace.el = el; splace.off = el.getBoundingClientRect().top - tr.top; splace.st = sessEl.scrollTop; }
+}
+function sHold() {
+  if (view !== "session") return;
+  if (splace.pinned) { const to = sessEl.scrollHeight - sessEl.clientHeight; if (sessEl.scrollTop < to - 1) sessEl.scrollTop = to; return; }
+  const el = splace.el; if (!el?.isConnected) return;
+  const moved = splace.st === undefined ? 0 : sessEl.scrollTop - splace.st; // a scroll of his not yet reported
+  const d = el.getBoundingClientRect().top - sessEl.getBoundingClientRect().top - (splace.off - moved);
+  if (Math.abs(d) >= 1) { sessEl.scrollTop += d; if (splace.st !== undefined) splace.st += d; }
+}
+const sRO = new ResizeObserver(() => sHold());
+// Every item is observed (an image loading in one item while another shrinks can leave the whole body's
+// height unchanged), and every image load or failure puts him back too.
+const sObserve = (nodes) => { for (const n of nodes) if (n.nodeType === 1) sRO.observe(n); };
+sessEl.addEventListener("load", () => sHold(), true); sessEl.addEventListener("error", () => sHold(), true);
+// New items into the drawn page: at the end (a poll) or in front (older turns). A result for a tool
+// already on the page fills that tool in place (its output, an image it returned, err), keeping it
+// open if he opened it.
+function addSession(items, where) {
+  const body = sessEl.querySelector(".sbody"); if (!body) return renderSession();
+  for (const it of items) if (it.k === "result") sess.results.set(it.id, it);
+  for (const it of items) {
+    if (it.k !== "result") continue;
+    const el = body.querySelector(`.stool[data-id="${CSS.escape(it.id)}"]`), tool = el && sess.items.find((x) => x.k === "tool" && x.id === it.id);
+    if (!tool) continue;
+    const n = nodesOf(sessItemHtml(tool))[0], open = !el.querySelector(".stx")?.hidden;
+    el.classList.toggle("err", n.classList.contains("err"));
+    const ni = n.querySelector(".simgs"); if (ni && !el.querySelector(".simgs")) el.querySelector(".stl").after(ni);
+    const nx = n.querySelector(".stx"); nx.hidden = !open; el.querySelector(".stx").replaceWith(nx);
+  }
+  const html = items.filter((it) => it.k !== "result").map(sessItemHtml).join("");
+  if (html) { const nodes = nodesOf(html); where === "start" ? body.prepend(...nodes) : body.append(...nodes); sObserve(nodes); }
+  if (!sess.more) sessEl.querySelector(".solder")?.remove();
+  renderSessionHead();
+  sHold();
+}
 // A file it read: the cached thumbnail (opens in Fils). If the file isn't servable (in /tmp, outside the
 // allowed folders, or deleted since: Pocket's review), the session's own copy of what it saw (the tool
 // result's inline image), else a small label. An inline image: from the session.
@@ -1012,12 +1075,18 @@ sessEl.addEventListener("scroll", () => { if (sessEl.scrollTop < 300) loadOlder(
 // (never upscaled past their own size, capped on a desktop); a file's small cached thumbnail shows first
 // (stretched to that width, class lo) and the full file replaces it once loaded. A tap opens the viewer.
 const sessImgUrl = (im) => `/api/session/img?agent=${encodeURIComponent(sess.agent)}&at=${im.at}&i=${im.i}`;
+// J230: with its pixel size known (the server reads it), an image has its final size before it loads (the
+// screen's width, never past its own pixels, ≤ 75vh), so nothing moves when it arrives. Unknown: as before.
+const sdim = (im) => im.w > 0 && im.h > 0 ? ` style="width:min(100%,${+im.w}px);aspect-ratio:${+im.w}/${+im.h}"` : "";
 const sessThumb = (im, fallback) => im.file
-  ? `<img class="sthumb lo" loading="lazy" src="/api/thumb?path=${encodeURIComponent(im.file)}" data-file="${esc(im.file)}"${fallback ? ` data-fb="${esc(sessImgUrl(fallback))}"` : ""} alt="" onload="window.__sthumbLoad(this)" onerror="window.__sthumbFail(this)">`
-  : `<img class="sthumb" loading="lazy" src="${esc(sessImgUrl(im))}" alt="" onerror="window.__sthumbFail(this)">`;
+  ? `<img class="sthumb lo"${sdim(im)} src="/api/thumb?path=${encodeURIComponent(im.file)}" data-file="${esc(im.file)}"${fallback ? ` data-fb="${esc(sessImgUrl(fallback))}"` : ""} alt="" onload="window.__sthumbLoad(this)" onerror="window.__sthumbFail(this)">`
+  : `<img class="sthumb"${sdim(im)} loading="lazy" src="${esc(sessImgUrl(im))}" alt="" onerror="window.__sthumbFail(this)">`;
+// J230: thumbnails load when drawn (they're small), so the page's heights settle at once rather than
+// while he scrolls back; the full file replaces one only when it comes near the screen (same width).
+const upObs = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { upObs.unobserve(e.target); e.target.src = "/file?path=" + encodeURIComponent(e.target.dataset.file); } }, { root: sessEl, rootMargin: "100% 0px" });
 window.__sthumbLoad = (img) => {
   if (!img.dataset.file) { img.classList.remove("lo"); return; }
-  if (!img.dataset.up) { img.dataset.up = "1"; img.src = "/file?path=" + encodeURIComponent(img.dataset.file); return; } // the thumbnail is up: now the full file
+  if (!img.dataset.up) { img.dataset.up = "1"; upObs.observe(img); return; } // the thumbnail is up: the full file once it's near the screen (J230)
   img.classList.remove("lo");
 };
 window.__sthumbFail = (img) => {
@@ -1036,7 +1105,7 @@ function sessItemHtml(it) {
   if (it.k === "text") return `<div class="msg thoughts"><div class="md">${md(it.text)}</div></div>`;
   if (it.k === "tool") {
     const r = sess.results.get(it.id);
-    const imgs = it.file ? [{ file: it.file }] : ((r?.imgs) || []);
+    const imgs = it.file ? [{ file: it.file, w: it.fw || r?.imgs?.[0]?.w, h: it.fh || r?.imgs?.[0]?.h }] : ((r?.imgs) || []); // J230: a file gone from disk takes the size of the session's copy
     return `<div class="stool${r?.err ? " err" : ""}" data-id="${esc(it.id)}"><div class="stl">${esc("↳ " + it.line)}</div>${imgs.length ? `<div class="simgs">${imgs.map((im) => sessThumb(im, it.file ? r?.imgs?.[0] : null)).join("")}</div>` : ""}<div class="stx" hidden><pre>${esc(it.args)}</pre>${r ? `<pre class="sres">${esc(r.text || "(no output)")}</pre>` : ""}</div></div>`;
   }
   if (it.k === "note") return `<div class="msg small note${it.err ? " error" : ""}">${esc(it.text)}</div>`;
@@ -1055,14 +1124,16 @@ function renderSession({ toEnd = false } = {}) {
   const projects = (a.projects || []).map((p) => `${esc(p.icon || "")} @${esc(p.name)}`).join(" ");
   const body = sess.items.filter((it) => it.k !== "result").map(sessItemHtml).join("");
   sessEl.innerHTML = `<div id="shead" class="phead"><div class="shrow"><span class="pic">${esc(a.icon || "")}</span><span class="pname">${agentName(a)}</span><span class="sst"></span><button id="sstop" type="button" hidden title="stop its turn (like Esc)">Stop</button></div><div class="ssub">${esc([a.model, a.thinking].filter(Boolean).join(" · "))}${projects ? " · " + projects : ""}</div></div>`
-    + (sess.more ? `<div class="small" style="text-align:center;padding:8px">↑ older turns load as you scroll up</div>` : "")
+    + (sess.more ? `<div class="small solder" style="text-align:center;padding:8px">↑ older turns load as you scroll up</div>` : "")
     + `<div class="sbody">${body}</div><button id="snew" type="button" hidden>new below ↓</button>`;
   linkNames(sessEl.querySelector(".sbody")); textGlyphs(sessEl);
   renderSessionHead();
-  if (toEnd) { sessEl.scrollTop = sessEl.scrollHeight; requestAnimationFrame(() => { sessEl.scrollTop = sessEl.scrollHeight; }); }
+  sRO.disconnect(); sRO.observe(sessEl.querySelector(".sbody")); sObserve(sessEl.querySelector(".sbody").children); // J230: images loading, etc. → sHold()
+  if (toEnd) splace.pinned = true;
+  sHold();
 }
 sessEl.addEventListener("click", async (e) => {
-  if (e.target.id === "snew") { sessEl.scrollTop = sessEl.scrollHeight; e.target.hidden = true; return; }
+  if (e.target.id === "snew") { splace.pinned = true; sHold(); e.target.hidden = true; return; }
   if (e.target.id === "sstop") { try { await call("POST", "/api/agent/stop", { agent: sess.agent }); note("stopped"); } catch (err) { note("✗ " + err.message); } return; }
   const th = e.target.closest(".sthumb");
   if (th) return openViewer(th.dataset.file ? "/file?path=" + encodeURIComponent(th.dataset.file) : th.getAttribute("src")); // J221: the viewer over the session (✕, a tap beside it, swipe down or back closes)

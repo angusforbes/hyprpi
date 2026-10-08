@@ -23,6 +23,44 @@ function turnStart(e) {
   if (e.type === "custom_message" && e.display !== false && !/^hyprpi-(talk-reply|note|activity|phone-cmd|ignore)$/.test(e.customType || "")) return true;
   return false;
 }
+// J230: an image's pixel size from its first bytes (png, jpeg, gif, webp), so the phone can give it its
+// final size before it loads and nothing moves when it arrives. null when unknown.
+export function imgSize(b) {
+  try {
+    if (b.length > 24 && b.readUInt32BE(0) === 0x89504e47) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+    if (b.length > 10 && b.toString("latin1", 0, 3) === "GIF") return { w: b.readUInt16LE(6), h: b.readUInt16LE(8) };
+    if (b.length > 30 && b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WEBP") {
+      const f = b.toString("latin1", 12, 16);
+      if (f === "VP8X") return { w: 1 + b.readUIntLE(24, 3), h: 1 + b.readUIntLE(27, 3) };
+      if (f === "VP8 ") return { w: b.readUInt16LE(26) & 0x3fff, h: b.readUInt16LE(28) & 0x3fff };
+      if (f === "VP8L") { const n = b.readUInt32LE(21); return { w: 1 + (n & 0x3fff), h: 1 + ((n >> 14) & 0x3fff) }; }
+    }
+    if (b[0] === 0xff && b[1] === 0xd8) { // JPEG: the first SOFn marker (EXIF rotation is ignored: rare for screenshots)
+      let i = 2;
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xff) { i++; continue; }
+        const m = b[i + 1];
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) };
+        if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+        i += 2 + b.readUInt16BE(i + 2);
+      }
+    }
+  } catch { /* truncated */ }
+  return null;
+}
+const sizeCache = new Map(); // path → { key: mtime:size, dim }
+function fileDims(p) {
+  try {
+    const st = fs.statSync(p), key = `${st.mtimeMs}:${st.size}`, c = sizeCache.get(p);
+    if (c?.key === key) return c.dim;
+    const fd = fs.openSync(p, "r"), b = Buffer.alloc(Math.min(st.size, 256 << 10));
+    try { fs.readSync(fd, b, 0, b.length, 0); } finally { fs.closeSync(fd); }
+    const dim = imgSize(b); if (sizeCache.size > 2000) sizeCache.clear(); sizeCache.set(p, { key, dim });
+    return dim;
+  } catch { return null; }
+}
+const dataDims = (d) => { try { return imgSize(Buffer.from(String(d || "").slice(0, 350000), "base64")); } catch { return null; } };
+const withDims = (o, d) => d?.w > 0 && d?.h > 0 ? { ...o, w: d.w, h: d.h } : o;
 const textOf = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.filter((x) => x.type === "text").map((x) => x.text).join("\n") : "";
 
 // One tool call as one line ("read files.js", "ran git log …").
@@ -47,20 +85,21 @@ function itemsOf(e, at) {
   if (e.type === "message") {
     const m = e.message || {};
     if (m.role === "user") {
-      const imgs = Array.isArray(m.content) ? m.content.map((c, i) => c.type === "image" ? { at, i } : null).filter(Boolean) : [];
+      const imgs = Array.isArray(m.content) ? m.content.map((c, i) => c.type === "image" ? withDims({ at, i }, dataDims(c.data)) : null).filter(Boolean) : [];
       out.push({ k: "in", from: "Angus", text: clip(textOf(m.content), 6000), imgs, ts });
     } else if (m.role === "assistant") {
       for (const c of m.content || []) {
         if (c.type === "text" && c.text?.trim()) out.push({ k: "text", text: clip(c.text, 12000), ts });
         else if (c.type === "toolCall") {
           const args = c.arguments || {}, p = args.path || args.file_path;
-          out.push({ k: "tool", id: c.id, name: c.name, line: toolLine(c.name, args), args: clip(JSON.stringify(args, null, 1), 1200), file: p && IMG_FILE.test(String(p)) ? String(p).replace(/^~/, home) : "", ts });
+          const file = p && IMG_FILE.test(String(p)) ? String(p).replace(/^~/, home) : "", d = file ? fileDims(file) : null;
+          out.push({ k: "tool", id: c.id, name: c.name, line: toolLine(c.name, args), args: clip(JSON.stringify(args, null, 1), 1200), file, ...(d ? { fw: d.w, fh: d.h } : {}), ts });
         }
       }
       if (m.stopReason === "aborted") out.push({ k: "note", text: "interrupted", ts });
       else if (m.stopReason === "error" || m.errorMessage) out.push({ k: "note", text: "✗ " + one(m.errorMessage || "error", 160), err: true, ts });
     } else if (m.role === "toolResult") {
-      const imgs = (m.content || []).map((c, i) => c.type === "image" ? { at, i } : null).filter(Boolean);
+      const imgs = (m.content || []).map((c, i) => c.type === "image" ? withDims({ at, i }, dataDims(c.data)) : null).filter(Boolean);
       out.push({ k: "result", id: m.toolCallId, err: !!m.isError, text: clip(textOf(m.content), 900), imgs, ts });
     }
   } else if (e.type === "custom_message") {
