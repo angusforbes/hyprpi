@@ -254,6 +254,9 @@ export default function hyprpi(pi: ExtensionAPI) {
         reply({ ok: true, started, aborted: running, dropped, delivered: deliver });
       } catch (e) { reply({ ok: false, error: (e as Error).message }); }
     } else if (event === "talk") {
+      // J272 fix 7 (StallTest1): Angus's decision overtakes; what the same Thoughts sent earlier and is still held
+      // here is marked as older than it, so a stale "hold" that starts later isn't obeyed blindly.
+      if (d.decision) for (const m of held) if (m?.details?.from?.id === d.from?.id && !m.details.olderNote && typeof m.content === "string") { m.details.olderNote = true; m.content = `[older than Angus's decision that came after it (re ${d.request_id}): it may be out of date; the decision wins]\n` + m.content; }
       const how = d.mode === "demand"
         ? `${d.from.name} is waiting for your answer. Reply once with talk_reply(request_id="${d.request_id}", text=...). A refusal is a valid answer.`
         : `Reply (optional) with talk_reply(request_id="${d.request_id}", text=...).`;
