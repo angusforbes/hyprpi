@@ -130,7 +130,7 @@ Details, the API and the upload limits: [remote-control/README.md](remote-contro
 
 ![The MCP gateway: many agents share one set of tool servers, started only when used](docs/img/gateway.png)
 
-The MCP gateway keeps one shared, lazily started copy of each stdio MCP server for all your pi agents. pi starts every enabled MCP server once per agent process, so with many parallel agents the idle server processes and their memory add up quickly. With the gateway a server runs only while it is being used, so at rest no server processes are running. Measured on the machine hyprpi is developed on: about 30 parallel agents, each starting its own servers, meant 108 server processes and 7.7 GB; with the gateway that is 0 server processes at rest, and the gateway itself uses about 76 MB. It is plain Node with no hyprpi dependency, so it also works with any other pi setup.
+The MCP gateway keeps one shared, lazily started copy of each stdio MCP server for all your pi agents. pi starts every enabled MCP server once per agent process, so with many parallel agents the idle server processes and their memory add up quickly. With the gateway a server runs only while it is being used, so at rest no server processes are running. With a few dozen agents that is the difference between dozens of MCP server processes using gigabytes of memory and nothing at all while idle. It is plain Node with no hyprpi dependency, so it also works with any other pi setup.
 
 ### What you can do
 
