@@ -151,7 +151,7 @@ Details: [mcp-gateway/README.md](mcp-gateway/README.md).
 ## Coming soon
 
 - **Dictation routing.** Speak to your desktop and have it go to the right place: the world's Thoughts, a named agent ("Mira, …") or a project. A first version sends dictation to Thoughts or to a named agent; routing everything by voice is still being built.
-- **Sandboxing.** Run agents in containers, so an agent working on untrusted code can't touch the rest of your machine. Plan: [docs/sandbox-plan.md](docs/sandbox-plan.md).
+- **Sandboxing.** Run agents in containers, so an agent working on untrusted code can't touch the rest of your machine. Agents can already run in a Docker container ([docker/](docker/)); the sandboxing itself is still being designed.
 
 ## Commands
 
