@@ -1116,14 +1116,14 @@ function renderSessionHead() {
   const status = { "●": "working", "◐": "background", "×": "needs you", "✓": "done", "○": "idle", "◌": a.status }[a.mark] || a.status;
   h.querySelector(".sst").textContent = `${a.mark} ${status}`;
   const working = a.mark === "●";
-  $("#sstop").hidden = !working; sint.hidden = !working;
+  const st = $("#sstop"); st.hidden = !working; if (!working) { clearTimeout(st._t); st.classList.remove("arm"); st.textContent = "■ stop"; } sint.hidden = !working;
 }
 function renderSession({ toEnd = false } = {}) {
   const a = sessAgent() || { name: "agent", icon: "", mark: "○" };
   for (const it of sess.items) if (it.k === "result") sess.results.set(it.id, it);
   const projects = (a.projects || []).map((p) => `${esc(p.icon || "")} @${esc(p.name)}`).join(" ");
   const body = sess.items.filter((it) => it.k !== "result").map(sessItemHtml).join("");
-  sessEl.innerHTML = `<div id="shead" class="phead"><div class="shrow"><span class="pic">${esc(a.icon || "")}</span><span class="pname">${agentName(a)}</span><span class="sst"></span><button id="sstop" type="button" hidden title="stop its turn (like Esc)">Stop</button></div><div class="ssub">${esc([a.model, a.thinking].filter(Boolean).join(" · "))}${projects ? " · " + projects : ""}</div></div>`
+  sessEl.innerHTML = `<div id="shead" class="phead"><div class="shrow"><button id="sback" type="button" aria-label="back to the agents" title="back to the agents">‹</button><span class="pic">${esc(a.icon || "")}</span><span class="pname">${agentName(a)}</span><span class="sst"></span><button id="sstop" type="button" hidden title="stop its turn (like Esc): tap, then tap again to confirm">■ stop</button></div><div class="ssub">${esc([a.model, a.thinking].filter(Boolean).join(" · "))}${projects ? " · " + projects : ""}</div></div>`
     + (sess.more ? `<div class="small solder" style="text-align:center;padding:8px">↑ older turns load as you scroll up</div>` : "")
     + `<div class="sbody">${body}</div><button id="snew" type="button" hidden>new below ↓</button>`;
   linkNames(sessEl.querySelector(".sbody")); textGlyphs(sessEl);
@@ -1134,7 +1134,16 @@ function renderSession({ toEnd = false } = {}) {
 }
 sessEl.addEventListener("click", async (e) => {
   if (e.target.id === "snew") { splace.pinned = true; sHold(); e.target.hidden = true; return; }
-  if (e.target.id === "sstop") { try { await call("POST", "/api/agent/stop", { agent: sess.agent }); note("stopped"); } catch (err) { note("✗ " + err.message); } return; }
+  // J235 (Angus: "Why is there a big red stop button … I feel like we're about to go back to the agent list"):
+  // ‹ at the top left goes back to the Agnt list; Stop is a small grey chip by the status that needs a
+  // second tap within 3 s ("stop it?") before it stops the turn.
+  if (e.target.id === "sback") { openAgent.delete(world); return setView("agents"); }
+  if (e.target.id === "sstop") {
+    const b = e.target;
+    if (!b.classList.contains("arm")) { b.classList.add("arm"); b.textContent = "stop it?"; clearTimeout(b._t); b._t = setTimeout(() => { b.classList.remove("arm"); b.textContent = "■ stop"; }, 3000); return; }
+    clearTimeout(b._t); b.classList.remove("arm"); b.textContent = "■ stop";
+    try { await call("POST", "/api/agent/stop", { agent: sess.agent }); note("stopped"); } catch (err) { note("✗ " + err.message); } return;
+  }
   const th = e.target.closest(".sthumb");
   if (th) return openViewer(th.dataset.file ? "/file?path=" + encodeURIComponent(th.dataset.file) : th.getAttribute("src")); // J221: the viewer over the session (✕, a tap beside it, swipe down or back closes)
   if (e.target.closest("#shead")) { const id = sess.agent, a = sessAgent(); if (a) openAgent.set(world, id); return setView("agents"); } // the header: back to its summary
