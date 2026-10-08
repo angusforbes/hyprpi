@@ -52,6 +52,8 @@ case "$CMD" in
   status)
     systemctl --user is-active "hyprpi-$WORLD-helper" hyprpi-sbx-relay || true
     sbx ls 2>/dev/null | awk -v s="$SB" 'NR==1 || $1==s'
-    in_sb 'hyprpi list' 2>/dev/null || true ;;
+    # J279: only look inside when it is already running (sbx exec would start a stopped sandbox)
+    if sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}'; then in_sb 'hyprpi list' 2>/dev/null || true
+    else echo "($SB is not running: not started just to look; start: docker/world/world.sh start)"; fi ;;
   *) echo "usage: world.sh start|new NAME|stop|status [WORLD]" >&2; exit 2 ;;
 esac
