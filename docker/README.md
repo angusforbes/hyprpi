@@ -61,6 +61,16 @@ A Docker Sandboxes (`sbx` / `pi-sbx`) sandbox can't reach anything on the laptop
 - Log: `~/.local/state/hyprpi/sbx-relay/log.jsonl` (metadata and a hash of each message; `"log_text": true` in the config keeps the text).
 - Security: reviewed by a second model family (J244); the drop-box folders are pinned as file descriptors so a sandbox can't swap them for symlinks to host files, every request is size- and rate-limited, and sandbox text is stripped of control characters and quoted line by line.
 
+## A sandboxed world (J262): world G
+
+World G is a whole hyprpi world inside ONE Docker Sandboxes sandbox (`world-g`): its own hyprpi daemon, agents, panels and Thoughts-G run inside and work together normally. Their windows are host kitty windows on G's workspaces (61–69). The only links to the host: a window helper for G's own windows, and the drop-box relay to the other worlds (messages out of G wait for Angus's approval).
+
+- Inside the sandbox, `hyprctl` and `kitty` are stand-ins (`docker/world/bin/`) that ask the host's window helper (`docker/world/world-helper.mjs`) through a drop-box; the helper only sees and touches G's windows, only on G's workspaces, from a small allowlist of window operations. New windows run `sbx exec -it world-g …/g-run TOKEN` (the command itself stays inside the sandbox), with a locked-down kitty config (`sandbox-kitty.conf`) and an output filter (`g-filter.py`) so the sandbox can't reach the host through the terminal (no clipboard, links, graphics file reads or host shells).
+- `docker/world/g-gate.mjs` inside the sandbox is G's gateway agent "Outside": "Name: text" to Outside goes to agent Name in another world (held for approval); messages from other worlds to "world-g" starting "Name: " reach that G agent, anything else reaches Thoughts-G.
+- Config: `~/.config/hyprpi/worlds/world-g.json` (sandbox, workspace, host-only inbox, workspace range) and a `world-g` entry in `~/.config/hyprpi/sbx-relay.json`. Inside the sandbox: Pi and a model key in `~/.pi/agent`, `~/.config/hyprpi/config.json` (Pi, models), and read-only mounts of this checkout and the two host-only inboxes.
+- Start (manual, after a reboot): `docker/world/world.sh start`, then `docker/world/world.sh new NAME` for each agent. Stop: `docker/world/world.sh stop`. Status: `docker/world/world.sh status`.
+- Approving a held message is Angus's: click the toast (a terminal asks y/n) or run `docker/sbx-relay.mjs approve ID` in his own terminal; an agent's approve is refused (accident prevention, not authentication).
+
 ## How hyprpi handles it (daemon and extension)
 
 - **Window**: Pi in a container reports pid 1 and hangs off containerd-shim, so the usual walk UP from its

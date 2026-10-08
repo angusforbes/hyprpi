@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+// kitty stand-in inside a sandboxed hyprpi world (J262). hyprpi (`hyprpi new`, the panel launchers) runs
+// `kitty [options] [--] COMMAND…` here; this saves COMMAND, its folder and environment in a launch file
+// inside the sandbox (~/.hyprpi-g/launch/<token>.json) and asks the host's world-helper to open a real
+// kitty window on the host running `sbx exec -it <sandbox> g-run <token>`, which runs it back in here.
+// The host only ever sees the token, the window kind and the workspace.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { gCall } from "../g-call.mjs";
+const a = process.argv.slice(2);
+let cls = "", dir = "", i = 0;
+const val = (s, k) => (s.startsWith(k + "=") ? s.slice(k.length + 1) : null);
+for (; i < a.length; i++) {
+  const s = a[i];
+  if (s === "--") { i++; break; }
+  if (val(s, "--class") != null) { cls = val(s, "--class"); continue; }
+  if (s === "--class") { cls = a[++i] || ""; continue; }
+  if (val(s, "--directory") != null) { dir = val(s, "--directory"); continue; }
+  if (s === "--directory" || s === "-d") { dir = a[++i] || ""; continue; }
+  if (["--config", "-c", "-o", "--override", "--title", "-T", "--name"].includes(s)) { i++; continue; }
+  if (s.startsWith("-")) continue;
+  break;
+}
+const argv = a.slice(i);
+if (!argv.length) { process.stderr.write("kitty (sandboxed world): no command\n"); process.exit(2); }
+const tui = argv.map((x) => /(agents|room|board|search)-tui\.mjs$/.exec(x)).find(Boolean);
+const kind = cls === "hyprpi.agent" ? "agent" : tui ? { agents: "router", room: "room", board: "board", search: "search" }[tui[1]] : "";
+if (!kind) { process.stderr.write(`kitty (sandboxed world): can't open a window of class "${cls}" here\n`); process.exit(2); }
+const token = crypto.randomBytes(12).toString("hex");
+const dirL = path.join(os.homedir(), ".hyprpi-g", "launch");
+fs.mkdirSync(dirL, { recursive: true, mode: 0o700 });
+fs.writeFileSync(path.join(dirL, `${token}.json`), JSON.stringify({ argv, cwd: dir || process.cwd(), env: process.env }), { mode: 0o600 });
+const ws = Number(process.env.G_WS || process.env.HYPRPI_WORKSPACE) || 0;
+try {
+  const r = await gCall({ op: "open", kind, token, ws, agent: process.env.HYPRPI_AGENT_ID || "" });
+  if (!r.ok) throw new Error(r.error || "failed");
+} catch (e) { try { fs.unlinkSync(path.join(dirL, `${token}.json`)); } catch { /* */ } process.stderr.write(`kitty (sandboxed world): ${e.message}\n`); process.exit(1); }

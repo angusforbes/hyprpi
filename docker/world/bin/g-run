@@ -1,0 +1,25 @@
+#!/usr/bin/env node
+// Runs, inside the sandbox, what bin/kitty saved under TOKEN (J262): the host's new window calls
+// `sbx exec -it <sandbox> g-run TOKEN`. A launch file is used once and deleted.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawn } from "node:child_process";
+const tok = process.argv[2] || "";
+if (!/^[0-9a-f]{24}$/.test(tok)) { console.error("g-run: bad token"); process.exit(2); }
+const f = path.join(os.homedir(), ".hyprpi-g", "launch", `${tok}.json`);
+let spec; try { spec = JSON.parse(fs.readFileSync(f, "utf8")); fs.unlinkSync(f); } catch { console.error("g-run: no such launch"); process.exit(2); }
+try { process.chdir(spec.cwd); } catch { /* stay */ }
+const c = spawn(spec.argv[0], spec.argv.slice(1), { stdio: "inherit", env: spec.env });
+c.on("exit", (code, sig) => process.exit(sig ? 1 : code ?? 0));
+c.on("error", (e) => { console.error(`g-run: ${e.message}`); process.exit(1); });
+for (const s of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(s, () => c.kill(s));
+// When the host window closes, `sbx exec` leaves this session (and its pty) alive inside the sandbox, so
+// nothing in here can tell (J262). The host's world-helper notices the window closing and writes
+// closed-<token> into the read-only inbox; then this program is ended (SIGHUP, then SIGKILL).
+const closed = path.join(process.env.HYPRPI_G_IN || "/nonexistent", `closed-${tok}`);
+setInterval(() => {
+  if (!fs.existsSync(closed)) return;
+  try { c.kill("SIGHUP"); } catch { /* */ }
+  setTimeout(() => { try { c.kill("SIGKILL"); } catch { /* */ } process.exit(1); }, 3000);
+}, 2000).unref();

@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// hyprctl stand-in inside a sandboxed hyprpi world (J262): queries and allowlisted window ops go to the
+// host's world-helper; exec_cmd runs HERE, inside the sandbox (e.g. `hyprpi new`, panel launchers), with
+// the requested workspace in G_WS so bin/kitty can ask for its window there.
+import { spawn } from "node:child_process";
+import { gCall } from "../g-call.mjs";
+const a = process.argv.slice(2);
+const fail = (m) => { process.stderr.write(m + "\n"); process.exit(1); };
+try {
+  if (a[0] === "-j" && a.length === 2) {
+    const r = await gCall({ op: "query", what: a[1] });
+    if (!r.ok) fail(r.error || "failed");
+    process.stdout.write(JSON.stringify(r.data) + "\n");
+  } else if (a[0] === "dispatch" && a.length === 2) {
+    const m = /^hl\.dsp\.exec_cmd\(\[\[([\s\S]*)\]\](?:, \{ workspace = "([^"]*)" \})?\)$/.exec(a[1]);
+    if (m) {
+      const ws = (/^(\d+)/.exec(m[2] || "") || [])[1] || "";
+      spawn("sh", ["-c", m[1]], { detached: true, stdio: "ignore", env: { ...process.env, G_WS: ws } }).unref();
+      process.stdout.write("ok\n");
+    } else {
+      const r = await gCall({ op: "dispatch", lua: a[1] });
+      if (!r.ok) fail(r.error || "failed");
+      process.stdout.write("ok\n");
+    }
+  } else fail(`hyprctl (sandboxed world): not supported: ${a.join(" ").slice(0, 80)}`);
+} catch (e) { fail(e.message); }

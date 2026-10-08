@@ -380,7 +380,12 @@ class Relay {
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
     log({ sb: sb.name, dir: "out", op: "talk", held: id, to: msg.to, ...textMeta(msg.text) });
     // The notice shows only who, never the text (a planted message shouldn't be broadcast); read it with `pending`.
-    try { execFileSync("notify-send", ["-a", "hyprpi", `Sandbox ${sb.name} wants to message ${msg.shown.join(", ")}`, `Review: sbx-relay.mjs pending\nThen: sbx-relay.mjs approve ${id} (or deny)`]); } catch { /* no notifier */ }
+    // Clicking the toast opens a small terminal on Angus's current workspace showing this message with
+    // approve / deny (J262: the click used to fall back to "focus the first window whose class matches
+    // hyprpi", which landed on a random world-A panel).
+    const review = [process.execPath, fileURLToPath(import.meta.url), "review", id];
+    try { execFileSync("omarchy-notification-send", ["--app-name", "hyprpi-relay", "-g", "🐳", "-u", "critical", "-t", "60000", `Sandbox ${sb.name} wants to message ${msg.shown.join(", ")}`, "Click to read it and approve or deny", "--exec", "kitty", "--class=hyprpi.review", "--title=hyprpi: approve a sandbox message", "--", ...review]); }
+    catch { try { execFileSync("notify-send", ["-a", "hyprpi-relay", `Sandbox ${sb.name} wants to message ${msg.shown.join(", ")}`, `Approve or deny in a terminal: ${review.join(" ")}`]); } catch { /* no notifier */ } }
     sb.conn?.call("room.post", { text: `🐳 [relay] sandbox ${sb.name} wants to message ${msg.shown.join(", ")}; it waits for Angus's OK (sbx-relay.mjs pending, then approve or deny ${id}).` }).catch(() => {});
     return id;
   }
@@ -439,6 +444,33 @@ class Relay {
   }
 }
 
+// --- Angus's decision -----------------------------------------------------------------------------------------
+// Approving is Angus's call (J262: an agent approved a held message addressed to itself). So approve only works
+// from a real terminal on the desktop, never from inside an agent: no hyprpi agent (HYPRPI_AGENT_ID) and no pi
+// process anywhere among this process's ancestors, and stdin a terminal. Deny stays open to anyone (it's safe).
+// This is accident prevention, NOT authentication (review J262 #6): a hostile process running under the user's
+// account could still write a decision file directly. It stops well-behaved agents approving by accident or
+// because a message told them to; the sandbox itself can't reach the decisions folder at all.
+function decideAsAngus(id, verdict) {
+  if (verdict === "approve") {
+    const why = agentAncestor();
+    if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
+  }
+  fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "", { mode: 0o600 });
+}
+function agentAncestor() {
+  if (process.env.HYPRPI_AGENT_ID || process.env.PI_CODING_AGENT || process.env.PI_SESSION_FILE) return "called from an agent";
+  let pid = process.ppid;
+  for (let i = 0; i < 40 && pid > 1; i++) {
+    let env = "", stat = "", comm = "";
+    try { env = fs.readFileSync(`/proc/${pid}/environ`, "utf8"); stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8"); comm = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim(); } catch { return `can't check process ${pid}`; } // fail closed
+    if (/(^|\0)(HYPRPI_AGENT_ID|PI_CODING_AGENT|PI_SESSION_FILE)=/.test(env) || comm === "pi" || comm === "script") return `under an agent (pid ${pid})`;
+    pid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
+  }
+  return "";
+}
+
 // --- CLI ---------------------------------------------------------------------------------------------------
 const [cmd, arg] = process.argv.slice(2);
 const self = fileURLToPath(import.meta.url);
@@ -463,10 +495,22 @@ if (cmd === "run") {
     const m = JSON.parse(fs.readFileSync(path.join(PENDING, f), "utf8"));
     console.log(`${m.id}  ${m.at}  ${m.sandbox} → ${(m.shown || m.to).join(", ")} (${m.mode})\n  │ ${m.text.replace(/\n/g, "\n  │ ")}\n`);
   }
+} else if (cmd === "review" && arg) {
+  // The toast's click (J262): show one held message and ask, in a terminal Angus is looking at.
+  const f = path.join(PENDING, arg + ".json");
+  if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(f)) { console.log("That message isn't waiting any more (already decided or expired)."); await new Promise((r) => setTimeout(r, 4000)); process.exit(0); }
+  const m = JSON.parse(fs.readFileSync(f, "utf8"));
+  console.log(`Sandbox ${m.sandbox} wants to send a ${m.mode} to ${(m.shown || m.to).join(", ")}:\n`);
+  console.log("  │ " + String(m.text).replace(/\n/g, "\n  │ ") + "\n");
+  const rl = (await import("node:readline")).createInterface({ input: process.stdin, output: process.stdout });
+  const ans = await new Promise((r) => rl.question("Approve? [y = send it / n = deny / Enter = decide later] ", r)); rl.close();
+  const verdict = /^y/i.test(ans) ? "approve" : /^n/i.test(ans) ? "deny" : "";
+  if (verdict) { decideAsAngus(arg, verdict); console.log(verdict === "approve" ? "Approved: it's being sent." : "Denied."); }
+  else console.log(`Left waiting. Later: ${process.argv[1]} pending`);
+  await new Promise((r) => setTimeout(r, 1500));
 } else if ((cmd === "approve" || cmd === "deny") && arg) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
-  fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(DECISIONS, `${arg}.${cmd}`), "", { mode: 0o600 });
+  decideAsAngus(arg, cmd);
   console.log(`${cmd === "deny" ? "denied" : "approved"} ${arg}`);
 } else {
   console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID");
