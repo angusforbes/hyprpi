@@ -26,6 +26,7 @@ import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 import { jotKinds, jotWhat } from "../lib/jot-kinds.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone app (J38)
 let worldBar = null;
@@ -152,12 +153,19 @@ function evidence(kind, text, n = 10) {
 let thoughtsOn = true; // always (no modes any more)
 let linkRows = {}; // screen row -> [{ x0, x1, target }] (1-based rows, 0-based columns): clickable links in the thread
 const linkAt = (x, y) => (linkRows[y] || []).find((q) => x - 1 >= q.x0 && x - 1 < q.x1)?.target || null;
-const TH = { room: "", entries: [], busy: false, scroll: 0, pinned: false, unseen: 0, rows: null, key: "", max: 0 }; // scroll: rows up from the bottom
+const TH = { room: "", entries: [], busy: false, scroll: 0, pinned: false, unseen: 0, rows: null, key: "", max: 0, anchor: null, restore: null, pill: null }; // scroll: rows up from the bottom
 // J121 (Angus: "i want to be able to 'pin' your stream so you don't auto-move on update until i scroll back
 // down again"): scrolling up PINS the view: new entries, the thinking… lines and re-renders keep the same
-// lines on screen (render adds the growth to scroll) and the status line says "↓ N new · End to follow".
+// lines on screen (since J247: the first line on screen is anchored) and a "↓ N new" pill shows.
 // Back at the bottom (End / ^End, PgDn, ^↓, the wheel) or sending/searching yourself follows again.
-function follow() { TH.scroll = 0; TH.pinned = false; TH.unseen = 0; if (!note.startsWith("✗")) note = ""; }
+// J247 (Angus: "just like in the phone app … leave me where i am but provide an indicator that there's new
+// messages/info below"): pinned, the FIRST line on screen stays the first line (TH.anchor: its entry and
+// the row within it), whatever is added below or re-drawn; new entries that show (not hidden / quiet
+// ones) count on the "↓ N new" pill at the bottom right of the thread (lib/tui/new-pill.mjs; a click on
+// it, End or ^End follows again; so does sending). A restart onto new code comes back to the same place.
+function follow() { TH.scroll = 0; TH.pinned = false; TH.unseen = 0; TH.anchor = null; if (!note.startsWith("✗")) note = ""; }
+const shows = (e) => { const k = threadKind(e); return k !== "hidden" && k !== "quiet"; };
+const entryKey = (e) => `${e?.ts || 0}|${e?.role || ""}|${String(e?.text || "").length}`;
 // Thread build cache (Angus via Thoughts-C 2026-09-30: typing re-wrapped the whole thread on
 // every keystroke, ~170 ms on the long world-C thread). The per-entry wrapped lines and their
 // items are rebuilt only on a width change, new/changed entries (bumpThread), a world switch,
@@ -343,7 +351,7 @@ function enter() {
     setBox(""); note = "";
     if (!api) { note = "✗ daemon offline"; return render(); }
     api.call("thoughts.ignore", { room, text: raw }).catch((e) => { note = "✗ " + e.message; render(); });
-    return render();
+    follow(); return render(); // J247: sending takes you to the bottom
   }
   if (!raw.startsWith("//") && STEP_RE.test(raw)) { setBox(""); return steps(raw); } // J233: "A /step B" (also "/jot-note x /step y")
   if (raw.startsWith("/") && !raw.startsWith("//")) {
@@ -614,8 +622,8 @@ function render() {
   const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
   const bottom = [];
   // One animation only (Angus): "thinking…" / "searching…" in the thread; this line stays still.
-  const pinHint = thoughtsOn && TH.pinned && TH.scroll > 0 && (!note || (TH.unseen && !note.startsWith("✗"))); // J121: new lines below beat an old note ("copied"); errors still show
-  bottom.push(" " + (note && !pinHint ? statusStyled : pinHint ? fg(c, `↓ ${TH.unseen ? `${TH.unseen} new` : "more below"} · End to follow`) : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
+  // (J247: "↓ N new" is the pill at the bottom right of the thread now, not this line.)
+  bottom.push(" " + (note ? statusStyled : dim(`Thoughts-${room} · remembers this conversation · can ask agents and hand them work`)));
   bottom.push(fg(c, "─".repeat(W)));
   const boxAt = bottom.length;
   inRows.forEach((l, i) => bottom.push((i === 0 ? prompt : " ".repeat(pw)) + l + (i === 0 && inRows.length === 1 ? hint : "")));
@@ -641,7 +649,10 @@ function render() {
     // already covers them; they stay in its context and in /keyword /ask). Thoughts' own answers to
     // agents show as ONE short grey line with what it said: "↩ to Blink: …", one or two rows.
     // Which entries show and how: lib/thoughts-lines.mjs (the same rule as the phone app).
+    let tagFrom = 0, tagKey = null;
+    const tag = () => { for (let i = tagFrom; i < flat.length; i++) flat[i].ek = tagKey; }; // J247: each row knows its entry
     for (const [ei, e] of TH.entries.entries()) {
+      tag(); tagFrom = flat.length; tagKey = entryKey(e);
       const kind = threadKind(e);
       if (kind === "hidden" || kind === "quiet") continue; // J147: quiet = hyprpi's automatic notes (in the Stream's all-activity view)
       if (kind === "answer") {
@@ -703,6 +714,7 @@ function render() {
       else if (e.role === "reply") { flat.push({ l: `   ${dim(italic(`↩ ${e.from} replied:`))}`, meta: { item: k, textX: 4 } }); add(md(e.text, tw - 2, "     ", dim).slice(0, 12), 6); }
       else add(md(e.text, tw, "   ", e.text.startsWith("✗") ? red : dim), 4);
     }
+      tag();
       return { flat, items };
     }
     const ck = `${tw}|${room}|${new Date().toDateString()}|${Object.values(theme).join()}|` + known.map((a) => a.display + (a.color || "")).join("");
@@ -715,18 +727,36 @@ function render() {
     // Pinned (J121): whatever was added below (or taken away: the thinking… lines) shifts scroll by as
     // much, so the same lines stay on screen. Not across a width or world change (the rows re-wrap).
     const pinKey = `${tw}|${room}|${avail}`;
-    if (TH.pinned && TH.key === pinKey && TH.rows != null && flat.length !== TH.rows) TH.scroll = Math.max(0, TH.scroll + flat.length - TH.rows);
+    // After a restart onto new code (J247): the saved place, once this world's thread is loaded.
+    if (TH.restore && TH.room === room && TH.entries.length) {
+      const r = TH.restore; TH.restore = null;
+      TH.pinned = true; TH.scroll = 1; TH.anchor = { ...r, scroll: 1 };
+      TH.unseen = (r.unseen || 0) + TH.entries.filter((e) => (e.ts || 0) > (r.lastTs || 0) && shows(e)).length;
+    }
+    // Pinned (J121, J247): the first line on screen last time stays the first line, unless the scroll
+    // was moved since (wheel, PgUp, ^↑↓): what's added below, the thinking… lines and re-wraps don't move it.
+    if (TH.pinned && TH.scroll > 0 && TH.anchor && TH.scroll === TH.anchor.scroll) {
+      const i0 = flat.findIndex((x) => x.ek === TH.anchor.ek);
+      if (i0 >= 0) TH.scroll = Math.max(1, flat.length - avail - (i0 + TH.anchor.off));
+    }
     TH.key = pinKey; TH.rows = flat.length;
     const maxScroll = Math.max(0, flat.length - avail);
     TH.max = maxScroll;
     TH.scroll = Math.max(0, Math.min(TH.scroll, maxScroll));
     const start = Math.max(0, flat.length - avail - TH.scroll), shown = flat.slice(start, start + avail);
+    TH.anchor = null;
+    if (TH.pinned && TH.scroll > 0) {
+      let i = start; while (i < flat.length && flat[i].ek == null) i++;
+      if (i < flat.length) TH.anchor = { ek: flat[i].ek, off: start - flat.findIndex((x) => x.ek === flat[i].ek), scroll: TH.scroll };
+    }
     // Lines out of view, like the projects panel: "· ↑ N above · ↓ N below".
     const above = start, below = Math.max(0, flat.length - start - avail);
     if (above || below) rows[ruleAt] = rule(`${headLabel}${above ? ` · ↑ ${above} above` : ""}${below ? ` · ↓ ${below} below` : ""}`);
     while (shown.length < avail) shown.unshift({ l: "" }); // a short thread sits just above the box, like a chat
     shown.forEach((x, k) => { if (x.meta) rowMeta[rows.length + 1 + k] = x.meta; if (x.links?.length) linkRows[rows.length + 1 + k] = x.links; });
     rows.push(...shown.map((x) => x.l));
+    TH.pill = null;
+    if (TH.pinned && TH.scroll > 0 && TH.unseen > 0) { const pl = withPill(rows[rows.length - 1], TH.unseen, W, room); rows[rows.length - 1] = pl.line; TH.pill = { y: rows.length, x0: pl.x0, x1: pl.x1 }; }
   } else if (showHelp) {
     rows[ruleAt] = rule(`${headLabel} · help · Esc closes`);
     rows.push(...helpLines().slice(0, avail));
@@ -823,7 +853,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
-        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) TH.unseen++; else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
+        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) { if (shows(data.entry)) TH.unseen++; } else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
@@ -913,6 +943,7 @@ function onKey(d) {
     const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
     const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, [room]) : null;
     if (tab) { const s = stepTo(rooms, room, tab); if (s) cycle(s); return; } // a world tab: like Ctrl+Tab
+    if (b === 0 && pillHit(TH.pill, x, y)) { if (m[4] === "M") { follow(); sel = null; } return render(); } // J247: the "↓ N new" pill
     if (b === 64) return move(-1);
     if (b === 65) return move(1);
     // Left button (+4 = Shift): press starts a possible selection, motion drags it,
@@ -955,7 +986,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs", "thoughts-lines.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs", "thoughts-lines.mjs", "tui/new-pill.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
@@ -966,7 +997,8 @@ setInterval(() => {
   // The launcher (mockups/search-tui) loops on exit 75: the state goes in its file and this
   // process ends, so restarts don't pile up processes (N19). Older windows: a child, as before.
   const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
-  if (sf) { try { fs.writeFileSync(sf, JSON.stringify({ query, qc })); } catch { /* start fresh */ } process.exit(75); }
+  const place = TH.pinned && TH.anchor ? { ek: TH.anchor.ek, off: TH.anchor.off, unseen: TH.unseen, lastTs: TH.entries.at(-1)?.ts || 0 } : null; // J247: where he was reading
+  if (sf) { try { fs.writeFileSync(sf, JSON.stringify({ query, qc, place })); } catch { /* start fresh */ } process.exit(75); }
   spawnChild(process.execPath, [CODE[0], room], { stdio: "inherit", env: process.env }).on("exit", (code) => process.exit(code ?? 0));
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
@@ -974,7 +1006,7 @@ out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h${ESC}?1004h`);
 { // after a restart onto new code: the same words in the box, the same mode
   const sf = process.env.HYPRPI_SEARCH_TUI_STATEFILE;
   try { const k = sf && JSON.parse(fs.readFileSync(sf, "utf8") || "null"); if (sf) fs.writeFileSync(sf, "");
-    if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); } } catch { /* fresh */ }
+    if (k) { query = String(k.query || ""); qc = Math.min(Number(k.qc) || 0, graphemes(query).length); if (k.place?.ek) TH.restore = k.place; } } catch { /* fresh */ }
 }
 box.restore(); // J194: an unsent draft from before a close / crash
 render();

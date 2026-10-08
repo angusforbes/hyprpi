@@ -39,6 +39,7 @@ const completions = (prefix) => cmds.complete(prefix);
 import { sentLine, SENT_STICKY_MS } from "../lib/tui/sent.mjs"; // J165
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 let worldBar = null;
 const helpRows = () => {
   const list = cmds.help(), w = Math.max(12, ...list.map(([c]) => c.length));
@@ -92,7 +93,15 @@ function copyInputSel(cut) { box.copySel(cut); render(); }
 const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
 
+const streamKeysOf = (items) => items.map((x) => x.key);
 let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the newest
+// J247 (Angus: "when i'm scrolled up reading … leave me where i am but provide an indicator that there's
+// new messages below"): seenKey = the newest stream item when he was last at the bottom; the message
+// blocks (header rows) after it while scrolled up = the "↓ N new" pill (lib/tui/new-pill.mjs). Older
+// items filed in above (board changes loaded later) don't count. lastAnchor: the
+// first line on screen (see "Scrolled up" in render). pillAt: where the pill was drawn (clicks).
+// restoreScroll: the place to go back to after a restart onto new code.
+let seenKey = null, pillAt = null, restoreScroll = null, lastAnchor = null;
 let convoY = 0, confirm = null;
 // (The ▸ marks are retired: messages go to the room, @Name or @project; /stream @Name filters.)
 const listRowY = 0, listRows = 0; // no agent pane here (kept so the copy code reads the same)
@@ -404,8 +413,12 @@ function draw() {
     convo.push({ line: `   ${postWho(au)}${tagOf(it)}${tm(it.ts)}`, msg: mi, header: true });
     for (const para of String(it.m.text).split("\n")) { const ls = wrap(para, textW); ls.forEach((l, i) => convo.push({ line: `   ${l}`, msg: mi, textX, hard: i === ls.length - 1 })); }
   });
-  // Scrolled up: stay on the same lines when new ones arrive below.
-  if (scroll > 0 && convo.length > lastConvoLen) scroll += convo.length - lastConvoLen;
+  // After a restart onto new code (J247): the saved place becomes the anchor (applied below) once this
+  // world's stream is loaded.
+  if (restoreScroll && messages[room] !== undefined) {
+    const r = restoreScroll; restoreScroll = null;
+    seenKey = r.seenKey || null; scroll = 1; lastAnchor = { ...r, scroll: 1 };
+  }
   lastConvoLen = convo.length; lastAvail = avail;
   // Selected item (Ctrl+↑↓): a bar in the world colour on all its rows and the selection
   // background on its first row (like a selected search result); keep it in view.
@@ -433,6 +446,14 @@ function draw() {
     const busy = hereAgents().filter((a) => a.status === "working" && inFilter(a));
     if (busy.length) { convo.push({ line: "", msg: null }); convo.push({ line: "   " + dim(busy.map((a) => `● ${a.display} working…`).join("   ")), msg: null }); }
   }
+  // Scrolled up: stay on the same lines whatever arrives (J247; was: the growth below, J121). The first
+  // line on screen last time (its stream item + the row within it) is put back on the first line, so
+  // posts below, board changes loaded later and filed by time, and the "● X working…" lines all leave
+  // the view where it is. Only when the scroll is what it was then: a wheel / PgUp / ^↑↓ move wins.
+  if (scroll > 0 && lastAnchor && scroll === lastAnchor.scroll) {
+    const k = streamKeysOf(sItems).indexOf(lastAnchor.key), r0 = k < 0 ? -1 : convo.findIndex((x) => x.msg === k);
+    if (r0 >= 0) scroll = Math.max(1, convo.length - avail - (r0 + lastAnchor.off));
+  }
   scroll = Math.max(0, Math.min(scroll, convo.length - avail));
   rows[ruleAt] = rule(`stream ${room} · ${SVIEW_LABEL[sview] || sview} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "")
     + (sf.text ? ` · ${sf.text} (Esc clears)` : "") + (res?.unknown.length ? ` · ✗ no ${res.unknown.map((n) => "@" + n).join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
@@ -442,6 +463,14 @@ function draw() {
   rowMeta = {}; convoMsgs = sItems;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
   rows.push(...shown.map((r) => r.line));
+  // J247: the "↓ N new" pill (new message blocks since he was last at the bottom), and where we are
+  // (the first line on screen) in case the panel restarts onto new code.
+  if (scroll === 0 || !seenKey) seenKey = streamKeys[streamKeys.length - 1] || null;
+  const si = streamKeys.lastIndexOf(seenKey), fresh = scroll > 0 && si >= 0 ? convo.filter((x) => x.header && x.msg > si).length : 0;
+  pillAt = null;
+  if (fresh > 0) { const pl = withPill(rows[rows.length - 1], fresh, W, room); rows[rows.length - 1] = pl.line; pillAt = { y: rows.length, x0: pl.x0, x1: pl.x1 }; }
+  const top = shown.find((x) => x.msg != null);
+  lastAnchor = scroll > 0 && top ? { key: streamKeys[top.msg], off: convo.indexOf(top) - convo.findIndex((x) => x.msg === top.msg), scroll, seenKey } : null;
   }
 
   // Input line(s)
@@ -643,6 +672,7 @@ async function send() {
   if (!text && !api) return render();
   if (!text) return render(); // Enter on an empty line: nothing to post (the agents live in panel 1)
   if (!api) return render();
+  scroll = 0; streamSel = null; // J247: sending takes you to the bottom
   // @names alone: they need a message.
   if (onlyAt(text)) { input = raw + " "; ic = graphemes(input).length; note = "add your message after the @names (a room post goes to everyone)"; return render(); }
   // A room post (every agent in the room gets it), or "@Name text" / "@project text": just them.
@@ -770,6 +800,8 @@ function onKey(d) {
       focusArea = "stream"; return render();
     }
   }
+  // J247: End with an empty box goes back to the newest (like the Thoughts panel); in text it's the box's.
+  if ((d === "\x1b[F" || d === "\x1b[4~" || d === "\x1bOF") && !input && view === "stream" && scroll > 0) { scroll = 0; streamSel = null; return render(); }
   // Editing the message (the shared box): ←→, Ctrl/Alt+←→ by word, Home/End / Ctrl+E, ↑↓ lines,
   // Shift+arrows / Shift+Home End select, Backspace / Delete / Alt+Backspace / Ctrl+W, Ctrl+U clear.
   // (Typing, paste, Shift+Enter and Ctrl+C/X/V are handled above and below, through insertText.)
@@ -785,6 +817,7 @@ function onKey(d) {
       const b = Number(m[1]), x = Number(m[2]), y = Number(m[3]);
       const tab = b === 0 && m[4] === "M" ? worldTabAt(worldBar, x, y, [room]) : null;
       if (tab) { const s = stepTo(rooms.map((r) => r.id), room, tab); if (s) cycle(s); continue; } // a world tab: like Ctrl+Tab
+      if (b === 0 && pillHit(pillAt, x, y)) { if (m[4] === "M") { scroll = 0; streamSel = null; sel = null; } continue; } // J247: the "↓ N new" pill
       const inList = false; // no agent pane in this panel
       // Left button: press starts a possible selection, motion drags it,
       // release copies it (or, without a drag, counts as a click).
@@ -853,7 +886,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/new-pill.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
@@ -862,7 +895,7 @@ setInterval(() => {
   try { api?.close?.(); } catch { /* fine */ }
   out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`);
   // Keep what Angus was looking at: the stream view and filter, and what is typed.
-  const keep = JSON.stringify({ view: "stream", streamArg, sview, input, ic });
+  const keep = JSON.stringify({ view: "stream", streamArg, sview, input, ic, place: lastAnchor }); // J247: and where he was reading
   // The launcher (mockups/room-tui) loops on exit code 75: hand it the state in a file and
   // exit, so restarts don't pile up processes. Older windows (no loop): a child, as before.
   if (process.env.HYPRPI_ROOM_TUI_STATEFILE) {
@@ -888,6 +921,7 @@ try {
     if (k.filter === "raw" && !/\braw\b/.test(streamArg)) streamArg = (streamArg + " raw").trim();
     sview = SVIEWS.includes(k.sview) ? k.sview : k.compact ? "compact" : "full"; // (older: compact)
     if (typeof k.input === "string") { input = k.input; ic = Math.min(Number(k.ic) || 0, graphemes(input).length); }
+    if (k.place && k.place.key) restoreScroll = k.place; // J247: scrolled up when it restarted
   }
 } catch { /* start in the stream */ }
 box.restore(); // J194: an unsent draft from before a close / crash
