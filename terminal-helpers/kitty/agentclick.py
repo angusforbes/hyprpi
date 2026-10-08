@@ -10,7 +10,11 @@ import subprocess
 from kittens.tui.handler import result_handler
 
 # (kitty runs kittens with exec, without __file__: hyprpi's checkout, HYPRPI_ROOT if set)
-AGENT_AT = os.path.join(os.environ.get('HYPRPI_ROOT') or os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), 'mockups', 'agent-at')
+# kitty runs kittens with exec and no __file__ (J190's change broke the import); agentclick-map.py passes
+# this checkout's root as the kitten's first argument instead. Fallbacks: $HYPRPI_ROOT, then ~/Work/hyprpi.
+def agent_at(args):
+    root = (args[1] if len(args) > 1 and args[1] else '') or os.environ.get('HYPRPI_ROOT') or os.path.expanduser('~/Work/hyprpi')
+    return os.path.join(root, 'mockups', 'agent-at')
 
 
 def main(args):
@@ -38,6 +42,6 @@ def handle_result(args, answer, target_window_id, boss):
     env = dict(os.environ)
     for k in ('HYPRPI_AGENT_ID', 'HYPRPI_WORKSPACE', 'PI_SESSION'):
         env.pop(k, None)
-    subprocess.Popen([AGENT_AT, '--line', line, '--x', str(pos['cell_x'] + 1)], env=env,
+    subprocess.Popen([agent_at(args), '--line', line, '--x', str(pos['cell_x'] + 1)], env=env,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)

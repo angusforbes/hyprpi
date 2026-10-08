@@ -10,7 +10,8 @@ so these apply to agent windows and override yours only there. `"terminalHelpers
 |---|---|
 | `pi.conf` | Agent windows only: select-to-copy; SUPER+C copies Pi's own selection (Ctrl+Insert passes through when kitty has none, for Pi's `editor-select` extension); Ctrl+Shift+A reaches Pi (select-all) instead of starting kitty's opacity shortcuts; Shift+Enter and Alt+Shift+Enter as CSI-u. Includes `links.conf`. |
 | `links.conf` | Ctrl+click opens links and local files with the system default app; plain clicks never open anything. |
-| `agentclick.py` | Agent windows (mapped in `pi.conf`): Ctrl+click opens a link as before; otherwise an agent's name under the pointer (`pi·wpzt`, `@Blink`, `Sankey[e]`, any world) jumps to that agent's window, like the panels (`mockups/agent-at`, `lib/tui/agent-click.mjs`). Kitty runs kittens without `__file__`, so it finds hyprpi at `$HYPRPI_ROOT` or `~/Work/hyprpi`. |
+| `agentclick.py` | Agent windows (mapped in `pi.conf`): Ctrl+click opens a link as before; otherwise an agent's name under the pointer (`pi·wpzt`, `@Blink`, `Sankey[e]`, any world) jumps to that agent's window, like the panels (`mockups/agent-at`, `lib/tui/agent-click.mjs`). Kitty runs kittens without `__file__`, so `agentclick-map.py` (pulled in by `pi.conf` with `geninclude`) maps Ctrl+click with this checkout's absolute path and passes its root to the kitten; fallbacks `$HYPRPI_ROOT`, then `~/Work/hyprpi`. |
+| `agentclick-map.py` | Prints that Ctrl+click mapping (no machine-specific path in `pi.conf`). Comment out its `geninclude` line in `pi.conf` to turn agent-name clicks off. |
 
 To have Ctrl+click in **every** kitty window too, add this to `~/.config/kitty/kitty.conf`:
 
