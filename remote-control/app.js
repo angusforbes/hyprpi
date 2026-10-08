@@ -525,7 +525,7 @@ function renderProjects({ keepScroll = false } = {}) {
       // The header (J48): icon, name, badge, title and owner/members as ONE tap target, the full width,
       // that goes back to the list. Names in it are not links (the J45 pass skips .phead): the
       // name used to be a link to this same project, which took the tap and re-opened it.
-      + `<div class="phead ptoggle" title="back to the projects"><h2><span class="pic">${esc(p.icon)}</span><span>@${esc(p.name)} ${badge(p.status)}</span></h2>`
+      + `<div class="phead ptoggle" title="back to the projects"><h2><span class="backbtn" aria-label="back to the projects">‹</span><span class="pic">${esc(p.icon)}</span><span>@${esc(p.name)} ${badge(p.status)}</span></h2>`
       + `${p.title ? `<div class="ptitle">${esc(p.title)}</div>` : ""}`
       + `</div>`
       // J219 (c): owner and members just below the header (outside its back-tap, J48), each a link to
@@ -642,7 +642,7 @@ function ago(ts) {
 const agentName = (a) => `<span class="aname"${a.color ? ` style="color:${esc(a.color)}"` : ""}>${esc(a.name)}</span>`;
 function agentRow(a, cls = "agent") {
   const meta = [a.ws, a.compactions >= 1 ? `⟳${a.compactions}` : "", a.topic ? `<i>${esc(a.topic)}</i>` : "", a.active ? ago(a.active) : ""].filter(Boolean).join(" · "); // J117 ⟳N: compactions
-  return `<button class="${cls}${a.mark === "◌" ? " gone" : ""}" data-a="${esc(a.id)}"><span class="amark m${a.mark === "●" ? "w" : a.mark === "◐" ? "b" : a.mark === "×" ? "x" : a.mark === "✓" ? "d" : "i"}">${esc(a.mark)}</span><span class="pic">${esc(a.icon || "")}</span><span class="pmain"><span class="pname">${agentName(a)}</span><span class="pwhere">${meta}</span></span>${cls === "agent" ? `<span class="chev aopen" title="open its session">›</span>` : ""}</button>`;
+  return `<button class="${cls}${a.mark === "◌" ? " gone" : ""}" data-a="${esc(a.id)}">${cls === "agent open" ? `<span class="backbtn" aria-label="back to the agents">‹</span>` : ""}<span class="amark m${a.mark === "●" ? "w" : a.mark === "◐" ? "b" : a.mark === "×" ? "x" : a.mark === "✓" ? "d" : "i"}">${esc(a.mark)}</span><span class="pic">${esc(a.icon || "")}</span><span class="pmain"><span class="pname">${agentName(a)}</span><span class="pwhere">${meta}</span></span>${cls === "agent" || (cls === "agent open" && a.mark !== "◌") ? `<span class="chev aopen" title="open its session">›</span>` : ""}</button>`; // J236: the summary's header too
 }
 function renderAgents({ keepScroll = false } = {}) {
   if (view !== "agents") return;
@@ -670,6 +670,7 @@ function renderAgents({ keepScroll = false } = {}) {
   agentsEl.scrollTop = keepScroll ? was : 0;
 }
 agentsEl.addEventListener("click", (e) => {
+  const hs = e.target.closest(".phead .aopen"); if (hs) return openSession(hs.closest(".agent").dataset.a); // J236: › at the top right → its session
   if (e.target.closest(".phead")) { openAgent.delete(world); return renderAgents(); } // the header: back to the list (J48)
   const ts = e.target.closest(".tostream"); if (ts) { streamOnly(ts.dataset.name); return setView("stream"); } // its lines in Strm
   const so = e.target.closest(".tosession"); if (so) return openSession(so.dataset.a); // J161

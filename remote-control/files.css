@@ -9,6 +9,8 @@ body.files { display: flex; flex-direction: column; height: 100dvh; }
 #fdir { font-size: var(--fs-meta); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 body.files button, .fbig { flex: none; font: inherit; font-size: var(--fs-btn); font-weight: 600; color: var(--accent); background: var(--bg); border: 1px solid var(--line); border-radius: 14px; min-height: 34px; padding: 4px 12px; cursor: pointer; }
 #fup, #fhelp { width: 38px; padding: 0; font-size: 18px; }
+/* J236 (Angus: "use that same back button the same color as the world in Files"): ‹ as on π's agent pages */
+body.files #fup { width: auto; min-height: 0; font-size: 30px; line-height: 1; font-weight: 400; color: var(--world, var(--accent)); background: none; border: none; padding: 0 6px 4px 0; margin-left: -2px; }
 #fq { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--fg); background: var(--faint); border: 1px solid var(--line); border-radius: 12px; padding: 5px 10px; }
 #flist { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 4px calc(env(safe-area-inset-right) + 6px) 12px calc(env(safe-area-inset-left) + 6px); }
 .fe { display: flex; align-items: center; gap: 10px; padding: 4px 6px; cursor: pointer; /* J154: tighter (was 7px 6px) */ /* J152 trial: no divider lines between rows (was border-bottom: 1px solid var(--faint)) */ -webkit-user-select: none; user-select: none; }

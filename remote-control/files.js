@@ -57,7 +57,10 @@ getJSON("/api/state").then((s) => {
   worlds = (s.worlds || []).filter((w) => w.shown !== false);
   agents = (s.directory?.agents || []).filter((a) => a.kind === "agent" && a.live);
   if (!lastWorld) lastWorld = s.active || worlds[0]?.id || "A";
+  worldColour();
 }).catch(() => {});
+// J236: --world = this world's colour (the ‹ back), as in π.
+function worldColour() { const c = worlds.find((w) => w.id === lastWorld)?.color; if (c) document.documentElement.style.setProperty("--world", c); }
 
 // ---- the list ---------------------------------------------------------------------------------
 const size = (n) => n < 1e3 ? n + " B" : n < 1e6 ? (n / 1e3).toFixed(0) + " KB" : n < 1e9 ? (n / 1e6).toFixed(1) + " MB" : (n / 1e9).toFixed(2) + " GB";
@@ -311,7 +314,7 @@ if (EMBED) {
   // show its folder and open it in the viewer.
   addEventListener("message", async (e) => {
     if (e.origin !== location.origin) return;
-    if (/^[A-Z]$/.test(e.data?.world || "")) lastWorld = e.data.world;
+    if (/^[A-Z]$/.test(e.data?.world || "")) { lastWorld = e.data.world; worldColour(); }
     if (typeof e.data?.open === "string") {
       const fp = e.data.open.replace(/\/+$/, "") || e.data.open;
       // J164 (Angus: "why not jump right to the image?"): a name with a file extension opens in the viewer at
