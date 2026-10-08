@@ -42,6 +42,7 @@ case "$CMD" in
     WS="$(in_sb 'hyprctl -j clients' | jq --argjson lo "$LO" --argjson hi "$HI" '[.[].workspace.id] as $u | [range($lo; $hi)] | map(select(. as $w | $u | index($w) | not)) | first // $lo')"
     in_sb "cd \"\$G_WORLD_DIR\" && hyprpi new --workspace $WS --no-focus --cwd \"\$G_WORLD_DIR\" --name $NAME" ;;
   stop)
+    node "$H/docker/sbx-relay.mjs" clear "$WORLD" >/dev/null 2>&1 || true   # J274: this world's "allow similar" rules end with it
     for a in $(node "$H/docker/world/world-helper.mjs" windows "$WORLD"); do   # only windows this world owns (review #7)
       hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null 2>&1 || true
     done

@@ -36,6 +36,7 @@ import crypto from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { connect } from "../lib/client.mjs";
+import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
 
 const HOME = os.homedir();
 const CONFIG = path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi", "sbx-relay.json");
@@ -43,6 +44,8 @@ const STATE = path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", 
 const PENDING = path.join(STATE, "pending");
 const DECISIONS = path.join(STATE, "decisions");
 const LOG = path.join(STATE, "log.jsonl");
+const REVIEWS = path.join(STATE, "reviews");   // J274: a Review click asks that world's Thoughts panel to take it
+const AUTO = path.join(STATE, "auto.jsonl");   // J274: messages a rule let through, for the receiving room panel
 const UNIT = "hyprpi-sbx-relay";
 const DROP = ".hyprpi-dropbox";
 
@@ -335,7 +338,22 @@ class Sandbox {
           const r = await this.conn.call("talk", { to: open.map((x) => x.id), text: body, mode, strict_ids: true });
           out.delivered = r.delivered; out.request_id = r.request_id; out.skipped = r.skipped;
         }
-        if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), targets: gated.map((x) => ({ kind: x.kind, id: x.id })), shown: gated.map((x) => x.shown), rooms: [...new Set(gated.map((x) => x.room).filter(Boolean))], mode, text: t, body })];
+        // J274: an "allow similar" rule Angus made covers every gated recipient (talk only, under its cap)?
+        const ruled = gated.length ? useRules(STATE, { sandbox: this.name, targets: gated, mode }) : null;
+        if (ruled) {
+          const ns = ruled.map((r) => r.n).join(", ");
+          const rbody = `${body}\n(sent without asking under Angus's rule ${ns})`;
+          const ids = gated.filter((x) => x.kind === "agent").map((x) => x.id), th = gated.filter((x) => x.kind === "thoughts").map((x) => x.id);
+          for (const [to, extra] of [[ids, { strict_ids: true }], [th, {}]]) {
+            if (!to.length) continue;
+            const r = await this.conn.call("talk", { to, text: rbody, mode, ...extra });
+            out.delivered.push(...(r.delivered || [])); out.request_id ||= r.request_id;
+          }
+          const rooms = [...new Set(gated.map((x) => x.room).filter(Boolean))];
+          try { fs.appendFileSync(AUTO, JSON.stringify({ t: now(), sandbox: this.name, rooms, to: gated.map((x) => x.shown), rule: ns, preview: clean(t).replace(/\s+/g, " ").slice(0, 120) }) + "\n", { mode: 0o600 }); } catch { /* best effort */ }
+          log({ sb: this.name, op: "talk", rule: ns, to: gated.map((x) => x.id), ...textMeta(t) });
+          out.ruled = ns;
+        } else if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), targets: gated.map((x) => ({ kind: x.kind, id: x.id })), shown: gated.map((x) => x.shown), rooms: [...new Set(gated.map((x) => x.room).filter(Boolean))], mode, text: t, body })];
         out.log = { to: targets.map((x) => x.id), open: open.length, gated: gated.length, ...textMeta(t) };
         return out;
       }
@@ -368,7 +386,7 @@ class Sandbox {
 // are escaped (no links or markup from a sandbox); control characters are already gone (clean()).
 const NOTIF = ["org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications"];
 const ACTION_KEYS = { approve: "Approve", deny: "Deny", review: "Review" };
-function preview(text, n = 220) {
+function preview(text, n = 600) {
   const one = clean(text).replace(/\s+/g, " ");
   const cut = one.length > n ? one.slice(0, n - 1) + "…" : one;
   return cut.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -391,7 +409,7 @@ function notifyHeld(sb, msg, review) {
       "hyprpi-relay", "0", "", summary, body,
       String(Object.keys(ACTION_KEYS).length * 2), ...Object.entries(ACTION_KEYS).flatMap(([k, label]) => [`${k}:${nonce}`, label]),
       "3", "urgency", "y", "2", "omarchy-glyph", "s", "🐳", "omarchy-exec-argv", "s",
-      JSON.stringify(["kitty", "--class=hyprpi.review", "--title=hyprpi: approve a sandbox message", "--", ...review]),
+      JSON.stringify(review),
       "0"], { encoding: "utf8", timeout: 5000 });
     const m = /^u (\d+)/.exec(out.trim()); return m ? { id: Number(m[1]), nonce, owner } : null;
   } catch {
@@ -439,15 +457,27 @@ function onActionLine(line) {
   // the same id AND the same server instance that showed it (fail closed when the owner can't be read)
   if (rec.notif.id !== n || !rec.notif.owner || rec.notif.owner !== notifOwner()) { log({ note: `toast ${key} for ${id} ignored (server changed)` }); return; }
   log({ note: `toast ${key} for ${id}` });
-  if (key === "review") {
-    // Hyprland starts the window (outside this unit's small memory/task limits, which killed a kitty started
-    // from here); id is checked against ID_RE above and the paths are ours, so the exec string is safe.
-    const cmdline = ["kitty", "--class=hyprpi.review", "'--title=hyprpi: approve a sandbox message'", "--", process.execPath, fileURLToPath(import.meta.url), "review", id].join(" ");
-    try { const k = spawn("hyprctl", ["dispatch", `hl.dsp.exec_cmd("${cmdline}")`], { stdio: "ignore" }); k.on("error", (e) => log({ error: `review window: ${e.message}` })); } catch { /* */ }
-    return;
-  }
+  if (key === "review") { openReview(id); return; }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(DECISIONS, `${id}.${key}`), "", { mode: 0o600 });
+}
+
+// J274 (Angus: "have it go to the appropriate Thoughts where we can interact and get context"): Review asks the
+// RECEIVING world's Thoughts panel to take the held message. It writes reviews/<WORLD>.json (host-only) and
+// brings that world's Thoughts panel to Angus's workspace; the panel claims the file, asks Thoughts for a
+// context summary, and shows the numbered choices. Only Angus's own typing in that panel decides (lib/held.mjs).
+function openReview(id) {
+  if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(id)) return false;
+  let m; try { m = JSON.parse(fs.readFileSync(path.join(PENDING, id + ".json"), "utf8")); } catch { return false; }
+  const world = String((Array.isArray(m.rooms) && m.rooms[0]) || "").toUpperCase();
+  if (!/^[A-I]$/.test(world)) { log({ note: `review ${id}: no receiving world` }); return false; }
+  fs.mkdirSync(REVIEWS, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(REVIEWS, world + ".json"), JSON.stringify({ id, at: now() }), { mode: 0o600 });
+  // Hyprland starts the panel (outside this unit's limits); world is one letter A-I and the path is ours.
+  const panels = fileURLToPath(new URL("../mockups/panels", import.meta.url));
+  try { const k = spawn("hyprctl", ["dispatch", `hl.dsp.exec_cmd("${panels} ${world} --only 3")`], { stdio: "ignore" }); k.on("error", (e) => log({ error: `review panel: ${e.message}` })); } catch { /* */ }
+  log({ note: `review ${id} → Thoughts-${world} panel` });
+  return true;
 }
 
 // --- the relay: all sandboxes, the approval queue, the watchers -----------------------------------------
@@ -479,7 +509,7 @@ class Relay {
     return id;
   }
   async decide(file) {
-    const m = /^(.+)\.(approve|deny)$/.exec(file); if (!m) return;
+    const m = /^(.+)\.(approve|deny|allow-(?:\d{1,5}|today))$/.exec(file); if (!m) return;
     const [, id, verdict] = m;
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
@@ -488,6 +518,15 @@ class Relay {
     closeNotif(msg.notif); // decided anywhere (toast, panel, terminal): the toast goes too (J268)
     const sb = this.sandboxes.find((s) => s.name === msg.sandbox);
     if (!sb) return;
+    // J274 "allow similar": approve this one and add a rule (talk only; caps in lib/sbx-rules.mjs)
+    if (verdict.startsWith("allow-")) {
+      const spec = verdict.slice(6), dur = spec === "today" ? { today: true } : { ms: Number(spec) * 60000 };
+      if (msg.mode === "talk" && Array.isArray(msg.targets)) {
+        const shownOf = (i) => (msg.shown || [])[i] || msg.targets[i].id;
+        const made = addRules(STATE, { sandbox: sb.name, targets: msg.targets.map((t, i) => ({ ...t, shown: shownOf(i) })), dur, from: id });
+        log({ sb: sb.name, op: "rule", id, rules: made.map((r) => ({ n: r.n, to: r.recipient, until: new Date(r.until).toISOString(), capped: r.capped })) });
+      } else log({ sb: sb.name, op: "rule", id, note: "not a talk: approved once, no rule" });
+    }
     if (verdict === "deny") {
       log({ sb: sb.name, op: "talk", decision: "denied", id });
       if (!sb.conn) return;
@@ -543,7 +582,7 @@ class Relay {
 // account could still write a decision file directly. It stops well-behaved agents approving by accident or
 // because a message told them to; the sandbox itself can't reach the decisions folder at all.
 function decideAsAngus(id, verdict) {
-  if (verdict === "approve") {
+  if (verdict !== "deny") { // approve and allow (J274) are Angus's only
     const why = agentAncestor();
     if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
   }
@@ -551,12 +590,15 @@ function decideAsAngus(id, verdict) {
   fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "", { mode: 0o600 });
 }
 function agentAncestor() {
-  if (process.env.HYPRPI_AGENT_ID || process.env.PI_CODING_AGENT || process.env.PI_SESSION_FILE) return "called from an agent";
+  if (process.env.HYPRPI_AGENT_ID || process.env.PI_CODING_AGENT || process.env.PI_SESSION_FILE || process.env.HYPRPI_THOUGHTS_ROOM) return "called from an agent"; // (J274: Thoughts too)
   let pid = process.ppid;
   for (let i = 0; i < 40 && pid > 1; i++) {
     let env = "", stat = "", comm = "";
+    // J274: the user's systemd manager (the root of every desktop process) can't be read (not dumpable) and is
+    // no agent: stop there. Before this, every panel and terminal under it failed closed ("can't check").
+    try { if (fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0] === "/usr/lib/systemd/systemd" && fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[1] === "--user") return ""; } catch { /* checked below */ }
     try { env = fs.readFileSync(`/proc/${pid}/environ`, "utf8"); stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8"); comm = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim(); } catch { return `can't check process ${pid}`; } // fail closed
-    if (/(^|\0)(HYPRPI_AGENT_ID|PI_CODING_AGENT|PI_SESSION_FILE)=/.test(env) || comm === "pi" || comm === "script") return `under an agent (pid ${pid})`;
+    if (/(^|\0)(HYPRPI_AGENT_ID|PI_CODING_AGENT|PI_SESSION_FILE|HYPRPI_THOUGHTS_ROOM)=/.test(env) || comm === "pi" || comm === "script") return `under an agent (pid ${pid})`;
     pid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
   }
   return "";
@@ -587,23 +629,27 @@ if (cmd === "run") {
     console.log(`${m.id}  ${m.at}  ${m.sandbox} → ${(m.shown || m.to).join(", ")} (${m.mode})\n  │ ${m.text.replace(/\n/g, "\n  │ ")}\n`);
   }
 } else if (cmd === "review" && arg) {
-  // The toast's click (J262): show one held message and ask, in a terminal Angus is looking at.
-  const f = path.join(PENDING, arg + ".json");
-  if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(f)) { console.log("That message isn't waiting any more (already decided or expired)."); await new Promise((r) => setTimeout(r, 4000)); process.exit(0); }
-  const m = JSON.parse(fs.readFileSync(f, "utf8"));
-  console.log(`Sandbox ${m.sandbox} wants to send a ${m.mode} to ${(m.shown || m.to).join(", ")}:\n`);
-  console.log("  │ " + String(m.text).replace(/\n/g, "\n  │ ") + "\n");
-  const rl = (await import("node:readline")).createInterface({ input: process.stdin, output: process.stdout });
-  const ans = await new Promise((r) => rl.question("Approve? [y = send it / n = deny / Enter = decide later] ", r)); rl.close();
-  const verdict = /^y/i.test(ans) ? "approve" : /^n/i.test(ans) ? "deny" : "";
-  if (verdict) { decideAsAngus(arg, verdict); console.log(verdict === "approve" ? "Approved: it's being sent." : "Denied."); }
-  else console.log(`Left waiting. Later: ${process.argv[1]} pending`);
-  await new Promise((r) => setTimeout(r, 1500));
+  // The toast's click and its Review button (J274): hand the message to the receiving world's Thoughts panel.
+  if (!openReview(arg)) { console.error("That message isn't waiting any more (or has no receiving world)."); process.exit(1); }
+} else if (cmd === "allow" && arg) {
+  // J274: approve this one and allow similar (same sandbox → same recipients, talk) for DURATION (default 1 h).
+  if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
+  const dur = parseDuration(process.argv.slice(4).join(" "));
+  if (!dur) { console.error("duration: once, today, or e.g. 30m, 2h, 2 hours"); process.exit(1); }
+  const verdict = dur.once ? "approve" : dur.today ? "allow-today" : `allow-${Math.round(dur.ms / 60000)}`;
+  decideAsAngus(arg, verdict);
+  console.log(`${verdict === "approve" ? "approved" : "approved and allowed similar"} ${arg}`);
+} else if (cmd === "rules") {
+  const list = loadRules(STATE);
+  console.log(list.length ? list.map((r) => describeRule(r)).join("\n") : "no rules");
+} else if ((cmd === "revoke" || cmd === "clear") && arg) {
+  // Revoking is safe, so open to anyone (agents too). clear SANDBOX: world.sh stop calls it.
+  console.log(`revoked ${revokeRules(STATE, arg)} rule(s)`);
 } else if ((cmd === "approve" || cmd === "deny") && arg) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
   decideAsAngus(arg, cmd);
   console.log(`${cmd === "deny" ? "denied" : "approved"} ${arg}`);
 } else {
-  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID");
+  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|SANDBOX");
   process.exit(cmd ? 1 : 0);
 }

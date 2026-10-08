@@ -29,7 +29,8 @@ import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
-import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone app (J38)
+import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
+import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -343,8 +344,48 @@ function completeName(dir = 1) {
   render(); return true;
 }
 
+// J274 (Angus: Review "go to the appropriate Thoughts where we can interact and get context"): a held sandbox
+// message the relay handed to this world's panel. Thoughts writes the context; ONLY what Angus types here
+// decides it: a bare 1 / 2 / 3 at once, free-form wording ("3, but for 2 hours") after one confirming y.
+// The panel parses his words itself (lib/held.mjs parseChoice) and runs the relay's guarded CLI; nothing
+// Thoughts writes, and nothing from the sandbox, is ever taken as an answer.
+let review = null; // { id, room, h, confirm, shownAt }
+function pollReview() {
+  if (restarting) return;
+  if (review) {
+    if (!heldById(review.id)) { note = `held message ${review.id} was decided (or expired)`; review = null; render(); }
+    return;
+  }
+  const id = room && claimReview(room); if (!id) return;
+  const h = heldById(id); if (!h) return;
+  review = { id, room, h, confirm: null, shownAt: Date.now() };
+  sendThought(reviewPrompt(h));
+}
+setInterval(pollReview, 2000);
+function reviewKey(raw) {
+  if (!review || review.room !== room || !heldById(review.id)) { if (review && !heldById(review.id)) review = null; return false; }
+  if (Date.now() - review.shownAt < 1500) return false; // typed before the review appeared: not an answer
+  const decide = (ch) => {
+    const r = actOnHeld(review.id, ch), h = review.h;
+    note = r.ok ? `✓ ${ch.label}: ${h.sandbox} → ${h.to.join(", ")}` : "✗ " + (r.text || "couldn't decide");
+    if (r.ok) { const id = review.id; review = null; sendThought(`[Angus decided held ${id}: ${ch.label}]`); }
+    setBox(""); render(); return true;
+  };
+  if (review.confirm) {
+    const ch = review.confirm; review.confirm = null;
+    if (/^y(es)?$/i.test(raw)) return decide(ch);
+    note = "cancelled"; if (/^n(o)?$/i.test(raw)) { setBox(""); render(); return true; }
+  }
+  const ch = parseChoice(raw);
+  if (!ch) return false;
+  if (ch.verdict === "unclear") { note = "✗ no duration found (e.g. \"3 for 2 hours\", \"3 today\"); sent to Thoughts as a question"; return false; }
+  if (ch.confirm) { review.confirm = ch; setBox(""); note = `${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
+  return decide(ch);
+}
+
 function enter() {
   const raw = query.trim();
+  if (raw && reviewKey(raw)) return;
   if (raw) box.remember(raw); // ↑ brings it back, /commands included (N51)
   // "/ignore TEXT" (Angus, N52): a secret signpost. A normal line from Angus in the thread, given to
   // Thoughts with his next message, no reply. Not in /help or Tab.
@@ -609,6 +650,12 @@ function render() {
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const headLabel = `thoughts ${room}`; // "— thoughts C" (Angus)
   rows.push(rule(headLabel));
+  if (review && review.room === room) { // J274: the held message under review, and how to answer
+    const h = review.h;
+    rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})`, W))));
+    rows.push(clip("   " + h.text.replace(/\s+/g, " "), W));
+    rows.push(dim(clip(review.confirm ? `   ${review.confirm.label}? y + ⏎ confirms · anything else cancels` : "   1 Approve · 2 Deny · 3 Allow similar 1 h (\"3 for 2 hours\") · anything else goes to Thoughts", W)));
+  }
   const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯" (was a 💭)
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
   const hint = slash ? dim("  " + slash) : query ? "" : dim(`talk to Thoughts-${room} · /keyword WORDS · /ask QUESTION · /help`);
@@ -987,7 +1034,7 @@ process.stdout.on("resize", render);
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
 const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs", "thoughts-lines.mjs", "tui/new-pill.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs", "thoughts-lines.mjs", "tui/new-pill.mjs", "held.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

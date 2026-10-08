@@ -41,7 +41,7 @@ import { userName, HUMAN_KEY } from "../lib/policy.mjs"; // J261: the human's di
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
-import { heldFor, decideHeld } from "../lib/held.mjs"; // J268: sandbox messages held for Angus, answered y / n here
+import { heldFor, decideHeld, autoNotes, rulesCommand } from "../lib/held.mjs"; // J268: sandbox messages held for Angus, answered y / n here
 let worldBar = null;
 const helpRows = () => {
   const list = cmds.help(), w = Math.max(12, ...list.map(([c]) => c.length));
@@ -114,7 +114,7 @@ const hereAgents = () => agents.filter((a) => a.room === room);
 // Enter: a closed one is resumed (same id, name, twins), a parked one is moved back to
 // this workspace. ^W twice on a closed one drops it from the list (its session stays).
 let dormant = [];
-let heldNow = [], heldSig = "", heldShownAt = 0; // J268: held sandbox messages for this world (lib/held.mjs)
+let heldNow = [], heldSig = "", heldShownAt = 0, autoNow = []; // autoNow: J274 rule notes // J268: held sandbox messages for this world (lib/held.mjs)
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The Stream: room messages, agent activity and board changes (lib/stream.mjs builds the timeline).
 let activity = {}, changes = {}; // room -> activity events · board changes
@@ -296,6 +296,8 @@ function draw() {
   const rows = [];
   // J268: a message from a sandboxed world held for Angus's OK, addressed to someone in this world.
   // y + Enter sends it, n + Enter denies it (the relay's CLI decides; agents can't approve).
+  // J274: messages an "allow similar" rule let through to this world in the last 15 min (one line each, newest)
+  for (const a of autoNow.slice(-2)) rows.push(dim(cut(a.line, W)));
   if (heldNow.length) {
     const h = heldNow[0], more = heldNow.length > 1 ? `  (+${heldNow.length - 1} more)` : "";
     rows.push(fg(c, bold(cut(`🐳 held: ${h.sandbox} → ${h.to.join(", ")}${more}`, W))));
@@ -659,6 +661,9 @@ const cmds = createCommands({
         note = `history: ${n === "all" ? "everything" : "last " + n + " interactions"}`;
         setView("stream"); loadRoom(room);
       } },
+    // J274: the "allow similar" rules Angus made for messages from sandboxes (any world's).
+    { name: "/rules", usage: "/rules [revoke N | revoke all]", help: "sandbox \"allow similar\" rules: list them, or revoke one or all",
+      run: (arg) => { const t = rulesCommand(arg); note = t.split("\n").join("  ·  ") || "no rules"; render(); } },
   ],
   ctx: {
     panel: "room", world: () => room, worlds: () => rooms.map((r) => r.id), cycle: (d) => cycle(d), agents: () => agents,
@@ -935,7 +940,7 @@ setInterval(() => {
 process.stdout.on("resize", render);
 // J268: a held sandbox message appears / goes (decided by toast, terminal or another panel) within 2 s.
 // The poll is the only reader (review J268 #6: not on every render); heldShownAt = when the first one appeared.
-const pollHeld = () => { if (restarting) return; const h = heldFor(room), sig = h.map((x) => x.id).join(","); if (sig !== heldSig) { if ((heldNow[0] && heldNow[0].id) !== (h[0] && h[0].id)) heldShownAt = Date.now(); heldSig = sig; heldNow = h; render(); } };
+const pollHeld = () => { if (restarting) return; const au = autoNotes(room), h = heldFor(room), sig = h.map((x) => x.id).join(",") + "|" + au.map((x) => x.t).join(","); autoNow = au; if (sig !== heldSig) { if ((heldNow[0] && heldNow[0].id) !== (h[0] && h[0].id)) heldShownAt = Date.now(); heldSig = sig; heldNow = h; render(); } };
 pollHeld(); setInterval(pollHeld, 2000);
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
 // After a restart onto new code: back to the same view. An old saved state from the in-panel board view
