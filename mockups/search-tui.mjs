@@ -23,6 +23,7 @@ import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
+import { jotKinds } from "../lib/jot-kinds.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
@@ -195,6 +196,26 @@ function sendThought(text, images = []) {
 
 // Commands: the search panel's own (/search, /ai, /ask) plus the ones every panel has (/help,
 // /tinker, /quit), all through lib/tui/command-line.mjs.
+// J229 (Angus: "i sent this exactly the first time and you didn't get it: /idea An idea for …"): pi-jot's
+// commands (/jot-idea, /jot-note, … from ~/.pi/agent/jot.json; the bare kind, /idea, /note, too) go to
+// this world's Thoughts, which keeps the text verbatim; the panel says at once what it did, and the thread
+// shows "kept it as idea → file" when it's saved. They were unknown commands here, and nothing was sent.
+function jotCommands() {
+  const out = [];
+  for (const k of jotKinds()) {
+    const run = (arg, text) => {
+      if (!api) { setBox(text); note = "✗ daemon offline: not kept"; return render(); }
+      const line = `/${k.command}${arg ? " " + arg : ""}`;
+      note = `📝 ${k.kind}: sending to Thoughts-${room}…`; render();
+      api.call("thoughts.jot", { room, text: line })
+        .then(() => { note = arg ? `📝 ${k.kind} kept verbatim by Thoughts-${room}${k.kind === "note" || k.kind === "thought" ? "" : " (it picks the title)"}: the thread says where` : `📝 /${k.command}: Thoughts-${room} writes one from the conversation`; render(); })
+        .catch((e) => { setBox(text); note = `✗ ${k.kind} not kept: ${e.message}`; render(); });
+    };
+    out.push({ name: "/" + k.command, usage: `/${k.command} [@Title] TEXT`, help: `${k.description} (pi-jot, kept by Thoughts)`, run });
+    if (k.command !== k.kind && !["thought"].includes(k.kind)) out.push({ name: "/" + k.kind, usage: `/${k.kind} TEXT`, help: `the same as /${k.command}`, hidden: true, run });
+  }
+  return out;
+}
 const cmds = createCommands({
   commands: [
     { name: "/keyword", usage: "/keyword WORDS", help: "exact-word search of this world's history (instant, no model): the 10 newest matching turns", run: (a) => evidence("keyword", a) },
@@ -207,6 +228,7 @@ const cmds = createCommands({
       const add = Math.max(1, Number(a) || 20); evidence(EV.last.kind, EV.last.text, EV.last.n + add);
     } },
     { name: "/thought", usage: "/thought TEXT", help: "the same as typing TEXT: tell Thoughts", run: (a) => sendThought(a) },
+    ...jotCommands(),
   ],
   ctx: {
     panel: "search", world: () => room, worlds: () => rooms, cycle: (d) => cycle(d), agents: () => known.filter((a) => a.live),
