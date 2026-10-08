@@ -368,7 +368,7 @@ async function cmdList() {
       console.log(`  ${(a.icon ? a.icon + " " : "") + a.display}\t${a.status}\t${a.workspace_label || "?"}\t${a.model}\t${a.id}`);
     }
     const th = (r.thoughts || []).find((t) => t.room === room.id);
-    if (th) console.log(`  💭 ${th.name}\t${th.running ? "running" : "starts when talked to"}\t(world agent: talk to it any time)`);
+    if (th) console.log(th.sandboxed ? `  💭 ${th.name}\tin its sandbox\t(sandboxed world: reached through ${th.sandboxed}; no host Thoughts)` : `  💭 ${th.name}\t${th.running ? "running" : "starts when talked to"}\t(world agent: talk to it any time)`); // J267
   }
 }
 
