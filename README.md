@@ -159,9 +159,9 @@ Details: [mcp-gateway/README.md](mcp-gateway/README.md).
 
 Run `hyprpi help` for the full text. Skipped as internal: `seen` (called by the Hyprland click hook) and `voice-targets` (JSON for the voice widget; not in the help).
 
-- `hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--twin-of ID] [--here] [--no-focus] [-- PI_ARGS...]` — open a Pi agent in its own terminal window (SUPER+A); starts in the focused terminal's or agent's folder unless `--cwd`
+- `hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [--here] [--no-focus] [-- PI_ARGS...]` — open a Pi agent in its own terminal window (SUPER+A); starts in the focused terminal's or agent's folder unless `--cwd`
 - `hyprpi list [--json]` — live agents and rooms
-- `hyprpi room [ROOM] [--toggle]` — show or toggle the room widget (no ROOM = current world)
+- `hyprpi room --toggle` — jump to the current world's agents panel, or open it here (what clicking the current world in the bar does)
 - `hyprpi search [ROOM] [--toggle]` — open the search (Thoughts) window for a room
 - `hyprpi find [--room R] [--ai] QUERY` — search from the terminal, by keyword or with `--ai`
 - `hyprpi post [--room R] TEXT` — post to a room as yourself; every agent there gets it
@@ -178,7 +178,7 @@ Run `hyprpi help` for the full text. Skipped as internal: `seen` (called by the 
 - `hyprpi whoami` — this agent (inside a hyprpi agent)
 - `hyprpi status STATE [--quiet]` — set this agent's status
 - `hyprpi finder [--list]` — find an agent or project (Omarchy only: the finder add-on, SUPER+SHIFT+SPACE)
-- `hyprpi integration [status|install|uninstall] [NAME…]` — hyprpi's home-folder wiring piece by piece: hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy, or `recommended`
+- `hyprpi integration [status|install|uninstall] [NAME…]` — hyprpi's home-folder wiring piece by piece: hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy, pi (installs the tested pi version), or `recommended` / `all`
 - `hyprpi mcp-gateway [install|status]` — the shared MCP gateway; `install` writes and starts its systemd user unit
 - `hyprpi remote [install|status]` — the phone app's systemd user unit, the same way
 - `hyprpi daemon` — run the daemon in the foreground
@@ -273,7 +273,7 @@ Registered by pi-extension/ in every hyprpi agent. The `/jot-*` commands (`/jot-
 <details>
 <summary>Commands and keys in the four panels</summary>
 
-Every panel has a message box at the bottom (`/command`, Tab completes, `//text` sends a literal slash). A unique prefix runs a command (`/tin fix x`). Full key lists with source lines live in the keybinding explorer (Omarchy only, SUPER+ALT+K).
+Every panel has a message box at the bottom (`/command`, Tab completes, `//text` sends a literal slash). A unique prefix runs a command (`/tin fix x`). Full key lists with source lines are in the [universal keybinding explorer](https://github.com/angusforbes/omarchy-universal-keybinding-explorer), a separate Omarchy plugin (SUPER+ALT+K, if installed).
 
 **Shared commands** (all panels, from lib/tui/command-line.mjs):
 
@@ -327,7 +327,9 @@ The Thoughts window has no `/ai`, `/thought`, `/digest` or `/search` of the shar
 - `/ask QUESTION` (or `/ai`) — a small model answers from the history and cites the turns
 - `/digest [@names…] [3h|today|since 9am] [words]` — summary by project; alone: since you last looked
 - `/thought TEXT` — the same as typing TEXT
-- `/steps [cancel]` — what `/step` still has queued; `cancel` drops it
+- `/step` — `A /step B /step C` sends A, then B once Thoughts has answered, and so on; `/steps [cancel]` shows or drops what is still queued
+- `/compact [FOCUS]` — compact Thoughts' conversation now
+- `/model [provider/id]` and `/thinking LEVEL` — Thoughts' model or thinking level until it restarts
 - Esc interrupts what is running (it never touches the box); Ctrl+Up / Ctrl+Down, PgUp / PgDn and Ctrl+Home / Ctrl+End scroll the thread; End on an empty box follows the newest
 
 </details>
