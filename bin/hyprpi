@@ -19,12 +19,12 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi search [ROOM] [--toggle]  open the search window for a room (default: current world)
   hyprpi find [--room R] [--ai] QUERY  search from the terminal (keyword, or AI with --ai)
   hyprpi list [--json]        live agents and rooms
-  hyprpi post [--room R] TEXT post to a room as Angus (every agent there gets it)
+  hyprpi post [--room R] TEXT post to a room as you (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
   hyprpi thoughts new W [--handoff FILE]   a fresh session for world W's Thoughts (the old one archived, never deleted)
   hyprpi thoughts [--room R] [--via voice] TEXT   a message to a world's Thoughts (default: the world you're on); --via voice marks it 🎤 (dictation)
   hyprpi dictate [--to hp:ID|proj:NAME] TEXT   a dictation: the focused world's Thoughts (🎤), or the agent /
-                              project it starts with ("Knock, …", "project system, …")
+                              project it starts with ("Atlas, …", "project onboarding, …")
   hyprpi tinker [W:] TEXT     drop a friction fix off in the workshop world: one free agent
                               there gets it, or a new one opens. "D: TEXT" also makes world D
                               the workshop from now on (remembered)
@@ -584,7 +584,7 @@ const commands = {
   restart: async () => {
     const who = args.find((x) => !x.startsWith("-")), compact = !args.includes("--no-compact");
     if (!who) { console.error("usage: hyprpi restart AGENT [--no-compact] [--wait]"); process.exit(2); }
-    const r = await request("agent.restart", { agent: who, compact, by: "Angus (hyprpi restart)" });
+    const r = await request("agent.restart", { agent: who, compact, by: "you (hyprpi restart)" });
     console.log(`${r.agent}: ${r.already ? "already restarting" : r.queued ? "restarts when its turn ends" : "restarting"}${compact ? " (compacting first)" : ""}`);
     if (!args.includes("--wait")) return;
     for (let i = 0; i < 1200; i++) { // up to 20 min (a long turn, then compaction)
