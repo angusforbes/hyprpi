@@ -39,6 +39,32 @@ const here = new URL(".", import.meta.url).pathname;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clients = () => hypr.clients().catch(() => []);
 
+// J262 v2: on a SANDBOXED world's workspaces (a ~/.config/hyprpi/worlds/<name>.json covers them, e.g. world G =
+// 61–69), the panel keys bring THAT world's own panels (they run inside its sandbox, against its own daemon and
+// Thoughts), never the host's panels for that room. Missing ones are opened by docker/world/world.sh start.
+{
+  const dir = `${process.env.XDG_CONFIG_HOME || process.env.HOME + "/.config"}/hyprpi/worlds`;
+  let worlds = [];
+  try { worlds = fs.readdirSync(dir).filter((f) => /^[a-z0-9-]+\.json$/.test(f)).map((f) => ({ name: f.slice(0, -5), ...JSON.parse(fs.readFileSync(`${dir}/${f}`, "utf8")) })); } catch { /* none */ }
+  const aw = wantWs || (await hypr.activeWorkspace().catch(() => null))?.id;
+  const w = worlds.find((x) => Array.isArray(x.workspaces) && aw >= x.workspaces[0] && aw <= x.workspaces[1]);
+  if (w) {
+    const KIND = { "1": "router", "2": "room", "4": "board", "3": "search" };
+    const envOf = (pid) => { try { return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); } catch { return []; } };
+    const mine = (await clients()).filter((c) => /^hyprpi\.g-/.test(c.class || "") && envOf(c.pid).includes(`G_WORLD=${w.name}`));
+    let missing = false, last = null;
+    for (const n of only) {
+      const c = mine.find((x) => new RegExp(`^G: hyprpi-${KIND[n]} `).test(x.title || ""));
+      if (!c) { missing = true; continue; }
+      if (c.workspace?.id !== aw) await hypr.moveWindow(c.address, String(aw)).catch(() => {});
+      last = c;
+    }
+    if (last) await hypr.focusWindow(last.address).catch(() => {});
+    if (missing) spawn(`${here}../docker/world/world.sh`, ["start", w.name], { detached: true, stdio: "ignore" }).unref();
+    process.exit(0);
+  }
+}
+
 // Window titles: "hyprpi-router C" (panel 1), "hyprpi-room C" (2), "hyprpi-search C" (3)
 // — that is how an existing window is recognised. Deliberately no " · <ROOM>" ending: the
 // daemon reads titles ending that way as its own room windows and repositions them.

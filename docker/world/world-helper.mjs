@@ -45,6 +45,11 @@ const ADDR_RE = /^0x[0-9a-f]{1,16}$/;
 const TOKEN_RE = /^[0-9a-f]{24}$/;
 const AGENT_RE = /^[A-Za-z0-9_.-]{3,64}$/;
 const LIVE_MSG = (n) => String(n);
+// G's window classes (J262 v2): hyprpi.g-agent / hyprpi.g-agents / hyprpi.g-mockup. Under "hyprpi." so the host
+// treats them like hyprpi windows (Hyprland's hyprpi.* rules: terminal tag, opacity; summon/dismiss never
+// move them as apps), but none equals a host class (hyprpi.agent …), so the host daemon never takes them
+// for its own agents or panels.
+const G_CLASS = /^hyprpi\.g-/;
 const PANEL_KINDS = { router: "hyprpi.agents", room: "hyprpi.mockup", board: "hyprpi.mockup", search: "hyprpi.mockup" };
 
 function log(e) {
@@ -128,7 +133,7 @@ class Helper {
     const all = await hj("clients");
     const mine = [];
     for (const c of all) {
-      if (!c?.pid || !/^hyprpi-g\./.test(c.class || "")) continue;
+      if (!c?.pid || !G_CLASS.test(c.class || "")) continue;
       let o = this.owned.get(c.address);
       if (!o || o.pid !== c.pid) {
         const env = envOf(c.pid);
@@ -151,7 +156,7 @@ class Helper {
     return {
       address: c.address, mapped: c.mapped, hidden: c.hidden, at: c.at, size: c.size, floating: c.floating,
       workspace: { id: c.workspace?.id, name: String(c.workspace?.name ?? "") }, monitor: c.monitor,
-      class: String(c.class).replace(/^hyprpi-g\./, "hyprpi."), initialClass: String(c.class).replace(/^hyprpi-g\./, "hyprpi."),
+      class: String(c.class).replace(G_CLASS, "hyprpi."), initialClass: String(c.class).replace(G_CLASS, "hyprpi."),
       title, initialTitle: title, pid: 0, xwayland: false, pinned: false, fullscreen: c.fullscreen, fullscreenClient: c.fullscreenClient,
       grouped: [], tags: [], swallowing: "0x0", focusHistoryID: c.focusHistoryID, hyprpiAgent: o.agent,
     };
@@ -233,9 +238,9 @@ class Helper {
     this.saveTokens();
     // The host command: fixed except the token (checked charset), the class (from a fixed table) and the
     // panel title (from a fixed table). The workspace number is an integer we checked.
-    const cls = kind === "agent" ? "hyprpi-g.agent" : PANEL_KINDS[kind].replace(/^hyprpi\./, "hyprpi-g.");
+    const cls = kind === "agent" ? "hyprpi.g-agent" : PANEL_KINDS[kind].replace(/^hyprpi\./, "hyprpi.g-");
     const H = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-    const kconf = ["--config", path.join(H, "docker", "world", "sandbox-kitty.conf")];
+    const kconf = ["--config", this.kittyConf(H)];
     const title = kind === "agent" ? [] : ["--title", `G: hyprpi-${kind} G`];
     // Review #1: the window gets a locked-down kitty config (no clipboard, links, remote control or host-shell
     // keys) instead of Angus's own, and the program's output passes through g-filter (drops kitty graphics,
@@ -250,6 +255,28 @@ class Helper {
     if (!/^[A-Za-z0-9/._-]+$/.test(script)) throw new Error("unexpected characters in the launch script path");
     await this.run(`hl.dsp.exec_cmd(${q(script)}, { workspace = ${q(`${ws} silent`)} })`);
     return { ok: true, ws, kind };
+  }
+  // The window's kitty config (J262 v2): Angus's look (font, padding, decorations, cursor, the current Omarchy
+  // theme's colours) copied as plain values from his kitty.conf and the theme's kitty.conf, KEEPING ONLY
+  // visual settings from a fixed list (never includes, maps, links, remote control or listen_on), then the
+  // lockdown in sandbox-kitty.conf, which comes last and wins. Rebuilt on each open (theme changes).
+  kittyConf(H) {
+    const VISUAL = /^(font_family|bold_font|italic_font|bold_italic_font|font_size|font_features|modify_font|disable_ligatures|window_padding_width|window_margin_width|single_window_padding_width|single_window_margin_width|hide_window_decorations|background_opacity|dynamic_background_opacity|cursor|cursor_text_color|cursor_shape|cursor_shape_unfocused|cursor_blink_interval|cursor_stop_blinking_after|cursor_beam_thickness|cursor_underline_thickness|cursor_trail|foreground|background|selection_foreground|selection_background|color[0-9]{1,3}|active_border_color|inactive_border_color|bell_border_color|url_color|mark[123]_(fore|back)ground|active_tab_(fore|back)ground|inactive_tab_(fore|back)ground|tab_bar_background|tab_bar_margin_color|tab_bar_edge|tab_bar_style|tab_powerline_style|text_composition_strategy|text_fg_override_threshold|scrollback_lines|enable_audio_bell|visual_bell_duration|window_alert_on_bell|wheel_scroll_multiplier|touch_scroll_multiplier)$/;
+    const VALUE = /^[A-Za-z0-9 #.,:_+\-%]{0,120}$/;
+    const kconfDir = path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "kitty");
+    const files = [path.join(HOME, ".local", "state", "omarchy", "current", "theme", "kitty.conf"), path.join(kconfDir, "kitty.conf")];
+    const lines = [];
+    for (const f of files) {
+      let t = ""; try { t = fs.readFileSync(f, "utf8"); } catch { continue; }
+      for (const raw of t.split("\n")) {
+        const m = /^\s*([a-z0-9_]+)\s+(.*?)\s*$/.exec(raw);
+        if (m && VISUAL.test(m[1]) && VALUE.test(m[2])) lines.push(`${m[1]} ${m[2]}`);
+      }
+    }
+    const out = path.join(STATE, "kitty-look.conf");
+    const lock = fs.readFileSync(path.join(H, "docker", "world", "sandbox-kitty.conf"), "utf8");
+    fs.writeFileSync(out, `# generated by world-helper.mjs: visual settings only, then the sandbox lockdown\n${lines.join("\n")}\n\n${lock}`, { mode: 0o600 });
+    return out;
   }
   async handle(r) {
     switch (r.op) {
@@ -302,7 +329,7 @@ class Helper {
 if (cmd === "run") await new Helper(readConfig()).run_();
 else if (cmd === "windows") { // the world's own windows (G_WORLD in the kitty process), for world.sh stop (review #7)
   const all = JSON.parse(execFileSync("hyprctl", ["-j", "clients"]).toString());
-  for (const c of all) if (c.pid && /^hyprpi-g\./.test(c.class || "") && envOf(c.pid).includes(`G_WORLD=${WORLD}`)) console.log(c.address);
+  for (const c of all) if (c.pid && G_CLASS.test(c.class || "") && envOf(c.pid).includes(`G_WORLD=${WORLD}`)) console.log(c.address);
 }
 else if (cmd === "start") { readConfig(); execFileSync("systemd-run", ["--user", `--unit=${UNIT}`, "--collect", "--property=Restart=on-failure", "--property=MemoryMax=256M", "--property=CPUQuota=50%", "--property=TasksMax=64", process.execPath, fileURLToPath(import.meta.url), "run", WORLD], { stdio: "inherit" }); }
 else if (cmd === "stop") execFileSync("systemctl", ["--user", "stop", UNIT], { stdio: "inherit" });

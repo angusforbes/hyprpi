@@ -188,7 +188,11 @@ async function onInnerTalk(d) {
   if (!reqId || from.id === "hyprpi") return; // daemon delivery notes
   const asker = { id: String(from.id || ""), name: field(from.name, 64) || String(from.id || "?") };
   const p = parseOutgoing(d.text);
-  if (p.error) { log(`refused a talk from ${asker.name}: bad address`); return void answerInner(reqId, `Outside: not sent: ${p.error}.`); }
+  if (p.error) {
+    log(`refused a talk from ${asker.name}: bad address`);
+    // Thoughts-G and agents sometimes include Outside in a broadcast; answer as the gateway it is (J262 v2).
+    return void answerInner(reqId, `Outside: I'm world G's gateway to the other worlds, not an agent. To send something out, write "Name: text" (Name = an agent in another world; it waits for Angus's approval). Not sent: ${p.error}.`);
+  }
   if (outBudget.left() <= 0) return void answerInner(reqId, `Outside: not sent: rate limit (${L.outPerMin} messages a minute to the outside world); try again in a minute.`);
   const body = SIGN ? `[${asker.name}, in world G] ${p.rest}` : p.rest;
   if (Buffer.byteLength(body) > L.outBytes) return void answerInner(reqId, `Outside: not sent: text over ${L.outBytes} bytes (the relay's limit); shorten it.`);
