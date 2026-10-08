@@ -24,7 +24,7 @@ This repo holds hyprpi and the desktop pieces it is built around. Each can be in
 
 ## Install
 
-**Requirements:** Linux with Hyprland 0.56 or newer and its Lua config (`hyprland.lua`), Node.js 22+, a terminal (kitty recommended), and pi 1.0.x logged in to a model provider. Omarchy is needed only for the extras that live in its bar and menus (the finder, the bar widgets). Details: [docs/requirements.md](docs/requirements.md), [docs/terminals.md](docs/terminals.md).
+**Requirements:** Linux with Hyprland 0.56 or newer and its Lua config (`hyprland.lua`), Node.js 22+, a terminal (kitty recommended), and pi 1.0.x logged in to a model provider. Omarchy is needed only for the extras that live in its bar and menus (the finder, the bar widgets). Details: [docs/requirements.md](docs/requirements.md).
 
 On Arch / Omarchy the tools are one line:
 
@@ -333,9 +333,3 @@ The Thoughts window has no `/ai`, `/thought`, `/digest` or `/search` of the shar
 - Esc interrupts what is running (it never touches the box); Ctrl+Up / Ctrl+Down, PgUp / PgDn and Ctrl+Home / Ctrl+End scroll the thread; End on an empty box follows the newest
 
 </details>
-
-## More
-
-- [docs/CHANGELOG.md](docs/CHANGELOG.md): the detailed reference and change notes (the old README: every key, setting and design decision, in the order they were built).
-- [docs/requirements.md](docs/requirements.md), [docs/terminals.md](docs/terminals.md): what hyprpi needs, and how each terminal behaves.
-- [HANDOFF.md](HANDOFF.md): working notes for the agents developing hyprpi.
