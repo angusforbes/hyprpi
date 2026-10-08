@@ -33,7 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { connect } from "../lib/client.mjs";
 
@@ -319,13 +319,13 @@ class Sandbox {
         const list = (await this.conn.call("list")).agents || [];
         const peerIds = new Set(this.relay.sandboxes.filter((s) => s !== this && s.conn).map((s) => s.agentId));
         const resolve = (n) => {
-          if (THOUGHTS_RE.test(n)) return { kind: "thoughts", id: n, shown: n, peer: false };
+          if (THOUGHTS_RE.test(n)) return { kind: "thoughts", id: n, shown: n, room: n.slice(9).toUpperCase(), peer: false };
           const k = n.toLowerCase();
           const hits = list.filter((a) => a.id === n || String(a.name || "").toLowerCase() === k || String(a.display || "").toLowerCase() === k);
           if (hits.length !== 1) throw new Error(hits.length ? `ambiguous recipient '${n}'` : `no live agent '${n}'`);
           const a = hits[0];
           if (a.id === this.agentId) throw new Error("that is you");
-          return { kind: "agent", id: a.id, shown: `${a.display || a.name} (${a.id}, room ${a.room || "?"})`, peer: peerIds.has(a.id) };
+          return { kind: "agent", id: a.id, shown: `${a.display || a.name} (${a.id}, room ${a.room || "?"})`, room: a.room || "", peer: peerIds.has(a.id) };
         };
         const targets = raw.map(resolve);
         const open = targets.filter((x) => x.peer), gated = targets.filter((x) => !x.peer);
@@ -335,7 +335,7 @@ class Sandbox {
           const r = await this.conn.call("talk", { to: open.map((x) => x.id), text: body, mode, strict_ids: true });
           out.delivered = r.delivered; out.request_id = r.request_id; out.skipped = r.skipped;
         }
-        if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), targets: gated.map((x) => ({ kind: x.kind, id: x.id })), shown: gated.map((x) => x.shown), mode, text: t, body })];
+        if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), targets: gated.map((x) => ({ kind: x.kind, id: x.id })), shown: gated.map((x) => x.shown), rooms: [...new Set(gated.map((x) => x.room).filter(Boolean))], mode, text: t, body })];
         out.log = { to: targets.map((x) => x.id), open: open.length, gated: gated.length, ...textMeta(t) };
         return out;
       }
@@ -361,6 +361,95 @@ class Sandbox {
   }
 }
 
+// --- the toast (J268): preview + Approve / Deny / Review buttons ------------------------------------------
+// Sent straight to org.freedesktop.Notifications (as omarchy-notification-send does: busctl, every value one
+// typed parameter, never re-parsed), with three actions. Angus's notification plugin draws buttons for these
+// keys only for app "hyprpi-relay", with fixed labels. The body is plain text inside StyledText, so <, > and &
+// are escaped (no links or markup from a sandbox); control characters are already gone (clean()).
+const NOTIF = ["org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications"];
+const ACTION_KEYS = { approve: "Approve", deny: "Deny", review: "Review" };
+function preview(text, n = 220) {
+  const one = clean(text).replace(/\s+/g, " ");
+  const cut = one.length > n ? one.slice(0, n - 1) + "…" : one;
+  return cut.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+// Review J268 #1/#2: the action keys carry a per-message nonce ("approve:<nonce>"), so a click is bound to
+// THIS message, never to a numeric notification id (ids restart at 1 when the shell restarts); and the
+// notification server's unique bus name at send time is stored too: a click only counts while that same
+// server instance still owns org.freedesktop.Notifications (a process that grabs the name later is ignored).
+function notifOwner() {
+  try { const o = execFileSync("busctl", ["--user", "--", "call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner", "s", NOTIF[0]], { encoding: "utf8", timeout: 3000 }); const m = /^s "(:[0-9.]+)"/.exec(o.trim()); return m ? m[1] : ""; }
+  catch { return ""; }
+}
+function notifyHeld(sb, msg, review) {
+  const summary = `Sandbox ${sb.name} → ${msg.shown.join(", ")}`;
+  const body = `${preview(msg.text)}`;
+  const nonce = crypto.randomBytes(8).toString("hex"), owner = notifOwner();
+  if (!owner) return null;
+  try {
+    const out = execFileSync("busctl", ["--user", "--", "call", ...NOTIF, "Notify", "susssasa{sv}i",
+      "hyprpi-relay", "0", "", summary, body,
+      String(Object.keys(ACTION_KEYS).length * 2), ...Object.entries(ACTION_KEYS).flatMap(([k, label]) => [`${k}:${nonce}`, label]),
+      "3", "urgency", "y", "2", "omarchy-glyph", "s", "🐳", "omarchy-exec-argv", "s",
+      JSON.stringify(["kitty", "--class=hyprpi.review", "--title=hyprpi: approve a sandbox message", "--", ...review]),
+      "0"], { encoding: "utf8", timeout: 5000 });
+    const m = /^u (\d+)/.exec(out.trim()); return m ? { id: Number(m[1]), nonce, owner } : null;
+  } catch {
+    try { execFileSync("notify-send", ["-a", "hyprpi-relay", summary, `Approve or deny in a terminal: ${review.join(" ")}`]); } catch { /* no notifier */ }
+    return null;
+  }
+}
+function closeNotif(nf) {
+  // only close it if the server that showed it is still the one running (ids restart with the shell)
+  const n = nf && nf.id; if (!Number.isInteger(n) || n <= 0 || !nf.owner || nf.owner !== notifOwner()) return;
+  try { execFileSync("busctl", ["--user", "--", "call", ...NOTIF, "CloseNotification", "u", String(n)], { timeout: 3000, stdio: "ignore" }); } catch { /* gone */ }
+}
+// The buttons: listen for ActionInvoked. `gdbus monitor --dest` only shows signals whose SENDER is the
+// current owner of org.freedesktop.Notifications (the D-Bus daemon stamps the sender; another process can't
+// forge it), so only the notification server itself, i.e. a click on the toast, can trigger a decision here.
+// Only notification ids this relay created and stored in a pending file count; anything else is ignored.
+// Fail closed: if the monitor dies, the buttons do nothing until it is back (the terminal and panel still work).
+function watchActions() {
+  const start = () => {
+    let p;
+    let again = false;
+    const restart = (why) => { if (again) return; again = true; log({ note: `action monitor ${why}; restarting` }); setTimeout(start, 5000); };
+    try { p = spawn("gdbus", ["monitor", "--session", "--dest", NOTIF[0], "--object-path", NOTIF[1]], { stdio: ["ignore", "pipe", "ignore"] }); }
+    catch (e) { restart(`failed: ${e.message}`); return; }
+    p.on("error", (e) => restart(`error: ${e.message}`)); // review J268 #4: async spawn errors must not kill the relay
+    let buf = "";
+    p.stdout.on("data", (d) => {
+      buf += d; let i;
+      while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); onActionLine(line); }
+      if (buf.length > 65536) buf = "";
+    });
+    p.on("exit", () => restart("exited"));
+  };
+  start();
+}
+function onActionLine(line) {
+  const m = /^\/org\/freedesktop\/Notifications: org\.freedesktop\.Notifications\.ActionInvoked \(uint32 (\d+), '([a-z]+):([0-9a-f]{16})'\)\s*$/.exec(line);
+  if (!m || !Object.hasOwn(ACTION_KEYS, m[2])) return;
+  const n = Number(m[1]), key = m[2], nonce = m[3];
+  let id = null, rec = null;
+  for (const f of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) {
+    try { const r = JSON.parse(fs.readFileSync(path.join(PENDING, f), "utf8")); if (r.notif && r.notif.nonce === nonce) { id = r.id; rec = r; break; } } catch { /* */ }
+  }
+  if (!id || !/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(id)) return;
+  // the same id AND the same server instance that showed it (fail closed when the owner can't be read)
+  if (rec.notif.id !== n || !rec.notif.owner || rec.notif.owner !== notifOwner()) { log({ note: `toast ${key} for ${id} ignored (server changed)` }); return; }
+  log({ note: `toast ${key} for ${id}` });
+  if (key === "review") {
+    // Hyprland starts the window (outside this unit's small memory/task limits, which killed a kitty started
+    // from here); id is checked against ID_RE above and the paths are ours, so the exec string is safe.
+    const cmdline = ["kitty", "--class=hyprpi.review", "'--title=hyprpi: approve a sandbox message'", "--", process.execPath, fileURLToPath(import.meta.url), "review", id].join(" ");
+    try { const k = spawn("hyprctl", ["dispatch", `hl.dsp.exec_cmd("${cmdline}")`], { stdio: "ignore" }); k.on("error", (e) => log({ error: `review window: ${e.message}` })); } catch { /* */ }
+    return;
+  }
+  fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(DECISIONS, `${id}.${key}`), "", { mode: 0o600 });
+}
+
 // --- the relay: all sandboxes, the approval queue, the watchers -----------------------------------------
 class Relay {
   constructor(cfg) {
@@ -379,13 +468,13 @@ class Relay {
     const id = `${sb.name}--${crypto.randomBytes(3).toString("hex")}`;
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
     log({ sb: sb.name, dir: "out", op: "talk", held: id, to: msg.to, ...textMeta(msg.text) });
-    // The notice shows only who, never the text (a planted message shouldn't be broadcast); read it with `pending`.
-    // Clicking the toast opens a small terminal on Angus's current workspace showing this message with
-    // approve / deny (J262: the click used to fall back to "focus the first window whose class matches
-    // hyprpi", which landed on a random world-A panel).
+    // J268 (Angus: decide "within the toast itself" and in the receiving world's panel): the toast now
+    // shows a short preview of the text and three buttons, Approve / Deny / Review. The relay sends it
+    // itself over D-Bus with those actions and listens for the notification server's ActionInvoked
+    // (watchActions below); clicking the card body still opens the review terminal (J262).
     const review = [process.execPath, fileURLToPath(import.meta.url), "review", id];
-    try { execFileSync("omarchy-notification-send", ["--app-name", "hyprpi-relay", "-g", "🐳", "-u", "critical", "-t", "60000", `Sandbox ${sb.name} wants to message ${msg.shown.join(", ")}`, "Click to read it and approve or deny", "--exec", "kitty", "--class=hyprpi.review", "--title=hyprpi: approve a sandbox message", "--", ...review]); }
-    catch { try { execFileSync("notify-send", ["-a", "hyprpi-relay", `Sandbox ${sb.name} wants to message ${msg.shown.join(", ")}`, `Approve or deny in a terminal: ${review.join(" ")}`]); } catch { /* no notifier */ } }
+    const notif = notifyHeld(sb, msg, review);
+    if (notif) { try { const pf = path.join(PENDING, id + ".json"); const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* decided already */ } }
     sb.conn?.call("room.post", { text: `🐳 [relay] sandbox ${sb.name} wants to message ${msg.shown.join(", ")}; it waits for Angus's OK (sbx-relay.mjs pending, then approve or deny ${id}).` }).catch(() => {});
     return id;
   }
@@ -396,6 +485,7 @@ class Relay {
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
     fs.unlinkSync(pf);
+    closeNotif(msg.notif); // decided anywhere (toast, panel, terminal): the toast goes too (J268)
     const sb = this.sandboxes.find((s) => s.name === msg.sandbox);
     if (!sb) return;
     if (verdict === "deny") {
@@ -422,7 +512,7 @@ class Relay {
   sweepPending() {
     for (const n of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) {
       const p = path.join(PENDING, n);
-      try { if (Date.now() - fs.statSync(p).mtimeMs > LIMITS.pendingTtlMs) { fs.unlinkSync(p); log({ note: `pending ${n} expired` }); } } catch { /* gone */ }
+      try { if (Date.now() - fs.statSync(p).mtimeMs > LIMITS.pendingTtlMs) { try { closeNotif(JSON.parse(fs.readFileSync(p, "utf8")).notif); } catch { /* */ } fs.unlinkSync(p); log({ note: `pending ${n} expired` }); } } catch { /* gone */ }
     }
   }
   async run() {
@@ -436,6 +526,7 @@ class Relay {
       } catch (e) { log({ sb: sb.name, error: `watch: ${e.message}` }); }
     }
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
+    watchActions();
     for (const f of fs.readdirSync(DECISIONS)) this.decide(f).catch(() => {});
     process.on("unhandledRejection", (e) => log({ error: `unhandled: ${e?.message || e}` }));
     setInterval(() => { for (const sb of this.sandboxes) sb.scan().catch(() => {}); }, 2000); // backstop for missed events

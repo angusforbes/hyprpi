@@ -41,6 +41,7 @@ import { userName, HUMAN_KEY } from "../lib/policy.mjs"; // J261: the human's di
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
+import { heldFor, decideHeld } from "../lib/held.mjs"; // J268: sandbox messages held for Angus, answered y / n here
 let worldBar = null;
 const helpRows = () => {
   const list = cmds.help(), w = Math.max(12, ...list.map(([c]) => c.length));
@@ -113,6 +114,7 @@ const hereAgents = () => agents.filter((a) => a.room === room);
 // Enter: a closed one is resumed (same id, name, twins), a parked one is moved back to
 // this workspace. ^W twice on a closed one drops it from the list (its session stays).
 let dormant = [];
+let heldNow = [], heldSig = "", heldShownAt = 0; // J268: held sandbox messages for this world (lib/held.mjs)
 let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messages = {}, input = "", note = "", online = false;
 // The Stream: room messages, agent activity and board changes (lib/stream.mjs builds the timeline).
 let activity = {}, changes = {}; // room -> activity events · board changes
@@ -292,6 +294,14 @@ function draw() {
   const live = hereAgents();
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const rows = [];
+  // J268: a message from a sandboxed world held for Angus's OK, addressed to someone in this world.
+  // y + Enter sends it, n + Enter denies it (the relay's CLI decides; agents can't approve).
+  if (heldNow.length) {
+    const h = heldNow[0], more = heldNow.length > 1 ? `  (+${heldNow.length - 1} more)` : "";
+    rows.push(fg(c, bold(cut(`🐳 held: ${h.sandbox} → ${h.to.join(", ")}${more}`, W))));
+    rows.push(cut("   " + h.text, W));
+    rows.push(dim(cut("   y + Enter: send it · n + Enter: deny · (a toast has the same buttons)", W)));
+  }
 
   // One header line (Angus): "— room C · <view> (^F)" plus the pane's own hints; the agents
   // live in the agents panel (SUPER+ALT+A).
@@ -670,6 +680,17 @@ async function send() {
   const raw = input.trim();
   if (raw && !onlyAt(raw.startsWith("//") ? raw.slice(1) : raw)) box.remember(raw); // ↑ brings it back (N51)
   if (command(raw)) return;
+  // J268: a bare y / n answers the held sandbox message shown at the top (oldest first).
+  // Review J268 #5: only for the message that was already on screen before this was typed (shown for
+  // 2 s+, and still the first one now), so a reply "y" typed as a message can't approve a new arrival.
+  const fresh = heldFor(room);
+  if (/^[yn]$/i.test(raw) && fresh.length && heldNow.length && fresh[0].id === heldNow[0].id && Date.now() - heldShownAt >= 2000) {
+    const h = fresh[0], verdict = /^y/i.test(raw) ? "approve" : "deny";
+    input = ""; ic = 0;
+    const r = decideHeld(h.id, verdict);
+    note = r.ok ? (verdict === "approve" ? `✓ approved: ${h.sandbox} → ${h.to.join(", ")} is being sent` : `denied: ${h.sandbox} → ${h.to.join(", ")}`) : "✗ " + (r.text || "couldn't decide");
+    heldSig = ""; pollHeld(); return render();
+  }
   if (view === "help") view = "stream";
   input = ""; ic = 0;
   const text = raw.startsWith("//") ? raw.slice(1) : raw;
@@ -891,7 +912,7 @@ process.on("SIGTERM", quit);
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
 const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/new-pill.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/new-pill.mjs", "held.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
@@ -912,6 +933,10 @@ setInterval(() => {
   process.stdin.setRawMode?.(false); process.stdin.pause();
 }, 3000);
 process.stdout.on("resize", render);
+// J268: a held sandbox message appears / goes (decided by toast, terminal or another panel) within 2 s.
+// The poll is the only reader (review J268 #6: not on every render); heldShownAt = when the first one appeared.
+const pollHeld = () => { if (restarting) return; const h = heldFor(room), sig = h.map((x) => x.id).join(","); if (sig !== heldSig) { if ((heldNow[0] && heldNow[0].id) !== (h[0] && h[0].id)) heldShownAt = Date.now(); heldSig = sig; heldNow = h; render(); } };
+pollHeld(); setInterval(pollHeld, 2000);
 out(`${ESC}?1049h${ESC}?1000h${ESC}?1002h${ESC}?1006h${ESC}?2004h`); // alt screen + mouse (wheel, click, drag-select) + bracketed paste
 // After a restart onto new code: back to the same view. An old saved state from the in-panel board view
 // (gone, J210) opens the normal Stream; its view / card fields are ignored.
