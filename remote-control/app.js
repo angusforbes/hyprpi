@@ -9,6 +9,7 @@ import { install as installFileViewer, open as openViewer } from "/fileview.mjs"
 // links still open in the overlay, over the tab they're in.
 addEventListener("click", (e) => {
   if (e.defaultPrevented || e.button > 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  if (e.target.closest?.("img.img, img.mdimg")) return; // J234: an image (his bubble's are wrapped in a link) opens in the overlay, as in Agnt (J221)
   const a = e.target.closest?.("a[href^='/file?path=']"); if (!a || a.closest("#fv")) return;
   const fp = new URLSearchParams(a.getAttribute("href").split("?")[1] || "").get("path"); if (!fp) return;
   e.preventDefault(); e.stopPropagation();

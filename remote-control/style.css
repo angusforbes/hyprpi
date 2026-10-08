@@ -105,6 +105,17 @@ details.card[open] summary { margin-bottom: 4px; }
 .mdfig .mdimg { display: block; width: 100%; max-width: 100%; height: auto; max-height: 160px; object-fit: contain; margin: 0; }
 .mdfig figcaption { font-size: 13px; line-height: 1.3; margin-top: 3px; color: var(--fg); }
 .tw img { max-width: 100%; }
+/* J234 (Angus, after J221 made Agnt's images full width: should Thoughts match? "I think so"): in the
+   Thoughts thread, images (in his bubbles and in replies, captioned or not) are the column's width on
+   a phone, one per row, aspect kept, never upscaled past their own pixels, at most 75% of the screen
+   tall; a bubble with an image widens to the column. Capped at 640 px / 60vh on a wide screen, as in
+   J221. A tap opens the viewer (fileview.mjs). Replaces J63's 45% / 160 px thumbnails here. */
+.tw .img, .tw .mdimg, .tw .mdfig .mdimg { display: block; width: auto; height: auto; max-width: 100%; max-height: 75vh; object-fit: contain; margin: 6px 0 0; }
+.tw .mdfig { display: block; width: auto; max-width: 100%; margin: 6px 0 2px; }
+.tw .msg.you:has(.img) { max-width: 100%; }
+.tw .msg.you .img { margin-top: 8px; }
+.tw a:has(> .img) { display: block; width: fit-content; max-width: 100%; }
+@media (min-width: 700px) { .tw .img, .tw .mdimg, .tw .mdfig .mdimg { max-width: min(100%, 640px); max-height: 60vh; } }
 
 /* markdown */
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
