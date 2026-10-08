@@ -584,7 +584,7 @@ Item {
     var ro0 = 0, co0 = {}
     if (keepScroll) {
       for (var nr = 0; nr < out.length; nr++) {
-        if (out[nr].world <= prevTopWorld) ro0 = nr
+        if (out[nr].world === prevTopWorld) ro0 = nr   // rows follow the world ORDER, not letters (J265)
         if (prevColByWorld[out[nr].world] !== undefined) co0[nr] = prevColByWorld[out[nr].world]
       }
     }
@@ -747,11 +747,18 @@ Item {
   function colOffset(r) { return colOffsets[r] || 0 }
 
   function ensureVisible() {
-    var vr = Math.min(visibleRows, rows.length)
-    var ro = rowOffset
-    if (selRow < ro) ro = selRow
-    if (selRow >= ro + vr) ro = selRow - vr + 1
-    rowOffset = Math.max(0, Math.min(ro, rows.length - vr))
+    // The row window is circular (J265), like the selection and the ▲/▼ hints:
+    // wrapping past the first/last shown world scrolls ONE row instead of
+    // jumping the view to the other end of the list.
+    var nr = rows.length, vr = Math.min(visibleRows, nr)
+    if (nr === 0 || vr >= nr) { rowOffset = 0 } else {
+      var ro = ((rowOffset % nr) + nr) % nr
+      if ((selRow - ro + nr) % nr >= vr) {
+        if (selRow === (ro - 1 + nr) % nr) ro = selRow            // one row up
+        else ro = (selRow - vr + 1 + nr) % nr                     // down, or a jump
+      }
+      rowOffset = ro
+    }
     var n = colCount(selRow), vc = Math.min(visibleCols, n)
     var co = colOffset(selRow)
     if (selCol < co) co = selCol
@@ -779,7 +786,7 @@ Item {
   function visibleRowIndices() {
     var out = []
     var vr = Math.min(visibleRows, rows.length)
-    for (var i = 0; i < vr; i++) out.push(rowOffset + i)
+    for (var i = 0; i < vr; i++) out.push((rowOffset + i) % rows.length)
     return out
   }
 
