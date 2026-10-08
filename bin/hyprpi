@@ -30,10 +30,10 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
                               the workshop from now on (remembered)
   hyprpi focus AGENT          jump to an agent's window
   hyprpi restart AGENT [--no-compact] [--wait]   restart an agent's pi on the same session when it's idle
+                              (compacts first; frees memory, picks up the current pi); --wait prints before/after
   hyprpi mcp-gateway [install|status]   the MCP gateway (mcp-gateway/): install writes + starts its systemd --user unit
   hyprpi remote [install|status]   the phone app (remote-control/): the same for its unit
   hyprpi integration [status|install|uninstall] [NAME…]   hyprpi's home-folder wiring, piece by piece (hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy; "recommended")
-                              (compacts first; frees memory, picks up the current pi); --wait prints before/after
   hyprpi finder [--list]      find an agent or project (the Omarchy menu; the finder add-on, SUPER+SHIFT+SPACE)
   hyprpi move AGENT... --to WS|WORLD   move agents' windows (focus stays); a world letter keeps
                               each one's slot (C4 -> F4). --room C moves every live agent in C
