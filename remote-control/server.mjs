@@ -31,6 +31,7 @@ import { execFileSync } from "node:child_process";
 import { connect } from "../lib/client.mjs";
 import { socketPath, runtimeDir, loadConfig, wsLabel, expandHome } from "../lib/paths.mjs";
 import { hyprJson, subscribe as hyprSubscribe } from "../lib/hypr.mjs";
+import { userName } from "../lib/policy.mjs"; // J261
 import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames, filterStream } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49) and @Name filter
 import { worldHex, theme } from "../lib/tui/term.mjs";
 import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
@@ -322,7 +323,7 @@ const streams = new Map(); // room -> { items, sig }
 async function buildStreamFor(r) {
   const [h, b] = await Promise.all([api.call("history.read", { room: r, interactions: 200 }), api.call("board.get", { room: r }).catch(() => ({ projects: [] }))]);
   const projects = b.projects || [], pname = (id) => projects.find((p) => p.id === id)?.name || "";
-  const raw = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects });
+  const raw = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects, user: userName() });
   const items = raw.map((it) => phoneRow(it, pname));
   const sig = `${items.length}|${items.at(-1)?.k || ""}|${items.at(-1)?.text?.length || 0}`;
   const old = streams.get(r);
@@ -335,13 +336,13 @@ async function buildStreamFor(r) {
 // to, the project id, the raw text and the board line's project name.
 function phoneRow(it, pname) {
   {
-    const full = streamLine(it, { projectName: pname, time: false }); // "who: text [@project]", as /digest says it
+    const full = streamLine(it, { projectName: pname, time: false, user: userName() }); // "who: text [@project]", as /digest says it
     const who = it.kind === "board" ? { name: "📋 " + it.who.name, color: "" } : { name: (it.who.icon ? it.who.icon + " " : "") + it.who.name, color: it.who.color || "", human: !!it.who.human };
     // The body without the "who" lead (the row shows who in its colour); DIRECT / did / topic keep their verb.
     const body = DIRECT[it.kind] ? full.replace(/^.*?(?= (to|asks|replies to) )/, "").trim() : it.kind === "turn" ? "did: " + it.text : it.kind === "topic" ? "topic: " + it.text : it.text;
     // by: whose line it is, for "only X" in the open view: an agent, a Thoughts agent, "Angus" (his
     // messages, and prompts he sent), or whoever made a board change.
-    const by = it.who.human || it.kind === "prompt" ? "Angus" : it.who.name || "";
+    const by = it.who.human || it.kind === "prompt" ? userName() : it.who.name || ""; // J261
     return { k: it.key, ts: it.ts, kind: it.kind, who, by, project: it.kind === "board" ? it.pname || "" : pname(it.project), text: body,
       f: { id: it.who.id || "", name: it.who.name || "", human: !!it.who.human, to: it.to || [], project: it.project || null, text: it.text, pname: it.pname || "" } };
   }
@@ -356,7 +357,7 @@ function filterPool(r, projects) {
 async function searchAll(r, q, kinds) {
   const [h, b] = await Promise.all([api.call("history.read", { room: r, since: 0 }, { timeoutMs: 60000 }), api.call("board.get", { room: r }).catch(() => ({ projects: [] }))]);
   const projects = b.projects || [], pname = (id) => projects.find((p) => p.id === id)?.name || "";
-  const raw = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects });
+  const raw = buildStream({ msgs: h.messages || [], events: h.events || [], changes: h.changes || [], projects, user: userName() });
   const f = parseStreamFilter(q), pool = filterPool(r, projects);
   const res = f.names.length ? resolveFilterNames(f.names, { agents: pool.agents, projects: pool.projects, items: raw }) : null;
   const keep = new Set(filterStream(raw, f, res).map((it) => it.key));
@@ -375,7 +376,7 @@ const kindGroup = (k) => k === "post" || k === "angus" || k === "thoughts" ? "po
 function streamFor(st, name) {
   // Angus isn't an agent, so the @Name rule can't resolve him: his lines are his room messages, the
   // prompts he sent (Angus → X) and his board changes (Angus, after J53: "stream only Angus").
-  if (name === "Angus") { const keep = new Set((st.raw || []).filter((it) => it.who?.human || it.kind === "prompt").map((it) => it.key)); return st.items.filter((it) => keep.has(it.k)); }
+  if (name === userName() || name === "Angus") { const keep = new Set((st.raw || []).filter((it) => it.who?.human || it.kind === "prompt").map((it) => it.key)); return st.items.filter((it) => keep.has(it.k)); }
   // Board changes carry the name of who made them, not an id: count those too (e.g. Thoughts-D's).
   const byName = new Set((st.raw || []).filter((it) => it.kind === "board" && it.who?.name === name).map((it) => it.key));
   const f = parseStreamFilter("@" + name);

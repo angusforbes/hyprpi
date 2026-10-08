@@ -28,6 +28,7 @@ import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
+import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone app (J38)
 let worldBar = null;
 
@@ -93,7 +94,7 @@ function when(ts) {
   const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
   return d.toDateString() === now.toDateString() ? hm : `${d.toLocaleString("en", { month: "short" })} ${d.getDate()} ${hm}`;
 }
-const ROLE = { angus: "Angus", agent: "agent", room: "room", talk: "talk", activity: "did" };
+const ROLE = { get angus() { return userName(); }, agent: "agent", room: "room", talk: "talk", activity: "did" };
 
 const t = { dim, bold, italic, clip, width, hexFg, rgb, get theme() { return theme; } };
 

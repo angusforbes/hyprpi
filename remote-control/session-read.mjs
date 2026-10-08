@@ -6,6 +6,7 @@
 // Images: a read of an image file shows that file (the page uses /api/thumb + Fils); an inline image
 // (pasted, a screenshot tool) is referenced by its line offset and served by image() on request.
 import fs from "node:fs";
+import { userName } from "../lib/policy.mjs"; // J261: the human's display name
 
 const CHUNK = 1 << 20;            // 1 MB per read
 const MAX_READ = 24 << 20;        // never read more than this for one request
@@ -86,7 +87,7 @@ function itemsOf(e, at) {
     const m = e.message || {};
     if (m.role === "user") {
       const imgs = Array.isArray(m.content) ? m.content.map((c, i) => c.type === "image" ? withDims({ at, i }, dataDims(c.data)) : null).filter(Boolean) : [];
-      out.push({ k: "in", from: "Angus", text: clip(textOf(m.content), 6000), imgs, ts });
+      out.push({ k: "in", from: userName(), mine: true, text: clip(textOf(m.content), 6000), imgs, ts });
     } else if (m.role === "assistant") {
       for (const c of m.content || []) {
         if (c.type === "text" && c.text?.trim()) out.push({ k: "text", text: clip(c.text, 12000), ts });
@@ -105,7 +106,7 @@ function itemsOf(e, at) {
   } else if (e.type === "custom_message") {
     const t = String(e.content ?? textOf(e.content));
     const head = /^\[hyprpi (\w+) from ([^·\]\n]+)/.exec(t);
-    if (turnStart(e)) out.push({ k: "in", from: head ? `${head[2].trim()} (${head[1]})` : e.customType === "hyprpi-prompt" ? "Angus" : (e.customType || "hyprpi"), text: clip(t, 6000), imgs: [], ts });
+    if (turnStart(e)) out.push({ k: "in", from: head ? `${head[2].trim()} (${head[1]})` : e.customType === "hyprpi-prompt" ? userName() : (e.customType || "hyprpi"), text: clip(t, 6000), imgs: [], ts });
     else if (e.customType === "hyprpi-phone-cmd" || e.customType === "hyprpi-ignore") out.push({ k: "note", text: one(t, 200), ts }); // J163: a phone command's result; an /ignore signpost
     else if (e.customType === "hyprpi-talk-reply") out.push({ k: "in", from: head ? head[2].trim() + " (reply)" : "reply", text: clip(t, 4000), imgs: [], ts, reply: true });
   } else if (e.type === "compaction") out.push({ k: "note", text: "— earlier context compacted —", ts });

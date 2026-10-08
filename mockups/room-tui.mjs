@@ -37,6 +37,7 @@ import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, strea
 // /quit), all through lib/tui/command-line.mjs.
 const completions = (prefix) => cmds.complete(prefix);
 import { sentLine, SENT_STICKY_MS } from "../lib/tui/sent.mjs"; // J165
+import { userName, HUMAN_KEY } from "../lib/policy.mjs"; // J261: the human's display name
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
@@ -128,7 +129,7 @@ let streamCache = { key: "", items: [] };
 function streamItems(raw, all = sview === "all") {
   const msgs = messages[room] || [], acts = activity[room] || [], ch = changes[room] || [], ps = board.room === room ? board.projects : [];
   const key = `${room}|${msgs.length}|${acts.length}|${ch.length}|${raw}|${all}|${ps.map((p) => p.id + p.status + p.members.join()).join()}`;
-  if (streamCache.key !== key) streamCache = { key, items: buildStream({ msgs, events: acts, changes: ch, projects: ps, raw, all }) };
+  if (streamCache.key !== key) streamCache = { key, items: buildStream({ msgs, events: acts, changes: ch, projects: ps, raw, all, user: userName() }) };
   return streamCache.items;
 }
 // What the pane shows: "stream" | "help".
@@ -296,7 +297,7 @@ function draw() {
   // live in the agents panel (SUPER+ALT+A).
 
   const msgs = messages[room] || [];
-  const authorLabel = (au = {}) => au.kind === "human" ? au.name || "Angus" : (au.icon ? au.icon + " " : "") + (au.name || "agent");
+  const authorLabel = (au = {}) => au.kind === "human" ? userName() : (au.icon ? au.icon + " " : "") + (au.name || "agent");
   const nameW = Math.min(20, Math.max(6, ...msgs.slice(-200).map((m) => width(authorLabel(m.author)))));
   const nameBg = theme.muted || theme.selection;
 
@@ -334,7 +335,7 @@ function draw() {
   const tm = (ts) => topicsView ? "" : dim(" · " + hhmm(ts));
   const agentByName = (n) => agents.find((x) => x.display === n || x.name === n);
   const styledName = (n) => {
-    if (n === "Angus") return fg(c, bold("Angus"));
+    if (n === HUMAN_KEY || n === userName()) return fg(c, bold(userName()));
     const x = agentByName(n);
     return x ? (x.icon ? x.icon + " " : "") + nameFg(x.name, x.color, x.display || n) : bold(n);
   };
@@ -346,7 +347,7 @@ function draw() {
     : nameFg(au.name, au.color, cut(authorLabel(au), nameW));
   // A direct message's text: after "…: ", without a leading repeat of the sender's own name.
   const directBody = (it) => {
-    const self = it.kind === "prompt" ? "Angus" : (it.who.name || "");
+    const self = it.kind === "prompt" ? HUMAN_KEY : (it.who.name || ""); // the stored text leads with the internal label
     const lead = new RegExp(`^\\s*(?:\\S+\\s+)?${self.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:,—-]\\s*`, "u");
     return self ? afterColon(it.text).replace(lead, "") : afterColon(it.text);
   };
@@ -357,13 +358,13 @@ function draw() {
   // what a Shift-selection copies; m / e let Ctrl+click find the row's agent.
   const sItems = [];
   items.forEach((it) => {
-    const mi = sItems.push({ copy: streamLine(it, { projectName: pname }), key: it.key, m: it.m, e: it.e }) - 1;
+    const mi = sItems.push({ copy: streamLine(it, { projectName: pname, user: userName() }), key: it.key, m: it.m, e: it.e }) - 1;
     if (compact) { // one line: time · who [· @project]  text
       const one = (t) => String(t).replace(/\s+/g, " ").trim();
       let head, body;
       if (it.kind === "board") { head = fg(c, "📋 @" + (it.pname || "?")); body = midFg(one(`${it.who.name} ${it.text}`)); }
       else if (DIRECT[it.kind]) {
-        head = it.kind === "prompt" ? `${fg(c, bold("Angus"))} to ${sender(it.e.agent || {})}` : `${sender(it.e.agent || {})} ${DIRECT[it.kind]} ${it.to.map(styledName).join(", ")}`;
+        head = it.kind === "prompt" ? `${fg(c, bold(userName()))} to ${sender(it.e.agent || {})}` : `${sender(it.e.agent || {})} ${DIRECT[it.kind]} ${it.to.map(styledName).join(", ")}`;
         body = one(directBody(it));
       } else if (it.m) { head = postWho(it.m.author || {}); body = one(it.text); }
       else { head = sender(it.e.agent || {}); body = actStyle({ ...it, text: one(it.text) }); }
@@ -389,7 +390,7 @@ function draw() {
       // Direct messages (agent to agent(s), Angus to an agent): their own block, a header
       // "🗃️ Quartermaster to 📊 Sankey, …" with every name in its colour, then the message.
       if (DIRECT[it.kind]) {
-        const from = it.kind === "prompt" ? fg(c, bold("Angus")) : sender(au);
+        const from = it.kind === "prompt" ? fg(c, bold(userName())) : sender(au);
         const to = it.kind === "prompt" ? sender(au) : it.to.map(styledName).join(", ");
         if (convo.length) convo.push({ line: "", msg: null });
         convo.push({ line: `   ${from} ${DIRECT[it.kind]} ${to}${tagOf(it)}${tm(it.ts)}`, msg: mi, header: true, act: true });

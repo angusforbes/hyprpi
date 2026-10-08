@@ -1119,7 +1119,7 @@ window.__sthumbFail = (img) => {
 };
 function sessItemHtml(it) {
   if (it.k === "in") {
-    const mine = it.from === "Angus" || /^\[Angus, from his phone\]/.test(it.text);
+    const mine = it.mine || it.from === "Angus" || /^\[Angus, from his phone\]/.test(it.text); // J261: mine from the server; the rest for older servers
     const text = it.text.replace(/^\[Angus, from his phone\]\n/, "");
     if (mine) return `<div class="msg you">${esc(text)}${(it.imgs || []).map((im) => sessThumb(im)).join("")}</div>`;
     const first = text.split("\n").find((l) => l.trim()) || "";
