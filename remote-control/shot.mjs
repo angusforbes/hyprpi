@@ -78,7 +78,7 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
     if (k === "heic" || k === "avif" || b.length > 5 * MB) { // the model takes ≤ ~5 MB; Thoughts takes png/jpeg/webp/gif
       const tmp = path.join(UPLOAD_DIR, `.shot-${randomBytes(6).toString("hex")}.${k}`);
       fs.writeFileSync(tmp, b, { mode: 0o644 });
-      try { file = freeName(base, "jpg"); await vips(tmp, file); } catch (e) { return json(res, 500, { error: "couldn't convert the image: " + (e.message || e) }); } finally { fs.rmSync(tmp, { force: true }); }
+      try { file = freeName(base, "jpg"); await vips(tmp, file); } catch (e) { log("shot: vips failed:", String(e.message || e).slice(0, 400)); return json(res, 422, { error: "couldn't read that image" }); } // short: it shows in the Shortcut's notification (Pocket) finally { fs.rmSync(tmp, { force: true }); }
     } else { file = freeName(base, k); fs.writeFileSync(file, b, { flag: "wx", mode: 0o644 }); }
     const dim = imgSize(fs.readFileSync(file).subarray(0, 256 << 10));
     log("shot →", r, path.basename(file), b.length, caption ? JSON.stringify(caption.slice(0, 60)) : "");
