@@ -282,13 +282,13 @@ class Sandbox {
         const list = (await this.conn.call("list")).agents || [];
         const peerIds = new Set(this.relay.sandboxes.filter((s) => s !== this && s.conn).map((s) => s.agentId));
         const resolve = (n) => {
-          if (THOUGHTS_RE.test(n)) return { id: n, shown: n, peer: false };
+          if (THOUGHTS_RE.test(n)) return { kind: "thoughts", id: n, shown: n, peer: false };
           const k = n.toLowerCase();
           const hits = list.filter((a) => a.id === n || String(a.name || "").toLowerCase() === k || String(a.display || "").toLowerCase() === k);
           if (hits.length !== 1) throw new Error(hits.length ? `ambiguous recipient '${n}'` : `no live agent '${n}'`);
           const a = hits[0];
           if (a.id === this.agentId) throw new Error("that is you");
-          return { id: a.id, shown: `${a.display || a.name} (${a.id}, room ${a.room || "?"})`, peer: peerIds.has(a.id) };
+          return { kind: "agent", id: a.id, shown: `${a.display || a.name} (${a.id}, room ${a.room || "?"})`, peer: peerIds.has(a.id) };
         };
         const targets = raw.map(resolve);
         const open = targets.filter((x) => x.peer), gated = targets.filter((x) => !x.peer);
@@ -298,7 +298,7 @@ class Sandbox {
           const r = await this.conn.call("talk", { to: open.map((x) => x.id), text: body, mode, strict_ids: true });
           out.delivered = r.delivered; out.request_id = r.request_id; out.skipped = r.skipped;
         }
-        if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), shown: gated.map((x) => x.shown), mode, text: t, body })];
+        if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), targets: gated.map((x) => ({ kind: x.kind, id: x.id })), shown: gated.map((x) => x.shown), mode, text: t, body })];
         out.log = { to: targets.map((x) => x.id), open: open.length, gated: gated.length, ...textMeta(t) };
         return out;
       }
@@ -356,7 +356,9 @@ class Relay {
     }
     try {
       // exact ids only (strict_ids: no name fallback if the agent left); Thoughts-X names go separately
-      const ids = msg.to.filter((x) => !THOUGHTS_RE.test(x)), th = msg.to.filter((x) => THOUGHTS_RE.test(x));
+      // split by the kind stored when it was resolved, never by spelling (an agent id may look like Thoughts-X)
+      const tg = Array.isArray(msg.targets) ? msg.targets : [];
+      const ids = tg.filter((x) => x.kind === "agent").map((x) => x.id), th = tg.filter((x) => x.kind === "thoughts").map((x) => x.id);
       const r = { delivered: [], skipped: [] };
       for (const [to, extra] of [[ids, { strict_ids: true }], [th, {}]]) {
         if (!to.length) continue;
