@@ -113,7 +113,15 @@ const q = (s) => JSON.stringify(String(s));
 function envOf(pid) { try { return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); } catch { return []; } }
 
 class Helper {
-  constructor(cfg) { this.cfg = cfg; this.st = {}; this.stamps = []; this.opens = []; this.tokens = new Map(); this.owned = new Map(); this.busy = false; }
+  constructor(cfg) {
+    this.cfg = cfg; this.st = {}; this.stamps = []; this.opens = []; this.owned = new Map(); this.busy = false;
+    // token -> { agent, kind, at }: kept on disk (host-only state) so a helper restart still knows which
+    // agent each open window belongs to.
+    this.tokFile = path.join(STATE, "tokens.json");
+    this.tokens = new Map();
+    try { for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(this.tokFile, "utf8")))) if (TOKEN_RE.test(k)) this.tokens.set(k, v); } catch { /* none */ }
+  }
+  saveTokens() { try { fs.writeFileSync(this.tokFile, JSON.stringify(Object.fromEntries(this.tokens)), { mode: 0o600 }); } catch { /* */ } }
   inWorld(ws) { return Number.isInteger(ws) && ws >= this.cfg.lo && ws <= this.cfg.hi; }
   // The world's windows: kitty processes this helper started carry G_WORLD=<world> and G_TOKEN.
   async windows() {
@@ -135,7 +143,7 @@ class Helper {
       if (!this.inWorld(c.workspace?.id)) continue;
       mine.push({ c, o });
     }
-    for (const [a, o] of [...this.owned]) if (!all.some((c) => c.address === a)) { this.owned.delete(a); this.closed(o.token); }
+    for (const [a, o] of [...this.owned]) if (!all.some((c) => c.address === a)) { this.owned.delete(a); this.closed(o.token); if (o.token) { this.tokens.delete(o.token); this.saveTokens(); } }
     return mine;
   }
   view({ c, o }) {
@@ -219,7 +227,10 @@ class Helper {
     const ws = this.inWorld(Number(r.ws)) ? Number(r.ws) : this.cfg.lo;
     this.opens.push(t);
     this.tokens.set(r.token, { agent, kind, at: t });
-    for (const [k, v] of this.tokens) if (t - v.at > 3600000) this.tokens.delete(k);
+    // forget tokens of windows that never opened within a minute, and of closed windows (below)
+    const liveTok = new Set([...this.owned.values()].map((o) => o.token));
+    for (const [k, v] of this.tokens) if (!liveTok.has(k) && !v.mapped && t - v.at > 60000) this.tokens.delete(k);
+    this.saveTokens();
     // The host command: fixed except the token (checked charset), the class (from a fixed table) and the
     // panel title (from a fixed table). The workspace number is an integer we checked.
     const cls = kind === "agent" ? "hyprpi-g.agent" : PANEL_KINDS[kind].replace(/^hyprpi\./, "hyprpi-g.");
