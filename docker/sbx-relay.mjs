@@ -5,7 +5,11 @@
 // A pi-sbx sandbox cannot reach anything on the laptop (NVIDIA policy blocks localhost), but it shares its
 // workspace folder with the host. So each sandbox gets a drop-box in its workspace:
 //   <workspace>/.hyprpi-dropbox/outbox/   the sandbox writes one JSON request per file
-//   <workspace>/.hyprpi-dropbox/inbox/    the relay writes results and incoming messages
+//   <inbox>/   (J259) the relay writes results and incoming messages into a HOST-ONLY folder that is
+//              mounted read-only into the sandbox (sbx mount … :ro), so code in the sandbox can't plant,
+//              change or delete inbox items (no forged prompts, approvals or tool results). The sandbox
+//              never deletes them; the relay prunes old ones. Config "inbox"; without it (older setups)
+//              the inbox is <workspace>/.hyprpi-dropbox/inbox/, which the sandbox CAN write.
 // This relay (one host process) watches every outbox, checks each request against a small allowlist,
 // and carries it to the hyprpi daemon as that sandbox's own agent identity. It never gives a sandbox the
 // daemon socket, never acts as Angus, and only knows these operations:
@@ -48,7 +52,8 @@ const LIMITS = {
   recipients: 5,
   perMinute: 20,               // requests per sandbox per minute
   pendingPerSandbox: 20,
-  inboxFiles: 500,             // stop writing when the sandbox doesn't clean its inbox
+  inboxFiles: 300,             // the relay prunes the oldest inbox files beyond this
+  inboxKeepMs: 3600 * 1000,    // and any older than an hour
   readLimit: 20,
   pendingTtlMs: 24 * 3600 * 1000,
   scanEntries: 200,            // directory entries looked at per scan (bounded iteration)
@@ -104,7 +109,15 @@ function pinDirs(sb) {
   };
   try {
     const ws = openDirAt(null, String(sb.cfg.workspace || "").replace(/^~(?=\/|$)/, HOME)); opened.push(ws); // the configured host path, outside the sandbox's control
-    const base = sub(ws, DROP), outbox = sub(base, "outbox"), inbox = sub(base, "inbox");
+    const base = sub(ws, DROP), outbox = sub(base, "outbox");
+    let inbox;
+    // Host-only, read-only in the sandbox (J259). Required: no fallback to a sandbox-writable inbox.
+    if (!sb.cfg.inbox) throw new Error(`no "inbox" for ${sb.name} in ${CONFIG} (a host folder, mounted read-only into the sandbox)`);
+    const inboxPath = path.resolve(String(sb.cfg.inbox).replace(/^~(?=\/|$)/, HOME));
+    const wsPath = path.resolve(String(sb.cfg.workspace).replace(/^~(?=\/|$)/, HOME));
+    if (inboxPath === wsPath || inboxPath.startsWith(wsPath + path.sep)) throw new Error("the inbox must not be inside the sandbox's workspace");
+    inbox = openDirAt(null, inboxPath); opened.push(inbox);
+    for (const n of listNames(inbox, 5000)) { const t = Number(n.split("-")[0]); if (t > (sb.lastInbox || 0)) sb.lastInbox = t; }
     sb.dirs = { ws, base, outbox, inbox };
     return sb.dirs;
   } catch (e) { for (const fd of opened) { try { fs.closeSync(fd); } catch { /* */ } } throw e; }
@@ -118,7 +131,7 @@ function writeReadme(sb, dirs) {
 
 Talk to hyprpi from inside this sandbox by writing one JSON file per request into outbox/.
 Write it as a temp name first and rename it to NAME.json when complete (the relay ignores other names).
-Results and incoming messages appear in inbox/ as JSON files; delete them when you've read them.
+Results and incoming messages appear in the inbox (HYPRPI_INBOX, read-only here) as JSON files.
 
 Requests (fields beyond these are ignored; text up to ${LIMITS.textBytes} bytes):
 - {"op":"room.post","text":"..."}                       post in your room (labelled as sandboxed)
@@ -139,8 +152,13 @@ function listNames(dirFd, max) {
 }
 function inboxWrite(sb, obj) {
   const dirs = pinDirs(sb);
-  if (listNames(dirs.inbox, LIMITS.inboxFiles + 1).length >= LIMITS.inboxFiles) { log({ sb: sb.name, dir: "in", dropped: "inbox full", type: obj.type }); return false; }
-  const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`;
+  const have = listNames(dirs.inbox, 5000).filter((n) => /^[0-9]+-[0-9a-f]{8}\.json$/.test(n)).sort();
+  const cutoff = Date.now() - LIMITS.inboxKeepMs;
+  have.forEach((n, i) => { if (i < have.length - LIMITS.inboxFiles + 1 || Number(n.split("-")[0]) < cutoff) { try { fs.unlinkSync(fdPath(dirs.inbox, n)); } catch { /* */ } } });
+  // Strictly increasing names (re-review #2): the extension keeps a high-water mark, so two items in the
+  // same millisecond (or a clock step back) must still sort after everything written before.
+  sb.lastInbox = Math.max(Date.now(), (sb.lastInbox || 0) + 1);
+  const name = `${String(sb.lastInbox).padStart(13, "0")}-${crypto.randomBytes(4).toString("hex")}.json`;
   createFile(dirs.inbox, name, JSON.stringify({ v: 1, ...obj }, null, 2) + "\n");
   return name;
 }
@@ -205,8 +223,15 @@ class Sandbox {
       }
     } catch (e) { log({ sb: this.name, dir: "in", error: e.message }); }
   }
-  rateOk() {
-    const t = Date.now(); this.stamps = this.stamps.filter((s) => t - s < 60000);
+  rateOk(name) {
+    // A status file is tiny and frequent (each turn): its own limit, one per 2 s, applied in handle().
+    const t = Date.now();
+    if (/^status-/.test(name || "")) {
+      this.statusStamps = (this.statusStamps || []).filter((s) => t - s < 60000);
+      if (this.statusStamps.length >= 60) return false;
+      this.statusStamps.push(t); return true;
+    }
+    this.stamps = this.stamps.filter((s) => t - s < 60000);
     if (this.stamps.length >= LIMITS.perMinute) return false;
     this.stamps.push(t); return true;
   }
@@ -223,11 +248,12 @@ class Sandbox {
       for (const n of names) {
         // Review #4: the rate limit applies before a file is opened or parsed, valid or not; over the
         // limit the file is deleted unread (one log line per scan, one result per file is skipped).
-        if (!this.rateOk()) { try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ } dropped++; continue; }
+        if (!this.rateOk(n)) { try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ } dropped++; continue; }
         let req = null, result;
         try {
           req = readRequest(dirs.outbox, n);
           try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ } // consume before acting (pinned dir, review #1)
+          if (/^status-/.test(n) !== (req?.op === "status")) throw new Error("status requests use status-*.json names, and only they do");
           result = await this.handle(req);
         } catch (e) {
           try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ }
@@ -250,6 +276,17 @@ class Sandbox {
     if (!t) throw new Error("text is empty");
     if (bytes(t) > LIMITS.textBytes) throw new Error(`text over ${LIMITS.textBytes} bytes`);
     return t;
+  }
+  flushStatusSoon() {
+    if (this.statusTimer) return;
+    const wait = Math.max(0, 2000 - (Date.now() - (this.lastStatusAt || 0)));
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = null; const st = this.pendingStatus; this.pendingStatus = null;
+      if (!st || !this.conn) return;
+      this.lastStatusAt = Date.now();
+      if (st !== this.status) { this.status = st; this.conn.call("agent.update", { status: st }).catch(() => {}); }
+      if (this.pendingStatus) this.flushStatusSoon();
+    }, wait);
   }
   label() { return `🐳 [sandboxed: ${this.name}]`; }
   // Review #5: every line of sandbox text is visibly quoted, so a forged "Angus: …" or protocol header on a
@@ -311,7 +348,15 @@ class Sandbox {
         this.delivered.delete(id);
         return { ok: true, delivered: !!r.delivered, to: d.from, log: { request_id: id, to: d.from, ...textMeta(t) } };
       }
-      default: throw new Error("unknown op (room.post, room.read, talk, reply)");
+      case "status": {
+        // working / idle for hyprpi's agents panel (J259): coalesced, at most one update every 2 s,
+        // always ending on the latest state (review J259 #6).
+        const state = req.state === "working" ? "working" : req.state === "idle" ? "idle" : "";
+        if (!state) throw new Error("state must be working or idle");
+        this.pendingStatus = state; this.flushStatusSoon();
+        return { ok: true, state };
+      }
+      default: throw new Error("unknown op (room.post, room.read, talk, reply, status)");
     }
   }
 }
