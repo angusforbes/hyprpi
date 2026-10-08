@@ -789,6 +789,7 @@ function onKey(d) {
     if (sc !== undefined) {
       if (view !== "stream") return;
       scroll = sc === Infinity ? 1e9 : sc === -Infinity ? 0 : Math.max(0, scroll + sc);
+      if (sc === -Infinity) streamSel = null; // J247: Ctrl+End = the newest, even with a row picked (J247check2)
       focusArea = "stream"; return render();
     }
     // Alt+↑↓ / Alt+Home End: pick a stream row (the selection the mouse also makes).
