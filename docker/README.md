@@ -49,6 +49,16 @@ the current folder at the same path (so `file:///` links work). It runs as your 
 HOME (`/tmp/home`): no host settings, extensions, sessions, SSH keys or mise toolchains. Its session is lost
 when the container ends; have it write anything worth keeping into the mounted folder first.
 
+## pi-sbx sandboxes: the drop-box relay (J244)
+
+A Docker Sandboxes (`sbx` / `pi-sbx`) sandbox can't reach anything on the laptop: NVIDIA's policy blocks localhost, and local exceptions are refused. It does share its workspace folder with the host. So `sbx-relay.mjs` gives each sandbox a drop-box in its workspace (`.hyprpi-dropbox/outbox/` and `inbox/`, with a README for the agent) and carries a small allowlist of requests to hyprpi as that sandbox's own agent: post or read its own room, talk (to anyone but another relay sandbox it waits for Angus's approval), and reply to messages it received. It never gives a sandbox the daemon socket and never acts as Angus.
+
+- Config: `~/.config/hyprpi/sbx-relay.json`, e.g. `{"sandboxes":[{"name":"sbxprobe","workspace":"~/Work/sbx-probe","workspace_num":61,"container":"pi-sbx:developer"}]}` (`workspace_num` 61 = world G's first workspace).
+- Start / stop / status: `docker/sbx-relay.mjs start`, `docker/sbx-relay.mjs stop`, `docker/sbx-relay.mjs status` (a systemd user unit, `hyprpi-sbx-relay`, with memory and CPU limits).
+- Approvals: `docker/sbx-relay.mjs pending`, then `docker/sbx-relay.mjs approve ID` or `deny ID`. A held message shows a desktop notification and a one-line notice in the sandbox's room, without its text.
+- Log: `~/.local/state/hyprpi/sbx-relay/log.jsonl` (metadata and a hash of each message; `"log_text": true` in the config keeps the text).
+- Security: reviewed by a second model family (J244); the drop-box folders are pinned as file descriptors so a sandbox can't swap them for symlinks to host files, every request is size- and rate-limited, and sandbox text is stripped of control characters and quoted line by line.
+
 ## How hyprpi handles it (daemon and extension)
 
 - **Window**: Pi in a container reports pid 1 and hangs off containerd-shim, so the usual walk UP from its
