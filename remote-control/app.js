@@ -1116,14 +1116,14 @@ function renderSessionHead() {
   const status = { "●": "working", "◐": "background", "×": "needs you", "✓": "done", "○": "idle", "◌": a.status }[a.mark] || a.status;
   h.querySelector(".sst").textContent = `${a.mark} ${status}`;
   const working = a.mark === "●";
-  const st = $("#sstop"); st.hidden = !working; if (!working) { clearTimeout(st._t); st.classList.remove("arm"); st.textContent = "■ stop"; } sint.hidden = !working;
+  sint.hidden = !working; sintLabel();
 }
 function renderSession({ toEnd = false } = {}) {
   const a = sessAgent() || { name: "agent", icon: "", mark: "○" };
   for (const it of sess.items) if (it.k === "result") sess.results.set(it.id, it);
   const projects = (a.projects || []).map((p) => `${esc(p.icon || "")} @${esc(p.name)}`).join(" ");
   const body = sess.items.filter((it) => it.k !== "result").map(sessItemHtml).join("");
-  sessEl.innerHTML = `<div id="shead" class="phead"><div class="shrow"><button id="sback" type="button" aria-label="back to the agents" title="back to the agents">‹</button><span class="pic">${esc(a.icon || "")}</span><span class="pname">${agentName(a)}</span><span class="sst"></span><button id="sstop" type="button" hidden title="stop its turn (like Esc): tap, then tap again to confirm">■ stop</button></div><div class="ssub">${esc([a.model, a.thinking].filter(Boolean).join(" · "))}${projects ? " · " + projects : ""}</div></div>`
+  sessEl.innerHTML = `<div id="shead" class="phead"><div class="shrow"><button id="sback" type="button" aria-label="back to the agents" title="back to the agents">‹</button><span class="pic">${esc(a.icon || "")}</span><span class="pname">${agentName(a)}</span><span class="sst"></span></div><div class="ssub">${esc([a.model, a.thinking].filter(Boolean).join(" · "))}${projects ? " · " + projects : ""}</div></div>`
     + (sess.more ? `<div class="small solder" style="text-align:center;padding:8px">↑ older turns load as you scroll up</div>` : "")
     + `<div class="sbody">${body}</div><button id="snew" type="button" hidden>new below ↓</button>`;
   linkNames(sessEl.querySelector(".sbody")); textGlyphs(sessEl);
@@ -1135,42 +1135,50 @@ function renderSession({ toEnd = false } = {}) {
 sessEl.addEventListener("click", async (e) => {
   if (e.target.id === "snew") { splace.pinned = true; sHold(); e.target.hidden = true; return; }
   // J235 (Angus: "Why is there a big red stop button … I feel like we're about to go back to the agent list"):
-  // ‹ at the top left goes back to the Agnt list; Stop is a small grey chip by the status that needs a
-  // second tap within 3 s ("stop it?") before it stops the turn.
+  // ‹ at the top left goes back to the Agnt list. v2 ("I think the interrupt is enough"): no separate Stop;
+  // the composer's button is Stop with an empty box (cancel, no new turn) and Interrupt with text.
   if (e.target.id === "sback") { openAgent.delete(world); return setView("agents"); }
-  if (e.target.id === "sstop") {
-    const b = e.target;
-    if (!b.classList.contains("arm")) { b.classList.add("arm"); b.textContent = "stop it?"; clearTimeout(b._t); b._t = setTimeout(() => { b.classList.remove("arm"); b.textContent = "■ stop"; }, 3000); return; }
-    clearTimeout(b._t); b.classList.remove("arm"); b.textContent = "■ stop";
-    try { await call("POST", "/api/agent/stop", { agent: sess.agent }); note("stopped"); } catch (err) { note("✗ " + err.message); } return;
-  }
+
   const th = e.target.closest(".sthumb");
   if (th) return openViewer(th.dataset.file ? "/file?path=" + encodeURIComponent(th.dataset.file) : th.getAttribute("src")); // J221: the viewer over the session (✕, a tap beside it, swipe down or back closes)
   if (e.target.closest("#shead")) { const id = sess.agent, a = sessAgent(); if (a) openAgent.set(world, id); return setView("agents"); } // the header: back to its summary
   const t = e.target.closest(".stool"); if (t && !e.target.closest("a")) { const x = t.querySelector(".stx"); x.hidden = !x.hidden; }
 });
+// J235 v2: the composer's red button: "Stop" with an empty box (stops its turn, nothing sent), "Interrupt"
+// with text (stops its turn; the text is its next turn).
+function sintLabel() { const empty = !sinput.value.trim(); sint.textContent = empty ? "Stop" : "Interrupt"; sint.title = empty ? "stop its turn (like Esc)" : "stop its turn; this message is its next turn"; }
+async function sessStop() {
+  if (!sess.agent) return;
+  sint.disabled = true;
+  try { await call("POST", "/api/agent/stop", { agent: sess.agent }); note("stopped"); setTimeout(() => note(""), 3000); }
+  catch (err) { note("✗ not stopped: " + err.message); }
+  finally { sint.disabled = false; }
+}
 async function sessSend(how) {
-  const text = sinput.value.trim(); if (!text || !sess.agent) return;
+  const text = sinput.value.trim();
+  if (!text && how === "interrupt") return sessStop();
+  if (!text || !sess.agent) return;
   ssend.disabled = sint.disabled = true;
   try {
     // J163: a slash command runs as if typed in its window (after a running turn); Interrupt doesn't stop for it.
     const r = await call("POST", how === "interrupt" ? "/api/agent/interrupt" : "/api/agent/send", { agent: sess.agent, text });
     note(r.slash ? (r.queued ? `${text.split(/\s/)[0]}: runs when its turn ends` : `${text.split(/\s/)[0]}: sent as typed`)
       : how === "interrupt" ? "interrupted: your message is its next turn" : r.queued ? "queued: it reads this after its current turn" : "sent");
-    sinput.value = ""; dropDraft(sdraftKey(sess.agent)); sinput.style.height = "auto"; setTimeout(() => note(""), 3000);
+    sinput.value = ""; dropDraft(sdraftKey(sess.agent)); sinput.style.height = "auto"; sintLabel(); setTimeout(() => note(""), 3000);
     if (touch) sinput.blur();
   } catch (err) { note("✗ not sent: " + err.message); }
   finally { ssend.disabled = sint.disabled = false; }
 }
 ssend.addEventListener("click", () => sessSend("send"));
 sint.addEventListener("click", () => sessSend("interrupt"));
+sinput.addEventListener("input", sintLabel);
 sinput.addEventListener("input", () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; });
 chatKeys(sinput, () => sessSend("send"));
 // J194: one draft per agent's session page (pi·wpzt: a shared key could send X's draft to Y).
 const sdraftKey = (id) => "hyprpi-rc.sdraft." + String(id || "");
 const sgrow = () => { sinput.style.height = "auto"; sinput.style.height = Math.min(sinput.scrollHeight + 2, innerHeight * 0.4) + "px"; };
 sinput.addEventListener("input", () => { if (!sess.agent) return; try { if (sinput.value) localStorage.setItem(sdraftKey(sess.agent), sinput.value); else localStorage.removeItem(sdraftKey(sess.agent)); } catch { /* full */ } });
-function loadSessDraft(id) { let t = ""; try { t = localStorage.getItem(sdraftKey(id)) || ""; } catch { /* none */ } sinput.value = t; sgrow(); }
+function loadSessDraft(id) { let t = ""; try { t = localStorage.getItem(sdraftKey(id)) || ""; } catch { /* none */ } sinput.value = t; sgrow(); sintLabel(); }
 sinput.addEventListener("touchend", (e) => { if (document.activeElement === sinput) return; e.preventDefault(); sinput.focus({ preventScroll: true }); }, { passive: false });
 sinput.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(fitViewport); });
 

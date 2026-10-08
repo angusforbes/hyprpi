@@ -186,10 +186,9 @@ mark { background: color-mix(in srgb, var(--world) 30%, transparent); color: inh
 .shrow { display: flex; align-items: center; gap: 8px; }
 .shrow .pname { font-size: var(--fs-row); font-weight: 650; }
 .sst { font-size: var(--fs-meta); color: var(--dim); }
-/* J235: ‹ back at the top left; Stop a small grey chip by the status (red only once armed: "stop it?") */
+/* J235: ‹ back at the top left (v2: no Stop in the header; the composer's button is Stop when the box is empty) */
 #sback { flex: none; font-family: inherit; font-size: 30px; line-height: 1; font-weight: 400; color: var(--world); background: none; border: none; padding: 0 6px 4px 0; margin-left: -2px; cursor: pointer; }
-#sstop { margin-left: 4px; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--dim); background: none; border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; cursor: pointer; }
-#sstop.arm { color: #fff; background: #e64553; border-color: #e64553; }
+
 .ssub { font-size: var(--fs-small); color: var(--dim); margin-top: 2px; }
 .sbody { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
 .sbody .msg.thoughts .md { font-size: var(--fs-body); }
