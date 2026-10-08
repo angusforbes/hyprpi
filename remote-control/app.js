@@ -1090,10 +1090,22 @@ window.__sthumbLoad = (img) => {
   if (!img.dataset.up) { img.dataset.up = "1"; upObs.observe(img); return; } // the thumbnail is up: the full file once it's near the screen (J230)
   img.classList.remove("lo");
 };
+// J249 (Angus: "yes to text instead of ?. That way I would know to ask you to move it to an allowed folder"):
+// an image the phone can't load (outside the allowed folders, or missing) becomes a label naming the file.
+function imgName(src) {
+  try { const u = new URL(src, location.href), p = u.searchParams.get("path") || u.searchParams.get("name") || u.pathname; return decodeURIComponent(p.split("/").pop() || p) || "image"; } catch { return "image"; }
+}
+function imgGone(img, name) {
+  const s = document.createElement("span"); s.className = "small sgone"; s.textContent = `🖼 image not available on the phone: ${name || imgName(img.getAttribute("src"))}`;
+  s.title = img.dataset.file || img.getAttribute("src") || "";
+  const a = img.parentElement?.tagName === "A" && img.parentElement.children.length === 1 ? img.parentElement : null;
+  (a || img).replaceWith(s);
+}
+document.addEventListener("error", (e) => { const t = e.target; if (t?.tagName === "IMG" && t.matches("img.img, img.mdimg")) imgGone(t); }, true);
 window.__sthumbFail = (img) => {
   if (img.dataset.up && img.dataset.file && !img.dataset.lofail) { img.dataset.lofail = "1"; img.src = "/api/thumb?path=" + encodeURIComponent(img.dataset.file); return; } // the full file failed: keep the thumbnail
   if (img.dataset.fb) { img.classList.remove("lo"); img.src = img.dataset.fb; delete img.dataset.fb; delete img.dataset.file; return; } // what it saw, from the session
-  const s = document.createElement("span"); s.className = "small sgone"; s.textContent = "image no longer on disk"; img.replaceWith(s);
+  imgGone(img, img.dataset.file ? img.dataset.file.split("/").pop() : null);
 };
 function sessItemHtml(it) {
   if (it.k === "in") {
