@@ -11,9 +11,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-type Deps = { call: (m: string, p?: any, o?: any) => Promise<any>; inject: (m: any, steer?: boolean) => void; idle: () => boolean; ctx: () => any };
+type Deps = { call: (m: string, p?: any, o?: any) => Promise<any>; inject: (m: any, steer?: boolean) => void; idle: () => boolean; ctx: () => any; flushHeld?: () => number };
 
-export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx }: Deps) {
+export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld }: Deps) {
+  let waits = 0; // J272: wait_report calls running now (index.ts wakes them when a message arrives)
   const text = (t: string, details: any = {}) => ({ content: [{ type: "text" as const, text: t }], details });
   let me: any = null; // { budget, used, startedAt, status, parent } when this agent was spawned
   let tokens = 0, stopped = false, closing: any = null, lastSent = 0;
@@ -123,11 +124,26 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx }: Deps) {
     label: "Wait for reports",
     description: "Block until your children report (all of them, or any: true for the first), or the timeout. No polling needed: the daemon answers when a report arrives. ids: child ids or names (default: all your live children). Reports since `since` (ms epoch; default: now) count, so a report that arrived just before the call isn't missed if you pass the spawn time.",
     parameters: Type.Object({ ids: Type.Optional(Type.Array(Type.String())), timeout_sec: Type.Optional(Type.Number({ description: "default 600, max 3600" })), any: Type.Optional(Type.Boolean()), since: Type.Optional(Type.Number()) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => {
+    // J272 fix 2 (J269: an interrupt or Esc couldn't stop a 30-min wait, so Thoughts' messages sat stuck until it
+    // returned): Esc / interrupt_agent (the tool's abort signal) ends the wait at once (daemon orch.unwait), and so
+    // does a message that arrives for this agent meanwhile (index.ts); those messages are then steered in right
+    // after this result, so they're answered in this turn.
+    execute: async (_id: string, p: any, signal?: AbortSignal) => {
       const t = Math.max(1, Math.min(3600, Number(p.timeout_sec) || 600));
-      const r = await call("orch.wait", p, { timeoutMs: (t + 30) * 1000 });
+      const onAbort = () => { call("orch.unwait", { why: "stopped (Esc or an interrupt)" }).catch(() => {}); };
+      if (signal?.aborted) throw new Error("stopped before it started waiting");
+      signal?.addEventListener?.("abort", onAbort, { once: true });
+      waits++;
+      let r: any;
+      try {
+        // The daemon ends the wait itself (orch.unwait), so its waiter is gone too: no report can be taken by a wait
+        // nobody reads any more. (A daemon without orch.unwait: the wait runs on as before.)
+        r = await call("orch.wait", p, { timeoutMs: (t + 30) * 1000 });
+      } finally { waits--; signal?.removeEventListener?.("abort", onAbort); }
       const lines = r.reports.map((x: any) => `## ${x.name} (${x.id})${x.final ? " · final" : ""}\n${x.text}`);
-      return text(`${r.timed_out ? "Timed out. " : ""}${r.reports.length} report(s)${r.still_working.length ? `; no report yet from: ${r.still_working.map((s: any) => `${s.name} (${s.status})`).join(", ")}` : ""}.\n\n${lines.join("\n\n")}`, r);
+      const woke = r.woken ? (/message/.test(String(r.woken)) ? `Woken early: ${r.woken}; it follows this result, so answer it first, then call wait_report again if you still need to. ` : `Ended early: ${r.woken === true ? "woken" : r.woken}. `) : "";
+      if (r.woken && /message/.test(String(r.woken))) setTimeout(() => flushHeld?.(), 0);
+      return text(`${woke}${r.timed_out ? "Timed out. " : ""}${r.reports.length} report(s)${r.still_working.length ? `; no report yet from: ${r.still_working.map((s: any) => `${s.name} (${s.status})`).join(", ")}` : ""}.\n\n${lines.join("\n\n")}`, r);
     },
   });
   pi.registerTool({
@@ -158,5 +174,5 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx }: Deps) {
     parameters: Type.Object({}, { additionalProperties: false }),
     execute: async () => { const r = await call("orch.children", {}); return text(r.children.length ? r.children.map((c: any) => `${c.name} (${c.id}) ${c.status} · ${c.model}/${c.thinking} · ${Math.round((c.used?.tokens || 0) / 1000)}k/${Math.round((c.budget?.tokens || 0) / 1000)}k tokens · ${c.reports} report(s)${c.last_report ? `: ${c.last_report.slice(0, 160)}` : ""}`).join("\n") : "No live children.", r); },
   });
-  return onEvent;
+  return Object.assign(onEvent, { waiting: () => waits > 0 });
 }

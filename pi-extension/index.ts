@@ -54,7 +54,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     handler: async (_a: any, ctx: any) => { ctxRef?.ui?.notify?.("🧹 reloading: hyprpi code changed", "info"); await ctx.reload(); },
   });
   // J130 orchestration primitives (spawn_agent, report_to_parent, wait_report, close_agent, …; budgets).
-  const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef });
+  const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef, flushHeld: () => flushHeld() });
   // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
   // coordination; a "followUp" talk once arrived only after the work it asked about was done, @hyprpi N44).
   // Not steered (Thoughts' tasks, room questions): held HERE while the agent works and started as
@@ -82,12 +82,25 @@ export default function hyprpi(pi: ExtensionAPI) {
   const inject = (message: any, steer = false) => {
     const k = keyOf(message);
     // A re-send from the daemon (J64 receipts) of something already here: just confirm it again.
-    if (k && (landed.has(k) || held.some((m) => keyOf(m) === k) || steered.has(k) || keyOf(afterAbort) === k)) { if (landed.has(k)) ack(k); return; }
+    if (k && (landed.has(k) || held.some((m) => keyOf(m) === k) || steered.has(k) || keyOf(afterAbort) === k)) {
+      if (landed.has(k)) ack(k);
+      else if (held.some((m) => keyOf(m) === k) && idle()) setTimeout(releaseHeld, 0); // J272 fix 1: a re-send of a message stuck in `held` while idle starts it (it used to just return)
+      return;
+    }
     if (idle() && !held.length && !starting) return send(message, { triggerTurn: true });
-    if (steer && !idle()) { const k = keyOf(message); if (k) steered.set(k, message); return send(message, { triggerTurn: true, deliverAs: "steer" }); }
+    if (steer && !idle()) { const k = keyOf(message); if (k) steered.set(k, message); wakeWait(message); return send(message, { triggerTurn: true, deliverAs: "steer" }); }
     held.push(message);
     if (idle()) setTimeout(releaseHeld, 0);
+    else wakeWait(message);
   };
+  // J272 fix 2: a message for this agent ends a running wait_report (it would otherwise sit behind a wait of up to an hour).
+  function wakeWait(message: any) { if (!orchEvent.waiting?.()) return; const who = message?.details?.from?.name || "someone"; call("orch.unwait", { why: `a message from ${who} arrived` }).catch(() => {}); }
+  // J272: steer everything held into the current turn (a wait_report woken by a message: answer it now).
+  function flushHeld() {
+    const n = held.length;
+    while (held.length) { const m = held.shift(); const k = keyOf(m); if (k) steered.set(k, m); send(m, { triggerTurn: true, deliverAs: "steer" }); }
+    return n;
+  }
   // Thoughts' work that landed in this session (ever) and in the current run (@hyprpi N57 cancel_work).
   const landed = new Set<string>(), inRun = new Set<string>();
   // Delivery receipt (J64): the daemon keeps the request until this says it is in the session.
@@ -434,6 +447,9 @@ export default function hyprpi(pi: ExtensionAPI) {
       setTimeout(() => {
         if (!wasInterrupt) keepHeld(); // Angus's Esc: kept for his next message; an interrupt: they wait their turn as usual
         if (afterAbort) { const m = afterAbort; afterAbort = null; if (afterAbortTimer) { clearTimeout(afterAbortTimer); afterAbortTimer = null; } send(m, { triggerTurn: true }); }
+        // J272 fix 1 (J269: Harbor 14:27→15:58, Linkpath's "restart ok" 15 min late): after an interrupt whose
+        // message already fell back into `held` (the run took > 20 s to settle), nothing started it; now it does.
+        else if (wasInterrupt) releaseHeld();
       }, 50);
       return;
     }
