@@ -61,7 +61,7 @@ function ownLogins() {
   } catch (e) { log("tailscale status failed:", e.message); }
   return new Set(extra);
 }
-const LOGINS = ownLogins();
+let LOGINS = ownLogins();
 log("allowed tailscale logins:", [...LOGINS].join(", ") || "(none: local only)");
 // The Host names it answers to (J74 security review: DNS rebinding). A page on another site whose
 // name is re-pointed at 127.0.0.1 would otherwise count as "local" and as same-origin. Only these
@@ -87,17 +87,23 @@ function hostOk(h) {
   if (HOSTS.hosts.has(h)) return true;
   const name = h.replace(/:\d+$/, "");
   if (HOSTS.names.has(name)) return true;
-  if (Date.now() - hostsAt > 30000) {
-    hostsAt = Date.now(); const n0 = HOSTS.names.size; HOSTS = ownHosts();
-    if (HOSTS.names.size !== n0) log("hosts now:", [...HOSTS.names].join(", "));
-    return HOSTS.names.has(name);
-  }
+  if (reaskTailscale()) return HOSTS.names.has(name);
   return false;
+}
+// Re-read this machine's tailnet name AND its own login (both were startup-only, so a start before
+// Tailscale also left the login list empty: 403 after the host recovered; HostCheck's finding). At most
+// once per 30 s, whatever asks. → true when it asked.
+function reaskTailscale() {
+  if (Date.now() - hostsAt <= 30000) return false;
+  hostsAt = Date.now();
+  const n0 = HOSTS.names.size, l0 = LOGINS.size; HOSTS = ownHosts(); LOGINS = ownLogins();
+  if (HOSTS.names.size !== n0 || LOGINS.size !== l0) log("tailscale re-read: hosts", [...HOSTS.names].join(", ") || "-", "· logins", [...LOGINS].join(", ") || "-");
+  return true;
 }
 
 function allowed(req) {
   const login = req.headers["tailscale-user-login"];
-  if (login) return LOGINS.has(String(login));
+  if (login) return LOGINS.has(String(login)) || (reaskTailscale() && LOGINS.has(String(login)));
   const ip = req.socket.remoteAddress || "";
   // tailscale serve always adds the login header for a tailnet user; without it, local only.
   return (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1") && !req.headers["tailscale-headers-info"];
