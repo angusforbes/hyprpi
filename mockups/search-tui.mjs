@@ -23,7 +23,7 @@ import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
-import { jotKinds } from "../lib/jot-kinds.mjs";
+import { jotKinds, jotWhat } from "../lib/jot-kinds.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
@@ -196,26 +196,93 @@ function sendThought(text, images = []) {
 
 // Commands: the search panel's own (/search, /ai, /ask) plus the ones every panel has (/help,
 // /tinker, /quit), all through lib/tui/command-line.mjs.
-// J229 (Angus: "i sent this exactly the first time and you didn't get it: /idea An idea for …"): pi-jot's
-// commands (/jot-idea, /jot-note, … from ~/.pi/agent/jot.json; the bare kind, /idea, /note, too) go to
-// this world's Thoughts, which keeps the text verbatim; the panel says at once what it did, and the thread
-// shows "kept it as idea → file" when it's saved. They were unknown commands here, and nothing was sent.
+// J229 + J233 (Angus: "we're going to use /jot-idea, i want appropriate actual hyprpi and pi commands to be
+// available here"): commands for this world's Thoughts, not the panel. Each says at once what it does.
+//  · pi-jot's /jot-<kind> (from ~/.pi/agent/jot.json): pi-jot itself runs it in Thoughts, as in an agent
+//    window, and the panel says what that kind does (kept exactly as typed, or a title picked, a poem written,
+//    the list updated…; Angus: "Not all the jots are only what's typed, some ask you to interpret it").
+//  · /compact /model /thinking: pi's own controls of the Thoughts process (thoughts.control).
+//  · /restart (= /reload-runtime) and /handoff (= /fresh): hyprpi's restart / fresh session for Thoughts.
+//  · /step: "A /step B" sends A, then B when Thoughts has answered (the panel queues it).
+//  · pi commands that need an agent window (/name, /messageboard, /skill:…, /settings …) say so.
+const T = () => `Thoughts-${room}`;
 function jotCommands() {
-  const out = [];
-  for (const k of jotKinds()) {
-    const run = (arg, text) => {
+  return jotKinds().map((k) => ({
+    name: "/" + k.command, usage: `/${k.command} ${k.mode === "list" ? "[add ITEM | done ITEM | FOCUS]" : k.compose ? "[DIRECTION]" : "[@Title] TEXT"}`,
+    help: k.mode === "list" ? `${k.description} (agent windows only: it edits files)` : `${k.description} (pi-jot, in ${T()})`,
+    run: (arg, text) => {
+      // A list kind (/jot-todo) has the agent read and edit the todo notes: Thoughts has no file tools.
+      if (k.mode === "list") { setBox(text); note = `✗ /${k.command}: needs file tools, so it works in an agent window, not ${T()}`; return render(); }
       if (!api) { setBox(text); note = "✗ daemon offline: not kept"; return render(); }
-      const line = `/${k.command}${arg ? " " + arg : ""}`;
-      note = `📝 ${k.kind}: sending to Thoughts-${room}…`; render();
-      api.call("thoughts.jot", { room, text: line })
-        .then(() => { note = arg ? `📝 ${k.kind} kept verbatim by Thoughts-${room}${k.kind === "note" || k.kind === "thought" ? "" : " (it picks the title)"}: the thread says where` : `📝 /${k.command}: Thoughts-${room} writes one from the conversation`; render(); })
-        .catch((e) => { setBox(text); note = `✗ ${k.kind} not kept: ${e.message}`; render(); });
-    };
-    out.push({ name: "/" + k.command, usage: `/${k.command} [@Title] TEXT`, help: `${k.description} (pi-jot, kept by Thoughts)`, run });
-    if (k.command !== k.kind && !["thought"].includes(k.kind)) out.push({ name: "/" + k.kind, usage: `/${k.kind} TEXT`, help: `the same as /${k.command}`, hidden: true, run });
-  }
-  return out;
+      const what = jotWhat(k, arg, T());
+      note = `📝 /${k.command}: ${what}…`; render();
+      api.call("thoughts.jot", { room, text: `/${k.command}${arg ? " " + arg : ""}` })
+        .then(() => { note = `📝 /${k.command}: ${what} · the thread shows the file when it's saved`; render(); })
+        .catch((e) => { setBox(text); note = `✗ /${k.command} not kept: ${/unknown method/.test(e.message) ? "the daemon hasn't picked this up yet (restart pending); your text is kept" : e.message}`; render(); });
+    },
+  }));
 }
+const ctl = (label, cmd, done, { text } = {}) => {
+  if (!api) { if (text) setBox(text); note = "✗ daemon offline"; return render(); }
+  note = `${label}…`; render();
+  api.call("thoughts.control", { room, cmd })
+    .then((d) => { note = done(d || {}); render(); })
+    .catch((e) => { if (text) setBox(text); note = `✗ ${label}: ${/unknown method/.test(e.message) ? "the daemon hasn't picked this up yet (restart pending)" : e.message}`; render(); });
+};
+const kTok = (n) => n >= 1000 ? Math.round(n / 1000) + "k" : String(n);
+function thoughtsCommands() {
+  const AGENT_ONLY = {
+    "/name": `${T()}'s name is fixed (it's this world's Thoughts)`,
+    "/messageboard": "Thoughts has no file tools: use an agent window", "/messageboard-poem": "Thoughts has no file tools: use an agent window",
+    "/settings": "only in an agent window", "/tree": "only in an agent window", "/login": "only in an agent window (/login there; the bar shows a lapsed login)",
+    "/resume": "only in an agent window", "/fork": "only in an agent window", "/clone": "only in an agent window", "/export": "only in an agent window",
+    "/copy": "only in an agent window", "/session": "only in an agent window", "/hotkeys": "only in an agent window", "/changelog": "only in an agent window",
+    "/scoped-models": "only in an agent window", "/share": "only in an agent window",
+    "/twin-split": "only in an agent window", "/twin-fork": "only in an agent window", "/twin-tree": "only in an agent window", "/twin-merge": "only in an agent window",
+    "/whatsapp": "only in an agent window", "/mail": "only in an agent window", "/voice-switch": "only in an agent window", "/sched": "only in an agent window",
+    "/nim-limit": "only in an agent window", "/hp-pin": "only in an agent window", "/hp-summon": "only in an agent window", "/hp-dismiss": "only in an agent window", "/hp-focus": "only in an agent window",
+  };
+  return [
+    ...jotCommands(),
+    { name: "/compact", usage: "/compact [FOCUS]", help: `compact ${T()}'s conversation now (FOCUS: what the summary should keep)`,
+      run: (a, text) => ctl(`compacting ${T()}`, { type: "compact", ...(a ? { customInstructions: a } : {}) }, (d) => `✓ ${T()} compacted${d.tokensBefore ? ` (${kTok(d.tokensBefore)} → ~${kTok(d.estimatedTokensAfter || 0)} tokens)` : ""}`, { text }) },
+    { name: "/model", usage: "/model [provider/id]", help: `${T()}'s model until it restarts (config.json thoughtsModel is the lasting one); alone: the models`,
+      run: (a, text) => {
+        if (!a) return ctl("models", { type: "get_available_models" }, (d) => { const ms = (d.models || []).map((m) => `${m.provider}/${m.id}`); return ms.length ? `${ms.length} models: ${ms.slice(0, 12).join(" · ")}${ms.length > 12 ? " …" : ""} · /model provider/id` : "no models listed"; });
+        const m = /^([^/\s]+)\/(\S+)$/.exec(a); if (!m) { setBox(text); note = "/model provider/id (e.g. anthropic/claude-opus-5-5)"; return render(); }
+        ctl(`model ${a}`, { type: "set_model", provider: m[1], modelId: m[2] }, () => `✓ ${T()} now on ${a} (until it restarts; config.json thoughtsModel is the lasting one)`, { text });
+      } },
+    { name: "/thinking", usage: "/thinking off|minimal|low|medium|high|xhigh|max", help: `${T()}'s thinking level until it restarts`,
+      run: (a, text) => { if (!/^(off|minimal|low|medium|high|xhigh|max)$/.test(a)) { setBox(text || "/thinking "); note = "/thinking off|minimal|low|medium|high|xhigh|max"; return render(); }
+        ctl(`thinking ${a}`, { type: "set_thinking_level", level: a }, () => `✓ ${T()} thinking: ${a} (until it restarts)`, { text }); } },
+    ...["/restart", "/reload-runtime"].map((name) => ({ name, usage: name, help: name === "/restart" ? `restart ${T()} on the current code (same session); not while it's replying` : "the same as /restart", hidden: name !== "/restart",
+      run: () => { if (!api) { note = "✗ daemon offline"; return render(); } note = `restarting ${T()}…`; render();
+        api.call("thoughts.restart", { room }).then((r) => { note = r.restarted ? `✓ ${T()} restarted: it starts on the new code with your next message` : `${T()} isn't running: it starts on the current code with your next message`; render(); })
+          .catch((e) => { note = "✗ " + e.message; render(); }); } })),
+    ...["/handoff", "/fresh"].map((name) => ({ name, usage: `${name} [NOTE]`, help: name === "/handoff" ? `${T()} writes a handoff, then starts a fresh session from it (the old one is archived; the last turns stay visible); NOTE goes into the handoff` : "the same as /handoff", hidden: name !== "/handoff",
+      run: (a) => { if (!api) { note = "✗ daemon offline"; return render(); } note = `${T()}: asking for its handoff…`; render();
+        api.call("thoughts.askHandoff", { room, note: a }).then(() => { note = `🔄 ${T()} writes its handoff, then starts fresh (a line in the thread says when)`; render(); })
+          .catch((e) => { note = `✗ /handoff: ${/unknown method/.test(e.message) ? "the daemon hasn't picked this up yet (restart pending)" : e.message}`; render(); }); } })),
+    { name: "/step", usage: "A /step B /step C", help: `send A; then B once ${T()} has answered, and so on`, run: (a) => steps(a) },
+    { name: "/steps", usage: "/steps [cancel]", help: "what /step still has queued; cancel drops it", run: (a) => { if (/^cancel$/i.test(a)) { const n = STEP.length; STEP.length = 0; note = n ? `/step: dropped ${n}` : "/step: nothing queued"; } else note = STEP.length ? `/step: ${STEP.length} waiting: ${STEP.map((x) => x.slice(0, 30)).join(" · ")}` : "/step: nothing queued"; render(); } },
+    ...Object.entries(AGENT_ONLY).map(([name, why]) => ({ name, hidden: true, run: (a, text) => { setBox(text); note = `✗ ${name}: ${why}`; render(); } })),
+  ];
+}
+// /step (J233): pieces go one at a time; the next when Thoughts settles (the thoughts event, below).
+const STEP = [];
+const STEP_RE = /(?:^|\s)\/step(?=\s|$)/i;
+function steps(text) {
+  const parts = String(text || "").split(/(?:^|\s)\/step(?=\s|$)/i).map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) { note = "/step: A /step B /step C"; return render(); }
+  STEP.push(...parts.slice(1));
+  runStep(parts[0]);
+  if (STEP.length) { note = `/step: ${STEP.length} more after this one`; render(); }
+}
+function runStep(piece) {
+  if (piece.startsWith("/") && !piece.startsWith("//")) { command(piece); setTimeout(nextStep, 1500); return; } // a command may not start a turn
+  sendThought(piece.startsWith("//") ? piece.slice(1) : piece, imagePaths(piece));
+}
+function nextStep() { if (STEP.length && !TH.busy) { const n = STEP.shift(); runStep(n); if (STEP.length) { note = `/step: ${STEP.length} more`; render(); } } }
 const cmds = createCommands({
   commands: [
     { name: "/keyword", usage: "/keyword WORDS", help: "exact-word search of this world's history (instant, no model): the 10 newest matching turns", run: (a) => evidence("keyword", a) },
@@ -228,7 +295,7 @@ const cmds = createCommands({
       const add = Math.max(1, Number(a) || 20); evidence(EV.last.kind, EV.last.text, EV.last.n + add);
     } },
     { name: "/thought", usage: "/thought TEXT", help: "the same as typing TEXT: tell Thoughts", run: (a) => sendThought(a) },
-    ...jotCommands(),
+    ...thoughtsCommands(),
   ],
   ctx: {
     panel: "search", world: () => room, worlds: () => rooms, cycle: (d) => cycle(d), agents: () => known.filter((a) => a.live),
@@ -278,6 +345,7 @@ function enter() {
     api.call("thoughts.ignore", { room, text: raw }).catch((e) => { note = "✗ " + e.message; render(); });
     return render();
   }
+  if (!raw.startsWith("//") && STEP_RE.test(raw)) { setBox(""); return steps(raw); } // J233: "A /step B" (also "/jot-note x /step y")
   if (raw.startsWith("/") && !raw.startsWith("//")) {
     // Not a /command at all (a first word with another "/" in it, e.g. a /home/… path, J108): say so and
     // keep the text in the box, instead of clearing it and sending nothing.
@@ -301,7 +369,10 @@ function runFrom(mode, query) {
 }
 const startArgs = (() => { const a = process.argv.slice(3), o = {}; for (let i = 0; i < a.length; i += 2) if (a[i] === "--mode" || a[i] === "--query") o[a[i].slice(2)] = a[i + 1] ?? ""; return o; })();
 let startRan = !(startArgs.mode || startArgs.query);
-function command(raw) { note = ""; showHelp = false; setBox(""); cmds.run(raw); render(); }
+function command(raw) {
+  if (/^\/\s*skill:/i.test(raw)) { note = "✗ /skill:…: skills load only in an agent window (Thoughts runs without them)"; return render(); } // J233
+  note = ""; showHelp = false; setBox(""); cmds.run(raw); render();
+}
 function complete() { // Tab on "/partial": the shared completion (lib/tui/command-line.mjs)
   cmds.tab({ get text() { return query; }, set: (t) => setBox(t) });
   render();
@@ -752,7 +823,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
-        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) TH.unseen++; else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) TH.busy = !!data.busy; if (thoughtsOn) render(); }
+        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) TH.unseen++; else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
