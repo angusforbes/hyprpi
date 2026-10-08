@@ -19,14 +19,20 @@ Herdr and hyprpi run side by side for now; hyprpi is meant to replace Herdr even
   one shows up at once.
 - **Safety, both:** file swaps keep the mode (`git show --summary HEAD | grep mode`; mockups/panels is
   755), the daemon is restarted only when nobody is mid-turn, and only your own files are committed.
-- **Push after each verified change** (J211, Angus 2026-10-07: "yes push after each verified change"; all
-  agents, all worlds, this repo and Angus's other repos agents work on). Once a change is verified (an
-  independent tester passed it, or Thoughts recorded it verified), the agent that committed it pushes the
-  branch to origin right away. Safety: only your own commits, from a tree where nobody else's work is
-  committed by you; scan the diff since origin for personal data first (`git diff @{u}..HEAD`); author
-  angus.forbes@gmail.com; fast-forward only: no force-push, no history rewrite. If the push is rejected,
-  `git pull --rebase` only when that's trivial (no conflicts), else stop and report. One pusher at a time:
-  if another agent is pushing the same repo, wait for it.
+- **Pushing: one pusher per repo, verified work only** (J211 + J260; Angus 2026-10-07 "yes push after each
+  verified change", 2026-10-08 "1a ok yes, it should be the owner/writer of the project. 1b yes, 1c yes"; all
+  agents, all worlds, this repo and Angus's other repos agents work on).
+  - **1a. The pusher is the owner (writer) of the project the repo belongs to** (for hyprpi: the @hyprpi
+    writer). Nobody else pushes. When your commit is verified (an independent tester passed it, or Thoughts
+    recorded it verified), tell the pusher (talk) with its hash; the pusher fast-forwards origin up to the
+    last verified commit and lists anything blocking the rest on the project card.
+  - **1b. Unverified work stays on a job branch** (e.g. `job/J247`); master gets it (fast-forward or a
+    plain merge, no rewrite) only once it's verified, so master never has unverified commits under verified ones.
+  - **1c. On shared local master you only append.** Rebases, fixups, amends or any rewrite of commits on
+    master need the pusher's OK first (a rewrite changes other agents' hashes).
+  - Safety, every push: scan `git diff @{u}..HEAD` for personal data; author angus.forbes@gmail.com;
+    fast-forward only: no force-push, no history rewrite of anything pushed. On a rejection, `git pull
+    --rebase` only when trivial and only by the pusher, else stop and report.
 
 ## Current state (all committed and pushed)
 
