@@ -46,6 +46,10 @@ Then run `pi` once and `/login`, and press **SUPER+A** for your first agent.
 
 Every piece is opt-in and reversible. `hyprpi integration status` shows what is installed; `hyprpi integration uninstall NAME…` undoes exactly what its install did (links, the lines it added, the services it wrote), and `hyprpi integration uninstall all` removes everything. Backups of files it edited stay in `~/.local/state/hyprpi/backups/`. Nothing touches your shell's rc files. Your agents' conversations are pi's own sessions and are never deleted.
 
+### Settings
+
+hyprpi's behaviour is set in one file, `~/.config/hyprpi/hyprpi.jsonc`, written on first run with every default and a comment on each; changes apply within a minute, no restart. For example, `"user": { "name": "Sam" }` sets the name the panels and the phone show for your messages (default: your login name).
+
 ## hyprpi: agents in their own windows
 
 ![The agents panel: each agent with its state, task and model, and helpers it spawned listed under it](docs/img/panels.png)
