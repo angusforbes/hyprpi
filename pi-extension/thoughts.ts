@@ -258,6 +258,22 @@ export default function thoughts(pi: ExtensionAPI) {
     execute: async (_id: string, p: any) => { const r: any = await call("thoughts.moveJob", p); return out(`${r.job} moved to @${r.project} ${r.item} (from ${r.from}).`, { action: `moved ${r.job} → @${r.project} ${r.item}` }); },
   });
 
+  // J241: revive_agent: bring a parked agent (Reprieve) of this world back, when hyprpi.jsonc allows it.
+  pi.registerTool({
+    name: "revive_agent",
+    label: "Revive a parked agent",
+    description: "Bring one of this world's PARKED agents (its window in Reprieve: still running with its own session and context, but out of the room; the world tool lists them) back to its workspace in this world, without moving Angus's focus. Only when thoughts.reviveParked is true in ~/.config/hyprpi/hyprpi.jsonc; otherwise it refuses and Angus brings it back himself. ask_agent, give_work and interrupt_agent on a parked agent revive it first on their own (same rule). A ♻ room line says so. Revive only when the agent is actually needed.",
+    promptSnippet: "Bring a parked agent back from Reprieve",
+    parameters: Type.Object({
+      agent: Type.String({ description: "the parked agent's name, e.g. Claw" }),
+      reason: Type.Optional(Type.String({ description: "why it's needed (shown in the room line)" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.revive", p);
+      return out(r.already ? `${r.agent} isn't parked (it's on ${r.workspace}).` : `${r.agent} is back from Reprieve, on ${r.workspace}.`, { action: `revived @${r.agent}` });
+    },
+  });
+
   // interrupt_agent (Angus, brief J12): a real interrupt for ANY live agent.
   pi.registerTool({
     name: "interrupt_agent",
