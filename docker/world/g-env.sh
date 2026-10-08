@@ -5,6 +5,7 @@
 [ -f "$HOME/.hyprpi-g/host.env" ] && . "$HOME/.hyprpi-g/host.env"
 W="$G_HOST_HYPRPI/docker/world"
 export HYPRPI_G_WORLD=world-g
+export HYPRPI_SANDBOX_WORLD=G
 export HYPRLAND_INSTANCE_SIGNATURE=world-g
 export XDG_RUNTIME_DIR="$HOME/.hyprpi-g/run"
 export HYPRPI_SOCKET="$HOME/.hyprpi-g/run/daemon.sock"
