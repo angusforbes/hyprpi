@@ -96,9 +96,9 @@ const home = (p) => String(p || "").replace(/^\/home\/[^/]+/, "~");
 const streamKeysOf = (items) => items.map((x) => x.key);
 let scroll = 0, lastConvoLen = 0, lastAvail = 10; // scroll = lines up from the newest
 // J247 (Angus: "when i'm scrolled up reading … leave me where i am but provide an indicator that there's
-// new messages below"): seenKey = the newest stream item when he was last at the bottom; the message
-// blocks (header rows) after it while scrolled up = the "↓ N new" pill (lib/tui/new-pill.mjs). Older
-// items filed in above (board changes loaded later) don't count. lastAnchor: the
+// new messages below"): seenKey = the newest stream item when he was last at the bottom; the items after
+// it that show, while scrolled up = the "↓ N new" pill (lib/tui/new-pill.mjs). Older items filed in
+// above (board changes loaded later) don't count. lastAnchor: the
 // first line on screen (see "Scrolled up" in render). pillAt: where the pill was drawn (clicks).
 // restoreScroll: the place to go back to after a restart onto new code.
 let seenKey = null, pillAt = null, restoreScroll = null, lastAnchor = null;
@@ -466,11 +466,14 @@ function draw() {
   // J247: the "↓ N new" pill (new message blocks since he was last at the bottom), and where we are
   // (the first line on screen) in case the panel restarts onto new code.
   if (scroll === 0 || !seenKey) seenKey = streamKeys[streamKeys.length - 1] || null;
-  const si = streamKeys.lastIndexOf(seenKey), fresh = scroll > 0 && si >= 0 ? convo.filter((x) => x.header && x.msg > si).length : 0;
+  // New = the stream items after it that show (each item once, in every view: compact rows have no headers; J247check2).
+  const si = streamKeys.lastIndexOf(seenKey), fresh = scroll > 0 && si >= 0 ? new Set(convo.filter((x) => x.msg != null && x.msg > si).map((x) => x.msg)).size : 0;
   pillAt = null;
   if (fresh > 0) { const pl = withPill(rows[rows.length - 1], fresh, W, room); rows[rows.length - 1] = pl.line; pillAt = { y: rows.length, x0: pl.x0, x1: pl.x1 }; }
-  const top = shown.find((x) => x.msg != null);
-  lastAnchor = scroll > 0 && top ? { key: streamKeys[top.msg], off: convo.indexOf(top) - convo.findIndex((x) => x.msg === top.msg), scroll, seenKey } : null;
+  // The anchor: the first item on screen, and how far the view's first row is from that item's first row
+  // (negative when the view starts on the blank line above it; J247check2).
+  const top = shown.find((x) => x.msg != null), vStart = Math.max(0, convo.length - avail - scroll);
+  lastAnchor = scroll > 0 && top ? { key: streamKeys[top.msg], off: vStart - convo.findIndex((x) => x.msg === top.msg), scroll, seenKey } : null;
   }
 
   // Input line(s)
