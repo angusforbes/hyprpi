@@ -73,6 +73,7 @@ export default function thoughts(pi: ExtensionAPI) {
       agent: Type.String({ description: "agent name, e.g. Sankey or pi·k3vg" }),
       question: Type.String(),
       urgent: Type.Optional(Type.Boolean()),
+      decision: Type.Optional(Type.Boolean({ description: "this passes on Angus's DECISION (an answer to something the agent asked or waits for): delivered at once, also while it works, ahead of older replies (J272)" })),
       images: Type.Optional(Type.Array(Type.String(), { description: "image paths to show the agent (e.g. a screenshot Angus pasted)" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {

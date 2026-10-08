@@ -66,6 +66,13 @@ export default function hyprpi(pi: ExtensionAPI) {
   // `starting` holds the rest until the turn has begun; a send that fails (now or later) is held again.
   let starting: ReturnType<typeof setTimeout> | null = null;
   const send = (message: any, opts: any) => {
+    // J272 fix 6: a message that waited here (or in the daemon) for minutes says so, so the agent doesn't take a
+    // stale question for an unanswered one and re-send what it already sent (Harbor, J262).
+    const sentAt = Number(message?.details?.sent_at) || 0;
+    if (sentAt && !message.details.lateNote && Date.now() - sentAt > 120000 && typeof message.content === "string") {
+      const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      message.details.lateNote = true; message.content = `[sent ${hm(sentAt)}, delivered ${hm(Date.now())}: it waited while you were busy, so it may be out of date; if you already answered this, say so in one line rather than re-sending]\n` + message.content;
+    }
     const again = () => { if (keyOf(message) && !landed.has(keyOf(message))) { held.unshift(message); setTimeout(releaseHeld, 1000); } };
     try {
       if (opts?.triggerTurn && !opts.deliverAs) { if (starting) clearTimeout(starting); starting = setTimeout(() => { starting = null; releaseHeld(); }, 5000); }

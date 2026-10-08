@@ -17,7 +17,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   let waits = 0; // J272: wait_report calls running now (index.ts wakes them when a message arrives)
   const text = (t: string, details: any = {}) => ({ content: [{ type: "text" as const, text: t }], details });
   let me: any = null; // { budget, used, startedAt, status, parent } when this agent was spawned
-  let tokens = 0, stopped = false, closing: any = null, lastSent = 0;
+  let tokens = 0, stopped = false, closing: any = null, lastSent = 0, calls = 0, toolCalls = 0, lastErr = "";
   const loadMe = async () => { try { me = await call("orch.me"); if (me?.used?.tokens) tokens = Math.max(tokens, me.used.tokens); if (me?.status === "budget") stopped = true; } catch { /* not spawned / offline */ } };
   pi.on("session_start", async () => { setTimeout(loadMe, 1500); setTimeout(() => { if (!me) loadMe(); }, 10000); });
 
@@ -32,7 +32,9 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     const m = e?.message;
     if (m?.role !== "assistant" || !me?.budget) return;
     const u = m.usage || {};
-    tokens += (u.input || 0) + (u.output || 0) + (u.cacheWrite || 0);
+    // J272 fix 5: the first call's input and cache write are the start-up context (system prompt, tools, skills,
+    // ~50k: ShellSources' 16k budget was gone before its first tool call); only its output counts.
+    tokens += calls++ === 0 ? (u.output || 0) : (u.input || 0) + (u.output || 0) + (u.cacheWrite || 0);
     if (Date.now() - lastSent > 15000) { lastSent = Date.now(); call("orch.usage", { tokens }).catch(() => {}); }
     checkCap();
   });
@@ -41,13 +43,14 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     if (!what || stopped) return;
     stopped = true;
     call("orch.usage", { tokens }).catch(() => {});
-    call("orch.budgetHit", { what }).catch(() => {});
+    call("orch.budgetHit", { what, early: toolCalls === 0 }).catch(() => {});
     inject({ customType: "hyprpi-orch", display: true, content: `[hyprpi · budget reached: ${what}]\nStop now. Call report_to_parent with what you have so far, what's left and what you'd need to finish (not final unless it's done), then end your turn. Other tools are blocked until your parent extends your budget.`, details: { request_id: `orch-budget-${Date.now()}` } }, true);
   }
   // The time cap also while one long tool call runs (Knock's J130 finding 4): the steer lands at its end, and
   // the tools after it are blocked.
   setInterval(() => { if (me?.budget?.minutes) checkCap(); }, 30000).unref?.();
   pi.on("tool_call", async (e: any) => {
+    toolCalls++;
     if (!stopped) return;
     const n = e?.toolName || e?.name || "";
     if (n === "report_to_parent" || n === "my_children" || n === "wait_report" || n === "close_agent") return;
@@ -65,6 +68,9 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     setTimeout(() => { try { process.kill(process.pid, "SIGTERM"); } catch { /* gone */ } }, 8000).unref?.();
   };
   pi.on("agent_end", async () => { setTimeout(tryClose, 200); });
+  // J272 fix 4: a spawned agent whose turn ended on an error (rate limit, overload, …) tells its parent.
+  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "assistant") lastErr = m.stopReason === "error" ? String(m.errorMessage || "error") : ""; });
+  pi.on("agent_end", async () => { if (me && lastErr) { const why = `its turn ended on an error: ${lastErr.replace(/\s+/g, " ").slice(0, 200)}`; lastErr = ""; call("orch.stalled", { why }).catch(() => {}); } });
 
   const onEvent = (event: string, d: any) => {
     if (event === "orch.report") {
