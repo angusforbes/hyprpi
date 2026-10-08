@@ -75,13 +75,22 @@ function ownHosts() {
   } catch { /* local only */ }
   return { hosts, names };
 }
-const HOSTS = ownHosts();
+let HOSTS = ownHosts();
 log("hosts:", [...HOSTS.hosts, ...[...HOSTS.names].map((n) => n + "[:port]")].join(", "));
+// Started before Tailscale was up (a login at boot), it knew only localhost and refused the phone with
+// "unknown host" until restarted (Angus, 10/8). An unknown host now asks Tailscale again, at most every 30 s.
+let hostsAt = Date.now();
 function hostOk(h) {
   h = String(h || "").toLowerCase();
   if (HOSTS.hosts.has(h)) return true;
   const name = h.replace(/:\d+$/, "");
-  return HOSTS.names.has(name);
+  if (HOSTS.names.has(name)) return true;
+  if (Date.now() - hostsAt > 30000) {
+    hostsAt = Date.now(); const n0 = HOSTS.names.size; HOSTS = ownHosts();
+    if (HOSTS.names.size !== n0) log("hosts now:", [...HOSTS.names].join(", "));
+    return HOSTS.names.has(name);
+  }
+  return false;
 }
 
 function allowed(req) {
