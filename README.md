@@ -164,11 +164,11 @@ Run `hyprpi help` for the full text. Skipped as internal: `seen` (called by the 
 - `hyprpi room --toggle` — jump to the current world's agents panel, or open it here (what clicking the current world in the bar does)
 - `hyprpi search [ROOM] [--toggle]` — open the search (Thoughts) window for a room
 - `hyprpi find [--room R] [--ai] QUERY` — search from the terminal, by keyword or with `--ai`
-- `hyprpi post [--room R] TEXT` — post to a room as yourself; every agent there gets it
+- `hyprpi post [--room R] TEXT` — post to a room as you; every agent there gets it
 - `hyprpi send AGENT TEXT` — prompt one agent directly
 - `hyprpi thoughts [--room R] [--via voice] TEXT` — message a world's Thoughts agent (default: the current world); `--via voice` marks it as dictated
 - `hyprpi thoughts new W [--handoff FILE]` — a fresh Thoughts session for world W (the old one is archived, never deleted)
-- `hyprpi dictate [--to hp:ID|proj:NAME] TEXT` — a dictation: goes to the focused world's Thoughts, or to the agent or project it starts with
+- `hyprpi dictate [--to hp:ID|proj:NAME] TEXT` — a dictation: goes to the focused world's Thoughts, or to the agent or project it starts with ("Atlas, …", "project onboarding, …")
 - `hyprpi tinker [W:] TEXT` — drop a friction fix off in the workshop world (one free agent there takes it, or a new one opens); `D: TEXT` also makes world D the workshop
 - `hyprpi focus AGENT` — jump to an agent's window
 - `hyprpi move AGENT... --to WS|WORLD` — move agents' windows (focus stays); a world letter keeps each one's slot; `--room C` moves every live agent in C
