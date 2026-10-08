@@ -350,6 +350,7 @@ class Sandbox {
             out.delivered.push(...(r.delivered || [])); out.request_id ||= r.request_id;
           }
           const rooms = [...new Set(gated.map((x) => x.room).filter(Boolean))];
+          try { if (fs.statSync(AUTO).size > 1e6) fs.renameSync(AUTO, AUTO + ".1"); } catch { /* none yet */ } // review #8: bounded
           try { fs.appendFileSync(AUTO, JSON.stringify({ t: now(), sandbox: this.name, rooms, to: gated.map((x) => x.shown), rule: ns, preview: clean(t).replace(/\s+/g, " ").slice(0, 120) }) + "\n", { mode: 0o600 }); } catch { /* best effort */ }
           log({ sb: this.name, op: "talk", rule: ns, to: gated.map((x) => x.id), ...textMeta(t) });
           out.ruled = ns;
@@ -578,7 +579,8 @@ class Relay {
 // Approving is Angus's call (J262: an agent approved a held message addressed to itself). So approve only works
 // from a real terminal on the desktop, never from inside an agent: no hyprpi agent (HYPRPI_AGENT_ID) and no pi
 // process anywhere among this process's ancestors, and stdin a terminal. Deny stays open to anyone (it's safe).
-// This is accident prevention, NOT authentication (review J262 #6): a hostile process running under the user's
+// This is accident prevention, NOT authentication (review J262 #6; J274 #9: a clean `systemd-run --user --pty` child
+// passes it too, and the same user can write decisions/, rules.json and reviews/ directly): a hostile process running under the user's
 // account could still write a decision file directly. It stops well-behaved agents approving by accident or
 // because a message told them to; the sandbox itself can't reach the decisions folder at all.
 function decideAsAngus(id, verdict) {
@@ -636,20 +638,24 @@ if (cmd === "run") {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
   const dur = parseDuration(process.argv.slice(4).join(" "));
   if (!dur) { console.error("duration: once, today, or e.g. 30m, 2h, 2 hours"); process.exit(1); }
-  const verdict = dur.once ? "approve" : dur.today ? "allow-today" : `allow-${Math.round(dur.ms / 60000)}`;
+  // agents get 24 h at most anyway (lib/sbx-rules.mjs): clamp here so the decision file is always one the relay reads (review #3)
+  const verdict = dur.once ? "approve" : dur.today ? "allow-today" : `allow-${Math.min(1440, Math.max(1, Math.round(dur.ms / 60000)))}`;
   decideAsAngus(arg, verdict);
   console.log(`${verdict === "approve" ? "approved" : "approved and allowed similar"} ${arg}`);
 } else if (cmd === "rules") {
   const list = loadRules(STATE);
   console.log(list.length ? list.map((r) => describeRule(r)).join("\n") : "no rules");
-} else if ((cmd === "revoke" || cmd === "clear") && arg) {
-  // Revoking is safe, so open to anyone (agents too). clear SANDBOX: world.sh stop calls it.
+} else if (cmd === "revoke" && (arg === "all" || /^\d{1,6}$/.test(arg || ""))) {
+  // Revoking is safe, so open to anyone (agents too).
   console.log(`revoked ${revokeRules(STATE, arg)} rule(s)`);
+} else if (cmd === "clear" && arg) {
+  // clear SANDBOX: every rule of one sandbox (world.sh stop calls it)
+  console.log(`revoked ${revokeRules(STATE, arg, { sandbox: true })} rule(s)`);
 } else if ((cmd === "approve" || cmd === "deny") && arg) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
   decideAsAngus(arg, cmd);
   console.log(`${cmd === "deny" ? "denied" : "approved"} ${arg}`);
 } else {
-  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|SANDBOX");
+  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|clear SANDBOX");
   process.exit(cmd ? 1 : 0);
 }

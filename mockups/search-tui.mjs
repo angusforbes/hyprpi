@@ -349,43 +349,56 @@ function completeName(dir = 1) {
 // decides it: a bare 1 / 2 / 3 at once, free-form wording ("3, but for 2 hours") after one confirming y.
 // The panel parses his words itself (lib/held.mjs parseChoice) and runs the relay's guarded CLI; nothing
 // Thoughts writes, and nothing from the sandbox, is ever taken as an answer.
-let review = null; // { id, room, h, confirm, shownAt }
+// One review per world (review J274 #2): switching worlds keeps each, but drops any half-confirmed choice.
+const reviews = {}; // room -> { id, room, h, confirm, shownAt, draft }
+let review = null;  // the current world's (kept in step by pollReview / render)
 function pollReview() {
   if (restarting) return;
-  if (review) {
-    if (!heldById(review.id)) { note = `held message ${review.id} was decided (or expired)`; review = null; render(); }
-    return;
+  const before = Object.keys(reviews).join(",") + "|" + note;
+  for (const [r, rv] of Object.entries(reviews)) if (!heldById(rv.id)) { delete reviews[r]; if (r === room) { note = `held message ${rv.id} was decided (or expired)`; if (rv.draft && !query) setBox(rv.draft); } }
+  review = reviews[room] || null;
+  if (!review && room) {
+    const id = claimReview(room), h = id && heldById(id);
+    if (h) {
+      // Whatever was already in the box can't answer it (review #1): it is set aside and comes back afterwards.
+      review = reviews[room] = { id, room, h, confirm: null, shownAt: Date.now(), draft: query };
+      setBox("");
+      sendThought(reviewPrompt(h));
+    }
   }
-  const id = room && claimReview(room); if (!id) return;
-  const h = heldById(id); if (!h) return;
-  review = { id, room, h, confirm: null, shownAt: Date.now() };
-  sendThought(reviewPrompt(h));
+  if (Object.keys(reviews).join(",") + "|" + note !== before) render();
 }
 setInterval(pollReview, 2000);
+let reviewRoom = room;
 function reviewKey(raw) {
-  if (!review || review.room !== room || !heldById(review.id)) { if (review && !heldById(review.id)) review = null; return false; }
+  if (reviewRoom !== room) { for (const rv of Object.values(reviews)) rv.confirm = null; reviewRoom = room; } // world switched: no half-confirmed choice survives
+  review = reviews[room] || null;
+  if (!review) return false;
+  if (!heldById(review.id)) { delete reviews[room]; review = null; return false; }
   if (Date.now() - review.shownAt < 1500) return false; // typed before the review appeared: not an answer
   const decide = (ch) => {
     const r = actOnHeld(review.id, ch), h = review.h;
     note = r.ok ? `✓ ${ch.label}: ${h.sandbox} → ${h.to.join(", ")}` : "✗ " + (r.text || "couldn't decide");
-    if (r.ok) { const id = review.id; review = null; sendThought(`[Angus decided held ${id}: ${ch.label}]`); }
-    setBox(""); render(); return true;
+    setBox("");
+    if (r.ok) { const { id, draft } = review; delete reviews[room]; review = null; if (draft) setBox(draft); sendThought(`[Angus decided held ${id}: ${ch.label}]`); }
+    render(); return true;
   };
   if (review.confirm) {
     const ch = review.confirm; review.confirm = null;
     if (/^y(es)?$/i.test(raw)) return decide(ch);
-    note = "cancelled"; if (/^n(o)?$/i.test(raw)) { setBox(""); render(); return true; }
+    note = "cancelled"; if (!raw || /^n(o)?$/i.test(raw)) { setBox(""); render(); return true; }
   }
+  if (!raw) return false;
   const ch = parseChoice(raw);
   if (!ch) return false;
-  if (ch.verdict === "unclear") { note = "✗ no duration found (e.g. \"3 for 2 hours\", \"3 today\"); sent to Thoughts as a question"; return false; }
+  if (ch.verdict === "unclear") { note = "✗ no usable duration (e.g. \"3 for 2 hours\", \"3 today\"); sent to Thoughts as a question"; return false; }
   if (ch.confirm) { review.confirm = ch; setBox(""); note = `${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
   return decide(ch);
 }
 
 function enter() {
   const raw = query.trim();
-  if (raw && reviewKey(raw)) return;
+  if (reviewKey(raw)) return; // (an empty ⏎ cancels a half-confirmed choice)
   if (raw) box.remember(raw); // ↑ brings it back, /commands included (N51)
   // "/ignore TEXT" (Angus, N52): a secret signpost. A normal line from Angus in the thread, given to
   // Thoughts with his next message, no reply. Not in /help or Tab.
@@ -650,7 +663,8 @@ function render() {
   const rule = (label) => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const headLabel = `thoughts ${room}`; // "— thoughts C" (Angus)
   rows.push(rule(headLabel));
-  if (review && review.room === room) { // J274: the held message under review, and how to answer
+  review = reviews[room] || null;
+  if (review) { // J274: the held message under review, and how to answer
     const h = review.h;
     rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})`, W))));
     rows.push(clip("   " + h.text.replace(/\s+/g, " "), W));
@@ -678,6 +692,7 @@ function render() {
   // No second rule (Angus: no "thread" line): the conversation starts right under the header, and
   // the header itself says so when you've scrolled back or opened /help.
   const ruleAt = 0;
+  const headN = rows.length; // 1, or 4 with a held review strip (review J274 #6)
   const avail = Math.max(1, H - rows.length - bottom.length - 1); // the thread; 1 = the status bar
   resultRows = {}; rowMeta = {}; items = []; linkRows = {};
 
@@ -843,8 +858,8 @@ function render() {
     if (S.ranFor && !S.busy && !S.results.length && !S.answer && !S.status.startsWith("✗")) shown.push({ l: dim(S.mode === "ai" ? "  Nothing matched that idea." : "  No exact matches.") });
     rows.push(...shown.map((x) => x.l));
   }
-  while (rows.length < 1 + avail) rows.push(""); // the thread's area, then the bottom block
-  rows.length = Math.min(rows.length, 1 + avail);
+  while (rows.length < headN + avail) rows.push(""); // the thread's area, then the bottom block
+  rows.length = Math.min(rows.length, headN + avail);
   const bottomY = rows.length + 1;
   boxArea = { y0: bottomY + boxAt, n: inRows.length, inTop, pw };
   rows.push(...bottom);
