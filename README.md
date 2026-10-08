@@ -326,8 +326,7 @@ Angus's names (2026-09-28), kept clearly distinct:
 - `hypr/hyprpi.lua` — Hyprland keys, the agent window rule and click-to-mark-seen
   (symlinked into `~/.config/hypr/`).
 - `docker/` — Pi agents in a Docker container that are still full hyprpi agents (room, board, window,
-  `(🐳 docker)` in the agents panel): images and `run-hyprpi-agent.sh`. See its README; plans and the
-  security design in `docs/sandbox-plan.md`.
+  `(🐳 docker)` in the agents panel): images and `run-hyprpi-agent.sh`. See its README.
 - `terminal-helpers/kitty/` — kitty settings for agent windows (`pi.conf`: Ctrl+click links
   and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
   `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.

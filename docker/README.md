@@ -3,11 +3,10 @@
 Run a Pi agent **inside a Docker container** that still behaves like a hyprpi agent: it joins its room,
 talks to other agents, reads and writes the board, gets its window in the panels (shown as
 `pi·erb2 (🐳 docker) · B2 · …` in the agents panel), and is dropped when you close it.
-Plans and the security design: [docs/sandbox-plan.md](../docs/sandbox-plan.md).
+The sandbox plans and security design are kept privately.
 
-> ⚠️ Not yet a security boundary against hostile code: the container gets the main hyprpi socket,
-> which can steer other agents as if it were Angus (see the plan). Use it for your own work and trusted
-> sites until the sandbox socket exists.
+> ⚠️ Not strong isolation: the container gets the main hyprpi socket, which can steer other agents.
+> Trusted workloads only for now.
 
 ## Files
 
