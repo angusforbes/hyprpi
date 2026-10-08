@@ -31,8 +31,8 @@ case "$CMD" in
     systemctl --user is-active --quiet hyprpi-sbx-relay || node "$H/docker/sbx-relay.mjs" start
     systemctl --user is-active --quiet "hyprpi-$WORLD-helper" || node "$H/docker/world/world-helper.mjs" start "$WORLD"
     in_sb true >/dev/null   # starts the sandbox (mounts are restored by sbx)
-    in_sb 'pgrep -f "hyprpi daemon" >/dev/null || { cd "$G_WORLD_DIR"; setsid -f node $G_HOST_HYPRPI/bin/hyprpi daemon >> $HOME/.hyprpi-g/daemon.log 2>&1 < /dev/null; sleep 3; }'
-    in_sb 'pgrep -f g-gate.mjs >/dev/null || HYPRPI_GATE_WORKSPACE='"$HI"' setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/g-gate.mjs; sleep 3; done" >> $HOME/.hyprpi-g/gate.log 2>&1 < /dev/null'
+    in_sb 'pgrep -f "^node .*/bin/hyprpi daemon" >/dev/null || { cd "$G_WORLD_DIR"; setsid -f sh -c "exec node $G_HOST_HYPRPI/bin/hyprpi daemon" >> $HOME/.hyprpi-g/daemon.log 2>&1 < /dev/null; sleep 3; }'
+    in_sb 'pgrep -f "^node .*/g-gate[.]mjs" >/dev/null || HYPRPI_GATE_WORKSPACE='"$HI"' setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/g-gate.mjs; sleep 3; done" >> $HOME/.hyprpi-g/gate.log 2>&1 < /dev/null'
     in_sb 'for p in agents-tui room-tui board-tui search-tui; do pgrep -f "$p.mjs" >/dev/null || G_WS='"$HI"' setsid -f $G_HOST_HYPRPI/mockups/$p G >/dev/null 2>&1 < /dev/null; done'
     in_sb 'hyprpi list' ;;
   new)
