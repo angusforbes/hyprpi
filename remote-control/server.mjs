@@ -13,6 +13,7 @@
 //   GET  /api/state            worlds (colours, Thoughts busy), the desktop's active world
 //   GET  /api/thoughts?world=C the thread
 //   POST /api/send   {world, text, images?}   to Thoughts, marked via "phone" (images: ~/Phone photos, J219)
+//   POST /api/shot?world=&caption=   a screenshot from the iOS share sheet (X-Shot-Token; shot.mjs, J250)
 //   POST /api/decide {world, project, h, answer, typed?}   answer a Decide item (board.item decide, J219)
 //   POST /api/stop   {world, ask?}   interrupt Thoughts (ask: it then says what got cut off)
 //   GET  /lib/thoughts-lines.mjs     the thread's display rule, shared with the desktop
@@ -34,6 +35,7 @@ import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames,
 import { worldHex, theme } from "../lib/tui/term.mjs";
 import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
 import * as session from "./session-read.mjs"; // an agent's session, tail-read (J161)
+import { shotRoutes } from "./shot.mjs"; // screenshots from the iPhone share sheet (J250)
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const HOME = os.homedir();
@@ -409,7 +411,8 @@ const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
 const STATIC = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/manifest.webmanifest": "manifest.webmanifest", "/icon.svg": "icon.svg", "/icon-180.png": "icon-180.png", "/md.mjs": "md.mjs", "/share.mjs": "share.mjs", "/viewer.js": "viewer.js", "/icon-192.png": "icon-192.png", "/icon-512.png": "icon-512.png", "/icon-maskable-512.png": "icon-maskable-512.png", "/favicon.png": "favicon.png",
   // the Files app (J74): its own page, manifest and icon, so it installs as a second Home Screen app
   "/files/": "files.html", "/files": "files.html", "/files.js": "files.js", "/files.css": "files.css", "/fileview.mjs": "fileview.mjs", "/files-manifest.webmanifest": "files-manifest.webmanifest",
-  "/files-icon-180.png": "files-icon-180.png", "/files-icon-192.png": "files-icon-192.png", "/files-icon-512.png": "files-icon-512.png", "/files-icon-maskable-512.png": "files-icon-maskable-512.png" };
+  "/files-icon-180.png": "files-icon-180.png", "/files-icon-192.png": "files-icon-192.png", "/files-icon-512.png": "files-icon-512.png", "/files-icon-maskable-512.png": "files-icon-maskable-512.png",
+  "/shortcut": "shortcut.html" }; // J250: the screenshot Shortcut setup page
 
 // "bytes=a-b" / "a-" / "-n" → [start, end] (inclusive), "bad" when unsatisfiable, null when absent or
 // not a single plain range (then the whole file).
@@ -503,6 +506,7 @@ function wikiFind(name, from) {
   return hits[0];
 }
 
+const shots = shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi: () => api, room, getActive: () => listing?.active_room || "" });
 const filesHandle = filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refusedPart, underRoot, json, body, log, getApi: () => api, room });
 
 const server = http.createServer(async (req, res) => {
@@ -533,6 +537,7 @@ const server = http.createServer(async (req, res) => {
     // The desktop panels' Ctrl+click name matcher, as-is (pure, no imports): the page's links (J45).
     if (req.method === "GET" && url.pathname === "/lib/tui/agent-click.mjs") return serveFile(res, path.join(HERE, "..", "lib", "tui", "agent-click.mjs"), "text/javascript; charset=utf-8");
     if (await filesHandle(req, res, url)) return;
+    if (await shots.handle(req, res, url)) return; // J250
     if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, state());
     if (req.method === "GET" && url.pathname === "/api/thoughts") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
@@ -613,7 +618,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (!r || (!text && !images.length)) return json(res, 400, { error: "world and text needed" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
-      log("send", r, JSON.stringify(text.slice(0, 80)));
+      log("send", r, JSON.stringify(text.slice(0, 80))); shots.sawWorld(r); // J250: a Shortcut screenshot with no world goes here
       // "/ignore …": a signpost in the thread, given to Thoughts with his next message; no reply now (N52).
       if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 200, { ...(await api.call("thoughts.ignore", { room: r, text })), ignored: true });
       return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone", ...(images.length ? { images } : {}) }));

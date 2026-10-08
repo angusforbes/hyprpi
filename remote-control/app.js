@@ -399,6 +399,16 @@ async function addPhotos(files) {
   }
 }
 $("#attach").addEventListener("click", () => attfile.click());
+// J250: an image pasted into the box (a screenshot copied on the phone, or on a desktop) is attached as
+// 📎 would; the box keeps any text that came with it.
+input.addEventListener("paste", (e) => {
+  const cd = e.clipboardData; if (!cd) return;
+  const files = [...(cd.files || [])].filter((f) => f.type.startsWith("image/"));
+  if (!files.length) for (const it of cd.items || []) if (it.kind === "file" && it.type.startsWith("image/")) { const f = it.getAsFile(); if (f) files.push(f); }
+  if (!files.length) return;
+  if (!cd.getData("text/plain")) e.preventDefault();
+  addPhotos(files.map((f, i) => f.name && f.name !== "image.png" ? f : new File([f], `pasted-${Date.now()}${i ? "-" + i : ""}.${(f.type.split("/")[1] || "png").replace("jpeg", "jpg")}`, { type: f.type })));
+});
 attfile.addEventListener("change", () => { const f = [...attfile.files]; attfile.value = ""; if (f.length) addPhotos(f); });
 attsEl.addEventListener("click", (e) => { const x = e.target.closest(".ax"); if (!x) return; const i = +x.closest(".att").dataset.i; const a = atts[i]; if (a?.local) URL.revokeObjectURL(a.local); atts.splice(i, 1); renderAtts(); saveAtts(); });
 queueMicrotask(renderAtts); // after the rest of the module has set up (view)
