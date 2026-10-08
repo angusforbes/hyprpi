@@ -422,7 +422,7 @@ if (cmd === "run") {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(DECISIONS, `${arg}.${cmd}`), "", { mode: 0o600 });
-  console.log(`${cmd}d ${arg}`);
+  console.log(`${cmd === "deny" ? "denied" : "approved"} ${arg}`);
 } else {
   console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID");
   process.exit(cmd ? 1 : 0);
