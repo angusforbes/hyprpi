@@ -24,6 +24,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import * as hypr from "./../lib/hypr.mjs";
+// J333: an isolated hyprpi (test socket/state) opens no panels on the real desktop.
+{ const why = hypr.hyprBlocked(); if (why) { console.error(`hypr actions disabled (isolated daemon: ${why}); HYPRPI_ALLOW_HYPR=1 allows them`); process.exit(1); } }
 import { request } from "./../lib/client.mjs";
 import { strictClients, withPanelLock } from "./../lib/panel-find.mjs";
 
@@ -127,7 +129,7 @@ async function setFloat(addr, want) {
     const c = await win(addr);
     if (!c || c.floating === want) return;
     await hypr.focusWindow(addr).catch(() => {});
-    await hypr.dispatch("hl.dsp.window.float()").catch(() => {});
+    await hypr.dispatch(`hl.dsp.window.float({ window = "address:${addr}" })`).catch(() => {}); // J333: by address, never the focused one
     await sleep(350);
   }
 }
@@ -183,9 +185,9 @@ async function exactColumns(addrs) {
     await setFloat(addrs[i], true);
     const w = i === addrs.length - 1 ? usable - (colW + gap) * i : colW; // last one takes the rounding
     await hypr.focusWindow(addrs[i]).catch(() => {});
-    await hypr.dispatch(`hl.dsp.window.resize({ x = ${w}, y = ${height}, relative = false })`).catch(() => {});
+    await hypr.dispatch(`hl.dsp.window.resize({ x = ${w}, y = ${height}, relative = false, window = "address:${addrs[i]}" })`).catch(() => {});
     await sleep(120);
-    await hypr.dispatch(`hl.dsp.window.move({ x = ${x0 + i * (colW + gap)}, y = ${y0}, relative = false })`).catch(() => {});
+    await hypr.dispatch(`hl.dsp.window.move({ x = ${x0 + i * (colW + gap)}, y = ${y0}, relative = false, window = "address:${addrs[i]}" })`).catch(() => {});
     await sleep(120);
   }
   await hypr.focusWindow(addrs[0]).catch(() => {});
@@ -219,7 +221,7 @@ async function evenTiles(addrs) {
   if (mine.length < 2) return;
   const total = mine.reduce((w, c) => w + c.size[0], 0);
   await hypr.focusWindow(mine[0].address).catch(() => {});
-  await hypr.dispatch(`hl.dsp.window.resize({ x = ${Math.floor(total / mine.length)}, y = ${mine[0].size[1]}, relative = false })`).catch(() => {});
+  await hypr.dispatch(`hl.dsp.window.resize({ x = ${Math.floor(total / mine.length)}, y = ${mine[0].size[1]}, relative = false, window = "address:${mine[0].address}" })`).catch(() => {});
   await sleep(200);
 }
 

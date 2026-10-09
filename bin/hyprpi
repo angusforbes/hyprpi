@@ -226,6 +226,8 @@ async function cmdNew() {
     child.on("error", (e) => die(e.message));
     return;
   }
+  // J333: an isolated hyprpi (test socket/state) opens no windows on the real desktop.
+  { const why = hypr.hyprBlocked(env); if (why) die(`hypr actions disabled (isolated daemon: ${why}): no window opened; HYPRPI_ALLOW_HYPR=1 allows it`); }
   let termPrefix;
   try { termPrefix = terminalCommand(cfg, { title: "pi", cwd }); } catch (e) { die(e.message); }
   const term = [...termPrefix, piCmd, ...piArgv];

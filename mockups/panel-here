@@ -14,6 +14,8 @@
 // through the daemon (ui.searchRun); a new one as its launch arguments.
 import { spawn } from "node:child_process";
 import * as hypr from "./../lib/hypr.mjs";
+// J333: an isolated hyprpi (test socket/state) opens no panels on the real desktop.
+{ const why = hypr.hyprBlocked(); if (why) { console.error(`hypr actions disabled (isolated daemon: ${why}); HYPRPI_ALLOW_HYPR=1 allows them`); process.exit(1); } }
 import { request } from "./../lib/client.mjs";
 import { strictClients, withPanelLock } from "./../lib/panel-find.mjs";
 
