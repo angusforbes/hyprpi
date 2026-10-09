@@ -127,9 +127,9 @@ The relay (`op: "research"`) then holds the finished deliverable as one message 
   | doorman-safe   | Doorman writes  | Angus reviews   |
   | doorman-open   | Doorman writes  | Doorman only    |
 
-  - doorman-safe is the default (no setting, or any value other than the three exact names). Angus thinks it's the right level for NVIDIA.
+  - doorman-safe is the default (no setting, or any value other than the three exact names). Angus thinks it's the right level for a work laptop.
   - doorman-strict holds the Doorman's planned searches for Angus first ("Searches planned for <sandbox>": toast + Thoughts review, 1 approve and run / 2 deny), then reviews the deliverable. The old `"research": { "strict": true }` still means doorman-strict (deprecated).
-  - doorman-open is opt-in only (the exact value `doorman-open`). The vetted deliverable goes straight into the sandbox, labelled "vetted by the Doorman, NOT reviewed by a human"; every delivery is logged and listed in the hourly digest. It does NOT meet NVIDIA's ASR first principle #11 (external data is promoted to internal only after a human reviews it) or #4 (Rule of Three) for a sandbox that holds internal data. Strict and safe meet them.
+  - doorman-open is opt-in only (the exact value `doorman-open`). The vetted deliverable goes straight into the sandbox, labelled "vetted by the Doorman, NOT reviewed by a human"; every delivery is logged and listed in the hourly digest. It does NOT meet the principles that external data is promoted to internal only after a human reviews it, or the Rule of Three, for a sandbox that holds internal data. Strict and safe meet them.
 - Limits: 10 quick and 3 deep requests an hour, 2 running at once, 1000 bytes per request.
 - `node docker/research/research.mjs digest [--send]` sums up the last hour for the reporting Thoughts.
 - Tests: `node docker/research/test-research.mjs`.
