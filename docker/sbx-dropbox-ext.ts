@@ -214,6 +214,21 @@ export default function (pi: ExtensionAPI) {
       let s = j; while (s > 0 && !own(ms[s - 1])) s--;
       return s > 0 ? { messages: ms.slice(s) } : undefined;
     });
+    // J327: a turn started by Angus himself in the developer window (its prompt opens with this marker, put there by
+    // doorman-view.mjs on the host) is a conversation with him only: the three tools that reach anyone else are
+    // blocked for that turn, so nothing he types can be sent to the sandbox or drafted as a request. A forged
+    // marker in a sandbox message can only block tools, which is the safe direction.
+    let devTurn = false;
+    // Decided before every model call from the latest user message, so a queued (follow-up) prompt of his is covered too.
+    pi.on("context", async (e: any) => {
+      const ms: any[] = e?.messages || []; let last: any = null;
+      for (let i = ms.length - 1; i >= 0; i--) if (ms[i]?.role !== "assistant" && ms[i]?.role !== "toolResult") { last = ms[i]; break; }
+      const c = last?.content; devTurn = (typeof c === "string" ? c : Array.isArray(c) ? c.map((x: any) => x?.text || "").join("") : "").startsWith("[Angus · developer window");
+    });
+    pi.on("tool_call", async (e: any) => {
+      const n = e?.toolName || e?.name;
+      if (devTurn && (n === "hyprpi_reply" || n === "hyprpi_talk" || n === "hyprpi_draft_request")) return { block: true, reason: "Angus is talking to you in the developer window: answer him in plain text here; nothing goes to the sandbox, other agents or the relay from this turn." };
+    });
     let lastErr = "";
     pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "assistant") lastErr = m.stopReason === "error" ? String(m.errorMessage || "error") : ""; });
     pi.on("tool_call", async (e: any) => { if ((e?.toolName || e?.name) === "hyprpi_reply") asked.delete(String(e?.input?.request_id ?? e?.args?.request_id ?? "")); });

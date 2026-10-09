@@ -6,6 +6,14 @@
 #   docker/doorman/doorman.sh create NAME     make the Doorman's sandbox and install Pi + its config in it
 #   docker/doorman/doorman.sh start NAME      run it (systemd user unit hyprpi-doorman-NAME, headless Pi in RPC mode)
 #   docker/doorman/doorman.sh stop NAME | status NAME | rm NAME
+#   docker/doorman/doorman.sh window NAME     (J327) open its live window now (developer / observer visibility only)
+#
+# "visibility" in its relay entry (J327; distinct from OpenRoute's "doorman": {"mode": ...} research key):
+#   strict     headless, nothing recorded outside the journal (the DEFAULT)
+#   safe       headless, plus state/status.json (state, last question and answer) for a status row
+#   observer   safe + a read-only live window (kitty on "visibility_workspace", default 68)
+#   developer  observer's window, where Angus can also type to the Doorman (marked as his; it reaches only the Doorman)
+# Files for all but strict: ~/.local/state/hyprpi/doormen/NAME/{events.jsonl,status.json,input.fifo (developer)}.
 #
 # NAME is its entry in ~/.config/hyprpi/sbx-relay.json, e.g.
 #   { "name": "doorman-g", "doorman_for": "world-g", "reports_to": "Thoughts-A", "display": "Doorman-G",
@@ -26,6 +34,11 @@ ENTRY="$(jq -c --arg n "$NAME" '.sandboxes[] | select(.name == $n)' "$CONF")"
 get() { jq -r --arg k "$1" '.[$k] // empty' <<<"$ENTRY" | sed "s#^~#$HOME#"; }
 FOR="$(get doorman_for)"; [[ -n "$FOR" ]] || { echo "doorman: '$NAME' has no doorman_for in $CONF" >&2; exit 2; }
 BOX="$(get workspace)"; INBOX="$(get inbox)"; CARD="$(get card)"; MODEL="$(get model)"; KEYF="$(get key_file)"
+VIS="$(get visibility)"; VIS="${VIS:-strict}"
+case "$VIS" in strict|safe|observer|developer) ;; *) echo "doorman: visibility '$VIS' must be strict, safe, observer or developer" >&2; exit 2 ;; esac
+WS="$(get visibility_workspace)"; WS="${WS:-68}"; [[ "$WS" =~ ^[0-9]{1,3}$ ]] || { echo "doorman: bad visibility_workspace" >&2; exit 2; }
+VSTATE="${HYPRPI_DOORMEN_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/hyprpi/doormen}/$NAME"
+VIEW="$H/docker/doorman/doorman-view.mjs"
 MODEL="${MODEL:-nv-claude/azure/anthropic/claude-opus-5-5}"
 UNIT="hyprpi-doorman-$NAME"
 # Its only shares besides the empty drop-box: the card (ro) and its inbox (ro). Mounts don't survive a sandbox restart,
@@ -72,9 +85,29 @@ start)
   # Refresh the extension and prompt from this checkout (fixes reach it), then a headless Pi kept fed by tail.
   sbx cp "$H/docker/sbx-dropbox-ext.ts" "$NAME:/home/agent/.pi/agent/extensions/hyprpi-dropbox.ts" >/dev/null
   sbx cp "$H/docker/doorman/doorman-prompt.md" "$NAME:/home/agent/doorman-prompt.md" >/dev/null
-  RUN="tail -f /dev/null | sbx exec -i -w /home/agent -e HYPRPI_DROPBOX=$BOX/.hyprpi-dropbox -e HYPRPI_INBOX=$INBOX -e HYPRPI_DOORMAN=1 $NAME sh -c 'exec /home/agent/.local/bin/pi --mode rpc --no-skills --no-context-files --no-prompt-templates --tools read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request --system-prompt \"\$(cat /home/agent/doorman-prompt.md)\"'"
-  systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M sh -c "$RUN"
-  echo "started $UNIT"
+  PIRUN="sbx exec -i -w /home/agent -e HYPRPI_DROPBOX=$BOX/.hyprpi-dropbox -e HYPRPI_INBOX=$INBOX -e HYPRPI_DOORMAN=1 $NAME sh -c 'exec /home/agent/.local/bin/pi --mode rpc --no-skills --no-context-files --no-prompt-templates --tools read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request --system-prompt \"\$(cat /home/agent/doorman-prompt.md)\"'"
+  IN="tail -f /dev/null"; OUT=""
+  if [[ "$VIS" != strict ]]; then
+    mkdir -p "$VSTATE"; chmod 700 "$VSTATE"
+    OUT=" | $(command -v node) $VIEW log $NAME"
+    if [[ "$VIS" == developer ]]; then
+      [[ -p "$VSTATE/input.fifo" ]] || { rm -f "$VSTATE/input.fifo"; mkfifo -m 600 "$VSTATE/input.fifo"; }
+      IN="exec 3<>$VSTATE/input.fifo; cat <&3" # read-write open: the fifo stays open between Angus's lines
+    fi
+  fi
+  RUN="set -o pipefail; { $IN; } | $PIRUN$OUT"
+  systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M bash -c "$RUN"
+  echo "started $UNIT (visibility $VIS)"
+  [[ "$VIS" == developer || "$VIS" == observer ]] && [[ -z "${DOORMAN_NO_WINDOW:-}" ]] && "$0" window "$NAME" || true
+  ;;
+window)
+  [[ "$VIS" == developer || "$VIS" == observer ]] || { echo "doorman: $NAME's visibility is $VIS: no window"; exit 0; }
+  CLS="hyprpi-doorman-$NAME"
+  hyprctl -j clients | jq -e --arg c "$CLS" '.[] | select(.class == $c)' >/dev/null && { echo "doorman: window already open"; exit 0; }
+  ARG=""; [[ "$VIS" == developer ]] && ARG=" --write"
+  # on its workspace, silently: Angus's focus never moves
+  hyprctl dispatch "hl.dsp.exec_cmd(\"kitty --class $CLS --title 'Doorman $NAME ($VIS)' $(command -v node) $VIEW view $NAME$ARG\", { workspace = \"$WS silent\" })" >/dev/null
+  echo "opened $CLS on workspace $WS"
   ;;
 stop) systemctl --user stop "$UNIT"; sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true ;;
 status) systemctl --user --no-pager status "$UNIT" || true ;;
