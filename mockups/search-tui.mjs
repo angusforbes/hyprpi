@@ -785,7 +785,7 @@ function render() {
         const route = /^(.*?) \((?:toast|terminal|room panel|dismissed), [^)]*\)$/.exec(head);
         const plain = e.kind === "reply" || !!route || /^Sent under your rule/.test(head);
         if (plain) head = e.kind === "reply" ? head.replace(/ to \S+ \([^)]*\)$/, "") : route ? (/^Denied/.test(route[1]) ? "Denied" : "Approved") : head.replace(/^Sent under your rule/, "Sent under rule");
-        const bar = `${ESC}${worldBg(room)}m${ESC}97m`, off = `${ESC}49m${ESC}39m`; // J293 v2 (Angus: "ALL notifications white with the world colour highlighting"; a failure keeps its ✗)
+        const bar = `${ESC}${worldBg(room)}m${ESC}38;2;255;255;255m`, off = `${ESC}49m${ESC}39m`; // J293 v2 (truecolor white: the theme maps 97 to a dark colour) (Angus: "ALL notifications white with the world colour highlighting"; a failure keeps its ✗)
         flat.push({ l: "" });
         flat.push({ l: `  ${bar}${bold(` ${plain || e.kind === "request" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${plain ? "" : dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         for (const [li, line] of rest.entries()) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(c, "│")} ${e.kind === "request" && li === rest.length - 1 ? bold(w) : w}` })), 6);

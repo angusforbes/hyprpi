@@ -297,7 +297,7 @@ function draw() {
   // J268: a message from a sandboxed world held for Angus's OK, addressed to someone in this world.
   // y + Enter sends it, n + Enter denies it (the relay's CLI decides; agents can't approve).
   // J274: messages an "allow similar" rule let through to this world in the last 15 min (one line each, newest)
-  if (reconn && Date.now() - reconn.at < 5 * 60 * 1000) rows.push(`${ESC}${worldBg(room)}m${ESC}97m${bold(cut(" " + reconn.text + " ", W))}${ESC}49m${ESC}39m`); // J283
+  if (reconn && Date.now() - reconn.at < 5 * 60 * 1000) rows.push(`${ESC}${worldBg(room)}m${ESC}38;2;255;255;255m${bold(cut(" " + reconn.text + " ", W))}${ESC}49m${ESC}39m`); // J283
   for (const a of autoNow.slice(-2)) rows.push(dim(cut(a.line, W)));
   if (heldNow.length) {
     const h = heldNow[0], more = heldNow.length > 1 ? `  (+${heldNow.length - 1} more)` : "";
