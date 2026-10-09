@@ -51,6 +51,19 @@ def hidden_targets():
         pass
     return out
 
+def card_ro():
+    """Read-only paths per the host card (the host's own word: holds even if the guest unmounted something)."""
+    out = []
+    c = host_card()
+    if c:
+        try:
+            for l in open(c):
+                m = re.match(r"^\|\s*ro\s*\|\s*(/\S+)\s*\|", l)
+                if m: out.append(m.group(1))
+        except OSError:
+            pass
+    return out
+
 def share_for(p):
     best = None
     for t, mode in mounts():
@@ -77,13 +90,14 @@ def why_path(arg):
     s = share_for(p)
     hid = [t for t in hidden_targets() if p == t or p.startswith(t.rstrip("/") + "/")]
     if hid:
-        return (f"{p} is hidden by the host owner: a gitignored file or folder in a shared project shows as empty here "
+        return (f"{p} is hidden by the host owner: a gitignored file or folder in a shared project shows as empty (a folder: not readable) here "
                 f"(on purpose; it may hold secrets). Don't try to get around it. If you need it, ask the host owner to show it.")
     if s and s[0] == os.path.expanduser("~/.sandbox"):
         return f"{p} is the host card's folder, written by the host and read-only in here."
     if s and not s[0].startswith("/mnt/host"):
         rest = "it exists" if os.path.exists(p) else "but nothing is at this path inside it"
-        ro = " READ-ONLY: writes are refused by the sandbox (on the host side), even with sudo." if s[1] == "ro" else " Writable: changes land on the host."
+        ro_card = any(p == t or p.startswith(t.rstrip("/") + "/") for t in card_ro())
+        ro = " READ-ONLY: writes are refused by the sandbox (on the host side), even with sudo." if s[1] == "ro" or ro_card else " Writable: changes land on the host."
         return f"{p} is inside the host share {s[0]} ({rest}).{ro}"
     if os.path.exists(p):
         return f"{p} exists inside this sandbox, outside the detected host shares: most likely the sandbox's own disk, which the host doesn't see. (Detection uses /proc/mounts; a bind mount or symlink could fool it.)"
@@ -95,7 +109,7 @@ def why_path(arg):
                 f"That says nothing about the host. Ask the host (the Doorman) whether it exists and whether it can be shared.")
     return (f"{p} isn't here. It is not shared into this sandbox, so this says nothing about the host: the host may well have it. "
             f"This sandbox is like a separate machine; only the folders listed by 'sandbox-guide' are shared.{hint} "
-            f"Next step: ask the host (the Doorman, or your host contact) whether it exists and whether it can be shared.")
+            f"Next step: ask the host (your Doorman, e.g. 'Doorman-G: ...' to Outside in world G, or your host contact) whether it exists and whether it can be shared.")
 
 def why_url(arg):
     u = arg if "://" in arg else "https://" + arg

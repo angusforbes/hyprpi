@@ -138,7 +138,7 @@ function plan() {
 // The placeholders: an empty dir and an empty file, host-side, never written to.
 function placeholders() {
   const d = path.join(STATE, WORLD, "empty");
-  fs.mkdirSync(path.join(d, "dir"), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.join(d, "dir"), { recursive: true, mode: 0o755 });
   const f = path.join(d, "file"); if (!fs.existsSync(f)) fs.writeFileSync(f, "", { mode: 0o444 });
   try { fs.chmodSync(path.join(d, "dir"), 0o555); } catch { /* */ }
   return { dir: path.join(d, "dir"), file: f };
@@ -148,6 +148,16 @@ const cardDir = () => path.join(STATE, WORLD, "card");
 function current(sandbox) {
   const r = readJson(path.join(RUNTIMES, `${sandbox}.json`), {});
   return (r.State?.runtime_mounts || []).map((m) => ({ host: m.host_path, at: m.container_target, ro: !!m.read_only }));
+}
+
+// What the guest really has mounted right now (a guest root can unmount; sbx's saved list wouldn't show that).
+// null when the sandbox isn't running (then sbx restores its saved mounts at start anyway).
+function live(sandbox) {
+  const st = spawnSync("sbx", ["ls"], { encoding: "utf8", timeout: 20000 });
+  if (!new RegExp(`^${sandbox}\\s+\\S+\\s+\\S+\\s+running`, "m").test(st.stdout || "")) return null;
+  const r = spawnSync("sbx", ["exec", sandbox, "cat", "/proc/self/mountinfo"], { encoding: "utf8", timeout: 30000 });
+  if (r.status !== 0) return null;
+  return new Set((r.stdout || "").split("\n").map((l) => l.split(" ")[4]).filter(Boolean).map((t) => t.replace(/\\040/g, " ")));
 }
 
 function sbx(args) {
@@ -162,7 +172,10 @@ function apply() {
     { host: cardDir(), at: "/home/agent/.sandbox", ro: true, why: "host card" }];
   writeCard(p);
   const have = current(p.sandbox), key = (m) => `${m.host}\0${m.at}\0${m.ro}`;
-  const haveKeys = new Set(have.map(key));
+  // (ShareTest) a mount sbx still lists but the guest no longer has (e.g. guest root unmounted a placeholder) counts
+  // as missing, so it's mounted again; sbx keeps the host-side read-only rule meanwhile either way.
+  const inGuest = live(p.sandbox);
+  const haveKeys = new Set(have.filter((m) => !inGuest || inGuest.has(m.at)).map(key));
   // Order matters only for display (sbx enforces ro per shared path on the host): writable parents first.
   const todo = want.filter((m) => !haveKeys.has(key(m))).sort((a, b) => (a.ro - b.ro) || a.at.length - b.at.length);
   let done = 0, failed = 0;
