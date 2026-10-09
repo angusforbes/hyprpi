@@ -372,11 +372,16 @@ function pollReview() {
     if (h && firstShow(id)) {
       // J285 v2 (Angus: "the 'Request from Alpha (G1)' part should be highlighted … like your Approved"): the request
       // as its own highlighted turn, from the relay's data; Thoughts only adds a one-line flag.
+      if (h.research) { // J309: the request, the searches that went out and the whole deliverable, drawn from its file; no Thoughts prompt (it would read external web text)
+        logTurn({ room, id, ok: true, kind: "research", file: h.research.file, turn: `Research for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`} · ${h.research.words} words` });
+        turns = heldTurns(room); bumpThread(); if (TH.pinned) TH.unseen++; else follow();
+      } else {
       const rq = requestTurn(h);
       logTurn({ room, id, ok: true, kind: "request", turn: `${rq.head}\n${rq.body}\n(1) Approve (2) Deny (3) Allow similar for 1 hour` });
       turns = heldTurns(room); bumpThread();
       if (auto) { if (TH.pinned) TH.unseen++; else follow(); if (api) { TH.busy = true; api.call("thoughts.send", { room, text: reviewPrompt(h) }).catch(() => {}); } } // (no jump while he reads back)
       else { follow(); sendThought(reviewPrompt(h)); }
+      }
     }
   }
   if (review) { const n = heldFor(room).length; if (n !== review.waiting) { review.waiting = n; render(); } }
@@ -449,6 +454,7 @@ function reviewKey(raw) {
     setBox(""); sendThought(raw, imagePaths(raw)); if (!note.startsWith("✗")) { note = hint; render(); } return true;
   };
   if (!ch) return asQuestion("🐳 that went to Thoughts as a question · to decide, type just 1, 2 or 3 (or \"3, but for 2 hours\")");
+  if (review.h.research && ch.verdict !== "approve" && ch.verdict !== "deny") { setBox(""); note = "🔎 research is approved once or denied: type 1 or 2"; render(); return true; } // J309: no "allow similar"
   if (ch.verdict === "unclear") return asQuestion("🐳 no usable duration (e.g. \"3 for 2 hours\", \"3 today\"): that went to Thoughts as a question");
   if (ch.confirm) { review.confirm = ch; setBox(""); note = `🐳 ${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
   return decide(ch);
@@ -724,9 +730,15 @@ function render() {
   review = reviews[room] || null;
   if (review) { // J274: the held message under review, and how to answer
     const h = review.h;
+    if (h.research) { // J309: the deliverable itself is drawn in the thread below, in full
+      rows.push(fg(c, bold(clip(`🔎 research for ${h.sandbox} to review${h.research.from ? ` (asked by ${h.research.from})` : ""}${review.waiting > 1 ? ` · 1 of ${review.waiting} waiting` : ""}`, W))));
+      rows.push(clip("   " + h.research.want, W));
+      rows.push(dim(clip("   (1) Approve: deliver it to the sandbox (2) Deny · the full deliverable is in the thread and its file · anything else goes to Thoughts", W)));
+    } else {
     rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})${review.waiting > 1 ? ` · 1 of ${review.waiting} waiting` : ""}`, W))));
     rows.push(clip("   " + h.text.replace(/\s+/g, " "), W));
     rows.push(dim(clip(review.confirm ? `   ${review.confirm.label}? y + ⏎ confirms · anything else cancels` : "   (1) Approve (2) Deny (3) Allow similar for 1 hour · or e.g. \"3 for 2 hours\" · anything else goes to Thoughts", W)));
+    }
   }
   const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯" (was a 💭)
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
@@ -805,6 +817,17 @@ function render() {
       }
       const k = items.push({ copy: e.text }) - 1, red = (l) => `${ESC}31m${l}${ESC}39m`;
       const add = (rs, textX) => { for (const r of rs) flat.push({ ...r, meta: { item: k, textX } }); };
+      if (e.role === "held" && e.kind === "research") { // J309: a research deliverable under review: drawn in full from its file, never cut
+        const bar = `${ESC}${worldBg(room)}m${ESC}38;2;255;255;255m`, off = `${ESC}49m${ESC}39m`;
+        let body = ""; try { body = fs.readFileSync(e.file, "utf8"); } catch { body = "(the deliverable file is gone)"; }
+        body = body.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "");
+        flat.push({ l: "" });
+        flat.push({ l: `  ${bar}${bold(` ${e.icon} ${String(e.text).split("\n")[0]} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        add(md(body, tw, "   "), 4);
+        add(md(`File: <file://${encodeURI(e.file)}>`, tw, "   ", dim), 4);
+        flat.push({ l: `   ${bold("(1) Approve: deliver it to the sandbox  (2) Deny")}`, meta: { item: k, textX: 4 } });
+        continue;
+      }
       if (e.role === "held") { // J280: a decision on a held sandbox message, highlighted at full brightness
         let [head, ...rest] = String(e.text).split("\n");
         // J293 (Angus): a decision taken outside the panel (toast, terminal, room panel, a dismiss, a rule) and a reply:

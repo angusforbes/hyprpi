@@ -105,3 +105,19 @@ Known limits, none from Docker: fetch_content's readable mode rejects pages unde
 Not available inside: host-integrated extensions (hyprcu, WhatsApp, mail, voice, pi-jot/Obsidian,
 name-sync), `ding`/`bonk`, subagents, MCP, SSH/`gh` credentials, GPU (needs the NVIDIA Container Toolkit and
 `--gpus all`; not installed).
+
+## Research (J309): web research for a sandbox, reviewed by Angus
+
+A sandbox's agent asks Outside `Research: <what I'm looking for>` (or `Research (deep): …`). The request goes to the sandbox's Doorman, never to the web:
+- The Doorman writes its own public searches (a stateless call to its model inside its sandbox; `docker/research/check.py`).
+- A host check refuses searches that copy G's wording, rare words or internal-looking text (`planCheck` in `docker/research/research.mjs`).
+- A quarantined reader sandbox (`reader-<world>`, profile `external-plus-inference`, no shares) runs them with Perplexity Sonar on NVIDIA Inference Hub, or sonar-deep-research for deep asks, and shapes the result into what was asked for (`docker/research/reader.py`).
+- The Doorman vets the deliverable.
+
+The relay (`op: "research"`) then holds the finished deliverable as one message for Angus: a toast, plus the Thoughts review showing the request, the searches that went out and the whole deliverable (also a Markdown file). Approving puts it in the sandbox's read-only inbox as `research-<id>.md`; the asker is told where.
+
+- Setup: `node docker/research/research.mjs reader create --sandbox world-g` (once). The Doorman sandbox must exist (`docker/doorman/doorman.sh create doorman-g`).
+- Optional config: `~/.config/hyprpi/research.json` (doorman, reader, reports_to, key_file, shape_model per sandbox).
+- Limits: 10 quick and 3 deep requests an hour, 2 running at once, 1000 bytes per request.
+- `node docker/research/research.mjs digest [--send]` sums up the last hour for the reporting Thoughts.
+- Tests: `node docker/research/test-research.mjs`.
