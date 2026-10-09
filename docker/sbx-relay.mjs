@@ -450,7 +450,45 @@ function watchActions() {
   };
   start();
 }
+// J291 (Angus: a toast "should be visible until I respond to it or dismiss it (a dismiss should be a deny)"):
+// the relay's toasts are critical, so they never expire. A user dismiss (NotificationClosed reason 2: the ✕, a
+// right-click, SUPER+comma, "dismiss all") of a still-held message counts as Deny. Not after a button (its
+// ActionInvoked comes first) or a card click (the review CLI marks it), never for an expiry (reason 1) or the relay
+// closing it itself (reason 3). Checked 2.5 s later, so the button or review has landed first.
+const acted = new Set();          // "owner:notifId" that had a button pressed
+const SEEN = path.join(STATE, "reviewed"); // <id> written by `sbx-relay.mjs review` (the card click)
+function onClosedLine(line) {
+  const m = /^\/org\/freedesktop\/Notifications: org\.freedesktop\.Notifications\.NotificationClosed \(uint32 (\d+), uint32 (\d+)\)\s*$/.exec(line);
+  if (!m || m[2] !== "2") return;
+  const n = Number(m[1]), owner = notifOwner();
+  setTimeout(() => {
+    if (!owner || acted.has(`${owner}:${n}`)) return;
+    for (const f of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) {
+      let r; try { r = JSON.parse(fs.readFileSync(path.join(PENDING, f), "utf8")); } catch { continue; }
+      if (!r.notif || r.notif.id !== n || r.notif.owner !== owner || !/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(r.id || "")) continue;
+      if (fs.existsSync(path.join(SEEN, r.id))) { log({ note: `toast for ${r.id} closed after a review click: still held` }); return; }
+      log({ note: `toast for ${r.id} dismissed: denied` });
+      writeDecision(r.id, "deny", "dismissed");
+      return;
+    }
+  }, 2500);
+}
+// Every held message gets a fresh toast (J291: a relay or shell restart must never lose one): at relay start, and
+// whenever another notification server instance takes over (the shell restarted). The old one is closed first.
+function reshowAll(relay, why) {
+  for (const f of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) {
+    const pf = path.join(PENDING, f);
+    let r; try { r = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { continue; }
+    const sb = relay.sandboxes.find((s) => s.name === r.sandbox); if (!sb || !Array.isArray(r.shown)) continue;
+    if (r.notif) { acted.add(`${r.notif.owner}:${r.notif.id}`); closeNotif(r.notif); } // (closing it isn't a dismiss)
+    const nf = notifyHeld(sb, r, [process.execPath, fileURLToPath(import.meta.url), "review", r.id]);
+    try { const cur = JSON.parse(fs.readFileSync(pf, "utf8")); cur.notif = nf; fs.writeFileSync(pf, JSON.stringify(cur, null, 2), { mode: 0o600 }); } catch { /* decided meanwhile */ }
+    log({ note: `toast re-shown for ${r.id} (${why})` });
+  }
+}
+
 function onActionLine(line) {
+  if (line.includes(".NotificationClosed (")) return onClosedLine(line);
   const m = /^\/org\/freedesktop\/Notifications: org\.freedesktop\.Notifications\.ActionInvoked \(uint32 (\d+), '([a-z]+):([0-9a-f]{16})'\)\s*$/.exec(line);
   if (!m || !Object.hasOwn(ACTION_KEYS, m[2])) return;
   const n = Number(m[1]), key = m[2], nonce = m[3];
@@ -462,6 +500,7 @@ function onActionLine(line) {
   // the same id AND the same server instance that showed it (fail closed when the owner can't be read)
   if (rec.notif.id !== n || !rec.notif.owner || rec.notif.owner !== notifOwner()) { log({ note: `toast ${key} for ${id} ignored (server changed)` }); return; }
   log({ note: `toast ${key} for ${id}` });
+  acted.add(`${rec.notif.owner}:${n}`); // J291: its close right after is not a dismiss
   if (key === "review") { openReview(id); return; }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   writeDecision(id, key, "toast"); // J284: the route, for the Thoughts note
@@ -576,6 +615,10 @@ class Relay {
     }
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
     watchActions();
+    // J291: re-show every held message's toast now, and again when the shell (notification server) restarts
+    let lastOwner = notifOwner();
+    setTimeout(() => reshowAll(this, "relay start"), 1500);
+    setInterval(() => { const o = notifOwner(); if (o && o !== lastOwner) { lastOwner = o; setTimeout(() => reshowAll(this, "shell restarted"), 3000); } else if (o) lastOwner = o; }, 5000);
     for (const f of fs.readdirSync(DECISIONS)) this.decide(f).catch(() => {});
     process.on("unhandledRejection", (e) => log({ error: `unhandled: ${e?.message || e}` }));
     setInterval(() => { for (const sb of this.sandboxes) sb.scan().catch(() => {}); }, 2000); // backstop for missed events
@@ -627,10 +670,10 @@ function heldNote(sb, msg, via, what, outcome) {
   sb.conn.call("held.note", { rooms, text }).catch((e) => log({ sb: sb.name, error: `held note: ${e.message}` }));
   // J289 (Angus didn't see the dim note; "never cut, show the full message"): the same decision as a highlighted turn
   // in the receiving world's Thoughts panel, with the WHOLE message (panel-turns.jsonl; the panel polls it).
-  const ok = !/^Denied/.test(what) && !/nobody|couldn't/.test(outcome);
+  const ok = !/^Denied/.test(what) && !/nobody|couldn't/.test(outcome); // J291: a deny shows as ✗
   const full = clean(String(msg.text || "")).replace(/\s+/g, " ").trim();
   const id = /^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(String(msg.id || "")) ? msg.id : `${sb.name}--000000`;
-  for (const r of rooms) logTurn({ room: r, id, ok: what.startsWith("Denied") ? true : ok, turn: `${what}${route}\n${msg.sandbox || sb.name} → ${to}: "${full}"${outcome ? `\n${outcome}` : ""}` });
+  for (const r of rooms) logTurn({ room: r, id, ok, turn: `${what}${route}\n${msg.sandbox || sb.name} → ${to}: "${full}"${outcome ? `\n${outcome}` : ""}` });
 }
 
 // --- Angus's decision -----------------------------------------------------------------------------------------
@@ -699,6 +742,8 @@ if (cmd === "run") {
   }
 } else if (cmd === "review" && arg) {
   // The toast's click and its Review button (J274): hand the message to the receiving world's Thoughts panel.
+  // J291: mark it first, so the toast's close that follows a card click isn't taken as a dismiss (= deny).
+  if (/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg)) { try { fs.mkdirSync(SEEN, { recursive: true, mode: 0o700 }); fs.writeFileSync(path.join(SEEN, arg), "", { mode: 0o600 }); } catch { /* best effort */ } }
   if (!openReview(arg)) { console.error("That message isn't waiting any more (or has no receiving world)."); process.exit(1); }
 } else if (cmd === "allow" && arg) {
   // J274: approve this one and allow similar (same sandbox → same recipients, talk) for DURATION (default 1 h).
