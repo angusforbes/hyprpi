@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -363,6 +363,11 @@ function pollReview() {
       // Whatever was already in the box can't answer it (review #1): it is set aside and comes back afterwards.
       review = reviews[room] = { id, room, h, confirm: null, shownAt: Date.now(), draft: query };
       setBox("");
+      // J285 v2 (Angus: "the 'Request from Alpha (G1)' part should be highlighted … like your Approved"): the request
+      // as its own highlighted turn, from the relay's data; Thoughts only adds a one-line flag.
+      const rq = requestTurn(h);
+      logTurn({ room, id, ok: true, kind: "request", turn: `${rq.head}\n${rq.body}\n1. Approve, 2. Deny, 3. Allow Similar for 1 hr` });
+      turns = heldTurns(room); bumpThread(); follow();
       sendThought(reviewPrompt(h));
     }
   }
@@ -387,7 +392,7 @@ function reviewKey(raw) {
     // highlighted turn in the thread, kept in panel-turns.jsonl (survives a reload). Review #1: the CLI only queues
     // it, so the turn waits for the relay's own result (its log) before saying ✓.
     const what = ch.verdict === "deny" ? "Denied" : ch.verdict === "approve" ? "Approved" : ch.dur === "once" ? "Approved (just this one, no rule)" : `Approved, and similar messages allowed for ${ch.dur === "1h" ? "1 hour" : ch.dur}${/capped/.test(ch.label) ? " (capped at 24 hours)" : ""}`;
-    const msg = `${h.sandbox} → ${h.to.join(", ")}: "${h.text.replace(/\s+/g, " ").slice(0, 160)}"`;
+    const msg = `${h.sandbox} → ${h.to.join(", ")}: "${h.text.replace(/\s+/g, " ").trim()}"`; // J285 (Angus: "don't cut anything out. show the full message!")
     const finish = (ok, head, body) => {
       logTurn({ room: at, id, ok, turn: `${head}\n${msg}\n${body}` });
       logHeld({ room: at, id, stage: "result", ok, result: body });
@@ -776,8 +781,8 @@ function render() {
         const bar = e.ok ? `${ESC}${worldBg(room)}m${ESC}30m` : `${ESC}41m${ESC}97m`, off = `${ESC}49m${ESC}39m`;
         const [head, ...rest] = String(e.text).split("\n");
         flat.push({ l: "" });
-        flat.push({ l: `  ${bar}${bold(` ${e.ok ? "✓" : "✗"} ${e.icon || "🐳"} ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
-        for (const line of rest) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(e.ok ? c : "31", "│")} ${w}` })), 6);
+        flat.push({ l: `  ${bar}${bold(` ${e.kind === "request" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        for (const [li, line] of rest.entries()) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(e.ok ? c : "31", "│")} ${e.kind === "request" && li === rest.length - 1 ? bold(w) : w}` })), 6);
         continue;
       }
       if (kind === "full") {
@@ -787,7 +792,7 @@ function render() {
         // indicator lines, and the summary right under it, no blank line between (Angus).
         let { lead, body } = splitLead(e);
         if (e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt) // J280 #6: only the panel's 1/2/3 count while a review is open
-          body = String(lead ? body : e.text).replace(/^(\s*(?:#+\s+|>\s*)*)(\*\*|__)?\s*\d+[a-z]?[.)]\s+/gm, "$1$2• "); // only the panel's strip is numbered (also **1.**, # 1., 1a.)
+          body = String(lead ? body : e.text).replace(/^(\s*(?:#+\s+|>\s*)*)(\*\*|__)?\s*\d+[a-z]?[.)]\s+(?!Approve, 2\. Deny, 3\. Allow Similar for 1 hr\s*(?:\*\*|__)?\s*$)/gm, "$1$2• "); // (J285: his own choices line stays as written) // only the panel's strip is numbered (also **1.**, # 1., 1a.)
         if (lead) add(md(lead, tw, "   ", dim), 4);
         add(md(e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt ? body : lead ? body : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
         const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
