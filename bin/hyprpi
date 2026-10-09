@@ -626,4 +626,17 @@ const commands = {
 
 const fn = commands[cmd];
 if (!fn) die(`unknown command '${cmd}'\n\n${HELP}`, 2);
+// `hyprpi CMD --help` / `-h` prints CMD's lines of the help, never runs CMD: free-text commands
+// (tinker, send, post, thoughts, dictate) used to take "--help" as the text and deliver it.
+if (args[0] === "--help" || args[0] === "-h") { console.log(helpFor(cmd)); process.exit(0); }
+function helpFor(c) {
+  const out = []; let on = false;
+  for (const line of HELP.split("\n")) {
+    const m = line.match(/^  hyprpi (\S+)/);
+    if (m) on = m[1] === c;
+    else if (!/^ {20,}\S/.test(line)) on = false;
+    if (on) out.push(line);
+  }
+  return out.length ? out.join("\n") : HELP;
+}
 try { await fn(); } catch (e) { die(e.message); }
