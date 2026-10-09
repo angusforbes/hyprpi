@@ -10,6 +10,39 @@ if (!/^[0-9a-f]{24}$/.test(tok)) { console.error("g-run: bad token"); process.ex
 const f = path.join(os.homedir(), ".hyprpi-g", "launch", `${tok}.json`);
 let spec; try { spec = JSON.parse(fs.readFileSync(f, "utf8")); fs.unlinkSync(f); } catch { console.error("g-run: no such launch"); process.exit(2); }
 try { process.chdir(spec.cwd); } catch { /* stay */ }
+// J362: never two pi processes on one agent (session): a reopen while the old pi still runs inside the sandbox (its
+// window closed, it wasn't ended) would put two writers on the same session. Refuse, and say so in the window.
+const agentId = String(spec.env?.HYPRPI_AGENT_ID || "");
+const running = agentId ? otherPiFor(agentId) : [];
+if (running.length) {
+  process.stdout.write(`g-run: ${agentId} is already running in this sandbox (pid ${running.join(", ")}), so a second pi isn't started on its session.\r\nClose the other window, or end that pi, then reopen. Press Enter to close this window.\r\n`);
+  if (process.stdin.isTTY) { process.stdin.setRawMode?.(false); process.stdin.once("data", () => process.exit(3)); setTimeout(() => process.exit(3), 120000).unref(); }
+  else process.exit(3);
+} else start();
+function otherPiFor(id) {
+  const out = [];
+  let ents = []; try { ents = fs.readdirSync("/proc"); } catch { return out; }
+  for (const p of ents) {
+    if (!/^\d+$/.test(p) || Number(p) === process.pid) continue;
+    try {
+      const argv0 = path.basename((fs.readFileSync(`/proc/${p}/cmdline`, "utf8").split("\0")[0] || "").trim().split(/\s+/)[0] || ""); // (pi sets process.title: "pi" padded with spaces)
+      const comm = fs.readFileSync(`/proc/${p}/comm`, "utf8").trim();
+      if (argv0 !== "pi" && comm !== "pi") continue;
+      if (fs.readFileSync(`/proc/${p}/environ`, "utf8").split("\0").includes(`HYPRPI_AGENT_ID=${id}`)) out.push(Number(p));
+    } catch { /* gone or not ours */ }
+  }
+  return out;
+}
+// J362: the inbox where world-helper writes closed-<token>. `sbx exec -it … g-run` doesn't source g-env.sh, so
+// HYPRPI_G_IN was unset and g-run watched /nonexistent: a closed window left its pi running. Take it from this
+// process, else the launch's own environment (the inner daemon's, which has it), else ~/.hyprpi-g/host.env.
+function inboxDir() {
+  const ok = (d) => typeof d === "string" && path.isAbsolute(d) && !d.includes("\0") ? d : "";
+  let fromHost = "";
+  try { fromHost = (/^G_HYPR_INBOX=(.*)$/m.exec(fs.readFileSync(path.join(os.homedir(), ".hyprpi-g", "host.env"), "utf8")) || [])[1] || ""; } catch { /* */ }
+  return ok(process.env.HYPRPI_G_IN) || ok(spec.env?.HYPRPI_G_IN) || ok(fromHost.trim());
+}
+function start() {
 const c = spawn(spec.argv[0], spec.argv.slice(1), { stdio: "inherit", env: { ...spec.env, PI_HYPERLINKS: "1" } });
 c.on("exit", (code, sig) => process.exit(sig ? 1 : code ?? 0));
 c.on("error", (e) => { console.error(`g-run: ${e.message}`); process.exit(1); });
@@ -17,9 +50,14 @@ for (const s of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(s, () => c.kill(s));
 // When the host window closes, `sbx exec` leaves this session (and its pty) alive inside the sandbox, so
 // nothing in here can tell (J262). The host's world-helper notices the window closing and writes
 // closed-<token> into the read-only inbox; then this program is ended (SIGHUP, then SIGKILL).
-const closed = path.join(process.env.HYPRPI_G_IN || "/nonexistent", `closed-${tok}`);
-setInterval(() => {
-  if (!fs.existsSync(closed)) return;
+const inbox = inboxDir();
+if (!inbox) console.error("g-run: no inbox path (HYPRPI_G_IN / host.env): a closed window won't end this program");
+const closed = inbox ? path.join(inbox, `closed-${tok}`) : "";
+let ending = false;
+if (closed) setInterval(() => {
+  if (ending || !fs.existsSync(closed)) return;
+  ending = true;
   try { c.kill("SIGHUP"); } catch { /* */ }
   setTimeout(() => { try { c.kill("SIGKILL"); } catch { /* */ } process.exit(1); }, 3000);
 }, 2000).unref();
+}
