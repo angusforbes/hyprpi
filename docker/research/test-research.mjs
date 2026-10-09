@@ -230,6 +230,10 @@ t("J357: an off-task request that WENT OUT under this task (an approved exceptio
   const r = R.ask({ sandbox: "world-q", lookingFor: "IPU6 the next one" }); assert.equal(r.status, "planned"); assert.match(r.exception, /topic drift/);
   assert.ok(lastPlan().recent.some((x) => /codeword/.test(x)));
 });
+t("J357 (red team 8): 'perovskites' and 'perovskite-silicon' aren't 'unusual copied words' (G16/G17 false refusals)", () => {
+  assert.deepEqual(R.planCheck("efficiency records of tandem perovskite-silicon cells in 2024", { searches: ["latest certified efficiency record perovskite-silicon tandem"], public_terms: [] }, { task: "perovskite solar cells" }), []);
+  assert.deepEqual(R.planCheck("compare the stability of mixed-cation perovskites", { searches: ["heat tolerance of perovskites with mixed cations"], public_terms: [] }, { task: "perovskite solar cells" }), []);
+});
 t("J357: the task hash is logged with each request", () => { const l = fs.readFileSync(path.join(R.STATE, "log.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).filter((e) => e.sandbox === "world-q"); assert.ok(l.length && l.every((e) => e.task_hash === R.taskHash(TASK)), JSON.stringify(l.slice(0, 2))); });
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });

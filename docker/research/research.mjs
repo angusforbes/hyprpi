@@ -198,7 +198,8 @@ const COMMON = new Set(("linux unix windows macos android ios ubuntu fedora debi
 const STOP = new Set("a an the and or of to in on for with by at from as is are was were be been it its this that these those which what who how why when where does do did can could should would will with without about into than then not no yes vs via per".split(" "));
 export function rareToken(w) {
   if (w.length < 3 && !/\d/.test(w)) return false;
-  if (COMMON.has(w)) return false;
+  if (COMMON.has(w) || SCIENCE.has(w) || SCIENCE.has(w.replace(/e?s$/, ""))) return false; // (J357: perovskites isn't "unusual")
+  if (/^[a-z]+(-[a-z]+)+$/.test(w) && w.split("-").every((p) => !rareToken(p))) return false; // perovskite-silicon
   if (/^(19|20)\d\d$/.test(w)) return false; // a year
   if (/\d/.test(w)) return true;
   const d = dict(); if (!d.size) return w.length >= 9;
@@ -211,7 +212,8 @@ export function planCheck(request, plan, { strict = false, task = "" } = {}) {
   const req = words(request), grams = new Set();
   for (let i = 0; i + 4 <= req.length; i++) grams.add(req.slice(i, i + 4).join(" "));
   const taskWords = new Set(words(task)); // J352 review #4: what the host-set task names is never "copied from the request"
-  const declared = new Set([...(plan?.public_terms || []).flatMap((t) => words(t)), ...taskWords]);
+  const declared0 = new Set([...(plan?.public_terms || []).flatMap((t) => words(t)), ...taskWords]);
+  const declared = { has: (x) => declared0.has(x) || declared0.has(String(x).replace(/e?s$/, "")) }; // (J357: plurals of declared/task words)
   const reqRare = new Set(req.filter(rareToken));
   const copied = new Set();
   for (const t of texts) {
