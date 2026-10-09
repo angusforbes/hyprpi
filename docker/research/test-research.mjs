@@ -109,6 +109,11 @@ t("strict on: a denied plan sends nothing and can't be run later", () => {
   const p = R.ask({ sandbox: "world-x", lookingFor: "IPU6 strict deny" }), n = calls();
   assert.equal(p.status, "planned"); assert.equal(R.dropPlan(p.rid), true); assert.equal(R.runPlan(p.rid).status, "error"); assert.equal(calls(), n);
 });
+t("review #1: a search with a link or markup is refused (Angus must see exactly what goes out)", () => { for (const x of ["IPU6 camera compatibility [details](https://example.com/zebra-alpha)", "IPU6 *alpha* support", "IPU6 <zebra> drivers", "IPU6 see www.example.com"]) assert.match(R.planCheck("IPU6 cameras", { searches: [x], public_terms: ["IPU6"] }).join(), /markup or a link/, x); });
+t("review #3: an old plan can't run", () => {
+  const p = R.ask({ sandbox: "world-x", lookingFor: "IPU6 strict old" }), f = path.join(R.STATE, "plans", p.rid + ".json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
+  j.created = Date.now() - 25 * 3600e3; fs.writeFileSync(f, JSON.stringify(j)); const n = calls(); assert.equal(R.runPlan(p.rid).status, "error"); assert.equal(calls(), n);
+});
 t("runPlan refuses a malformed id", () => assert.equal(R.runPlan("../../etc/x").status, "error"));
 t("digest shows held and denied searches", () => { const d = R.digest(); assert.match(d.text, /searches held for Angus/); assert.match(d.text, /denied the searches; nothing was sent/); });
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));

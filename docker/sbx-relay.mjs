@@ -631,8 +631,17 @@ class Relay {
   // J309: run one research request (docker/research/research.mjs ask) without blocking the relay; a ready deliverable
   // is held for Angus as ONE message, everything else goes straight back to the sandbox's inbox.
   // J314: runRid = the id of a plan Angus approved in strict mode (research.mjs run), instead of a new ask.
-  runResearch(sb, token, { want, depth, from, why, runRid = "" }) {
-    const done = (o) => { sb.research?.delete(token); try { inboxWrite(sb, { type: "research", token, ...o }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); } };
+  // J314 review #2: approved plans wait behind the same running limit as new requests.
+  pumpPlans(sb) {
+    while ((sb.planQueue || []).length && (sb.research?.size || 0) < LIMITS.researchRunning) {
+      const q = sb.planQueue.shift(); (sb.research ||= new Map()).set(q.token, { at: Date.now() });
+      this.runResearch(sb, q.token, q.opts);
+    }
+  }
+  runResearch(sb, token, { want, depth, from, why, runRid = "", heldId = "", room = "" }) {
+    const done = (o) => {
+      // J314 review #4: an approved plan that then fails shows up where Angus approved it
+      if (runRid && heldId && /^[A-I]$/.test(room) && o.status !== "held") logTurn({ room, id: heldId, ok: false, turn: `Research searches were approved, but the research ${o.status === "refused" ? "was refused" : "failed"}: ${String(o.reason || "").slice(0, 300)}` }); sb.research?.delete(token); this.pumpPlans(sb); try { inboxWrite(sb, { type: "research", token, ...o }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); } };
     let out = "", err = "";
     const args = runRid ? [RESEARCH, "run", "--rid", runRid] : [RESEARCH, "ask", "--stdin", "--sandbox", sb.name, "--depth", depth, ...(from ? ["--from", from] : []), ...(why ? ["--why", why] : [])];
     // Its own transient unit: the relay's own unit is capped (MemoryMax 256M, TasksMax 32), and a deep request runs for
@@ -653,7 +662,7 @@ class Relay {
           const text = `Searches planned for ${sb.name}${from ? `, asked by ${from}` : ""} (${depth}): ${want.replace(/\s+/g, " ")}\n\n${(r.searches || []).map((x) => `- ${x}`).join("\n")}`;
           const id = this.hold(sb, { to: [sb.agentId], targets: [], shown: [`${sb.name} (research searches)`], rooms: [room0], mode: "talk", text, body: "",
             research: { token, rid: r.rid, file: r.file, depth, from, want, plan: true, searches: r.searches } });
-          sb.research?.delete(token);
+          sb.research?.delete(token); this.pumpPlans(sb);
           try { inboxWrite(sb, { type: "research", token, status: "planned", id }); } catch { /* the decision still comes */ }
         } catch (e) { done({ status: "error", reason: `couldn't hold the searches: ${e.message}` }); }
         return;
@@ -666,7 +675,7 @@ class Relay {
       try {
         const id = this.hold(sb, { to: [sb.agentId], targets: [], shown: [`${sb.name} (research result)`], rooms: [room], mode: "talk", text, body: "",
           research: { token, rid: r.rid, file: r.file, depth, from, want, words: r.words, sources: r.sources, searches: r.searches } });
-        sb.research?.delete(token);
+        sb.research?.delete(token); this.pumpPlans(sb);
         try { inboxWrite(sb, { type: "research", token, status: "held", id, words: r.words }); } catch { /* the decision still comes */ }
       } catch (e) { done({ status: "error", reason: `couldn't hold it: ${e.message}` }); }
     });
@@ -705,11 +714,12 @@ class Relay {
         try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id, reason: "Angus denied the planned searches; nothing was sent" }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
         return;
       }
-      log({ sb: sb.name, op: "research-plan", decision: "approved", id, rid, delivered: ["reader"], searches: rs.searches });
-      heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Approved", "the searches run now; the result comes back for review");
+      const busy = (sb.research?.size || 0) >= LIMITS.researchRunning;
+      log({ sb: sb.name, op: "research-plan", decision: "approved", id, rid, delivered: [busy ? "the research queue (searches start when a running request finishes)" : "the research runner (searches started)"], searches: rs.searches });
+      heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Approved", busy ? "queued: the searches start when a running request finishes" : "the searches run now; the result comes back for review");
       try { inboxWrite(sb, { type: "research", token: rs.token, status: "running", id }); } catch { /* */ }
-      sb.research ||= new Map(); sb.research.set(rs.token, { at: Date.now() });
-      this.runResearch(sb, rs.token, { want: rs.want, depth: rs.depth, from: rs.from, runRid: rid });
+      (sb.planQueue ||= []).push({ token: rs.token, opts: { want: rs.want, depth: rs.depth, from: rs.from, runRid: rid, heldId: id, room: String((msg.rooms || [])[0] || "").toUpperCase() } });
+      this.pumpPlans(sb);
       return;
     }
     if (msg.research) { // J309: approved once (never a rule); deny drops it
@@ -777,7 +787,17 @@ class Relay {
   sweepPending() {
     for (const n of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) {
       const p = path.join(PENDING, n);
-      try { if (Date.now() - fs.statSync(p).mtimeMs > LIMITS.pendingTtlMs) { try { closeNotif(JSON.parse(fs.readFileSync(p, "utf8")).notif); } catch { /* */ } fs.unlinkSync(p); log({ note: `pending ${n} expired` }); } } catch { /* gone */ }
+      try {
+        if (Date.now() - fs.statSync(p).mtimeMs > LIMITS.pendingTtlMs) {
+          let rec = null; try { rec = JSON.parse(fs.readFileSync(p, "utf8")); closeNotif(rec.notif); } catch { /* */ }
+          fs.unlinkSync(p); log({ note: `pending ${n} expired` });
+          if (rec?.research?.plan) { // J314 review #3: an expired plan can never run, and the asker hears so
+            spawn(process.execPath, [RESEARCH, "drop", "--rid", String(rec.research.rid || ""), "--why", "expired"], { stdio: "ignore" }).on("error", () => {});
+            const sb = this.sandboxes.find((x) => x.name === rec.sandbox);
+            if (sb) try { inboxWrite(sb, { type: "research", token: rec.research.token, status: "denied", id: rec.id, reason: "the planned searches expired without a decision; nothing was sent" }); } catch { /* */ }
+          }
+        }
+      } catch { /* gone */ }
     }
   }
   async run() {

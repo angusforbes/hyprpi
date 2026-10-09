@@ -147,6 +147,8 @@ export function planCheck(request, plan) {
   const copied = new Set();
   for (const t of texts) {
     const pre = precheckQuery(t).filter((x) => !/more than \d+ lines/.test(x));
+    // J314 review #1: what Angus reads must be exactly what goes out: no markup or links that a renderer could hide
+    if (/[[\]<>`*_|\\~{}]|https?:|www\.|\]\(/i.test(t)) r.push("a search contains markup or a link");
     if (pre.length) r.push(`a search contains ${pre.join(", ")}`);
     const w = words(t);
     // a copied 4-word run counts unless it is only well-known names and filler ("intel ipu6 and ipu7" is fine)
@@ -247,7 +249,7 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   const sent = depth === "deep" ? [plan.brief] : plan.searches;
   if (cfg.strict) { // J314: nothing goes out until Angus approves these exact searches (research.mjs run --rid)
     mkState(); fs.mkdirSync(PLANS(), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(path.join(PLANS(), `${rid}.json`), JSON.stringify({ base, q, depth, plan: { searches: plan.searches || [], brief: plan.brief || "" } }), { mode: 0o600 });
+    fs.writeFileSync(path.join(PLANS(), `${rid}.json`), JSON.stringify({ created: Date.now(), base, q, depth, plan: { searches: plan.searches || [], brief: plan.brief || "" } }), { mode: 0o600 });
     const file = path.join(DELIVERABLES(), `${rid}.plan.md`);
     fs.writeFileSync(file, `# Searches planned for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches to send (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\nNothing has been sent yet. Approve to run exactly these; deny and nothing goes out.\n`, { mode: 0o600 });
     logEvent({ ev: "planned", ...base, searches: sent });
@@ -262,6 +264,7 @@ export function runPlan(rid) {
   const f = path.join(PLANS(), `${rid}.json`), taken = `${f}.run${process.pid}`;
   try { fs.renameSync(f, taken); } catch { return { status: "error", rid, reason: "no such plan waiting (already run, denied or expired)" }; }
   let p; try { p = JSON.parse(fs.readFileSync(taken, "utf8")); } catch { return { status: "error", rid, reason: "the plan is unreadable" }; } finally { try { fs.unlinkSync(taken); } catch { /* */ } }
+  if (!(Date.now() - Number(p.created) < 24 * 3600e3)) { logEvent({ ev: "plan-dropped", ...p.base, reason: "expired" }); return { status: "error", rid, reason: "the plan expired (24 hours)" }; } // J314 review #3
   const sent = p.depth === "deep" ? [p.plan.brief] : p.plan.searches;
   logEvent({ ev: "plan-approved", ...p.base, searches: sent });
   return research({ cfg: conf(p.base.sandbox), base: p.base, q: p.q, depth: p.depth, plan: p.plan, sent });
@@ -318,7 +321,7 @@ async function main(argv) {
     const lookingFor = flags.stdin ? fs.readFileSync(0, "utf8") : rest.join(" ");
     console.log(JSON.stringify(ask({ sandbox: flags.sandbox, from: flags.from, why: flags.why, depth: flags.depth, lookingFor })));
   } else if (cmd === "run") { console.log(JSON.stringify(runPlan(flags.rid))); // J314: only the relay calls this, after Angus approved the plan
-  } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, "denied") }));
+  } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, flags.why === "expired" ? "expired" : "denied") }));
   } else if (cmd === "digest") {
     const m = /^(\d+)(m|h)$/.exec(String(flags.since || "1h")); const d = digest({ sinceMs: m ? Number(m[1]) * (m[2] === "h" ? 3600e3 : 60e3) : 3600e3 });
     if (flags.json) { console.log(JSON.stringify(d)); return; }
