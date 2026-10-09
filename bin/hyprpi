@@ -604,16 +604,18 @@ const commands = {
     const quiet = flag("--quiet");
     // --decision "question": blocked on a decision from Angus (`ding`); it becomes a Decide item (N68).
     const decision = opt("--decision", "");
+    const given = opt("--agent", ""); // (recheck J337: consumed before reading the state, as before; required only below)
+    const me = () => given || agentId();
     const status = args[0];
     // J337: no state given → the /status facts (what's running, recently done, waiting on Angus), from the daemon.
     if (!["idle", "working", "blocked", "done"].includes(status)) {
-      const json = flag("--json"), self = flag("--self"), world = opt("--world", ""), me = self ? agentId() : ""; // (review J337 #2: identity only for --self, parsed once)
+      const json = flag("--json"), self = flag("--self"), world = opt("--world", ""), id = self ? me() : ""; // (review J337 #2: identity only for --self, parsed once)
       if (args.some((a) => a.startsWith("--"))) die("usage: hyprpi status idle|working|blocked|done [--quiet] [--decision TEXT] · or hyprpi status [FOCUS] [--world X] [--self] [--json]");
-      const r = await request("status.facts", { focus: args.join(" "), ...(world ? { room: world.toUpperCase() } : {}), ...(self ? { self: true, agent_id: me } : {}) });
+      const r = await request("status.facts", { focus: args.join(" "), ...(world ? { room: world.toUpperCase() } : {}), ...(self ? { self: true, agent_id: id } : {}) });
       console.log(json ? JSON.stringify(r.data, null, 1) : r.text);
       return;
     }
-    const id = agentId();
+    const id = me();
     const r = await request("agent.update", { agent_id: id, status, quiet, ...(decision && status === "blocked" ? { decision } : {}) });
     console.log(r.status);
   },
