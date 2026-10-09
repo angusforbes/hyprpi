@@ -34,7 +34,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { modeOf, MODE_TEXT } from "./mode.mjs"; // J325: doorman-strict / doorman-safe (default) / doorman-open
+import { modeForSandbox, MODE_TEXT } from "./mode.mjs"; // J325: doorman-strict / doorman-safe (default) / doorman-open
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -53,9 +53,7 @@ export function conf(sandbox) {
   const world = String(sandbox).replace(/^world-/, "");
   // J314 (Angus "2a"): strict mode, off by default: ~/.config/hyprpi/worlds/<name>.json "research": { "strict": true }
   // J325: the Doorman mode, per sandbox in ~/.config/hyprpi/worlds/<name>.json (docker/research/mode.mjs)
-  let mw = null;
-  try { const wd = path.join(path.dirname(CONFIG), "worlds"); for (const f of fs.readdirSync(wd)) { if (!f.endsWith(".json")) continue; let w; try { w = JSON.parse(fs.readFileSync(path.join(wd, f), "utf8")); } catch { continue; } if ((w.sandbox || f.slice(0, -5)) === sandbox) { mw = w; break; } } } catch { /* no worlds folder: the default */ }
-  const { mode, note: modeNote } = modeOf(mw);
+  const { mode, note: modeNote } = modeForSandbox(path.dirname(CONFIG), String(sandbox));
   return { mode, modeNote, strict: mode === "doorman-strict",
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
     key_file: c.key_file ? tilde(c.key_file) : "", shape_model: c.shape_model || "",
@@ -307,9 +305,10 @@ export function digest({ sinceMs = 3600e3, now = Date.now() } = {}) {
   const by = (k) => ev.filter((e) => e.ev === k);
   const q = (e) => `"${String(e.looking_for || e.query || "").slice(0, 90)}"${e.from ? ` (${e.from}, ${e.depth || "quick"})` : ""}`;
   const modes = [...new Set(ev.map((e) => e.sandbox))].map((s) => `${s}: ${conf(s).mode}`).join(", ");
-  const out = [`🔎 Research digest (Doorman mode: ${modes}), last ${Math.round(sinceMs / 60e3)} min: ${by("ready").filter((e) => e.mode !== "doorman-open").length} deliverables ready for review, ${by("delivered-open").length} delivered without human review (doorman-open), ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
+  const openRids = new Set(ev.filter((e) => e.ev === "delivered-open").map((e) => e.rid)), forReview = (e) => !openRids.has(e.rid); // (review #3: by what the relay did, not the runner's mode)
+  const out = [`🔎 Research digest (Doorman mode: ${modes}), last ${Math.round(sinceMs / 60e3)} min: ${by("ready").filter(forReview).length} deliverables ready for review, ${by("delivered-open").length} delivered without human review (doorman-open), ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
   for (const e of by("delivered-open")) out.push(`⚠ ${q(e)} delivered WITHOUT human review (doorman-open): ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
-  for (const e of by("ready").filter((x) => x.mode !== "doorman-open")) out.push(`✓ ${q(e)}: ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
+  for (const e of by("ready").filter(forReview)) out.push(`✓ ${q(e)}: ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
   for (const e of by("planned")) out.push(`⏸ ${q(e)}: searches held for Angus (strict mode): ${(e.searches || []).map((x) => `"${String(x).slice(0, 80)}"`).join(", ")}`);
   for (const e of by("plan-denied")) out.push(`✗ ${q(e)}: Angus denied the searches; nothing was sent`);
   for (const e of [...by("approved"), ...by("denied")]) out.push(`${e.ev === "approved" ? "→" : "✗"} ${q(e)} ${e.ev} by Angus${e.via ? ` (${e.via})` : ""}`);

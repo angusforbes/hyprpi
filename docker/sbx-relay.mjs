@@ -417,7 +417,8 @@ class Sandbox {
         const token = "r" + crypto.randomBytes(4).toString("hex");
         this.research.set(token, { at: Date.now() });
         this.relay.runResearch(this, token, { want, depth, from, why });
-        return { ok: true, research: token, depth, status: "started", log: { op: "research", depth, ...textMeta(want) } };
+        let mode = "doorman-safe"; try { mode = researchConf(this.name).mode; } catch { /* the runner decides again */ }
+        return { ok: true, research: token, depth, mode, status: "started", log: { op: "research", depth, ...textMeta(want) } };
       }
       case "reply": {
         const id = String(req.request_id || "");

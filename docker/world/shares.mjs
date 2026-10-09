@@ -32,7 +32,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { modeOf, MODE_TEXT } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
+import { modeForSandbox, MODE_TEXT } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
 
 
 const HOME = os.homedir();
@@ -275,7 +275,7 @@ function writeCard(p = plan()) {
     "## Network", "",
     net ? `Your requests go through the sandbox policy proxy, profile ${net.profile} (NVIDIA's central allowlist; the host can't change it, new domains need a request by the owner). A blocked domain answers 403 "Blocked by org policy". The full list (${net.tcp.length} host rules, ${net.http.length} path-limited web rules) is in net-allowlist.md next to this card.` : "Your requests go through the sandbox policy proxy (NVIDIA's central allowlist). The list couldn't be read on the host just now.", "",
     "## Web research", "",
-    ...(() => { const { mode, note } = modeOf(readJson(path.join(CFG, "worlds", `${WORLD}.json`), null)); return [`Doorman mode: ${mode}${note ? ` (${note})` : ""}`, "", `Ask Outside "Research: <what you're looking for>" (or "Research (deep): …"): ${MODE_TEXT[mode]}`, ""]; })(),
+    ...(() => { const { mode, note } = modeForSandbox(CFG, p.sandbox); return [`Doorman mode: ${mode}${note ? ` (${note})` : ""}`, "", `Ask Outside "Research: <what you're looking for>" (or "Research (deep): …"): ${MODE_TEXT[mode]}`, ""]; })(),
     "## How to ask", "",
     "- Talk to your Doorman (always allowed, no approval needed).",
     "- Messages to agents in other worlds wait for Angus's approval (a toast and the Thoughts panel); he can allow similar ones for a while.", "",

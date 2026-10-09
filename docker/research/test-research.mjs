@@ -132,7 +132,20 @@ t("doorman-safe: ready, held for review, header says the mode", () => { W({}); c
 t("doorman-strict: planned first, header says the mode", () => { W({ doorman: { mode: "doorman-strict" } }); const n = calls(), r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 strict mode" }); assert.equal(r.status, "planned"); assert.equal(calls(), n); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: doorman-strict$/m); });
 t("doorman-open: runs straight through, marked open and not human-reviewed", () => { W({ doorman: { mode: "doorman-open" } }); const r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 open mode" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "doorman-open"); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: doorman-open \(no human review/m); });
 t("doorman-open: the Doorman's checks still apply (inside data refused, injection withheld)", () => { assert.equal(R.ask({ sandbox: "world-m", lookingFor: "ipu6 SECRETWORD" }).status, "refused"); assert.equal(R.ask({ sandbox: "world-m", lookingFor: "ipu6 inject open" }).status, "refused"); });
+t("review #2: a non-string mode with a hostile toString is the default, no crash", () => assert.equal(M.modeOf({ doorman: { mode: { toString: null } } }).mode, "doorman-safe"));
+t("review #1: two worlds files naming one sandbox → ambiguous, fail closed to doorman-strict (whatever sorts first)", () => {
+  fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "aaa-backup.json"), JSON.stringify({ sandbox: "world-m", doorman: { mode: "doorman-open" } }));
+  const c = R.conf("world-m"); assert.equal(c.mode, "doorman-strict"); assert.match(c.modeNote, /ambiguous/);
+  const n = calls(); assert.equal(R.ask({ sandbox: "world-m", lookingFor: "IPU6 ambiguous" }).status, "planned"); assert.equal(calls(), n);
+  fs.unlinkSync(path.join(T, "config", "hyprpi", "worlds", "aaa-backup.json")); W({ doorman: { mode: "doorman-open" } });
+});
 t("digest header names the mode", () => assert.match(R.digest().text, /Doorman mode: .*world-m: doorman-open/));
+t("review #3: an open-mode result the relay didn't deliver unreviewed still counts as waiting for review", () => {
+  const r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 open then held" }); assert.equal(r.mode, "doorman-open");
+  assert.match(R.digest().text, new RegExp(`✓ "IPU6 open then held"`));
+  R.logEvent({ ev: "delivered-open", rid: r.rid, sandbox: "world-m", mode: "doorman-open", looking_for: "IPU6 open then held", words: 1, sources: 1 });
+  const d = R.digest().text; assert.match(d, /⚠ "IPU6 open then held".*WITHOUT human review/); assert.doesNotMatch(d, /✓ "IPU6 open then held"/);
+});
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`all ${n} passed`);

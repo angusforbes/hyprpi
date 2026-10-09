@@ -281,7 +281,7 @@ async function handleItem(j) {
       outWait.delete(j.for);
       const tok = field(j.research, 20);
       if (j.ok && tok) research.set(tok, { asker: w.asker, want: field(w.want, 120) });
-      const st = j.ok ? `research started (${field(j.depth, 8) || "quick"}, id ${tok}). The host's Doorman writes its own web searches from your request; a quarantined reader runs them and shapes the result into what you asked for; Angus reviews it before it reaches you. You'll hear from Outside when it's ready or refused (deep research can take many minutes).` : `research not started: ${field(j.error, 300) || "unknown error"}`;
+      const st = j.ok ? `research started (${field(j.depth, 8) || "quick"}, id ${tok}). The host's Doorman writes its own web searches from your request; a quarantined reader runs them and shapes the result into what you asked for; ${j.mode === "doorman-open" ? "the Doorman vets it and it comes straight to you WITHOUT human review (Doorman mode doorman-open)" : j.mode === "doorman-strict" ? "Angus approves the searches first and then reviews the result (Doorman mode doorman-strict)" : "Angus reviews it before it reaches you (Doorman mode doorman-safe)"}. You'll hear from Outside when it's ready or refused (deep research can take many minutes).` : `research not started: ${field(j.error, 300) || "unknown error"}`;
       if (!w.answered) { w.answered = true; await answerInner(w.innerReq, `Outside: ${st}`); } else await pushInner([w.asker.id], `[Outside] ${st}`);
       return;
     }
