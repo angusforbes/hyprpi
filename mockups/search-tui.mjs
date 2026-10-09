@@ -374,7 +374,7 @@ function pollReview() {
   else if (act === "rearm") {
     // J356: the same review had opened by itself (J301) and recorded the box's text as unable to answer it; Angus's
     // click makes it a clicked review: that text is set aside (it comes back afterwards) and a plain "1" answers.
-    Object.assign(review, { auto: false, typed: "", draft: query, confirm: null, shownAt: Date.now() }); setBox("");
+    Object.assign(review, { auto: false, typed: "", draft: query, confirm: null, shownAt: Date.now() }); setBox(""); render(); // (HeldReview #2: show the cleared box now)
     logHeld({ room, id: review.id, stage: "rearmed", reason: "Review clicked on a review that had opened by itself" });
   }
   if (!review && room) {
@@ -421,6 +421,8 @@ function reviewKey(raw) {
       // J356 (2a): a bare 1/2/3 aimed at a card that is no longer waiting says so here instead of going to Thoughts
       const card = bareChoice(raw) ? cardForBareNumber(turns, TH.entries) : null, st = card && heldStatus(card.id);
       if (st && st.state !== "pending") { logHeld({ room, id: card.id, raw, stage: "decided-card", reason: st.state }); setBox(""); note = `🐳 that card is ${st.state === "gone" ? "no longer waiting (expired or withdrawn)" : `already ${st.state}${st.at ? ` at ${new Date(st.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`}: nothing was sent`; render(); return true; }
+      // (HeldReview #1) the card waits but its review isn't armed in this panel yet (a click lands on the next 2 s poll): hold the number back
+      if (st && st.state === "pending" && gate.reason === "no-review") { logHeld({ room, id: card.id, raw, stage: "early-return", reason: "not-armed-yet" }); setBox(""); note = `🐳 the review of that card is just opening: type ${raw.trim()} again in a moment`; render(); return true; }
       if (gate.reason === "no-review" && raw && room && heldFor(room).length) logHeld({ room, id: "", stage: "early-return", reason: "no-review" }); // (ordinary chat: not logged, nor its text)
       return false;
     }
@@ -429,7 +431,10 @@ function reviewKey(raw) {
       review.typed = ""; // retyping the same choice now answers it
       setBox(""); note = `🐳 that was already in the box when the review opened, so it can't answer it: type ${raw.length <= 12 ? raw : "1, 2 or 3"} again`; render(); return true;
     }
-    return false; // early: meant for what was there before the review appeared
+    // early: typed within 1.5 s of the review appearing. A choice can't answer it (the guard stays), but it isn't lost
+    // to Thoughts either (HeldReview #1): say so. Anything else was meant for what was there before, as it always was.
+    if (parseChoice(raw)) { setBox(""); note = `🐳 the review just opened: type ${raw.length <= 12 ? raw : "your choice"} again to answer it`; render(); return true; }
+    return false;
   }
   const decide = (ch) => {
     const r = actOnHeld(review.id, ch), h = review.h, id = review.id, at = room;

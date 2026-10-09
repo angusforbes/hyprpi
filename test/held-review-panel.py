@@ -30,8 +30,10 @@ def scenario(kind):
     os.makedirs(run, mode=0o700, exist_ok=True)
     env = {**os.environ, "XDG_STATE_HOME": st, "XDG_RUNTIME_DIR": run, "HYPRPI_STATE": os.path.join(tmp, "hp"),
            "HYPRPI_SOCKET": os.path.join(run, "none.sock"), "HYPRLAND_INSTANCE_SIGNATURE": "bogus-j356", "HYPRPI_TEST": "1",
-           "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"}
-    for k in ("HYPRPI_AGENT_ID", "HYPRPI_SANDBOX_WORLD", "HYPRPI_G_WORLD"):
+           "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40",
+           "HOME": os.path.join(tmp, "home"), "XDG_CONFIG_HOME": os.path.join(tmp, "config")}   # (HeldReview #4: nothing of the live setup)
+    os.makedirs(env["HOME"], exist_ok=True)
+    for k in ("HYPRPI_AGENT_ID", "HYPRPI_SANDBOX_WORLD", "HYPRPI_G_WORLD", "HYPRPI_SEARCH_TUI_STATEFILE"):
         env.pop(k, None)
     pid, fd = pty.fork()
     if pid == 0:
@@ -62,6 +64,17 @@ def scenario(kind):
     json.dump(m, open(os.path.join(relay, "pending", hid + ".json"), "w"))   # ... the item is held, the review opens by itself
     pump(4)
     auto = [e for e in log() if e.get("id") == hid]
+    if kind == "early":   # (HeldReview #1) a 1 typed right after the click re-armed it: held back with a notice, not chat
+        json.dump({"id": hid}, open(os.path.join(relay, "reviews", "A.json"), "w"))
+        end = time.time() + 4
+        while time.time() < end and not any(e.get("stage") == "rearmed" for e in log()):
+            pump(0.05)
+        m0 = len(out); os.write(fd, b"1\r"); pump(1.0)
+        scr = out[m0:].decode("utf8", "replace")
+        check(f"{kind}: a 1 within 1.5 s of the click shows 'review just opened … again'", "review just opened" in scr)
+        check(f"{kind}: logged early-return reason early", any(e.get("reason") == "early" and e.get("id") == hid for e in log()))
+        pump(1.0)
+        os.write(fd, b"1"); pump(0.3)
     if kind == "click":
         json.dump({"id": hid}, open(os.path.join(relay, "reviews", "A.json"), "w"))   # Review clicked on the toast
         pump(3.5)
@@ -79,7 +92,11 @@ def scenario(kind):
         os.write(fd, b"1"); pump(0.3); os.write(fd, b"\r"); pump(3)
     L = log()
     cli = [e for e in L if e.get("id") == hid and e.get("stage") == "cli"]
-    check(f"{kind}: a plain 1 then approves (stage cli, verdict approve)", bool(cli) and (cli[-1].get("choice") or {}).get("verdict") == "approve")
+    # (HeldReview #3) this proves the panel ROUTES the 1 to an approve; the relay CLI itself refuses to approve when an
+    # agent runs it, so no real decision is made (that refusal is expected and recorded here)
+    check(f"{kind}: a plain 1 then goes to approve (stage cli, verdict approve)", bool(cli) and (cli[-1].get("choice") or {}).get("verdict") == "approve")
+    if cli:
+        print(f"   ({kind}: relay CLI ok={cli[-1].get('ok')}: {str(cli[-1].get('cli'))[:90]})")
     os.kill(pid, 9)
     try:
         os.waitpid(pid, 0)
@@ -98,8 +115,10 @@ def decided():
     os.makedirs(run, mode=0o700, exist_ok=True)
     env = {**os.environ, "XDG_STATE_HOME": st, "XDG_RUNTIME_DIR": run, "HYPRPI_STATE": os.path.join(tmp, "hp"),
            "HYPRPI_SOCKET": os.path.join(run, "none.sock"), "HYPRLAND_INSTANCE_SIGNATURE": "bogus-j356", "HYPRPI_TEST": "1",
-           "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"}
-    for k in ("HYPRPI_AGENT_ID", "HYPRPI_SANDBOX_WORLD", "HYPRPI_G_WORLD"):
+           "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40",
+           "HOME": os.path.join(tmp, "home"), "XDG_CONFIG_HOME": os.path.join(tmp, "config")}   # (HeldReview #4: nothing of the live setup)
+    os.makedirs(env["HOME"], exist_ok=True)
+    for k in ("HYPRPI_AGENT_ID", "HYPRPI_SANDBOX_WORLD", "HYPRPI_G_WORLD", "HYPRPI_SEARCH_TUI_STATEFILE"):
         env.pop(k, None)
     m = json.load(open(TPL)); hid = "world-g--dec1de"; m["id"] = hid
     json.dump(m, open(os.path.join(relay, "pending", hid + ".json"), "w"))
@@ -143,6 +162,6 @@ def decided():
 
 
 decided()
-for k in ("stale", "click"):
+for k in ("stale", "click", "early"):
     scenario(k)
 sys.exit(1 if fails else 0)
