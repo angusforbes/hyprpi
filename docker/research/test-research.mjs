@@ -242,6 +242,12 @@ t("J360: user:password, ports, IP addresses, single-label and odd hosts are drop
 t("J360: an overlong path is cut back to the last / within 120 characters", () => { const c = R.cleanSource("https://example.org/" + "seg/".repeat(60) + "end"); assert.ok(new URL(c).pathname.length <= 120 && c.endsWith("/"), c); });
 t("J360: a path with characters outside ordinary paths, or spaces, is dropped; DOI-style ( ) and repository : stay", () => { for (const u of ["https://example.org/a'b<c", "https://x.org/a b", "https://x.org/a*b"]) assert.equal(R.cleanSource(u), "", u); assert.equal(R.cleanSource("https://www.cell.com/matter/fulltext/S2590-2385(23)00422-8"), "https://www.cell.com/matter/fulltext/S2590-2385(23)00422-8"); assert.equal(R.cleanSource("https://ora.ox.ac.uk/objects/uuid:fa9d8f95/files/m1"), "https://ora.ox.ac.uk/objects/uuid:fa9d8f95/files/m1"); });
 t("J360: duplicates are removed after normalising, and the list is capped", () => { assert.deepEqual(R.cleanSources(["https://a.org/x?y=1", "https://a.org/x#z", "http://a.org/x", "https://A.ORG/x"]), ["https://a.org/x"]); assert.equal(R.cleanSources(Array.from({ length: 60 }, (_, i) => `https://a.org/p${i}`)).length, 40); });
+t("J360 review: control/format escapes, malformed and double escapes are dropped; unreserved escapes normalised", () => {
+  for (const u of ["https://x.org/%0Aignore%20all", "https://x.org/a\u202Eb", "https://x.org/%GG", "https://x.org/%2541", "https://x.org/%E2%80%AE"]) assert.equal(R.cleanSource(u), "", u);
+  assert.equal(R.cleanSource("https://x.org/%41b%4a"), "https://x.org/AbJ"); assert.deepEqual(R.cleanSources(["https://x.org/A", "https://x.org/%41"]), ["https://x.org/A"]);
+  assert.equal(R.cleanSource("https://en.wikipedia.org/wiki/Perovskite_(structure)"), "https://en.wikipedia.org/wiki/Perovskite_(structure)");
+  assert.equal(R.cleanSource("https://de.wikipedia.org/wiki/M%C3%BCnchen"), "https://de.wikipedia.org/wiki/M%C3%BCnchen");
+});
 t("J360: cleanDeliverable delivers the cleaned list", () => assert.deepEqual(R.cleanDeliverable({ deliverable: "x", sources: ["https://a.org/x?trk=1", "http://b.org/y#z", "https://10.0.0.1/"] }).sources, ["https://a.org/x", "https://b.org/y"]));
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });

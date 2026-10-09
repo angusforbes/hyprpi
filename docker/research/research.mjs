@@ -259,6 +259,12 @@ export function cleanSource(u) {
   if (host.length > 100 || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host) || /^[\d.]+$/.test(host) || !/[a-z]/.test(host.split(".").pop())) return "";
   let p = x.pathname || "/";
   if (!/^[A-Za-z0-9._~\/%:()+,;=@!-]*$/.test(p)) return ""; // (RFC 3986 path characters, minus quotes and *$&: DOIs use ( ) and repositories use :)
+  // (review J360) %-escapes: well-formed only; unreserved ones decoded and hex upper-cased (so /A and /%41 are one link);
+  // the decoded path may not hold control or format characters (%0A, U+202E) or another layer of escapes (%2541)
+  if (/%(?![0-9A-Fa-f]{2})/.test(p)) return "";
+  p = p.replace(/%[0-9A-Fa-f]{2}/g, (m) => { const c = String.fromCharCode(parseInt(m.slice(1), 16)); return /[A-Za-z0-9._~-]/.test(c) ? c : m.toUpperCase(); });
+  let dec; try { dec = decodeURIComponent(p); } catch { return ""; }
+  if (/[\p{Cc}\p{Cf}]/u.test(dec) || /%[0-9A-Fa-f]{2}/.test(dec)) return "";
   if (p.length > PATH_MAX) { p = p.slice(0, PATH_MAX); p = p.slice(0, p.lastIndexOf("/") + 1) || "/"; }
   return `https://${host}${p}`;
 }
