@@ -293,12 +293,18 @@ function readerSandbox(cmd, sandbox) {
 }
 
 // J352: the sandbox's recent requests (last 24 h, newest last), for the Doorman's drift check. Sandbox text: data only.
-export function recentRequests(sandbox, n = 6) {
+// J357 (Angus's test 1 was held as "drift" because of requests from before the task, and his own off-task test):
+// only requests whose searches actually WENT OUT ("started") under the CURRENT task (same task hash) count. A task
+// change starts a fresh history; held, denied and refused requests were judged on their own and don't count.
+export const taskHash = (task) => task ? sha("task:" + String(task)) : "";
+export function recentRequests(sandbox, n = 6, task = "") {
+  const th = taskHash(task);
+  if (!th) return [];
   let lines = []; try { lines = fs.readFileSync(LOG(), "utf8").trim().split("\n").slice(-2000); } catch { return []; }
   const since = Date.now() - 24 * 3600e3, seen = new Set(), out = [];
   for (const l of lines.reverse()) {
     let e; try { e = JSON.parse(l); } catch { continue; }
-    if (e.sandbox !== sandbox || !e.looking_for || !e.rid || seen.has(e.rid) || !(Date.parse(e.ts) >= since)) continue;
+    if (e.ev !== "started" || e.sandbox !== sandbox || e.task_hash !== th || !e.looking_for || !e.rid || seen.has(e.rid) || !(Date.parse(e.ts) >= since)) continue;
     seen.add(e.rid); const t = String(e.looking_for).replace(/\s+/g, " ").slice(0, 200);
     if (!out.includes(t)) out.push(t); // (J354: the same request logged twice, e.g. a retry, shows once)
     if (out.length >= n) break;
@@ -329,13 +335,13 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   depth = depth === "deep" ? "deep" : "quick";
   const cfg = conf(sandbox), q = String(lookingFor ?? "").replace(/\r\n/g, "\n").trim();
   const rid = "q" + crypto.randomBytes(4).toString("hex");
-  const base = { rid, sandbox, mode: cfg.mode, from: clean1(from, 40), depth, looking_for: clean1(q, LIMITS.requestChars + 50), why: clean1(why, LIMITS.whyChars) };
+  const base = { rid, sandbox, mode: cfg.mode, from: clean1(from, 40), depth, looking_for: clean1(q, LIMITS.requestChars + 50), why: clean1(why, LIMITS.whyChars), ...(cfg.task ? { task_hash: taskHash(cfg.task) } : {}) }; // J357: which task it was asked under
   const pre = precheckQuery(q, { task: cfg.task });
   if (pre.length) { logEvent({ ev: "refused", stage: "precheck", ...base, reason: pre.join(", ") }); return { status: "refused", rid, reason: `The request can't leave the sandbox: it contains ${pre.join(", ")}.` }; }
   const over = takeCap(sandbox, depth);
   if (over) { logEvent({ ev: "refused", stage: "cap", ...base, reason: `over ${over} ${depth} requests this hour` }); return { status: "refused", rid, reason: `The limit of ${over} ${depth} research requests an hour is used up.` }; }
   // The Doorman writes the searches in its own words (or refuses); it sees only the request, never "why" (red team J309).
-  const recent = recentRequests(sandbox); // (before this request is logged)
+  const recent = recentRequests(sandbox, 6, cfg.task); // (J357: only what went out under this task)
   const plan = doormanCheck(cfg, { mode: "plan", looking_for: q, depth, ...(cfg.task ? { task: cfg.task, recent } : {}) });
   if (!("refuse" in plan)) { logEvent({ ev: "error", stage: "doorman", ...base, reason: plan.reason }); return { status: "error", rid, reason: `Not sent: ${plan.reason}` }; }
   if (plan.refuse) { logEvent({ ev: "refused", stage: "doorman", ...base, reason: plan.reason }); return { status: "refused", rid, reason: `The Doorman refused it: ${plan.reason}` }; }

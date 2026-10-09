@@ -21,7 +21,7 @@ if r["mode"]=="plan":
   v={"ok":not c,"refuse":c,"reason":"fake: contains an inside code word" if c else "fake: public question","searches":qs,"brief":"Survey current IPU6 camera support in Linux" if r.get("depth")=="deep" else "","public_terms":["IPU6"]}
   if r.get("task"):
     open(${JSON.stringify(path.join(T, "doorman-plans"))},"a").write(json.dumps({"task":r["task"],"recent":r.get("recent")})+"\\n")
-    v.update({"on_task":"offtask" not in lf,"task_reason":"fake: not about the task" if "offtask" in lf else "fake: on task","drift":"drift" in lf,"drift_reason":"fake: jumps" if "drift" in lf else "fake: steady"})
+    v.update({"on_task":"offtask" not in lf,"task_reason":"fake: not about the task" if "offtask" in lf else "fake: on task","drift":"drift" in lf or any("offtask" in x for x in (r.get("recent") or [])),"drift_reason":"fake: jumps" if "drift" in lf else "fake: steady"})
     if "noverdict" in lf: v.pop("on_task")
   print(json.dumps(v))
 else:
@@ -199,6 +199,38 @@ J354.GOOD.forEach((q, i) => t(`J354: formula-heavy on-task request ${i + 1} pass
 J354.BAD.forEach(([q, why], i) => t(`J354: encoded-data attack ${i + 1} still refused (${why})`, () => assert.ok(R.precheckQuery(q).includes(why), JSON.stringify(R.precheckQuery(q)) + " " + q)));
 t("J354: a slash-joined run of words the task uses passes; random pieces don't", () => { assert.deepEqual(R.precheckQuery("check zxqvplorbium/wqertyuiopasd/perovskite", { task: "zxqvplorbium and wqertyuiopasd perovskites" }), []); assert.ok(R.precheckQuery("check zxqvplorbium/wqertyuiopasd/perovskite").includes("a long encoded-looking string")); });
 t("J354: chemicalFormula reads formulas and rejects base64", () => { for (const f of ["MAPbI3", "CH3NH3PbI3", "PbI2", "Cs0.05FA0.95PbI3", "FAPbI3", "SnO2", "Al2O3"]) assert.ok(R.chemicalFormula(f), f); for (const f of ["QUJDREVG", "Zm9vYmFy", "Hello", "XyZ9"]) assert.ok(!R.chemicalFormula(f), f); });
+// ---- J357: the drift history is only what went out under the current task ----
+const lastPlan = () => fs.readFileSync(path.join(T, "doorman-plans"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).at(-1);
+const logLine = (o) => fs.appendFileSync(path.join(R.STATE, "log.jsonl"), JSON.stringify({ ts: new Date().toISOString(), sandbox: "world-r", ...o }) + "\n");
+WF("world-r", { task: TASK, doorman: { mode: "doorman-safe" } });
+t("J357 fix 1: today's case replayed: requests from before the task (and under an older task) aren't drift history; MAPbI3 goes out", () => {
+  logLine({ ev: "started", rid: "qold00001", looking_for: "Which laptops have Intel IPU6 webcams that work on Fedora?" }); // before any task: no task_hash
+  logLine({ ev: "started", rid: "qold00002", looking_for: "offtask generative-art techniques in three.js" });
+  logLine({ ev: "started", rid: "qold00003", looking_for: "offtask an older task's request", task_hash: R.taskHash("some older task") });
+  const r = R.ask({ sandbox: "world-r", lookingFor: "IPU6 how does humidity degrade MAPbI3?" });
+  assert.deepEqual(lastPlan().recent, []); assert.equal(r.status, "ready", JSON.stringify(r));
+});
+t("J357 fix 1: a task change starts a fresh history", () => {
+  assert.equal(R.recentRequests("world-r", 6, TASK).length, 1);
+  assert.deepEqual(R.recentRequests("world-r", 6, "a new task"), []);
+});
+t("J357 fix 2: a held off-task test isn't drift history: the next on-task request goes out without a hold", () => {
+  const h = R.ask({ sandbox: "world-r", lookingFor: "offtask why do sea otters hold paws while sleeping?" }); assert.equal(h.status, "planned");
+  const r = R.ask({ sandbox: "world-r", lookingFor: "IPU6 encapsulation methods" }); assert.equal(r.status, "ready", JSON.stringify(r));
+  assert.ok(!lastPlan().recent.some((x) => /sea otters/.test(x)), JSON.stringify(lastPlan().recent));
+});
+t("J357 fix 2: refused requests aren't drift history either", () => {
+  R.ask({ sandbox: "world-r", lookingFor: "offtask copyme the frobnicator settings" });
+  R.ask({ sandbox: "world-r", lookingFor: "IPU6 film stability" }); assert.ok(!lastPlan().recent.some((x) => /frobnicator/.test(x)));
+});
+t("J357: an off-task request that WENT OUT under this task (an approved exception) still counts: the next request is held for drift", () => {
+  WF("world-q", { task: TASK, doorman: { mode: "doorman-safe" } });
+  const h = R.ask({ sandbox: "world-q", lookingFor: "offtask a codeword question" }); assert.equal(h.status, "planned");
+  assert.equal(R.runPlan(h.rid).status, "ready"); // Angus approved it: its searches went out
+  const r = R.ask({ sandbox: "world-q", lookingFor: "IPU6 the next one" }); assert.equal(r.status, "planned"); assert.match(r.exception, /topic drift/);
+  assert.ok(lastPlan().recent.some((x) => /codeword/.test(x)));
+});
+t("J357: the task hash is logged with each request", () => { const l = fs.readFileSync(path.join(R.STATE, "log.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).filter((e) => e.sandbox === "world-q"); assert.ok(l.length && l.every((e) => e.task_hash === R.taskHash(TASK)), JSON.stringify(l.slice(0, 2))); });
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`all ${n} passed`);
