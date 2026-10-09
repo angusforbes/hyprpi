@@ -425,7 +425,7 @@ function notifyHeld(sb, msg, review) {
 function closeNotif(nf) {
   // only close it if the server that showed it is still the one running (ids restart with the shell)
   const n = nf && nf.id; if (!Number.isInteger(n) || n <= 0 || !nf.owner || nf.owner !== notifOwner()) return;
-  try { execFileSync("busctl", ["--user", "--", "call", ...NOTIF, "CloseNotification", "u", String(n)], { timeout: 3000, stdio: "ignore" }); } catch { /* gone */ }
+  try { execFileSync("busctl", ["--user", "--", "call", ...NOTIF, "CloseNotification", "u", String(n)], { timeout: 3000, stdio: ["ignore", "ignore", "pipe"] }); } catch (e) { log({ note: `closing toast ${n} failed: ${String(e.stderr || e.message).trim().slice(0, 200)}` }); } // J303 follow-up: no longer silent
 }
 // The buttons: listen for ActionInvoked. `gdbus monitor --dest` only shows signals whose SENDER is the
 // current owner of org.freedesktop.Notifications (the D-Bus daemon stamps the sender; another process can't
