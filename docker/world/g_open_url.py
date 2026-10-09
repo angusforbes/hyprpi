@@ -54,12 +54,13 @@ def open_nofollow(path):
     try:
         for i, name in enumerate(parts):
             last = i == len(parts) - 1
-            nfd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | (0 if last else os.O_DIRECTORY), dir_fd=fd)
+            # O_NONBLOCK: a FIFO (e.g. "fifo.html") must not hang the gate (Lenswatch J335 1)
+            nfd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | (0 if last else os.O_DIRECTORY), dir_fd=fd)
             os.close(fd)
             fd = nfd
         st = os.fstat(fd)
-        if stat.S_ISLNK(st.st_mode):
-            raise OSError("symlink")
+        if stat.S_ISLNK(st.st_mode) or not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+            raise OSError("not a regular file or folder")
         return fd, stat.S_ISDIR(st.st_mode)
     except Exception:
         os.close(fd)
@@ -72,9 +73,15 @@ def copy_fd(src_fd, dst, budget):
         return False
     if st.st_size > budget[1]:
         return False
-    with os.fdopen(os.dup(src_fd), "rb") as f, open(dst, "wb") as o:
+    left = st.st_size   # copy at most the size we checked (Lenswatch J335 3), even if the file grows meanwhile
+    with open(dst, "wb") as o:
         os.lseek(src_fd, 0, 0)
-        shutil.copyfileobj(f, o)
+        while left > 0:
+            b = os.read(src_fd, min(left, 1 << 20))
+            if not b:
+                break
+            o.write(b)
+            left -= len(b)
     budget[0] -= 1
     budget[1] -= st.st_size
     return True
@@ -91,13 +98,13 @@ def copy_dir_fd(dfd, dst, budget, depth=0):
         try:
             st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
             if stat.S_ISREG(st.st_mode):
-                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)   # copy_fd re-checks S_ISREG by fstat
                 try:
                     copy_fd(fd, os.path.join(dst, name), budget)
                 finally:
                     os.close(fd)
             elif stat.S_ISDIR(st.st_mode) and depth < 6:
-                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=dfd)
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_DIRECTORY, dir_fd=dfd)
                 try:
                     copy_dir_fd(fd, os.path.join(dst, name), budget, depth + 1)
                 finally:
@@ -204,6 +211,21 @@ def rate_ok(world):
         return True
 
 
+def toast_ok(world):
+    f = os.path.join(STATE, world, ".agent-toast")
+    try:
+        if time.time() - os.stat(f).st_mtime < 60:
+            return False
+    except OSError:
+        pass
+    try:
+        os.makedirs(os.path.dirname(f), exist_ok=True)
+        open(f, "w").close()
+    except OSError:
+        pass
+    return True
+
+
 def world_brave(world):
     """argv that opens a URL in the world's own Brave (own profile; class matched by hypr/hyprpi.lua)."""
     if AGENT_OPENER:
@@ -239,7 +261,9 @@ def main(argv):
     if ok and agent and not rate_ok(world):
         ok, out = False, f"more than {RATE} links a minute from {world}"
     if not ok:
-        tell(f"Link from {who} not opened", out)
+        # an agent looping on refused links mustn't flood Angus: at most one notice a minute per world (J335 2)
+        if not agent or toast_ok(world):
+            tell(f"Link from {who} not opened", out + (" (further refusals this minute are not shown)" if agent else ""))
         print(f"g_open_url: refused: {out}", file=sys.stderr)
         return 1
     cmd = (world_brave(world) + ["--", out]) if agent else [OPENER, out]
