@@ -642,6 +642,7 @@ function cycle(d) {
 // workspace (where this TUI is), in DIR or the config's default folder.
 import { spawn } from "node:child_process";
 import { loadConfig } from "../lib/paths.mjs";
+import { isolatedReason } from "../lib/paths.mjs";
 let lastNew = 0;
 function newAgent(dir) {
   if (Date.now() - lastNew < 2000) return; // held / repeated Ctrl+N: one agent
@@ -915,6 +916,7 @@ function onKey(d) {
 function ctrlClick(x, y) {
   const word = wordAt(screen[y - 1] || "", x, gw);
   const url = urlIn(word);
+  if (url && isolatedReason(process.env)) { note = "link not opened (isolated hyprpi)"; return render(); } // J333
   if (url) { try { spawn("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
   if (!api) return;
   let hit = word ? agentIn(word, agents) : null;
