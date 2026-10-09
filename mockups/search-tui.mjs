@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { REVIEW_TAG, heldFor, firstShow, claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { REVIEW_TAG, heldFor, firstShow, claimReview, clickAction, reviewGate, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -369,13 +369,20 @@ function pollReview() {
   // A Review click on the toast (reviews/<W>.json) takes this world's open review over; with none, J301: the oldest
   // message held for this world opens by itself (Angus: "approve/deny/review directly in the Thoughts").
   const clicked = room ? claimReview(room) : null;
-  if (clicked && review && review.id !== clicked) { delete reviews[room]; review = null; }
+  const act = clickAction(review, clicked);
+  if (act === "replace") { delete reviews[room]; review = null; }
+  else if (act === "rearm") {
+    // J356: the same review had opened by itself (J301) and recorded the box's text as unable to answer it; Angus's
+    // click makes it a clicked review: that text is set aside (it comes back afterwards) and a plain "1" answers.
+    Object.assign(review, { auto: false, typed: "", draft: query, confirm: null, shownAt: Date.now() }); setBox("");
+    logHeld({ room, id: review.id, stage: "rearmed", reason: "Review clicked on a review that had opened by itself" });
+  }
   if (!review && room) {
     const auto = !clicked, id = clicked || (heldFor(room)[0] || {}).id, h = id && heldById(id);
     if (h) {
       // Whatever was already in the box can't answer it (review #1). After a click it is set aside and comes back
       // afterwards; when it opens by itself the box is left alone, and that same text can't answer it (J301).
-      review = reviews[room] = { id, room, h, confirm: null, shownAt: Date.now(), draft: auto ? "" : query, typed: auto ? query.trim() : "" };
+      review = reviews[room] = { id, room, h, auto, confirm: null, shownAt: Date.now(), draft: auto ? "" : query, typed: auto ? query.trim() : "" };
       if (!auto) setBox("");
     }
     if (h && firstShow(id)) {
@@ -405,10 +412,19 @@ function reviewKey(raw) {
   lastRaw = raw;
   if (reviewRoom !== room) { for (const rv of Object.values(reviews)) rv.confirm = null; reviewRoom = room; } // world switched: no half-confirmed choice survives
   review = reviews[room] || null;
-  if (!review) return false;
-  if (!heldById(review.id)) { delete reviews[room]; review = null; return false; }
-  if (Date.now() - review.shownAt < 1500) return false; // typed before the review appeared: not an answer
-  if (review.typed && raw === review.typed) return false; // (J301: already in the box when it opened by itself)
+  // J356: every way a line can fail to answer the open review is logged with its reason (panel.jsonl), and the one
+  // that used to lose Angus's "1" silently (stale) now says so instead of going to Thoughts.
+  const gate = reviewGate(review, raw, { now: Date.now(), exists: review ? !!heldById(review.id) : false });
+  if (!gate.ok) {
+    if (gate.reason === "no-review") { if (raw && room && heldFor(room).length) logHeld({ room, id: "", stage: "early-return", reason: "no-review" }); return false; } // (ordinary chat: not logged, nor its text)
+    logHeld({ room, id: review.id, raw, stage: gate.reason === "stale" ? "stale" : "early-return", reason: gate.reason });
+    if (gate.reason === "gone") { delete reviews[room]; review = null; return false; }
+    if (gate.reason === "stale") {
+      review.typed = ""; // retyping the same choice now answers it
+      setBox(""); note = `🐳 that was already in the box when the review opened, so it can't answer it: type ${raw.length <= 12 ? raw : "1, 2 or 3"} again`; render(); return true;
+    }
+    return false; // early: meant for what was there before the review appeared
+  }
   const decide = (ch) => {
     const r = actOnHeld(review.id, ch), h = review.h, id = review.id, at = room;
     logHeld({ room, id, raw: lastRaw, choice: ch, ok: r.ok, cli: r.text, stage: "cli" });
@@ -453,7 +469,7 @@ function reviewKey(raw) {
     note = "cancelled"; logHeld({ room, id: review.id, raw, stage: "confirm-cancelled" });
     if (!raw || /^n(o)?$/i.test(raw)) { setBox(""); render(); return true; }
   }
-  if (!raw) return false;
+  if (!raw) { logHeld({ room, id: review.id, stage: "early-return", reason: "empty" }); return false; }
   const ch = parseChoice(raw);
   logHeld({ room, id: review.id, raw, choice: ch || null, stage: "typed" });
   // J280: a line that isn't a choice goes to Thoughts as a question; say so where he is looking.
