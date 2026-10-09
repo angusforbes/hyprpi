@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, logHeld, heldTurns } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -328,7 +328,7 @@ function cycle(d) {
   const i = Math.max(0, rooms.indexOf(room));
   room = rooms[(i + d + rooms.length) % rooms.length];
   top = 0; note = "";
-  S.reset(); if (thoughtsOn) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } render();
+  S.reset(); turns = heldTurns(room); if (thoughtsOn) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } render();
 }
 // Tab on an @word: complete it from this room's agents (again: the next match).
 let atCycle = null; // completeAt's state: Tab again steps through the same matches
@@ -366,7 +366,7 @@ function pollReview() {
       sendThought(reviewPrompt(h));
     }
   }
-  if (Object.keys(reviews).join(",") + "|" + note !== before) render();
+  if (Object.keys(reviews).join(",") + "|" + note !== before) { bumpThread(); render(); } // (numbered lists are drawn differently while a review is open)
 }
 setInterval(pollReview, 2000);
 let reviewRoom = room;
@@ -379,32 +379,49 @@ function reviewKey(raw) {
   if (!heldById(review.id)) { delete reviews[room]; review = null; return false; }
   if (Date.now() - review.shownAt < 1500) return false; // typed before the review appeared: not an answer
   const decide = (ch) => {
-    const r = actOnHeld(review.id, ch), h = review.h;
-    note = r.ok ? `✓ ${ch.label}: ${h.sandbox} → ${h.to.join(", ")}` : "✗ " + (r.text || "couldn't decide");
+    const r = actOnHeld(review.id, ch), h = review.h, id = review.id, at = room;
+    logHeld({ room, id, raw: lastRaw, choice: ch, ok: r.ok, cli: r.text, stage: "cli" });
     // J280 (Angus: "it should be a real turn that i can read … maybe even highlighted"): the decision as its own
-    // highlighted turn in the thread (kept in the panel log, so it survives a reload), failures too.
-    const what = ch.verdict === "deny" ? "Denied" : ch.verdict === "approve" ? "Approved: sent" : ch.dur === "once" ? "Approved: sent (just this one, no rule)" : `Approved: sent, and similar messages allowed for ${ch.dur === "1h" ? "1 hour" : ch.dur}${/capped/.test(ch.label) ? " (capped at 24 hours)" : ""}`;
+    // highlighted turn in the thread, kept in panel-turns.jsonl (survives a reload). Review #1: the CLI only queues
+    // it, so the turn waits for the relay's own result (its log) before saying ✓.
+    const what = ch.verdict === "deny" ? "Denied" : ch.verdict === "approve" ? "Approved" : ch.dur === "once" ? "Approved (just this one, no rule)" : `Approved, and similar messages allowed for ${ch.dur === "1h" ? "1 hour" : ch.dur}${/capped/.test(ch.label) ? " (capped at 24 hours)" : ""}`;
     const msg = `${h.sandbox} → ${h.to.join(", ")}: "${h.text.replace(/\s+/g, " ").slice(0, 160)}"`;
-    const turn = r.ok
-      ? `${what}\n${msg}\n${ch.verdict === "allow" && ch.dur !== "once" ? "Same sandbox → same recipient, talk only, up to 30 an hour. See or end it: /rules in the room panel.\n" : ""}Relay: ${r.text || "ok"}`
-      : `Not decided: ${r.text || "the relay refused"}\n${msg}\nThe message is still waiting: try again, or use the toast.`;
-    logHeld({ room, id: review.id, raw: lastRaw, choice: ch, ok: r.ok, cli: r.text, turn });
-    turns = heldTurns(room); bumpThread(); follow();
+    const finish = (ok, head, body) => {
+      logTurn({ room: at, id, ok, turn: `${head}\n${msg}\n${body}` });
+      logHeld({ room: at, id, stage: "result", ok, result: body });
+      turns = heldTurns(room); bumpThread(); follow();
+      note = ok ? `✓ ${head}` : `✗ ${head}`; render();
+    };
     setBox("");
-    if (r.ok) { const { id, draft } = review; delete reviews[room]; review = null; if (draft) setBox(draft); sendThought(`[Angus decided held ${id}: ${ch.label}]`); }
-    render(); return true;
+    if (!r.ok) { finish(false, `Not decided: ${r.text || "the relay refused"}`, "The message is still waiting: try again, or use the toast."); return true; }
+    const { draft } = review; delete reviews[room]; review = null; if (draft) setBox(draft); bumpThread();
+    note = `🐳 ${ch.label}: waiting for the relay…`; render();
+    let tries = 0;
+    const poll = setInterval(() => {
+      const o = relayOutcome(id);
+      if (o || ++tries > 25) {
+        clearInterval(poll);
+        if (!o) finish(false, `${what}: no answer from the relay yet`, "It may still be waiting: check docker/sbx-relay.mjs status and pending.");
+        else finish(o.ok, o.ok ? what : `${what}, but it failed`, `Relay: ${o.text}${ch.verdict === "allow" && ch.dur !== "once" && o.ok ? "\nSame sandbox → same recipient, talk only, up to 30 an hour. See or end it: /rules in the room panel." : ""}`);
+        if (o && o.ok) sendThought(`[Angus decided held ${id}: ${ch.label}. Relay: ${o.text}]`);
+      }
+    }, 400);
+    return true;
   };
   if (review.confirm) {
     const ch = review.confirm; review.confirm = null;
     if (/^y(es)?$/i.test(raw)) return decide(ch);
-    note = "cancelled"; if (!raw || /^n(o)?$/i.test(raw)) { setBox(""); render(); return true; }
+    note = "cancelled"; logHeld({ room, id: review.id, raw, stage: "confirm-cancelled" });
+    if (!raw || /^n(o)?$/i.test(raw)) { setBox(""); render(); return true; }
   }
   if (!raw) return false;
   const ch = parseChoice(raw);
   logHeld({ room, id: review.id, raw, choice: ch || null, stage: "typed" });
   // J280: a line that isn't a choice goes to Thoughts as a question; say so where he is looking.
-  if (!ch) { note = "🐳 that went to Thoughts as a question · to decide, type just 1, 2 or 3 (or \"3, but for 2 hours\")"; return false; }
-  if (ch.verdict === "unclear") { note = "🐳 no usable duration (e.g. \"3 for 2 hours\", \"3 today\"): that went to Thoughts as a question"; return false; }
+  // (review #2: sending clears the status line, so send first, then say so)
+  const asQuestion = (hint) => { setBox(""); sendThought(raw, imagePaths(raw)); if (!note.startsWith("✗")) { note = hint; render(); } return true; };
+  if (!ch) return asQuestion("🐳 that went to Thoughts as a question · to decide, type just 1, 2 or 3 (or \"3, but for 2 hours\")");
+  if (ch.verdict === "unclear") return asQuestion("🐳 no usable duration (e.g. \"3 for 2 hours\", \"3 today\"): that went to Thoughts as a question");
   if (ch.confirm) { review.confirm = ch; setBox(""); note = `🐳 ${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
   return decide(ch);
 }
@@ -728,7 +745,8 @@ function render() {
     let tagFrom = 0, tagKey = null;
     const tag = () => { for (let i = tagFrom; i < flat.length; i++) flat[i].ek = tagKey; }; // J247: each row knows its entry
     // J280: the held-message decision turns (lib/held.mjs heldTurns) merged in by time
-    const merged = turns.length ? [...TH.entries, ...turns].sort((a, b) => (a.ts || 0) - (b.ts || 0)) : TH.entries;
+    let lastTs = 0; const dated = TH.entries.map((e) => ({ e, ts: (lastTs = Number(e.ts) || lastTs) })); // undated: keep their place (#7)
+    const merged = turns.length ? [...dated, ...turns.map((e) => ({ e, ts: e.ts }))].sort((a, b) => a.ts - b.ts).map((x) => x.e) : TH.entries;
     for (const [ei, e] of merged.entries()) {
       tag(); tagFrom = flat.length; tagKey = entryKey(e);
       const kind = threadKind(e);
@@ -756,9 +774,11 @@ function render() {
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         // Thoughts' "↩ from pi·wpzt" / "↪ to Blink" lead line (a direct message it is summing up): light grey like the other
         // indicator lines, and the summary right under it, no blank line between (Angus).
-        const { lead, body } = splitLead(e);
+        let { lead, body } = splitLead(e);
+        if (e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt) // J280 #6: only the panel's 1/2/3 count while a review is open
+          body = String(lead ? body : e.text).replace(/^(\s*)\d+[.)]\s+(?!(Approve|Deny|Allow similar for 1 hour)\s*$)/gm, "$1• ");
         if (lead) add(md(lead, tw, "   ", dim), 4);
-        add(md(lead ? body : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
+        add(md(e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt ? body : lead ? body : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
         const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
         if (extra.length) add(md(extra.map((f) => `📎 ${f}`).join("\n"), tw, "   ", dim), 4); // images not already in the text as a (clickable) path
       } else if (kind === "action" || kind === "error") add(md(actionPrefix(e) + e.text, tw, "   ", kind === "error" ? red : dim), 4);
@@ -939,7 +959,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
-        else if (ev === "thoughts" && data?.room === room) { if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) { if (shows(data.entry)) TH.unseen++; } else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
+        else if (ev === "thoughts" && data?.room === room) { const nt = heldTurns(room); if (nt.length !== turns.length) { turns = nt; bumpThread(); } if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) { if (shows(data.entry)) TH.unseen++; } else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
