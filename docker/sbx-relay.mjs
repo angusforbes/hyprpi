@@ -1060,6 +1060,7 @@ function decideAsAngus(id, verdict) {
   if (verdict !== "deny") { // approve and allow (J274) are Angus's only
     const why = agentAncestor();
     if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
+    console.error("sbx-relay: note: the normal route is the Thoughts review (Review on the toast, then type 1 after the full request); this terminal command is the admin tool."); // J355
   }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   const via = /^(panel|room panel)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";

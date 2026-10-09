@@ -41,7 +41,7 @@ import { userName, HUMAN_KEY } from "../lib/policy.mjs"; // J261: the human's di
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
-import { heldFor, decideHeld, autoNotes, rulesCommand } from "../lib/held.mjs"; // J268: sandbox messages held for Angus, answered y / n here
+import { heldFor, decideHeld, heldKeyAction, openHeldReview, autoNotes, rulesCommand } from "../lib/held.mjs"; // J268: sandbox messages held for Angus, answered y / n here
 let worldBar = null;
 const helpRows = () => {
   const list = cmds.help(), w = Math.max(12, ...list.map(([c]) => c.length));
@@ -295,7 +295,7 @@ function draw() {
   const rule = (label = "") => fg(c, "─" + (label ? ` ${label} ` : "") + "─".repeat(Math.max(0, W - 1 - (label ? width(label) + 2 : 0))));
   const rows = [];
   // J268: a message from a sandboxed world held for Angus's OK, addressed to someone in this world.
-  // y + Enter sends it, n + Enter denies it (the relay's CLI decides; agents can't approve).
+  // n + Enter denies it, r + Enter opens its review (J355: no quick approve; the relay's CLI decides).
   // J274: messages an "allow similar" rule let through to this world in the last 15 min (one line each, newest)
   if (reconn && Date.now() - reconn.at < 5 * 60 * 1000) rows.push(`${ESC}${worldBg(room)}m${ESC}38;2;255;255;255m${bold(cut(" " + reconn.text + " ", W))}${ESC}49m${ESC}39m`); // J283
   for (const a of autoNow.slice(-2)) rows.push(dim(cut(a.line, W)));
@@ -303,7 +303,7 @@ function draw() {
     const h = heldNow[0], more = heldNow.length > 1 ? `  (+${heldNow.length - 1} more)` : "";
     rows.push(fg(c, bold(cut(`🐳 held: ${h.sandbox} → ${h.to.join(", ")}${more}`, W))));
     rows.push(cut("   " + h.text, W));
-    rows.push(dim(cut("   y + Enter: send it · n + Enter: deny · (a toast has the same buttons)", W)));
+    rows.push(dim(cut("   n + Enter: deny · r + Enter: open the review in Thoughts (approve there) · (the toast has Deny and Review)", W)));
   }
 
   // One header line (Angus): "— room C · <view> (^F)" plus the pane's own hints; the agents
@@ -702,15 +702,14 @@ async function send() {
   const raw = input.trim();
   if (raw && !onlyAt(raw.startsWith("//") ? raw.slice(1) : raw)) box.remember(raw); // ↑ brings it back (N51)
   if (command(raw)) return;
-  // J268: a bare y / n answers the held sandbox message shown at the top (oldest first).
-  // Review J268 #5: only for the message that was already on screen before this was typed (shown for
-  // 2 s+, and still the first one now), so a reply "y" typed as a message can't approve a new arrival.
-  const fresh = heldFor(room);
-  if (/^[yn]$/i.test(raw) && fresh.length && heldNow.length && fresh[0].id === heldNow[0].id && Date.now() - heldShownAt >= 2000) {
-    const h = fresh[0], verdict = /^y/i.test(raw) ? "approve" : "deny";
-    input = ""; ic = 0;
-    const r = decideHeld(h.id, verdict);
-    note = r.ok ? (verdict === "approve" ? `✓ approved: ${h.sandbox} → ${h.to.join(", ")} is being sent` : `denied: ${h.sandbox} → ${h.to.join(", ")}`) : "✗ " + (r.text || "couldn't decide");
+  // J268 / J355: a bare n denies the held sandbox message shown at the top (oldest first), a bare r opens its review in the
+  // Thoughts panel; there is no y: approving happens only by typing the choice in that review. Only for the message that was
+  // already on screen 2 s+ before this was typed (review J268 #5).
+  const act = heldKeyAction(raw, heldFor(room), heldNow, heldShownAt);
+  if (act) {
+    const h = heldNow[0]; input = ""; ic = 0;
+    if (act === "deny") { const r = decideHeld(h.id, "deny"); note = r.ok ? `denied: ${h.sandbox} → ${h.to.join(", ")}` : "✗ " + (r.text || "couldn't decide"); }
+    else { const r = openHeldReview(h.id); note = r.ok ? "review opened in the Thoughts panel" : "✗ " + (r.text || "couldn't open the review"); }
     heldSig = ""; pollHeld(); return render();
   }
   if (view === "help") view = "stream";
