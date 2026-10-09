@@ -22,6 +22,7 @@ def _safe(u):  # (review #9) never show credentials in a proxy URL
     return urllib.parse.urlunsplit((p.scheme, p.hostname + (f":{p.port}" if p.port else ""), "", "", "")) if p.hostname else ""
 PROXY = _safe(os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "")
 CARD_PLACES = ["~/.sandbox/host-card.md"]  # a read-only share or pasted in; never the writable workspace (DoorReview)  # where a host card is looked for
+HIDDEN = set()  # filled in main(): placeholder mounts aren't shares
 SKIP = ("/proc", "/sys", "/dev", "/run", "/etc/", "/tmp", "/var/lib/docker")
 
 def mounts():
@@ -31,9 +32,21 @@ def mounts():
         for line in open("/proc/mounts"):
             dev, target, fstype, opts = line.split()[:4]
             target = target.replace("\\040", " ")
-            if fstype not in ("virtiofs", "9p", "fuse.sshfs") or target.startswith(SKIP) or target == "/mnt/host":
+            if fstype not in ("virtiofs", "9p", "fuse.sshfs") or target.startswith(SKIP) or target == "/mnt/host" or target in HIDDEN:
                 continue
             out.append((target, "ro" if "ro" in opts.split(",") else "rw"))
+    except OSError:
+        pass
+    return out
+
+def hidden_targets():
+    """Mount targets covered by the host's empty placeholders (hidden gitignored files, J307)."""
+    out = set()
+    try:
+        for line in open("/proc/self/mountinfo"):
+            f = line.split()
+            if re.search(r"/sandboxes/[^/]+/empty/(file|dir)$", f[3]):
+                out.add(f[4].replace("\\040", " "))
     except OSError:
         pass
     return out
@@ -62,6 +75,12 @@ def host_card():
 def why_path(arg):
     p = os.path.abspath(os.path.expanduser(arg))
     s = share_for(p)
+    hid = [t for t in hidden_targets() if p == t or p.startswith(t.rstrip("/") + "/")]
+    if hid:
+        return (f"{p} is hidden by the host owner: a gitignored file or folder in a shared project shows as empty here "
+                f"(on purpose; it may hold secrets). Don't try to get around it. If you need it, ask the host owner to show it.")
+    if s and s[0] == os.path.expanduser("~/.sandbox"):
+        return f"{p} is the host card's folder, written by the host and read-only in here."
     if s and not s[0].startswith("/mnt/host"):
         rest = "it exists" if os.path.exists(p) else "but nothing is at this path inside it"
         ro = " READ-ONLY: writes are refused by the sandbox (on the host side), even with sudo." if s[1] == "ro" else " Writable: changes land on the host."
@@ -71,6 +90,9 @@ def why_path(arg):
     par = os.path.dirname(p.rstrip("/"))
     near = [t for t, _ in mounts() if not t.startswith("/mnt/host") and (t == par or t.startswith(par.rstrip("/") + "/"))]  # (review #8: whole components)
     hint = f" Nearby shares: {', '.join(near)}." if near else ""
+    if host_card():
+        return (f"{p} isn't here: not shared into this sandbox (the host card {host_card()} lists what is). "
+                f"That says nothing about the host. Ask the host (the Doorman) whether it exists and whether it can be shared.")
     return (f"{p} isn't here. It is not shared into this sandbox, so this says nothing about the host: the host may well have it. "
             f"This sandbox is like a separate machine; only the folders listed by 'sandbox-guide' are shared.{hint} "
             f"Next step: ask the host (the Doorman, or your host contact) whether it exists and whether it can be shared.")
@@ -89,7 +111,8 @@ def why_url(arg):
     if "Blocked by org policy" in body:  # (review #6: only the policy's own marker counts)
         return (f"{host} is BLOCKED by the sandbox's network policy (the proxy answered {code}, \"Blocked by org policy\"). "
                 f"Nothing inside can change that: the allowlist is managed centrally. Next step: use an allowed source "
-                f"(e.g. a mirror or the package registry), or ask the host owner to request the domain.")
+                f"(e.g. a mirror or the package registry), or ask the host owner to request the domain."
+                + (f" The full allowlist is in {os.path.dirname(host_card())}/net-allowlist.md (see the host card's Network section)." if host_card() else ""))
     if code == "403":
         return f"{host} answered 403 without the policy's marker: probably the site itself refusing, not the sandbox. Unsure; ask if it matters."
     if code.startswith(("2", "3")):
@@ -145,6 +168,7 @@ def card():
     ])
 
 def main(a):
+    HIDDEN.update(hidden_targets())
     if not a:
         print(overview()); return
     if a[0] == "card":

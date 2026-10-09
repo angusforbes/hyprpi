@@ -34,6 +34,14 @@ case "$CMD" in
     in_sb 'pgrep -f "^node .*/bin/hyprpi daemon" >/dev/null || { cd "$G_WORLD_DIR"; setsid -f sh -c "exec node $G_HOST_HYPRPI/bin/hyprpi daemon" >> $HOME/.hyprpi-g/daemon.log 2>&1 < /dev/null; sleep 3; }'
     in_sb 'pgrep -f "^node .*/g-gate[.]mjs" >/dev/null || HYPRPI_GATE_WORKSPACE='"$HI"' setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/g-gate.mjs; sleep 3; done" >> $HOME/.hyprpi-g/gate.log 2>&1 < /dev/null'
     in_sb 'for p in agents-tui room-tui board-tui search-tui; do pgrep -f "$p.mjs" >/dev/null || G_WS='"$HI"' setsid -f $G_HOST_HYPRPI/mockups/$p G >/dev/null 2>&1 < /dev/null; done'
+    # J307: folder shares from config + the host card (re-applied on changes), the inner guide and the sandbox note
+    systemctl --user is-active --quiet "hyprpi-$WORLD-shares" || systemd-run --user --quiet --unit="hyprpi-$WORLD-shares" --collect --property=Restart=on-failure node "$H/docker/world/shares.mjs" watch "$WORLD"
+    sbx exec "$SB" sh -c 'mkdir -p ~/.local/bin ~/.pi/agent/skills/sandbox-guide' >/dev/null
+    sbx cp "$H/docker/guide/sandbox-guide" "$SB:/home/agent/.local/bin/sandbox-guide" >/dev/null && sbx exec "$SB" chmod +x /home/agent/.local/bin/sandbox-guide
+    sbx cp "$H/docker/guide/SKILL.md" "$SB:/home/agent/.pi/agent/skills/sandbox-guide/SKILL.md" >/dev/null
+    sbx cp "$H/docker/guide/AGENTS-sandbox.md" "$SB:/home/agent/.hyprpi-g/sandbox-note.md" >/dev/null
+    sbx exec "$SB" sh -c 'f=~/.pi/agent/AGENTS.md; touch $f; sed -i "/<!-- hyprpi sandbox note/,/<!-- end hyprpi sandbox note -->/d" $f; cat ~/.hyprpi-g/sandbox-note.md >> $f' >/dev/null
+    [ -x "$H/docker/world/ro-retest.sh" ] && { "$H/docker/world/ro-retest.sh" --if-new >/dev/null 2>&1 & }   # J307 (7a): re-test read-only after an sbx update
     in_sb 'hyprpi list' ;;
   new)
     NAME="${2:?usage: world.sh new NAME}"
@@ -46,6 +54,7 @@ case "$CMD" in
     for a in $(node "$H/docker/world/world-helper.mjs" windows "$WORLD"); do   # only windows this world owns (review #7)
       hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null 2>&1 || true
     done
+    systemctl --user stop "hyprpi-$WORLD-shares" >/dev/null 2>&1 || true   # J307
     sbx stop "$SB" >/dev/null 2>&1 || true
     node "$H/docker/world/world-helper.mjs" stop "$WORLD" 2>/dev/null || true
     echo "world $WORLD stopped (the relay keeps running: docker/sbx-relay.mjs stop)" ;;
