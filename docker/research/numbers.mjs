@@ -47,56 +47,48 @@ function tokens(text) {
   return out;
 }
 
-// Standard English value of a run of number words ("one thousand nine hundred fifty seven" → 1957), or null.
-function standard(ws) {
+// Standard value of a span of number words and digits ("one thousand nine hundred fifty seven" → 1957,
+// "5 thousand 3 hundred twenty-two" → 5322: a digit token counts like a unit), or null.
+function standard(items) {
   let total = 0, cur = 0, any = false;
-  for (const w of ws) {
-    if (w in UNITS) { cur += UNITS[w]; any = true; }
+  for (const it of items) {
+    const w = it.w;
+    if (it.d != null) { cur += Number(it.d); any = true; }
+    else if (w in UNITS) { cur += UNITS[w]; any = true; }
     else if (w in TEENS) { cur += TEENS[w]; any = true; }
     else if (w in TENS) { cur += TENS[w]; any = true; }
     else if (w === "hundred") { cur = (cur || 1) * 100; any = true; }
     else if (w === "thousand" || w === "million") { total += (cur || 1) * SCALES[w]; cur = 0; any = true; }
   }
-  return any ? total + cur : null;
+  return any && Number.isSafeInteger(total + cur) ? total + cur : null;
 }
-// Small chunks (< 100) read in sequence and joined: "seventeen twenty nine" → "1729", "eighty six oh one" → "8601",
-// "one seven two nine" → "1729". Two readings: tens+unit merged ("twenty nine" = 29) and not merged (20, 9).
-function chunked(ws, merge) {
-  if (ws.some((w) => w in SCALES)) return null;
+// Small chunks read in sequence and joined: "seventeen twenty nine" → "1729", "eighty six oh one" → "8601",
+// "one seven two nine" → "1729", "17 29" → "1729". Two readings: tens+unit merged ("twenty nine" = 29) and not.
+function chunked(items, merge) {
+  if (items.some((it) => it.w in SCALES)) return null;
   const parts = [];
-  for (let i = 0; i < ws.length; i++) {
-    const w = ws[i];
-    if (w === "oh" || w === "zero") { const n = ws[i + 1]; if (n in UNITS && n !== "oh" && n !== "zero") { parts.push("0" + UNITS[n]); i++; } else parts.push("0"); continue; }
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i], w = it.w, nx = items[i + 1]?.w;
+    if (it.d != null) { parts.push(it.d); continue; }
+    if (w === "oh" || w === "zero") { if (nx in UNITS && nx !== "oh" && nx !== "zero") { parts.push("0" + UNITS[nx]); i++; } else parts.push("0"); continue; }
     if (w in TEENS) { parts.push(String(TEENS[w])); continue; }
-    if (w in TENS) { const n = ws[i + 1]; if (merge && n in UNITS && UNITS[n] > 0) { parts.push(String(TENS[w] + UNITS[n])); i++; } else parts.push(String(TENS[w])); continue; }
+    if (w in TENS) { if (merge && nx in UNITS && UNITS[nx] > 0) { parts.push(String(TENS[w] + UNITS[nx])); i++; } else parts.push(String(TENS[w])); continue; }
     if (w in UNITS) parts.push(String(UNITS[w]));
   }
   return parts.length ? parts.join("") : null;
 }
 
+const SPAN = 10; // the longest span of number tokens read as one number (review J352 #2: every sub-span, not only the whole run)
 export function numbersIn(text) {
   const out = new Set(), toks = tokens(text);
-  const add = (s) => { if (s && /^\d{3,}$/.test(s)) out.add(s.replace(/^0+(?=\d{3})/, "")); };
-  // runs of number-ish tokens (words, digits, roman numerals) joined by separators only
+  const add = (v) => { const s = v == null ? "" : String(v); if (/^\d{3,}$/.test(s)) out.add(s.replace(/^0+(?=\d{3})/, "")); };
   let run = [];
   const flush = () => {
-    if (!run.length) return;
-    const ws = run.filter((t) => t.k === "word").map((t) => t.w);
-    const nums = run.filter((t) => t.k === "digits" || t.k === "roman").map((t) => t.v);
-    for (const n of nums) add(n);
-    if (ws.length && !nums.length) {
-      const st = standard(ws); if (st != null) add(String(st));
-      add(chunked(ws, true)); add(chunked(ws, false));
-      // and every sub-run split at a scale-free boundary: "nineteen fifty seven and two thousand"
-    }
-    // a mixed or digit-only run is also read joined: "17 29" → 1729, "nineteen 57" → 1957
-    if (run.length > 1) {
-      const pieces = [];
-      let wbuf = [];
-      const wflush = () => { if (wbuf.length) { const c = chunked(wbuf, true) ?? (standard(wbuf) != null ? String(standard(wbuf)) : null); if (c != null) pieces.push(c); wbuf = []; } };
-      for (const t of run) { if (t.k === "word") wbuf.push(t.w); else if (t.k === "digits" || t.k === "roman") { wflush(); pieces.push(t.v); } }
-      wflush();
-      if (pieces.length > 1) add(pieces.join(""));
+    const items = run.map((t) => (t.k === "word" ? { w: t.w } : { d: t.v }));
+    for (const it of items) if (it.d != null) add(it.d);
+    for (let i = 0; i < items.length; i++) for (let j = i + 1; j <= Math.min(items.length, i + SPAN); j++) {
+      const sp = items.slice(i, j);
+      add(standard(sp)); add(chunked(sp, true)); add(chunked(sp, false));
     }
     run = [];
   };
@@ -114,7 +106,7 @@ export function numberLeaks(request, texts, { allow = "" } = {}) {
   const req = numbersIn(request), ok = numbersIn(allow), hits = new Set();
   for (const r of req) {
     if (ok.has(r)) continue;
-    for (const t of texts) for (const n of numbersIn(t)) if (n === r || n.includes(r) || r.includes(n)) hits.add(n);
+    for (const t of texts) for (const n of numbersIn(t)) if (n === r || (r.length >= 4 && n.includes(r)) || (n.length >= 4 && r.includes(n))) hits.add(n); // (3-digit parts only when equal: the span readings make many)
   }
   return [...hits];
 }

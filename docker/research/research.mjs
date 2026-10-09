@@ -148,13 +148,14 @@ export function planCheck(request, plan, { strict = false, task = "" } = {}) {
   if (!texts.length) return ["the Doorman wrote no searches"];
   const req = words(request), grams = new Set();
   for (let i = 0; i + 4 <= req.length; i++) grams.add(req.slice(i, i + 4).join(" "));
-  const declared = new Set((plan?.public_terms || []).flatMap((t) => words(t)));
+  const taskWords = new Set(words(task)); // J352 review #4: what the host-set task names is never "copied from the request"
+  const declared = new Set([...(plan?.public_terms || []).flatMap((t) => words(t)), ...taskWords]);
   const reqRare = new Set(req.filter(rareToken));
   const copied = new Set();
   for (const t of texts) {
     const pre = precheckQuery(t).filter((x) => !/more than \d+ lines/.test(x));
     // J314 review #1: what Angus reads must be exactly what goes out: no markup or links that a renderer could hide
-    if (strict && /[[\]<>`*_|\\~{}]|https?:|www\.|\]\(/i.test(t)) r.push("a search contains markup or a link"); // (strict only: off stays as J309)
+    if (/[[\]<>`*_|\\~{}]|https?:|www\.|\]\(/i.test(t)) r.push("a search contains markup or a link"); // (J314 strict only; J352 review #1: every mode, since any plan may be held for a human as an exception)
     if (pre.length) r.push(`a search contains ${pre.join(", ")}`);
     const w = words(t);
     // a copied 4-word run counts unless it is only well-known names and filler ("intel ipu6 and ipu7" is fine)
@@ -172,7 +173,7 @@ export function planCheck(request, plan, { strict = false, task = "" } = {}) {
   const undeclared = [...copied].filter((x) => !declared.has(x));
   if (undeclared.length) r.push(`a search copies unusual words from the request (${undeclared.slice(0, 5).join(", ")})`);
   if (copied.size > 3) r.push(`a search copies more than 3 unusual words from the request`);
-  if ([...copied].some((x) => x.length > 20 || (/\d/.test(x) && !/^(v?\d{1,3}(\.\d{1,3}){0,2}|[a-z]{1,8}\d{1,4}[a-z]?)$/.test(x)))) r.push("a search copies a long or number-like token from the request");
+  if ([...copied].filter((x) => !taskWords.has(x)).some((x) => x.length > 20 || (/\d/.test(x) && !/^(v?\d{1,3}(\.\d{1,3}){0,2}|[a-z]{1,8}\d{1,4}[a-z]?)$/.test(x)))) r.push("a search copies a long or number-like token from the request");
   return [...new Set(r)];
 }
 
@@ -241,9 +242,20 @@ export function recentRequests(sandbox, n = 6) {
   }
   return out.reverse();
 }
-function exceptionsThisHour(sandbox) {
-  let n = 0; try { for (const l of fs.readFileSync(LOG(), "utf8").trim().split("\n").slice(-2000)) { try { const e = JSON.parse(l); if (e.sandbox === sandbox && e.ev === "planned" && e.exception && Date.parse(e.ts) > Date.now() - 3600e3) n++; } catch { /* */ } } } catch { /* none */ }
-  return n;
+// J352 review #3: a per-sandbox count of held exceptions in the last hour, reserved atomically (under the caps lock):
+// true = this one may be held, false = over the limit.
+function takeException(sandbox) {
+  return withLock(() => {
+    const f = path.join(STATE, "exceptions.json"); let all = {};
+    try { all = JSON.parse(fs.readFileSync(f, "utf8")) || {}; } catch { /* new */ }
+    const now = Date.now();
+    for (const k of Object.keys(all)) { all[k] = (Array.isArray(all[k]) ? all[k] : []).filter((x) => now - x < 3600e3); if (!all[k].length) delete all[k]; }
+    const mine = all[sandbox] || [];
+    const ok = mine.length < LIMITS.exceptionsPerHour;
+    if (ok) all[sandbox] = [...mine, now];
+    fs.writeFileSync(f + ".tmp", JSON.stringify(all), { mode: 0o600 }); fs.renameSync(f + ".tmp", f);
+    return ok;
+  });
 }
 
 // ---------- one request ----------
@@ -277,7 +289,7 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   const exception = !cfg.task ? (cfg.taskNote ? `${NO_TASK} (${cfg.taskNote})` : NO_TASK)
     : plan.on_task !== true ? `unrelated to this sandbox's task: ${plan.on_task === false ? clean1(plan.task_reason || "(no reason given)", 200) : "the Doorman gave no task verdict"}`
     : plan.drift !== false ? `topic drift across this sandbox's recent requests: ${plan.drift === true ? clean1(plan.drift_reason || "(no reason given)", 200) : "the Doorman gave no drift verdict"}` : "";
-  if (exception && exceptionsThisHour(sandbox) >= LIMITS.exceptionsPerHour) {
+  if (exception && !takeException(sandbox)) {
     logEvent({ ev: "refused", stage: "task", ...base, reason: `${exception}; over ${LIMITS.exceptionsPerHour} held exceptions this hour`, searches: sent });
     return { status: "refused", rid, reason: `Not sent: ${exception}. ${LIMITS.exceptionsPerHour} such requests already wait for Angus this hour; ask again later, or stay on the task.` };
   }

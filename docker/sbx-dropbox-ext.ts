@@ -124,6 +124,10 @@ export default function (pi: ExtensionAPI) {
     if (type === "prompt") {
       return { customType: "hyprpi-sbx-prompt", display: true, content: `[hyprpi · ${field(j.from) || "hyprpi"} → you, via the drop-box]\n${quote(clean(j.text))}` };
     }
+    if (type === "task_change") { // J352: Angus's decision on a task change this Doorman drafted (host-origin outcome)
+      const st = j.status === "applied" ? "approved it; the task is changed" : j.status === "denied" ? "denied it; the task is unchanged" : "approved it, but it wasn't applied";
+      return { customType: "hyprpi-sbx-note", display: true, content: `[hyprpi] Angus ${st} (${field(j.id, 40)}): ${quote(clean(String(j.outcome || "")).slice(0, 400))}` };
+    }
     if (type === "decision") {
       return { customType: "hyprpi-sbx-note", display: true, quiet: true, content: `[hyprpi] Angus ${j.decision === "approved" ? "approved" : "denied"} your message ${field(j.id, 40)} to ${(Array.isArray(j.to) ? j.to : []).map((x: unknown) => field(x, 64)).join(", ") || "?"}.` };
     }
