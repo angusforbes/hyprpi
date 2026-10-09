@@ -5,7 +5,7 @@ description: You are inside a sandbox (a separate machine). Use this BEFORE assu
 
 # The sandbox guide (inner guide)
 
-You run in a sandbox: a separate machine. The host's files, tools and processes are not visible, except a few shared folders. Some shares sit at the same paths as on the host (e.g. /home/agf/Work/...), which can make it look like you're on the host: you aren't.
+You run in a sandbox: a separate machine. The host's files, tools and processes are not visible, except a few shared folders. Some shares sit at the same paths as on the host (e.g. the owner's Work folder), which can make it look like you're on the host: you aren't.
 
 Run `sandbox-guide` (overview), or ask about one thing:
 

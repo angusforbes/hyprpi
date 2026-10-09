@@ -23,7 +23,7 @@
 //   research.mjs reader create|rm [--sandbox S]              the reader sandbox (reader-<world>)
 // Config (optional): ~/.config/hyprpi/research.json
 //   { "sandboxes": { "world-g": { "doorman": "doorman-g", "reader": "reader-g", "reports_to": "Thoughts-A",
-//       "key_file": "~/.config/nemoclaw-secrets/nvidia_inference_hub_key", "shape_model": "azure/openai/gpt-6-sol" } } }
+//       "key_file": "~/.config/<your-secrets>/<model-api-key-file>", "shape_model": "azure/openai/gpt-6-sol" } } }
 // State (host only, mode 700): ~/.local/state/hyprpi/research/ (log.jsonl, deliverables/, caps.json, digest/).
 
 import fs from "node:fs";
@@ -49,7 +49,7 @@ export function conf(sandbox) {
   const world = String(sandbox).replace(/^world-/, "");
   return {
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
-    key_file: tilde(c.key_file || "~/.config/nemoclaw-secrets/nvidia_inference_hub_key"), shape_model: c.shape_model || "",
+    key_file: c.key_file ? tilde(c.key_file) : "", shape_model: c.shape_model || "",
   };
 }
 const mkState = () => { fs.mkdirSync(DELIVERABLES(), { recursive: true, mode: 0o700 }); fs.chmodSync(STATE, 0o700); };
@@ -197,6 +197,7 @@ export function doormanCheck(cfg, payload) {
 export function readerRun(cfg, lookingFor, depth, plan = {}) {
   try {
     if (process.env.HYPRPI_RESEARCH_FAKE_READER) return JSON.parse(execFileSync(process.env.HYPRPI_RESEARCH_FAKE_READER, { input: JSON.stringify({ looking_for: lookingFor, depth, searches: plan.searches, brief: plan.brief }), encoding: "utf8" }));
+    if (!cfg.key_file) throw new Error(`no key_file for ${cfg.reader} in ${CONFIG} (the model API key file; there is no default)`);
     const key = fs.readFileSync(cfg.key_file, "utf8").replace(/[\r\n]/g, "");
     const req = { looking_for: lookingFor, depth, searches: plan.searches || [], brief: plan.brief || "", ...(cfg.shape_model ? { shape_model: cfg.shape_model } : {}) };
     return lastJson(sbx(["exec", "-i", cfg.reader, "python3", "-c", fs.readFileSync(path.join(HERE, "reader.py"), "utf8")], key + "\n" + JSON.stringify(req) + "\n", depth === "deep" ? 2400e3 : 900e3));
