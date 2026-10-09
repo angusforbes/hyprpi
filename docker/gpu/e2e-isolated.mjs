@@ -53,6 +53,7 @@ const waitInbox = async (pred, ms = 60000) => { for (let t = 0; t < ms; t += 500
 // 1. refusals before anything is held
 let r = await ask(lease({ time_s: 9999 })); ok(r && !r.ok && /over this host's limit of 300 seconds/.test(r.error), `over-limit time refused: ${r?.error}`);
 r = await ask(lease({ vram_mib: 4000 })); ok(r && !r.ok && /MiB of VRAM/.test(r.error), `over-limit VRAM refused: ${r?.error}`);
+r = await ask(lease({ vram_mib: 10 })); ok(r && !r.ok && /at least 64/.test(r.error), `a tiny VRAM request is refused, not silently raised: ${r?.error}`);
 r = await ask(lease({ script: "link.py", files: [] })); ok(r && !r.ok && /symlink/.test(r.error), `symlinked file refused: ${r?.error}`);
 r = await ask(lease({ files: ["../../etc/passwd"] })); ok(r && !r.ok && /bad file path/.test(r.error), `path outside the workspace refused: ${r?.error}`);
 r = await ask(lease({ files: ["/etc/passwd"] })); ok(r && !r.ok, `absolute path refused: ${r?.error}`);

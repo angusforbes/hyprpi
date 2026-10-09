@@ -47,6 +47,8 @@ export const plain = (v, n = 300) => String(v ?? "").replace(/\r\n?/g, "\n").rep
 export const RUNTIMES = { python: ["python", "-u"], sh: ["sh"] };
 export const DEFAULT_IMAGE = "python:3.12-slim";
 const CDI_DEVICE = "nvidia.com/gpu=0";
+// Containers are labelled with the instance that made them, so an isolated test relay never touches the live relay's workers.
+export const NS = process.env.HYPRPI_GPU_NS || (process.env.HYPRPI_TEST === "1" ? "test-" + crypto.createHash("sha256").update(String(process.env.XDG_STATE_HOME || process.env.HYPRPI_STATE || "")).digest("hex").slice(0, 8) : "live");
 
 const HOME = os.homedir();
 export const cfgDir = () => process.env.HYPRPI_GPU_CONFIG_DIR || path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi", "worlds");
@@ -61,7 +63,7 @@ export function gpuConf(sandbox) {
   const hits = []; let names = [];
   try { names = fs.readdirSync(cfgDir()).filter((f) => f.endsWith(".json")).sort(); } catch (e) { if (e.code !== "ENOENT") return { mode: "off", reason: "worlds folder is unreadable", limits: null }; }
   for (const f of names) {
-    let j; try { j = JSON.parse(fs.readFileSync(path.join(cfgDir(), f), "utf8")); } catch { if (f.slice(0, -5) === sandbox) return { mode: "off", reason: `worlds/${f} is unreadable`, limits: null }; continue; }
+    let j; try { j = JSON.parse(fs.readFileSync(path.join(cfgDir(), f), "utf8")); } catch { return { mode: "off", reason: `worlds/${f} is unreadable, so it can't be ruled out that it names ${sandbox}`, limits: null }; }
     if (j && typeof j === "object" && (typeof j.sandbox === "string" ? j.sandbox : f.slice(0, -5)) === sandbox) hits.push({ f, j });
   }
   if (hits.length > 1) return { mode: "off", reason: `ambiguous: ${hits.map((h) => h.f).join(", ")} all name ${sandbox}`, limits: null };
@@ -153,7 +155,8 @@ export function cardSection(sandbox) {
 
 // --- run one approved lease ------------------------------------------------------------------------------------------------
 // opts: { id, sandbox, dir (the snapshot), script, runtime, seconds, vramMib, outDir, noGpu (tests only) }
-export async function runWorker(opts) {
+export async function runWorker(opts) { const r = await runWorkerInner(opts); if (r?.reason) r.reason = plain(r.reason, 300); return r; }
+async function runWorkerInner(opts) {
   const c = gpuConf(opts.sandbox);
   if (c.mode === "off") return { status: "refused", reason: refusal(opts.sandbox, c) };
   const L = c.limits, id = String(opts.id || "").replace(/[^a-z0-9]/gi, "").slice(0, 24) || crypto.randomBytes(3).toString("hex");
@@ -177,14 +180,14 @@ export async function runWorker(opts) {
   const ins = await run("docker", ["image", "inspect", "--format", "{{.Id}}", image]);
   if (!ins.ok) return { ...res, status: "refused", reason: `image ${image} isn't pulled (a job never pulls: run docker pull ${image} first)` };
   if (opts.imageId && ins.out.trim() !== opts.imageId) return { ...res, status: "refused", reason: `image ${image} changed since the lease was reviewed; ask again` };
-  res.image = image;
+  res.image = image; const imageRef = ins.out.trim(); // create from the checked immutable id, never the tag
   const frac = opts.noGpu ? 0 : Math.max(0.01, Math.min(1, vramMib / (res.freeBefore + 1)));
-  const args = ["create", "--name", cname, "--label", "hyprpi.gpu=1", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+  const args = ["create", "--pull", "never", "--name", cname, "--label", "hyprpi.gpu=1", "--label", `hyprpi.gpu.ns=${NS}`, "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
     "--pids-limit", HARD.pids, "--memory", HARD.memory, "--memory-swap", HARD.memory, "--cpus", HARD.cpus, "--read-only", "--ulimit", `fsize=${HARD.fileSize}`, "--ulimit", "nofile=256", "--log-driver", "json-file", "--log-opt", "max-size=256k", "--log-opt", "max-file=1", "--tmpfs", `/tmp:rw,size=${HARD.tmp},mode=1777`,
     "-v", "/job", "-v", "/out", "-w", "/job",
     "-e", "HOME=/tmp", "-e", "JOB_OUT=/out", "-e", `GPU_VRAM_BUDGET_MIB=${vramMib}`, "-e", "TF_FORCE_GPU_ALLOW_GROWTH=true", "-e", "XLA_PYTHON_CLIENT_PREALLOCATE=false",
     "-e", `XLA_PYTHON_CLIENT_MEM_FRACTION=${frac.toFixed(3)}`, "-e", "PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128", "-e", `PYTORCH_PER_PROCESS_MEMORY_FRACTION=${frac.toFixed(3)}`,
-    ...(opts.noGpu ? [] : ["--device", CDI_DEVICE]), image, "timeout", "-s", "KILL", String(seconds + 2), ...interp, `/job/${script}`]; // the in-container timeout is an independent backstop: it still ends the job if the watcher dies
+    ...(opts.noGpu ? [] : ["--device", CDI_DEVICE]), imageRef, "timeout", "-s", "KILL", String(seconds + 2), ...interp, `/job/${script}`]; // the in-container timeout is an independent backstop: it still ends the job if the watcher dies
   const cleanup = async () => { await run("docker", ["rm", "-f", "-v", cname]); };
   try {
     let r = await run("docker", args); if (!r.ok) return { ...res, status: "refused", reason: `docker create failed: ${r.err.trim().split("\n").pop().slice(0, 200)}` };
@@ -212,7 +215,7 @@ export async function runWorker(opts) {
         const top = await run("docker", ["top", cname, "-eo", "pid"]);
         const pids = new Set(top.out.split("\n").slice(1).map((s) => s.trim()).filter(Boolean));
         const q = await run("nvidia-smi", ["--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"]);
-        if (!q.ok) smiFail++; else smiFail = 0;
+        if (!q.ok || !top.ok || !pids.size) smiFail++; else smiFail = 0; // no way to attribute VRAM to the worker is a failure too, not "zero use"
         if (smiFail >= 4) { await run("docker", ["kill", cname]); state = "vram"; res.reason = "VRAM could not be measured"; break; } // fail closed
         let used = 0, seen = false;
         for (const ln of q.out.split("\n")) { const [p, m] = ln.split(",").map((s) => s.trim()); if (pids.has(p)) { seen = true; used += Number(m) || 0; } }
@@ -251,6 +254,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
 }
 
 // Containers of leases that are still around (a relay that died mid-job): removed. Called when the relay starts and stops.
-export function reconcileSync() {
-  try { const ids = execFileSync("docker", ["ps", "-aq", "--filter", "label=hyprpi.gpu=1"], { encoding: "utf8", timeout: 20000 }).split("\n").filter(Boolean); if (ids.length) execFileSync("docker", ["rm", "-f", "-v", ...ids], { timeout: 60000, stdio: "ignore" }); return ids.length; } catch { return 0; }
+export function reconcileSync() { // -> { n, error } (an error must block new leases until a later call succeeds)
+  try { const ids = execFileSync("docker", ["ps", "-aq", "--filter", "label=hyprpi.gpu=1", "--filter", `label=hyprpi.gpu.ns=${NS}`], { encoding: "utf8", timeout: 20000 }).split("\n").filter(Boolean); if (ids.length) execFileSync("docker", ["rm", "-f", "-v", ...ids], { timeout: 60000, stdio: "ignore" }); return { n: ids.length, error: "" }; }
+  catch (e) { return { n: 0, error: plain(e.message, 200) }; }
 }

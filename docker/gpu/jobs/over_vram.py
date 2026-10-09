@@ -7,7 +7,7 @@ ck(cu.cuInit(0), "cuInit")
 dev = ctypes.c_int(); ck(cu.cuDeviceGet(ctypes.byref(dev), 0), "cuDeviceGet")
 name = ctypes.create_string_buffer(100); cu.cuDeviceGetName(name, 100, dev); print("device:", name.value.decode())
 ctx = ctypes.c_void_p(); ck(cu.cuCtxCreate_v2(ctypes.byref(ctx), 0, dev), "cuCtxCreate")
-n = int(os.environ.get("ALLOC_MIB", "700")) << 20
+n = int(os.environ.get("ALLOC_MIB", "400")) << 20
 p = ctypes.c_uint64(); ck(cu.cuMemAlloc_v2(ctypes.byref(p), ctypes.c_size_t(n)), "cuMemAlloc")
 ck(cu.cuMemsetD8_v2(p, ctypes.c_ubyte(0xA5), ctypes.c_size_t(n)), "cuMemset")
 buf = (ctypes.c_ubyte * 16)(); ck(cu.cuMemcpyDtoH_v2(buf, p, ctypes.c_size_t(16)), "cuMemcpyDtoH")
