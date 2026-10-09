@@ -401,7 +401,7 @@ function reviewKey(raw) {
       logHeld({ room: at, id, stage: "result", ok, result: body });
       if (room !== at) return; // switched worlds meanwhile: it shows when he comes back (recheck #3)
       turns = heldTurns(room); bumpThread(); follow();
-      note = ok ? `✓ ${head}` : `✗ ${head}`; render();
+      note = ""; render(); // J300: the highlighted ✓/✗ turn says it; no second copy in the status line
     };
     setBox("");
     if (!r.ok) { finish(false, `Not decided: ${r.text || "the relay refused"}`, "The message is still waiting: try again, or use the toast."); return true; }
