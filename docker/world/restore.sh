@@ -68,10 +68,12 @@ for W in "${worlds[@]}"; do
     done
   fi
   # 1. stale state from a crash: only when the sandbox's inner daemon is NOT running (else it's a live world)
-  if sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}' && sbx exec "$SB" sh -c 'pgrep -f "^(/usr/bin/)?node .*/bin/hyprpi daemon" >/dev/null' 2>/dev/null; then
+  #    (Lenswatch J322b) "running" = a daemon process (any node path) OR a socket that answers; stale files are
+  #    deleted only inside the sandbox, only when neither holds, and the socket is re-tested right before deleting.
+  if sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}' && sbx exec "$SB" sh -c "pgrep -f '[n]ode .*/bin/hyprpi daemon' >/dev/null || { . $H/docker/world/g-env.sh; timeout 10 hyprpi list >/dev/null 2>&1; }" 2>/dev/null; then
     log "restore $W: already running; only reopening what's missing"
   else
-    if sbx exec "$SB" sh -c 'r=$HOME/.hyprpi-g; rm -f $r/run/daemon.sock $r/run/daemon.lock; find $r/state -maxdepth 2 \( -name "*.tmp" -o -name "*.tmp.*" \) -mmin +1 -delete 2>/dev/null; true' >/dev/null 2>&1; then
+    if sbx exec "$SB" sh -c ". $H/docker/world/g-env.sh 2>/dev/null; pgrep -f '[n]ode .*/bin/hyprpi daemon' >/dev/null && exit 3; [ -S \$HOME/.hyprpi-g/run/daemon.sock ] && timeout 10 hyprpi list >/dev/null 2>&1 && exit 3; exit 0" >/dev/null 2>&1 && sbx exec "$SB" sh -c 'r=$HOME/.hyprpi-g; rm -f $r/run/daemon.sock $r/run/daemon.lock; find $r/state -maxdepth 2 \( -name "*.tmp" -o -name "*.tmp.*" \) -mmin +1 -delete 2>/dev/null; true' >/dev/null 2>&1; then
       log "restore $W: cleared stale daemon socket, lock and temp files"
     else log "restore $W: couldn't clear stale files (sandbox didn't start?); world.sh start will report why"; fi
   fi
