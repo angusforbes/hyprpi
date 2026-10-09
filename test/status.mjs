@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { statusText, statusPrompt, reportGist, unpushedRepos } from "../lib/status.mjs";
+import { statusText, statusPrompt, reportGist, unpushedRepos, unpushedReposAsync } from "../lib/status.mjs";
 
 let n = 0;
 const t = (name, f) => { f(); n++; console.log("ok", name); };
@@ -31,6 +31,10 @@ t("everything: running, recently done, waiting on Angus, housekeeping", () => {
   assert.match(s, /no daemon restart queued/);
   assert.match(s, /unpushed commits: hyprpi 3 \(newest: J2: legend\)/);
 });
+t("review #4: a job reported long ago and still unverified stays in Waiting, not in Recently done", () => {
+  const s = statusText({ ...base, jobs: [{ id: "J9", version: 1, state: "done", agent: "Beta", project: "", goal: "Old report", created: now - 30 * H, updated: now - 7 * H, report: "x" }] });
+  assert.match(s, /1 job reported but not yet verified .*: J9/); assert.match(s, /Jobs finished in the last 6 h:\n- none/);
+});
 t("nothing waiting says so", () => assert.match(statusText({ ...base, decisions: [], held: [], jobs: [] }), /Waiting on Angus:\n- nothing/));
 t("an unknown focus says it shows everything", () => assert.match(statusText({ ...base, focus: { kind: "unknown", raw: "zzz" } }), /"zzz" is no project or live agent in world B, so this is everything/));
 t("an agent's own scope", () => assert.match(statusText({ ...base, self: "Alpha", focus: { kind: "agent", name: "Alpha" }, children: [{ name: "Helper", status: "running", report: "half done" }] }), /Scope: Alpha's own work[\s\S]*Its helper agents:\n- Helper: running · last report: half done/));
@@ -48,6 +52,14 @@ t("unpushedRepos: only repos ahead of their upstream", () => {
   g(A, "push", "-q", "origin", "HEAD"); g(A, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "three");
   g(d, "init", "-q", "noupstream"); fs.mkdirSync(path.join(d, "plain"));
   assert.deepEqual(unpushedRepos(d), [{ repo: "ahead", count: 1, latest: "three" }]);
-  fs.rmSync(d, { recursive: true, force: true });
+  globalThis.__j337dir = d;
 });
+// review #1: the daemon's scan doesn't block (a ping-like timer runs during it) and gives the same answer
+{
+  const d = globalThis.__j337dir; let ticks = 0; const iv = setInterval(() => ticks++, 1);
+  const r = await unpushedReposAsync(d); clearInterval(iv);
+  assert.deepEqual(r, [{ repo: "ahead", count: 1, latest: "three" }]); assert.ok(ticks > 0, "the event loop ran during the scan");
+  assert.deepEqual(await unpushedReposAsync(path.join(d, "nope")), []);
+  fs.rmSync(d, { recursive: true, force: true }); n++; console.log("ok unpushedReposAsync: same answer, event loop free");
+}
 console.log(`all ${n} passed`);
