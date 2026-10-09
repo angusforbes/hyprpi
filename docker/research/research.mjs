@@ -121,16 +121,16 @@ export function chemicalFormula(w) {
 }
 const SCRIPT_MARKS = /[\u2070\u2074-\u207e\u2080-\u208e\u00b2\u00b3\u00b9]/g; // super/subscript DIGITS and signs only (review J354 #1: not ₛₖ, ₕₒₘₑ letters)
 const toDigits = (s) => s.normalize("NFKC"); // ₃ → 3, ² → 2: for the digit checks
-// "strong": a word or formula; "weak": a short acronym, unit or number; null: neither (random-looking)
 const SCIENCE = new Set(("perovskite perovskites methylammonium formamidinium cesium caesium chlorobenzene antisolvent antisolvents passivation " +
   "passivator passivators photovoltaic photovoltaics encapsulant encapsulants encapsulation heterojunction heterostructure heterostructures " +
   "photoluminescence electroluminescence spiro ometad ptaa pedot pss fullerene fullerenes bathocuproine mesoporous perovskite-silicon " +
   "degradation stoichiometry crystallinity hydrophobic hysteresis tandem tandems monolayer monolayers halide halides iodide bromide chloride " +
   "anneal annealing antisolvent toluene anisole dimethylformamide dimethyl sulfoxide").split(" "));
+const CAMEL = new Set("GitHub GitLab JavaScript TypeScript OpenAI iPhone iOS macOS PyPI NumPy SciPy PyTorch TensorFlow LaTeX OMeTAD PEDOT DeepMind YouTube LinkedIn".split(" "));
 // "strong": a word or formula; "weak": a short acronym, unit or number; null: neither (random-looking)
 function pieceKind(p, taskWords) {
   const l = p.toLowerCase();
-  if (/[a-z]/.test(p) && /[A-Z]/.test(p.slice(1)) && !chemicalFormula(p) && !COMMON.has(l)) return null; // (recheck: "LiGhT" casing can carry bits; GitHub is fine)
+  if (/[a-z]/.test(p) && /[A-Z]/.test(p.slice(1)) && !chemicalFormula(p) && !CAMEL.has(p)) return null; // (recheck: "LiGhT", "LiNuX" casing can carry bits; only known spellings like GitHub)
   if (/^[A-Za-z]{1,2}$/.test(p) || /^\d{1,4}$/.test(p) || /^[A-Z]{1,4}\d{0,2}$/.test(p) || /^(eV|meV|nm|cm|mm|mA|mW|mV|kW|Wh|kWh|ppm|ppb|wt|vol|RH|AM)$/.test(p)) return chemicalFormula(p) && p.length > 2 ? "strong" : "weak"; // (review J354 #2: short fragments are never "words")
   if (taskWords.has(l) || COMMON.has(l) || SCIENCE.has(l) || chemicalFormula(p)) return "strong";
   if (/^[a-z]+$/i.test(p) && p.length <= 24 && !rareToken(l)) return "strong"; // a dictionary word
@@ -142,6 +142,7 @@ function encodedLooking(text, taskWords) {
   for (const m of text.matchAll(/[A-Za-z0-9+/=_-]{24,}/g)) {
     const run = m[0];
     if (!/[A-Za-z0-9+/=_]{28,}/.test(run) && !/\d\D*\d\D*\d/.test(run)) continue; // (the old two triggers: 28+ without hyphens, or 24+ with 3 digits)
+    if (/[\/_+=-]{2,}/.test(run.replace(/=+$/, "")) || /^[\/_+=-]/.test(run)) return true; // (recheck: separator runs aren't writing)
     const kinds = run.split(/[\/_+=-]+/).filter(Boolean).map((p) => pieceKind(p, taskWords));
     if (kinds.length && kinds.every(Boolean) && kinds.filter((k) => k === "strong").length >= kinds.filter((k) => k === "weak").length) continue;
     return true;
@@ -159,18 +160,21 @@ export function precheckQuery(q, { task = "" } = {}) {
   if ((s.match(/[\p{L}\p{M}]+/gu) || []).some((w) => /\p{Script=Latin}/u.test(w) && /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]/u.test(w) && !/^[\u00b5\u03bc](m|s|g|l|L|A|V|W|J|F|H|M|Pa|mol|Hz|Ω)$/u.test(w) && !/^\p{Script=Greek}([A-Z][a-z]?|max|min|t)$/u.test(w))) r.push("mixed scripts (look-alike letters)"); // (ΔG, λmax are notation)
   // (recheck J354) a Greek or Cyrillic letter on its own is scientific notation (α-phase, δ, Δ); a WORD of them isn't
   if ((s.match(/[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]{3,}/gu) || []).length) r.push("non-Latin words");
+  // (recheck J354) only Greek is scientific notation: Latin plus Cyrillic, Armenian or Cherokee anywhere is refused as before
+  if (/\p{Script=Latin}/u.test(s) && /[\p{Script=Cyrillic}\p{Script=Armenian}\p{Script=Cherokee}]/u.test(s) && !r.includes("mixed scripts (look-alike letters)")) r.push("mixed scripts (look-alike letters)");
   const n = s.normalize("NFKC"); // (review J354 #1) every detector below sees the normalised text too: ₕₒₘₑ → home
-  if (/(^|[\s"'(=])(~\/|\.{1,2}\/|\/(home|Users|etc|root|var|opt|tmp|mnt|workspace|srv|run)\b)/i.test(n) || /[A-Za-z]:\\/.test(n)) r.push("a file path");
-  if (/\b(sk-[A-Za-z0-9_-]{8,}|sk-or-|nvapi-|ihub_|ghp_|github_pat_|gho_|xox[abprs]-|AKIA[0-9A-Z]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.)/.test(n) || /-----BEGIN/.test(n)) r.push("a key or token");
+  const both = (re) => re.test(s) || re.test(n); // (recheck: and the original, so a subscript next to a key keeps its word boundary)
+  if (both(/(^|[\s"'(=])(~\/|\.{1,2}\/|\/(home|Users|etc|root|var|opt|tmp|mnt|workspace|srv|run)\b)/i) || both(/[A-Za-z]:\\/)) r.push("a file path");
+  if (both(/\b(sk-[A-Za-z0-9_-]{8,}|sk-or-|nvapi-|ihub_|ghp_|github_pat_|gho_|xox[abprs]-|AKIA[0-9A-Z]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.)/) || both(/-----BEGIN/)) r.push("a key or token");
   const noUrl = toDigits(s.replace(/https?:\/\/\S+/g, ""));
   if (encodedLooking(noUrl, new Set(words(task)))) r.push("a long encoded-looking string");
-  if (/\b[0-9a-f]{16,}\b/i.test(n)) r.push("a long hex string"); // (review J354 #3: URLs included again)
-  if (/\d[\d\s.,:-]{14,}\d/.test(n)) r.push("a long run of digits");
-  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(n)) r.push("an email address");
-  if (/\b(\d{1,3}\.){3}\d{1,3}\b/.test(n)) r.push("an IP address");
-  if (/\b[\w-]+\.(nvidia\.com|nvidia\.net|nvidiangn\.net|nvda\.ai|local|internal|lan|corp)\b/i.test(n)) r.push("an internal host name");
-  if (/```|\$\(|`[^`]+`|;\s*(rm|curl|wget)\b|\|\s*(sh|bash)\b/.test(n)) r.push("code or a shell command");
-  if (/https?:\/\/\S+[?#&]\S*=/.test(n)) r.push("a URL with parameters");
+  if (both(/\b[0-9a-f]{16,}\b/i)) r.push("a long hex string"); // (review J354 #3: URLs included again)
+  if (both(/\d[\d\s.,:-]{14,}\d/)) r.push("a long run of digits");
+  if (both(/[\w.+-]+@[\w-]+\.[\w.-]+/)) r.push("an email address");
+  if (both(/\b(\d{1,3}\.){3}\d{1,3}\b/)) r.push("an IP address");
+  if (both(/\b[\w-]+\.(nvidia\.com|nvidia\.net|nvidiangn\.net|nvda\.ai|local|internal|lan|corp)\b/i)) r.push("an internal host name");
+  if (both(/```|\$\(|`[^`]+`|;\s*(rm|curl|wget)\b|\|\s*(sh|bash)\b/)) r.push("code or a shell command");
+  if (both(/https?:\/\/\S+[?#&]\S*=/)) r.push("a URL with parameters");
   return r;
 }
 // J309 (Angus: "the doorman turns the request into searches that it passes to perplexity"): the Doorman's searches must

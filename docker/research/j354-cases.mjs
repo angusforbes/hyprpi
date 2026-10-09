@@ -54,4 +54,9 @@ export const BAD = [
   ["perovskite LiGhT/HuMiDiTy/TeMpErAtUrE/PeRoVsKiTe", "a long encoded-looking string"],
   ["perovskite pеrovskite with a Cyrillic е", "mixed scripts (look-alike letters)"],
   ["perovskite μab/μcd/μef/μgh/μij/μkl", "mixed scripts (look-alike letters)"],
+  ["perovskite =+/=+//+=+/=++///+/=+//+=+=/light", "a long encoded-looking string"],
+  ["perovskite LiNuX/WiNdOwS/AnDrOiD/JaVaScRiPt", "a long encoded-looking string"],
+  ["perovskite ₂sk-abcdefghijklmnop", "a key or token"],
+  ["perovskite build.nvidia.com₂", "an internal host name"],
+  ["perovskite ѕк-abcdefghijklmnop", "mixed scripts (look-alike letters)"],
 ];
