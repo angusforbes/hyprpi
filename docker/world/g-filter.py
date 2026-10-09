@@ -19,7 +19,20 @@ import os, pty, re, sys, select, signal, termios, tty, fcntl, struct, urllib.par
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 WORLD = os.environ.get("G_WORLD", "")
 LINK_MAX = 2048   # bytes of visible text a vetted link may span
-CSI = re.compile(rb"\x1b\[[0-9;:?<=>]*[ -/]*[@-~]")
+CSI = re.compile(rb"\x1b\[[0-9;:]*m")   # only colour/style (SGR) sequences may sit inside a link's text, and not conceal (8 / 28; see sgr_ok).
+# Honest limit: cursor/erase sequences OUTSIDE a link can still edit what is shown next to it; the target is always a shared,
+# visible file, so the worst case is a misleading label on another allowed file.
+def sgr_ok(seq: bytes) -> bool:
+    """False for an SGR containing conceal (8) or its reset (28); extended colours (38/48/58 ; 5;n | 2;r;g;b) are skipped over."""
+    ps = [x for x in re.split(rb"[;:]", seq[2:-1])]
+    k = 0
+    while k < len(ps):
+        v = ps[k] or b"0"
+        if v in (b"38", b"48", b"58"): k += 3 if k + 1 < len(ps) and ps[k + 1] == b"5" else 5; continue
+        if v in (b"8", b"28"): return False
+        k += 1
+    return True
+SAFE_BODY = re.compile(rb"[\x20-\x7e\x80-\xff]*")   # a kept OSC body: printable only (no control characters, no ESC)
 
 
 def vet_link(uri: bytes, world: str):
@@ -51,7 +64,8 @@ class Filter:
         L, self.link = self.link, None
         text = bytes(L["text"])
         plain = CSI.sub(b"", text)
-        good = ok_close and not L["bad"] and b"\x1b" not in plain and b"\n" not in plain and re.fullmatch(re.escape(L["path"]) + r"(:\d+(-\d+)?)?", plain.decode("utf-8", "replace")) is not None
+        good = ok_close and not L["bad"] and all(sgr_ok(m.group()) for m in CSI.finditer(text))
+        good = good and b"\x1b" not in plain and b"\n" not in plain and re.fullmatch(re.escape(L["path"]) + r"(:\d+(-\d+)?)?", plain.decode("utf-8", "replace")) is not None
         if good: out += b"\x1b]8;;" + L["uri"].encode() + b"\x1b\\" + text + b"\x1b]8;;\x1b\\"
         else: out += text
     def feed(self, data: bytes) -> bytes:
@@ -74,11 +88,14 @@ class Filter:
                         if n - i > (1 << 20): i = n  # absurd: drop it
                         break
                     body = b[i + 2:end]
+                    if tl == 0:   # aborted by a stray ESC: dropped whole (malformed), and a link in progress is void
+                        if self.link is not None: self.link["bad"] = True
+                        i = end; continue
                     if k == 0x5d and body.startswith(b"8;"):
                         self._osc8(body, out)
                     elif k == 0x5d and self._keep_osc(body):
                         if self.link is not None: self.link["bad"] = True  # anything but text inside a link: no link
-                        put(b[i:end + tl])
+                        if SAFE_BODY.fullmatch(body): put(b"\x1b]" + body + b"\x1b\\")   # re-emitted canonically (ST), only if plain text
                     i = end + tl
                     continue
                 put(b[i:i + 2]); i += 2  # other ESC x (CSI etc.): the rest follows as plain bytes
@@ -90,7 +107,7 @@ class Filter:
                     if end < 0:
                         if n - i > (1 << 20): i = n
                         break
-                    i = end + tl  # C1-introduced strings are always dropped
+                    i = end + tl if tl else end  # C1-introduced strings are always dropped
                     continue
             # plain bytes up to the next ESC or C2
             j = i + 1
@@ -124,8 +141,9 @@ class Filter:
         while j < len(b):
             if b[j] == ESC:
                 if j + 1 >= len(b): return -1, 0
-                if b[j + 1] == ESC: j += 2; continue          # tmux passthrough doubles ESC
                 if b[j + 1] == 0x5c: return j, 2              # ESC \
+                return j, 0   # J359 (review): an ESC that doesn't start ST aborts the string at once, as a terminal does (never skipped:
+                              # that parser mismatch let a nested OSC 8 through inside a kept title); the sequence is dropped, parsing resumes at the ESC
             elif bel and b[j] == 0x07: return j, 1            # BEL
             elif b[j] == 0xC2 and j + 1 < len(b) and b[j + 1] == 0x9c: return j, 2   # C1 ST
             j += 1
