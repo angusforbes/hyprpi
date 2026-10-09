@@ -106,9 +106,10 @@ window)
   # focus guard: if Angus is looking at that workspace right now a new window could take his focus, so don't (J327 review)
   [[ -z "${DOORMAN_FORCE_WINDOW:-}" && "$(hyprctl -j activeworkspace | jq -r .id)" == "$WS" ]] && { echo "doorman: you are on workspace $WS; not opening a window under your hands (DOORMAN_FORCE_WINDOW=1 to override)"; exit 0; }
   hyprctl -j clients | jq -e --arg c "$CLS" '.[] | select(.class == $c)' >/dev/null && { echo "doorman: window already open"; exit 0; }
-  ARG=""; [[ "$VIS" == developer ]] && ARG=" --write"
+  ARG=""; MODETXT="OBSERVER (read-only)"; [[ "$VIS" == developer ]] && { ARG=" --write"; MODETXT="DEVELOPER MODE"; }
+  LABEL="$(get display)"; LABEL="${LABEL:-$NAME}"
   # on its workspace, silently: Angus's focus never moves
-  hyprctl dispatch "hl.dsp.exec_cmd(\"kitty --class $CLS --title 'Doorman $NAME ($VIS)' $(command -v node) $VIEW view $NAME$ARG\", { workspace = \"$WS silent\" })" >/dev/null
+  hyprctl dispatch "hl.dsp.exec_cmd(\"env DOORMAN_LABEL='$LABEL' kitty --class $CLS --title '$LABEL · $MODETXT' $(command -v node) $VIEW view $NAME$ARG\", { workspace = \"$WS silent\" })" >/dev/null
   echo "opened $CLS on workspace $WS"
   ;;
 stop) systemctl --user stop "$UNIT"; sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true ;;

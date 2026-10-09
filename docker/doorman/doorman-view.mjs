@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { execFileSync } from "node:child_process";
 
 export const MARKER = "[Angus · developer window";
 export const stateDir = (name) => path.join(process.env.HYPRPI_DOORMEN_DIR || path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "doormen"), name);
@@ -60,34 +61,82 @@ function log(name) {
   });
 }
 
+// ---- the window (J327 v2): a pinned header bar (white on world G's colour) that says which mode this is and whether typing
+// is possible right now, the live conversation in a scroll region, and an input line that is locked (🔒) with the reason
+// whenever a line typed now would not be sent.
+const COLORS = path.join(os.homedir(), ".local", "state", "omarchy", "current", "theme", "colors.toml");
+export function worldHex() { // world G = the 7th palette entry, "orange" / color11 (same as the panels' worldBg)
+  try { const t = {}; for (const l of fs.readFileSync(COLORS, "utf8").split("\n")) { const m = l.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?#([0-9A-Fa-f]{6})/); if (m) t[m[1]] = m[2]; } return t.orange || t.color11 || "e08a2e"; } catch { return "e08a2e"; }
+}
+const rgbOf = (h) => { const n = parseInt(h, 16); return `${n >> 16};${(n >> 8) & 255};${n & 255}`; };
+// Why typing is unavailable right now ("" = free). write = developer mode.
+export function lockReason({ write, unitActive, state, lastQuestion }) {
+  if (!write) return "read-only";
+  if (!unitActive) return "Doorman offline";
+  if (state === "working") return String(lastQuestion || "").startsWith(MARKER) ? "answering you; wait for it" : "busy answering G's request";
+  return "";
+}
+export function headerText(label, write, lock) {
+  return `🚪 ${label} · ${write ? "DEVELOPER MODE" : "OBSERVER (read-only)"}${lock ? `  🔒 typing off: ${lock}` : "  ✎ typing on"}`;
+}
+const unitIsActive = (name) => { try { execFileSync("systemctl", ["--user", "is-active", "--quiet", `hyprpi-doorman-${name}`]); return true; } catch { return false; } };
+
 function view(name, write) {
-  const d = stateDir(name), f = path.join(d, "events.jsonl"), fifo = path.join(d, "input.fifo");
-  const out = (s) => process.stdout.write(s.replace(/\n/g, "\r\n") + "\r\n");
-  out(`Doorman ${name} — ${write ? "DEVELOPER: you can type to it (your text is marked as yours; it reaches only the Doorman)" : "OBSERVER: read-only"}`);
+  const d = stateDir(name), f = path.join(d, "events.jsonl"), fifo = path.join(d, "input.fifo"), sf = path.join(d, "status.json");
+  const label = process.env.DOORMAN_LABEL || name, bg = rgbOf(worldHex());
+  const W = () => process.stdout.columns || 80, Hh = () => process.stdout.rows || 24;
+  const P = (s) => process.stdout.write(s);
+  const mode = write ? "DEVELOPER MODE" : "OBSERVER (read-only)";
+  let lock = "", buf = "", notice = "", unitOk = true, status = {};
+  const bar = (txt) => { const w = W(); let t = ` ${txt}`; const vis = [...t].length + [...t].filter((c) => /\p{Extended_Pictographic}/u.test(c)).length; t += " ".repeat(Math.max(0, w - vis)); return `\x1b[48;2;${bg}m\x1b[38;2;255;255;255m\x1b[1m${t}\x1b[0m`; };
+  const paintHeader = () => P(`\x1b7\x1b[1;1H${bar(headerText(label, write, lock))}\x1b8\x1b]2;🚪 ${label} · ${mode}${lock ? " 🔒" : ""}\x07`);
+  const prompt = () => lock ? `🔒 (${lock}) ` + (buf ? `held: ${buf}` : "") : `you> ${buf}`;
+  const paintInput = () => P(`\x1b[${Hh()};1H\x1b[2K${write ? prompt() : "🔒 read-only: ctrl-c to close this window"}${notice ? "" : ""}`);
+  const setup = () => { P(`\x1b[2J\x1b[2;${Hh() - 1}r`); paintHeader(); P(`\x1b[2;1H`); paintInput(); };
+  const out = (s) => { P(`\x1b7\x1b[${Hh() - 1};1H\r\n${s.replace(/\n/g, "\r\n")}\x1b8`); };
+  const refresh = () => {
+    unitOk = unitIsActive(name);
+    try { status = JSON.parse(fs.readFileSync(sf, "utf8")); } catch { status = {}; }
+    const l = lockReason({ write, unitActive: unitOk, state: status.state, lastQuestion: status.question });
+    if (l !== lock) { const was = lock; lock = l; paintHeader(); paintInput(); if (was && !l) out("🔓 typing is on again"); }
+  };
+  setup();
+  out(write ? "Developer mode: what you type is marked as yours and reaches only the Doorman. It can't approve or run anything, and nothing you type goes to world G." : "Observer mode: read-only. Nothing you do here reaches the Doorman.");
   let pos = 0;
   try { pos = Math.max(0, fs.statSync(f).size - 20000); } catch { /* none yet */ }
-  let buf = "";
+  let rbuf = "";
   const pump = () => {
     let fd; try { fd = fs.openSync(f, "r"); } catch { return; }
     try {
       const size = fs.fstatSync(fd).size; if (size < pos) pos = 0;
-      const b = Buffer.alloc(Math.min(size - pos, 1 << 20)); const n = fs.readSync(fd, b, 0, b.length, pos); pos += n; buf += b.toString("utf8", 0, n);
-      let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); try { const r = render(JSON.parse(line)); if (r) out(r); } catch { /* */ } }
+      const b = Buffer.alloc(Math.min(size - pos, 1 << 20)); const n = fs.readSync(fd, b, 0, b.length, pos); pos += n; rbuf += b.toString("utf8", 0, n);
+      let i; while ((i = rbuf.indexOf("\n")) >= 0) { const line = rbuf.slice(0, i); rbuf = rbuf.slice(i + 1); try { const r = render(JSON.parse(line)); if (r) out(r); } catch { /* */ } }
     } finally { fs.closeSync(fd); }
   };
-  setInterval(pump, 500); pump();
-  if (!write) { process.stdin.resume(); if (process.stdin.isTTY) process.stdin.setRawMode(true); process.stdin.on("data", (b) => { if (b[0] === 3 || b[0] === 4) process.exit(0); }); return; }
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: "you> " });
-  rl.prompt();
-  rl.on("line", (l) => {
-    const pl = promptLine(l);
-    if (pl) {
-      try { const fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); fs.writeSync(fd, pl); fs.closeSync(fd); out(`🧑 you: ${clip(plain(l), 300)}`); }
-      catch (e) { out(`(not sent: the Doorman's input isn't open: ${e.code || e.message})`); }
+  refresh(); setInterval(() => { pump(); refresh(); }, 500); pump();
+  process.stdout.on("resize", () => { setup(); });
+  const send = () => {
+    const pl = promptLine(buf);
+    if (!pl) { buf = ""; return; }
+    refresh();
+    if (lock) { out(`🔒 not sent (${lock}); your line is held, press Enter again when typing is on`); return; }
+    try { const fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); fs.writeSync(fd, pl); fs.closeSync(fd); out(`🧑 you: ${clip(plain(buf), 300)}`); buf = ""; }
+    catch (e) { out(`🔒 not sent: the Doorman's input isn't open (${e.code || e.message}); line held`); }
+  };
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdin.setEncoding("utf8"); process.stdin.resume();
+  process.stdin.on("data", (chunk) => {
+    for (let i = 0; i < chunk.length; i++) {
+      const c = chunk[i];
+      if (c === "\x03" || c === "\x04") { P("\x1b[r\x1b[2J\x1b[H"); process.exit(0); }
+      if (!write) continue;
+      if (c === "\x1b") { while (i + 1 < chunk.length && !/[A-Za-z~]/.test(chunk[i + 1])) i++; i++; continue; } // arrow keys etc: ignored
+      if (c === "\r" || c === "\n") send();
+      else if (c === "\x7f" || c === "\b") buf = [...buf].slice(0, -1).join("");
+      else if (c >= " ") buf += c;
     }
-    rl.prompt();
+    paintInput();
   });
-  rl.on("close", () => process.exit(0));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
