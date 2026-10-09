@@ -295,6 +295,13 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({ for: Type.String({ minLength: 1, maxLength: 120 }), why: Type.String({ minLength: 1, maxLength: 1500 }), tried: Type.Optional(Type.String({ maxLength: 1500 })), action: Type.String({ minLength: 1, maxLength: 1500 }) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => out(await request({ op: "draft", for: p.for, why: p.why, tried: p.tried || "", action: p.action })),
   });
+  // J352: a research task change (the host-set "task" that research is bound to): held for Angus; only his approval writes it.
+  if (process.env.HYPRPI_DOORMAN === "1") pi.registerTool({
+    name: "hyprpi_task_change", label: "Draft a research task change for Angus",
+    description: "Draft a change to your sandbox's research task (the host card's Web research section shows the current one) when the agents' work has really moved on, or no task is set. One plain sentence, at most 300 characters, and why. It waits for Angus's approval; you can't set the task yourself. Never draft one just to get an off-task search through.",
+    parameters: Type.Object({ task: Type.String({ minLength: 1, maxLength: 300 }), why: Type.String({ minLength: 1, maxLength: 1500 }) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => out(await request({ op: "task_change", task: p.task, why: p.why })),
+  });
   // J328: GPU lease (DEVELOPER MODE, not an approved route for work data). The relay refuses it when the sandbox's gpu setting is
   // off, checks the limits, snapshots the files from the sandbox's workspace and holds the lease for Angus.
   if (process.env.HYPRPI_DOORMAN === "1") pi.registerTool({

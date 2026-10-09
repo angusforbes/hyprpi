@@ -32,10 +32,15 @@ export function modeOf(w) {
 // The one resolver for a sandbox's mode (review J325 #1): every worlds/*.json naming the sandbox is read. Exactly one
 // → its mode. None → the default. More than one (a stale copy, a backup) → ambiguous: fail closed to doorman-strict,
 // never to whichever file sorts first.
-export function modeForSandbox(cfgDir, sandbox) {
+// Every worlds/*.json naming the sandbox, as { f, w } (J352: shared with the task, docker/research/task.mjs).
+export function worldsFor(cfgDir, sandbox) {
   const hits = [];
   let names = []; try { names = fs.readdirSync(path.join(cfgDir, "worlds")).filter((f) => f.endsWith(".json")).sort(); } catch { /* no folder */ }
   for (const f of names) { let w; try { w = JSON.parse(fs.readFileSync(path.join(cfgDir, "worlds", f), "utf8")); } catch { continue; } if (w && typeof w === "object" && (typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox) hits.push({ f, w }); }
+  return hits;
+}
+export function modeForSandbox(cfgDir, sandbox) {
+  const hits = worldsFor(cfgDir, sandbox);
   if (hits.length > 1) return { mode: "doorman-strict", note: `ambiguous: ${hits.map((h) => h.f).join(", ")} all name ${sandbox}; using doorman-strict until only one does`, file: "" };
   if (!hits.length) return { mode: DEFAULT_MODE, note: "", file: "" };
   return { ...modeOf(hits[0].w), file: hits[0].f };

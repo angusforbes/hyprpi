@@ -18,7 +18,12 @@ if r["mode"]=="plan":
   lf=r["looking_for"]; c="secretword" in lf.lower()
   if "copyme" in lf: qs=[lf]
   else: qs=["status of IPU6 camera support in recent Linux releases"]
-  print(json.dumps({"ok":not c,"refuse":c,"reason":"fake: contains an inside code word" if c else "fake: public question","searches":qs,"brief":"Survey current IPU6 camera support in Linux" if r.get("depth")=="deep" else "","public_terms":["IPU6"]}))
+  v={"ok":not c,"refuse":c,"reason":"fake: contains an inside code word" if c else "fake: public question","searches":qs,"brief":"Survey current IPU6 camera support in Linux" if r.get("depth")=="deep" else "","public_terms":["IPU6"]}
+  if r.get("task"):
+    open(${JSON.stringify(path.join(T, "doorman-plans"))},"a").write(json.dumps({"task":r["task"],"recent":r.get("recent")})+"\\n")
+    v.update({"on_task":"offtask" not in lf,"task_reason":"fake: not about the task" if "offtask" in lf else "fake: on task","drift":"drift" in lf,"drift_reason":"fake: jumps" if "drift" in lf else "fake: steady"})
+    if "noverdict" in lf: v.pop("on_task")
+  print(json.dumps(v))
 else:
   bad="ignore previous" in r["deliverable"].lower()
   print(json.dumps({"ok":not bad,"injection":bad,"not_what_asked":False,"odd":False,"reason":"fake: instructions aimed at an AI" if bad else "fake: fine"}))
@@ -39,6 +44,10 @@ else:
 process.env.HYPRPI_RESEARCH_FAKE_DOORMAN = fd;
 process.env.HYPRPI_RESEARCH_FAKE_READER = fr;
 
+// J352: research is bound to a host-set task; the sandboxes these tests use get one (no task → every search is held)
+const TASK = "IPU6 webcam support on Linux";
+fs.mkdirSync(path.join(T, "config", "hyprpi", "worlds"), { recursive: true });
+for (const w of ["world-d", "world-g", "world-k", "world-p", "world-s"]) fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", `${w}.json`), JSON.stringify({ sandbox: w, task: TASK }));
 const R = await import("./research.mjs");
 let n = 0; const t = (name, fn) => { fn(); n++; console.log("ok", n, name); };
 
@@ -59,7 +68,11 @@ t("paraphrase check: a copied run of only public names and filler is fine", () =
 t("paraphrase check: an undeclared unusual word copied from the request is refused", () => assert.match(R.planCheck("IPU6 support for zxqvplorb project", { searches: ["IPU6 zxqvplorb"], public_terms: ["IPU6"] }).join(), /unusual words.*zxqvplorb/));
 t("paraphrase check: a copied number-like token is refused even if declared", () => assert.match(R.planCheck("IPU6 with 7731-3344 buffers", { searches: ["IPU6 7731-3344"], public_terms: ["IPU6", "7731-3344"] }).join(), /number-like|encoded|unusual/));
 t("paraphrase check: a number from the request is refused however it's written (RFC7731 → RFC 7731)", () => assert.match(R.planCheck("What is RFC7731 about?", { searches: ["RFC 7731 summary"], public_terms: ["RFC7731"] }).join(), /number from the request \(7731\)/));
-t("paraphrase check: a year is fine", () => assert.deepEqual(R.planCheck("IPU6 support news from 2025", { searches: ["IPU6 Linux news 2025"], public_terms: ["IPU6"] }), []));
+t("J352: a year from the request is refused too (no year exemption)", () => assert.match(R.planCheck("IPU6 support news from 2025", { searches: ["IPU6 Linux news 2025"], public_terms: ["IPU6"] }).join(), /number from the request \(2025\)/));
+t("J352: a number the host-set task names is fine", () => assert.deepEqual(R.planCheck("IPU6 support news from 2025", { searches: ["IPU6 Linux news 2025"], public_terms: ["IPU6"] }, { task: "IPU6 on Linux in 2025" }), []));
+for (const [req, q, n] of [["What is RFC five thousand three hundred twenty-two about?", "RFC 5322 summary", "5322"], ["space events in MCMLVII", "space milestones 1957", "1957"],
+  ["the number seventeen twenty-nine", "1729 taxicab", "1729"], ["date format eighty-six oh one", "ISO 8601 dates", "8601"], ["one seven two nine", "the number 1729", "1729"], ["year 1957 events", "nineteen fifty-seven in space", "1957"]])
+  t(`J352: numbers however written: "${req}" → "${q}" refused`, () => assert.match(R.planCheck(req, { searches: [q], public_terms: [] }).join(), new RegExp(`number from the request \\(${n}`)));
 t("paraphrase check: more than 3 copied unusual words are refused", () => assert.match(R.planCheck("ipu6 libcamera pipewire wireplumber gstreamer", { searches: ["ipu6 libcamera pipewire wireplumber gstreamer bugs"], public_terms: ["ipu6", "libcamera", "pipewire", "wireplumber", "gstreamer"] }).join(), /more than 3/));
 t("paraphrase check: a search with a path or key is refused", () => assert.match(R.planCheck("x", { searches: ["IPU6 /home/agent/notes"], public_terms: [] }).join(), /file path/));
 t("a verbatim plan from the Doorman is refused by the host check", () => { const r = R.ask({ sandbox: "world-p", lookingFor: "copyme the frobnicator settings for IPU6 cams" }); assert.equal(r.status, "refused"); assert.match(r.reason, /paraphrase/); });
@@ -88,10 +101,9 @@ t("digest sums up the hour", () => { const d = R.digest(); assert.ok(d.count >= 
 // ---- J314 strict mode ----
 const calls = () => { try { return fs.readFileSync(path.join(T, "reader-calls"), "utf8").trim().split("\n").filter(Boolean).length; } catch { return 0; } };
 t("strict mode off by default: no worlds file → the flow runs straight through", () => { assert.equal(R.conf("world-s").strict, false); const n = calls(); assert.equal(R.ask({ sandbox: "world-s", lookingFor: "IPU6 strict off" }).status, "ready"); assert.equal(calls(), n + 1); });
-fs.mkdirSync(path.join(T, "config", "hyprpi", "worlds"), { recursive: true });
-fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "world-x.json"), JSON.stringify({ sandbox: "world-x", research: { strict: false } }));
+fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "world-x.json"), JSON.stringify({ sandbox: "world-x", task: TASK, research: { strict: false } }));
 t("strict: false in the worlds file → unchanged", () => { assert.equal(R.conf("world-x").strict, false); assert.equal(R.ask({ sandbox: "world-x", lookingFor: "IPU6 strict false" }).status, "ready"); });
-fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "world-x.json"), JSON.stringify({ sandbox: "world-x", research: { strict: true } }));
+fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "world-x.json"), JSON.stringify({ sandbox: "world-x", task: TASK, research: { strict: true } }));
 let planned;
 t("strict on: the searches are held, nothing is sent", () => {
   const n = calls(); planned = R.ask({ sandbox: "world-x", from: "Alpha", lookingFor: "IPU6 strict on" });
@@ -127,7 +139,7 @@ t("mode: open is never reached without the exact setting", () => {
 });
 t("mode: the old strict flag migrates to doorman-strict with a deprecation note", () => { const r = M.modeOf({ research: { strict: true } }); assert.equal(r.mode, "doorman-strict"); assert.match(r.note, /deprecated/); });
 t("mode: an explicit doorman.mode wins over the old flag", () => assert.equal(M.modeOf({ doorman: { mode: "doorman-safe" }, research: { strict: true } }).mode, "doorman-safe"));
-const W = (o) => fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "world-m.json"), JSON.stringify({ sandbox: "world-m", ...o }));
+const W = (o) => fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "world-m.json"), JSON.stringify({ sandbox: "world-m", task: TASK, ...o }));
 t("doorman-safe: ready, held for review, header says the mode", () => { W({}); const r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 safe mode" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "doorman-safe"); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: doorman-safe$/m); });
 t("doorman-strict: planned first, header says the mode", () => { W({ doorman: { mode: "doorman-strict" } }); const n = calls(), r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 strict mode" }); assert.equal(r.status, "planned"); assert.equal(calls(), n); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: doorman-strict$/m); });
 t("doorman-open: runs straight through, marked open and not human-reviewed", () => { W({ doorman: { mode: "doorman-open" } }); const r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 open mode" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "doorman-open"); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: doorman-open \(no human review/m); });
@@ -145,6 +157,29 @@ t("review #3: an open-mode result the relay didn't deliver unreviewed still coun
   assert.match(R.digest().text, new RegExp(`✓ "IPU6 open then held"`));
   R.logEvent({ ev: "delivered-open", rid: r.rid, sandbox: "world-m", mode: "doorman-open", looking_for: "IPU6 open then held", words: 1, sources: 1 });
   const d = R.digest().text; assert.match(d, /⚠ "IPU6 open then held".*WITHOUT human review/); assert.doesNotMatch(d, /✓ "IPU6 open then held"/);
+});
+// ---- J352 task-bound research ----
+const TK = await import("./task.mjs");
+const WF = (name, o) => fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", `${name}.json`), JSON.stringify({ sandbox: name, ...o }));
+WF("world-t", { task: TASK, doorman: { mode: "doorman-safe" }, extra: 1 });
+t("task: on-task request in doorman-safe runs straight through, with the task in the deliverable", () => { const n = calls(), r = R.ask({ sandbox: "world-t", lookingFor: "IPU6 on Fedora" }); assert.equal(r.status, "ready"); assert.equal(calls(), n + 1); assert.match(fs.readFileSync(r.file, "utf8"), /^Task: IPU6 webcam support on Linux$/m); });
+t("task: the Doorman gets the task and the sandbox's recent requests (oldest first)", () => { const l = fs.readFileSync(path.join(T, "doorman-plans"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).at(-1); assert.equal(l.task, TASK); assert.ok(Array.isArray(l.recent)); R.ask({ sandbox: "world-t", lookingFor: "IPU6 second" }); const m = fs.readFileSync(path.join(T, "doorman-plans"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).at(-1); assert.equal(m.recent.at(-1), "IPU6 on Fedora"); });
+t("task: off-task in doorman-safe is HELD as an exception (nothing sent), with the task and recent requests in the plan", () => { const n = calls(), r = R.ask({ sandbox: "world-t", lookingFor: "offtask why do zebras have stripes" }); assert.equal(r.status, "planned"); assert.equal(calls(), n); assert.match(r.exception, /unrelated to this sandbox's task: fake: not about the task/); assert.equal(r.task, TASK); const md = fs.readFileSync(r.file, "utf8"); assert.match(md, /^Task: IPU6 webcam support on Linux$/m); assert.match(md, /^Held as an exception: unrelated/m); assert.match(md, /recent requests \(oldest first\):\n\n- IPU6 on Fedora/); });
+t("task: drift is held as an exception", () => { const r = R.ask({ sandbox: "world-t", lookingFor: "IPU6 drift" }); assert.equal(r.status, "planned"); assert.match(r.exception, /topic drift/); });
+t("task: a missing task verdict counts as off-task (fail closed)", () => { const r = R.ask({ sandbox: "world-t", lookingFor: "IPU6 noverdict" }); assert.equal(r.status, "planned"); assert.match(r.exception, /no task verdict/); });
+t("task: beyond 3 exceptions an hour, further off-task requests are refused outright", () => { const n = calls(), r = R.ask({ sandbox: "world-t", lookingFor: "offtask the fourth one" }); assert.equal(r.status, "refused"); assert.match(r.reason, /3 such requests already wait/); assert.equal(calls(), n); assert.equal(R.ask({ sandbox: "world-t", lookingFor: "IPU6 still on task" }).status, "ready"); });
+WF("world-n", { doorman: { mode: "doorman-safe" } });
+t("task: no task set → every request is held (fail closed), saying so", () => { const r = R.ask({ sandbox: "world-n", lookingFor: "IPU6 no task" }); assert.equal(r.status, "planned"); assert.match(r.exception, /no task is set/); });
+WF("world-o", { task: TASK, doorman: { mode: "doorman-open" } });
+t("task: off-task in doorman-open is held too (never delivered unreviewed)", () => { const r = R.ask({ sandbox: "world-o", lookingFor: "offtask open mode" }); assert.equal(r.status, "planned"); });
+t("task: two worlds files naming one sandbox → no task, held, with the ambiguity named", () => { WF("zz-copy", { sandbox: "world-t", task: "anything at all" }); const c = R.conf("world-t"); assert.equal(c.task, ""); assert.match(c.taskNote, /ambiguous/); fs.unlinkSync(path.join(T, "config", "hyprpi", "worlds", "zz-copy.json")); });
+t("task: a non-string or control-character task is cleaned or ignored", () => { assert.equal(TK.taskOf({ task: 7 }), ""); assert.equal(TK.taskOf({ task: "a\u202eb\nc" }), "a b c"); assert.equal(TK.taskOf({ task: "x".repeat(400) }).length, 300); });
+t("task: setTask writes only the task, atomically, keeping the other keys; refuses ambiguity and length", () => {
+  const cfg = path.join(T, "config", "hyprpi"), r = TK.setTask(cfg, "world-t", "Perovskite solar cells");
+  assert.equal(r.before, TASK); const w = JSON.parse(fs.readFileSync(path.join(cfg, "worlds", "world-t.json"), "utf8")); assert.equal(w.task, "Perovskite solar cells"); assert.equal(w.extra, 1); assert.deepEqual(w.doorman, { mode: "doorman-safe" });
+  assert.throws(() => TK.setTask(cfg, "world-t", "x".repeat(301)), /300/); assert.throws(() => TK.setTask(cfg, "world-nope", "x"), /no worlds file/);
+  WF("zz-copy", { sandbox: "world-t" }); assert.throws(() => TK.setTask(cfg, "world-t", "y"), /2 worlds files/); fs.unlinkSync(path.join(cfg, "worlds", "zz-copy.json"));
+  TK.setTask(cfg, "world-t", ""); assert.equal(JSON.parse(fs.readFileSync(path.join(cfg, "worlds", "world-t.json"), "utf8")).task, undefined);
 });
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });

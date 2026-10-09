@@ -21,6 +21,7 @@
 //   research.mjs ask --sandbox S [--from NAME] [--depth quick|deep] [--why TEXT] LOOKING_FOR   → one JSON line
 //   research.mjs run --rid R | drop --rid R                  strict mode (J314): run / drop a plan Angus decided
 //   research.mjs mode [--sandbox S]                           the sandbox's Doorman mode (J325) and what it means
+//   research.mjs task [--sandbox S] [--set TEXT | --clear]    the sandbox's task (J352; Angus sets it, never the sandbox)
 //   research.mjs digest [--since 1h] [--send] [--json]       the hourly digest (--send: to the reporting Thoughts)
 //   research.mjs reader create|rm [--sandbox S]              the reader sandbox (reader-<world>)
 // Config (optional): ~/.config/hyprpi/research.json
@@ -35,6 +36,8 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { modeForSandbox, MODE_TEXT } from "./mode.mjs"; // J325: doorman-strict / doorman-safe (default) / doorman-open
+import { taskForSandbox, setTask, NO_TASK } from "./task.mjs"; // J352: task-bound research
+import { numberLeaks } from "./numbers.mjs"; // J352: numbers however they are written
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -45,7 +48,7 @@ export const DELIVERABLES = () => path.join(STATE, "deliverables");
 const PLANS = () => path.join(STATE, "plans"); // J314: strict-mode plans waiting for Angus (host-only)
 const SBX = process.env.HYPRPI_SBX || "sbx";
 
-export const LIMITS = { requestChars: 1000, requestLines: 12, whyChars: 400, quickPerHour: 10, deepPerHour: 3, deliverableChars: 60000, sources: 40 };
+export const LIMITS = { requestChars: 1000, requestLines: 12, whyChars: 400, quickPerHour: 10, deepPerHour: 3, exceptionsPerHour: 3, deliverableChars: 60000, sources: 40 };
 
 const tilde = (p) => String(p || "").replace(/^~(?=\/|$)/, HOME);
 export function conf(sandbox) {
@@ -54,7 +57,8 @@ export function conf(sandbox) {
   // J314 (Angus "2a"): strict mode, off by default: ~/.config/hyprpi/worlds/<name>.json "research": { "strict": true }
   // J325: the Doorman mode, per sandbox in ~/.config/hyprpi/worlds/<name>.json (docker/research/mode.mjs)
   const { mode, note: modeNote } = modeForSandbox(path.dirname(CONFIG), String(sandbox));
-  return { mode, modeNote, strict: mode === "doorman-strict",
+  const { task, note: taskNote } = taskForSandbox(path.dirname(CONFIG), String(sandbox)); // J352
+  return { mode, modeNote, strict: mode === "doorman-strict", task, taskNote,
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
     key_file: c.key_file ? tilde(c.key_file) : "", shape_model: c.shape_model || "",
   };
@@ -139,7 +143,7 @@ export function rareToken(w) {
   const stem = [w, w.replace(/(ies)$/, "y"), w.replace(/(es|s|ed|ing|ly|er)$/, "")];
   return !stem.some((x) => d.has(x));
 }
-export function planCheck(request, plan, { strict = false } = {}) {
+export function planCheck(request, plan, { strict = false, task = "" } = {}) {
   const r = [], texts = [...(plan?.searches || []), ...(plan?.brief ? [plan.brief] : [])].map(String);
   if (!texts.length) return ["the Doorman wrote no searches"];
   const req = words(request), grams = new Set();
@@ -160,10 +164,11 @@ export function planCheck(request, plan, { strict = false } = {}) {
     }
     for (const x of w) if (reqRare.has(x)) copied.add(x);
   }
-  // (red team 4: "RFC7731" came back as "RFC 7731") any 3+ digit run from the request, however it is split or joined,
-  // is refused in a search unless it's a year
-  const reqDigits = (String(request).match(/\d{3,}/g) || []).filter((d) => !/^(19|20)\d\d$/.test(d));
-  for (const t of texts) for (const d of String(t).match(/\d{3,}/g) || []) if (!/^(19|20)\d\d$/.test(d) && reqDigits.some((x) => x.includes(d) || d.includes(x))) { r.push(`a search copies a number from the request (${d})`); break; }
+  // (red team 4: "RFC7731" came back as "RFC 7731"; J349: "five thousand three hundred twenty-two" came back as "RFC 5322",
+  // MCMLVII as 1957, and years were exempt) J352: any number of 3+ digits in the request, in digits, words or Roman
+  // numerals, years included, is refused in a search in any written form, unless the host-set task itself names it.
+  const nl = numberLeaks(request, texts, { allow: task });
+  if (nl.length) r.push(`a search copies a number from the request (${nl.slice(0, 3).join(", ")})`);
   const undeclared = [...copied].filter((x) => !declared.has(x));
   if (undeclared.length) r.push(`a search copies unusual words from the request (${undeclared.slice(0, 5).join(", ")})`);
   if (copied.size > 3) r.push(`a search copies more than 3 unusual words from the request`);
@@ -224,6 +229,23 @@ function readerSandbox(cmd, sandbox) {
   else throw new Error("reader create|rm");
 }
 
+// J352: the sandbox's recent requests (last 24 h, newest last), for the Doorman's drift check. Sandbox text: data only.
+export function recentRequests(sandbox, n = 6) {
+  let lines = []; try { lines = fs.readFileSync(LOG(), "utf8").trim().split("\n").slice(-2000); } catch { return []; }
+  const since = Date.now() - 24 * 3600e3, seen = new Set(), out = [];
+  for (const l of lines.reverse()) {
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    if (e.sandbox !== sandbox || !e.looking_for || !e.rid || seen.has(e.rid) || !(Date.parse(e.ts) >= since)) continue;
+    seen.add(e.rid); out.push(String(e.looking_for).replace(/\s+/g, " ").slice(0, 200));
+    if (out.length >= n) break;
+  }
+  return out.reverse();
+}
+function exceptionsThisHour(sandbox) {
+  let n = 0; try { for (const l of fs.readFileSync(LOG(), "utf8").trim().split("\n").slice(-2000)) { try { const e = JSON.parse(l); if (e.sandbox === sandbox && e.ev === "planned" && e.exception && Date.parse(e.ts) > Date.now() - 3600e3) n++; } catch { /* */ } } } catch { /* none */ }
+  return n;
+}
+
 // ---------- one request ----------
 // Returns { status: "ready", rid, file, words, sources, flags } | { status: "refused"|"error", reason }.
 // "ready" content is NEVER returned to the sandbox: the relay holds it for Angus and delivers it only on approval.
@@ -238,24 +260,34 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   const over = takeCap(sandbox, depth);
   if (over) { logEvent({ ev: "refused", stage: "cap", ...base, reason: `over ${over} ${depth} requests this hour` }); return { status: "refused", rid, reason: `The limit of ${over} ${depth} research requests an hour is used up.` }; }
   // The Doorman writes the searches in its own words (or refuses); it sees only the request, never "why" (red team J309).
-  const plan = doormanCheck(cfg, { mode: "plan", looking_for: q, depth });
+  const recent = recentRequests(sandbox); // (before this request is logged)
+  const plan = doormanCheck(cfg, { mode: "plan", looking_for: q, depth, ...(cfg.task ? { task: cfg.task, recent } : {}) });
   if (!("refuse" in plan)) { logEvent({ ev: "error", stage: "doorman", ...base, reason: plan.reason }); return { status: "error", rid, reason: `Not sent: ${plan.reason}` }; }
   if (plan.refuse) { logEvent({ ev: "refused", stage: "doorman", ...base, reason: plan.reason }); return { status: "refused", rid, reason: `The Doorman refused it: ${plan.reason}` }; }
-  let pc = planCheck(q, plan, { strict: cfg.strict });
+  let pc = planCheck(q, plan, { strict: cfg.strict, task: cfg.task });
   if (pc.length) { // one retry with the host's complaint (only the check's own words go back, never sandbox text)
-    const p2 = doormanCheck(cfg, { mode: "plan", looking_for: q, depth, feedback: pc.join("; ") });
-    if ("refuse" in p2 && !p2.refuse) { const pc2 = planCheck(q, p2, { strict: cfg.strict }); if (!pc2.length) { Object.assign(plan, p2); pc = []; } else pc = pc2; }
+    const p2 = doormanCheck(cfg, { mode: "plan", looking_for: q, depth, feedback: pc.join("; "), ...(cfg.task ? { task: cfg.task, recent } : {}) });
+    if ("refuse" in p2 && !p2.refuse) { const pc2 = planCheck(q, p2, { strict: cfg.strict, task: cfg.task }); if (!pc2.length) { Object.assign(plan, p2); pc = []; } else pc = pc2; }
     else if (p2.refuse) { logEvent({ ev: "refused", stage: "doorman", ...base, reason: p2.reason }); return { status: "refused", rid, reason: `The Doorman refused it: ${p2.reason}` }; }
   }
   if (pc.length) { logEvent({ ev: "refused", stage: "paraphrase", ...base, reason: pc.join("; "), searches: plan.searches, brief: plan.brief }); return { status: "refused", rid, reason: `The Doorman's searches didn't pass the paraphrase check (${pc.join("; ")}); try asking in plainer words.` }; }
   const sent = depth === "deep" ? [plan.brief] : plan.searches;
-  if (cfg.strict) { // J314: nothing goes out until Angus approves these exact searches (research.mjs run --rid)
+  // J352 task-bound research: off-task, drifting, or no task set → held for Angus as an exception, in EVERY mode (the
+  // code decides from the Doorman's verdict; a missing verdict counts as off-task). Beyond a few an hour: refused.
+  const exception = !cfg.task ? (cfg.taskNote ? `${NO_TASK} (${cfg.taskNote})` : NO_TASK)
+    : plan.on_task !== true ? `unrelated to this sandbox's task: ${plan.on_task === false ? clean1(plan.task_reason || "(no reason given)", 200) : "the Doorman gave no task verdict"}`
+    : plan.drift !== false ? `topic drift across this sandbox's recent requests: ${plan.drift === true ? clean1(plan.drift_reason || "(no reason given)", 200) : "the Doorman gave no drift verdict"}` : "";
+  if (exception && exceptionsThisHour(sandbox) >= LIMITS.exceptionsPerHour) {
+    logEvent({ ev: "refused", stage: "task", ...base, reason: `${exception}; over ${LIMITS.exceptionsPerHour} held exceptions this hour`, searches: sent });
+    return { status: "refused", rid, reason: `Not sent: ${exception}. ${LIMITS.exceptionsPerHour} such requests already wait for Angus this hour; ask again later, or stay on the task.` };
+  }
+  if (cfg.strict || exception) { // J314: nothing goes out until Angus approves these exact searches (research.mjs run --rid)
     mkState(); fs.mkdirSync(PLANS(), { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(PLANS(), `${rid}.json`), JSON.stringify({ created: Date.now(), base, q, depth, plan: { searches: plan.searches || [], brief: plan.brief || "" } }), { mode: 0o600 });
     const file = path.join(DELIVERABLES(), `${rid}.plan.md`);
-    fs.writeFileSync(file, `# Searches planned for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${cfg.modeNote ? ` (${cfg.modeNote})` : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches to send (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\nNothing has been sent yet. Approve to run exactly these; deny and nothing goes out.\n`, { mode: 0o600 });
-    logEvent({ ev: "planned", ...base, searches: sent });
-    return { status: "planned", rid, file, searches: sent, depth, looking_for: q, from: base.from };
+    fs.writeFileSync(file, `# Searches planned for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${cfg.modeNote ? ` (${cfg.modeNote})` : ""}\n\nTask: ${cfg.task || "(none set)"}\n${exception ? `\nHeld as an exception: ${exception}. Approve only if this jump makes sense for the task.\n` : ""}${recent.length ? `\nThis sandbox's recent requests (oldest first):\n\n${recent.map((x) => `- ${clean1(x, 200)}`).join("\n")}\n` : ""}\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches to send (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\nNothing has been sent yet. Approve to run exactly these; deny and nothing goes out.\n`, { mode: 0o600 });
+    logEvent({ ev: "planned", ...base, searches: sent, ...(exception ? { exception } : {}) });
+    return { status: "planned", rid, file, searches: sent, depth, looking_for: q, from: base.from, ...(exception ? { exception, task: cfg.task } : {}) };
   }
   return research({ cfg, base, q, depth, plan, sent });
 }
@@ -291,7 +323,7 @@ function research({ cfg, base, q, depth, plan, sent }) {
   const file = path.join(DELIVERABLES(), `${rid}.md`), words = res.deliverable.split(/\s+/).filter(Boolean).length;
   // Angus (J309): the searches that actually went to Perplexity are part of what he reviews.
   const open = cfg.mode === "doorman-open";
-  const md = `# Research for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${open ? " (no human review: external web data, vetted by the Doorman only)" : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches sent (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\n## Deliverable\n\n${res.deliverable}\n\n## Sources\n\n${res.sources.map((u) => `- ${u}`).join("\n") || "(none listed)"}\n`;
+  const md = `# Research for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${open ? " (no human review: external web data, vetted by the Doorman only)" : ""}\n\nTask: ${cfg.task || "(none set)"}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches sent (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\n## Deliverable\n\n${res.deliverable}\n\n## Sources\n\n${res.sources.map((u) => `- ${u}`).join("\n") || "(none listed)"}\n`;
   fs.writeFileSync(file, md, { mode: 0o600 });
   logEvent({ ev: "ready", ...base, mode: cfg.mode, words, sources: res.sources.length, flags, models: raw.models, sha: sha(md) });
   return { status: "ready", mode: cfg.mode, rid, file, words, sources: res.sources.length, flags, models: raw.models, searches: sent, depth, looking_for: q, from: base.from };
@@ -326,6 +358,10 @@ async function main(argv) {
     if (flags.plan) { const p = doormanCheck(conf(flags.sandbox), { mode: "plan", looking_for: rest.join(" "), depth: flags.depth }); console.log(JSON.stringify({ plan: p, check: planCheck(rest.join(" "), p) })); return; }
     const lookingFor = flags.stdin ? fs.readFileSync(0, "utf8") : rest.join(" ");
     console.log(JSON.stringify(ask({ sandbox: flags.sandbox, from: flags.from, why: flags.why, depth: flags.depth, lookingFor })));
+  } else if (cmd === "task") { // J352: the host owner's statement of what the sandbox works on
+    const sb = flags.sandbox || "world-g";
+    if (flags.set || flags.clear) { const r = setTask(path.dirname(CONFIG), sb, flags.clear ? "" : String(flags.set)); console.log(JSON.stringify({ sandbox: sb, ...r })); return; }
+    const c = conf(sb); console.log(JSON.stringify({ sandbox: sb, task: c.task, note: c.taskNote || (c.task ? "" : NO_TASK) }));
   } else if (cmd === "mode") { const c = conf(flags.sandbox || "world-g"); console.log(JSON.stringify({ sandbox: flags.sandbox || "world-g", mode: c.mode, note: c.modeNote, means: MODE_TEXT[c.mode] }));
   } else if (cmd === "run") { console.log(JSON.stringify(runPlan(flags.rid))); // J314: only the relay calls this, after Angus approved the plan
   } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, flags.why === "expired" ? "expired" : "denied") }));

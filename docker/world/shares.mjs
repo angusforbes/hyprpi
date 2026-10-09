@@ -33,6 +33,7 @@ import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { modeForSandbox, MODE_TEXT } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
+import { taskForSandbox } from "../research/task.mjs"; // J352: the host-set research task in the host card
 
 import { cardSection } from "../gpu/gpu.mjs"; // J328: the card's GPU section
 
@@ -303,6 +304,10 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
       : ["No ports are published to the host: a server in here can't be opened from the owner's laptop. Ask the Doorman if you need one.", ""]),
     "## Web research", "",
     ...(() => { const { mode, note } = modeForSandbox(CFG, p.sandbox); return [`Doorman mode: ${mode}${note ? ` (${note})` : ""}`, "", `Ask Outside "Research: <what you're looking for>" (or "Research (deep): …"): ${MODE_TEXT[mode]}`, ""]; })(),
+    // J352: task-bound research. The task is Angus's; research outside it waits for him (in every mode).
+    ...(() => { const { task, note } = taskForSandbox(CFG, p.sandbox); return task
+      ? [`Task (set by Angus): ${task}`, "", "The Doorman writes the searches toward this task. A request it doesn't serve, or a run of requests jumping between unrelated subjects, waits for Angus as an exception (a few an hour at most; more are refused). Your Doorman can draft a task change for Angus to approve.", ""]
+      : [`Task: none set${note ? ` (${note})` : ""}. Every research request waits for Angus until he sets one; your Doorman can draft a task for him to approve.`, ""]; })(),
     ...cardSection(p.sandbox),
     "## How to ask", "",
     "- Talk to your Doorman (always allowed, no approval needed).",
