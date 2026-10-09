@@ -24,6 +24,7 @@ export const GOOD = [
   "Lead leakage from damaged perovskite modules in rain: measured Pb²⁺ release (mg/m²) and encapsulants that capture lead (P,P′-di(2-ethylhexyl)methanediphosphonic acid).",
   "Thermal expansion mismatch between perovskite layers and glass/ITO substrates: does it cause delamination during 200 thermal cycles?",
   "Efficiency loss mechanisms in FAPbI3/MAPbBr3 bilayers under light soaking: hysteresis, J–V scan rate and maximum power point tracking results.",
+  "Grain size of 2 μm, ΔG of formation and λmax shifts for α-FAPbI3 versus δ-FAPbI3 films after humidity exposure.",
   "What do accelerated aging tests at 85 °C, 1 sun, N₂ atmosphere show about the intrinsic thermal stability of MA-free compositions like Cs0.1FA0.9PbI3?",
 ];
 export const BAD = [
@@ -39,4 +40,18 @@ export const BAD = [
   ["MAPbI3 kxqzt/vbnmw/plkjh/gfdsa/zxcvb/qwrtp", "a long encoded-looking string"],
   ["stability of Ab3Cd4Ef5Gh6Ij7Kl8Mn9Op0Qr1St2", "a long encoded-looking string"],
   ["perovskite sk-abcdefghijklmnop stability", "a key or token"],
+  // review J354 (PrecheckReview): bypasses of the first fix, all refused now
+  ["perovskite ₛₖ-abcdefghijklmnop", "a key or token"],
+  ["see /ₕₒₘₑ/agent/ₓ for the data", "a file path"],
+  ["host ₁₀.₁.₂.₃ data", "an IP address"],
+  ["perovskite deadbeef/cafebabe/deadbeef/cafebabe", "a long encoded-looking string"],
+  ["perovskite a/G/V/s/b/G/8/v/d/2/9/y/b/G/Q/v/Z/m/9/v", "a long encoded-looking string"],
+  ["H1234567/C7654321/N9876543/O3456789 film", "a long encoded-looking string"],
+  ["perovskite https://example.org/deadbeefcafebabe1234", "a long hex string"],
+  ["perovskite HeLiBeB/CNOFNe/NaMgAlSi/PSClAr", "a long encoded-looking string"],
+  ["perovskite αβγδεζηθικλμνξοπρστυφχψω", "non-Latin words"],
+  ["perovskite =/+/=_+/=_+/=_+/=_+/=_+/=_+/=_+", "a long encoded-looking string"],
+  ["perovskite LiGhT/HuMiDiTy/TeMpErAtUrE/PeRoVsKiTe", "a long encoded-looking string"],
+  ["perovskite pеrovskite with a Cyrillic е", "mixed scripts (look-alike letters)"],
+  ["perovskite μab/μcd/μef/μgh/μij/μkl", "mixed scripts (look-alike letters)"],
 ];

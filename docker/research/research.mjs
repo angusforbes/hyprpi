@@ -114,21 +114,26 @@ export function chemicalFormula(w) {
     const sym = org || (/^[A-Z][a-z]$/.test(two) && ELEMENTS.has(two) ? two : ELEMENTS.has(one) ? one : null);
     if (!sym) return false;
     i += sym.length; parts++;
-    const n = /^\d+(?:\.\d+)?/.exec(w.slice(i)); if (n) i += n[0].length;
+    const n = /^\d{1,2}(?:\.\d{1,3})?/.exec(w.slice(i)); if (n) i += n[0].length; // (review J354 #2: H1234567 isn't an atom count)
+    if (/^\d/.test(w.slice(i))) return false;
   }
-  return parts >= 2 || /\d/.test(w);
+  return /\d/.test(w) ? parts >= 1 : parts >= 2 && parts <= 4; // (recheck: "CNOFNe" is a symbol string, not a formula)
 }
-const SCRIPT_MARKS = /[\u2070-\u209f\u00b2\u00b3\u00b9]/g; // super/subscript digits and signs
+const SCRIPT_MARKS = /[\u2070\u2074-\u207e\u2080-\u208e\u00b2\u00b3\u00b9]/g; // super/subscript DIGITS and signs only (review J354 #1: not ₛₖ, ₕₒₘₑ letters)
 const toDigits = (s) => s.normalize("NFKC"); // ₃ → 3, ² → 2: for the digit checks
+// "strong": a word or formula; "weak": a short acronym, unit or number; null: neither (random-looking)
+const SCIENCE = new Set(("perovskite perovskites methylammonium formamidinium cesium caesium chlorobenzene antisolvent antisolvents passivation " +
+  "passivator passivators photovoltaic photovoltaics encapsulant encapsulants encapsulation heterojunction heterostructure heterostructures " +
+  "photoluminescence electroluminescence spiro ometad ptaa pedot pss fullerene fullerenes bathocuproine mesoporous perovskite-silicon " +
+  "degradation stoichiometry crystallinity hydrophobic hysteresis tandem tandems monolayer monolayers halide halides iodide bromide chloride " +
+  "anneal annealing antisolvent toluene anisole dimethylformamide dimethyl sulfoxide").split(" "));
 // "strong": a word or formula; "weak": a short acronym, unit or number; null: neither (random-looking)
 function pieceKind(p, taskWords) {
   const l = p.toLowerCase();
-  if (taskWords.has(l) || COMMON.has(l) || STOP.has(l) || chemicalFormula(p)) return "strong";
+  if (/[a-z]/.test(p) && /[A-Z]/.test(p.slice(1)) && !chemicalFormula(p) && !COMMON.has(l)) return null; // (recheck: "LiGhT" casing can carry bits; GitHub is fine)
+  if (/^[A-Za-z]{1,2}$/.test(p) || /^\d{1,4}$/.test(p) || /^[A-Z]{1,4}\d{0,2}$/.test(p) || /^(eV|meV|nm|cm|mm|mA|mW|mV|kW|Wh|kWh|ppm|ppb|wt|vol|RH|AM)$/.test(p)) return chemicalFormula(p) && p.length > 2 ? "strong" : "weak"; // (review J354 #2: short fragments are never "words")
+  if (taskWords.has(l) || COMMON.has(l) || SCIENCE.has(l) || chemicalFormula(p)) return "strong";
   if (/^[a-z]+$/i.test(p) && p.length <= 24 && !rareToken(l)) return "strong"; // a dictionary word
-  // a word the dictionary lacks but that reads like one (chlorobenzene, methylammonium, formamidinium): lowercase,
-  // vowels in a natural proportion, no long consonant runs. Random or base64 text fails this.
-  if (/^[a-z]{4,24}$/.test(p) && (p.match(/[aeiouy]/g) || []).length / p.length >= 0.28 && (p.match(/[aeiouy]/g) || []).length / p.length <= 0.65 && !/[^aeiouy]{5}/.test(p)) return "strong";
-  if (/^\d{1,4}$/.test(p) || /^[A-Z]{1,4}\d{0,2}$/.test(p) || /^[a-z]{1,2}$/.test(p) || /^(eV|meV|nm|cm|mm|mA|mW|mV|kW|Wh|kWh|ppm|ppb|wt|vol|at|RH|AM)$/.test(p)) return "weak";
   return null;
 }
 // Any long base64-alphabet run that isn't made of readable pieces (see above): every piece a word, formula, acronym,
@@ -138,7 +143,7 @@ function encodedLooking(text, taskWords) {
     const run = m[0];
     if (!/[A-Za-z0-9+/=_]{28,}/.test(run) && !/\d\D*\d\D*\d/.test(run)) continue; // (the old two triggers: 28+ without hyphens, or 24+ with 3 digits)
     const kinds = run.split(/[\/_+=-]+/).filter(Boolean).map((p) => pieceKind(p, taskWords));
-    if (kinds.every(Boolean) && kinds.filter((k) => k === "strong").length >= kinds.filter((k) => k === "weak").length) continue;
+    if (kinds.length && kinds.every(Boolean) && kinds.filter((k) => k === "strong").length >= kinds.filter((k) => k === "weak").length) continue;
     return true;
   }
   return false;
@@ -151,18 +156,21 @@ export function precheckQuery(q, { task = "" } = {}) {
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]|[\u{e0000}-\u{e0fff}]/u.test(s)) r.push("control or invisible characters");
   const sv = s.replace(SCRIPT_MARKS, "").replace(/\u00b5/g, "\u03bc"); // (J354) CH₃, cm⁻², the micro sign
   if (sv.normalize("NFKC") !== sv) r.push("unusual Unicode forms");
-  if ((s.match(/[\p{L}\p{M}]+/gu) || []).some((w) => /\p{Script=Latin}/u.test(w) && /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]/u.test(w) && !/^[\u00b5\u03bc][A-Za-z]{1,2}$/u.test(w))) r.push("mixed scripts (look-alike letters)");
-  if (/(^|[\s"'(=])(~\/|\.{1,2}\/|\/(home|Users|etc|root|var|opt|tmp|mnt|workspace|srv|run)\b)/i.test(s) || /[A-Za-z]:\\/.test(s)) r.push("a file path");
-  if (/\b(sk-[A-Za-z0-9_-]{8,}|sk-or-|nvapi-|ihub_|ghp_|github_pat_|gho_|xox[abprs]-|AKIA[0-9A-Z]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.)/.test(s) || /-----BEGIN/.test(s)) r.push("a key or token");
+  if ((s.match(/[\p{L}\p{M}]+/gu) || []).some((w) => /\p{Script=Latin}/u.test(w) && /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]/u.test(w) && !/^[\u00b5\u03bc](m|s|g|l|L|A|V|W|J|F|H|M|Pa|mol|Hz|Ω)$/u.test(w) && !/^\p{Script=Greek}([A-Z][a-z]?|max|min|t)$/u.test(w))) r.push("mixed scripts (look-alike letters)"); // (ΔG, λmax are notation)
+  // (recheck J354) a Greek or Cyrillic letter on its own is scientific notation (α-phase, δ, Δ); a WORD of them isn't
+  if ((s.match(/[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]{3,}/gu) || []).length) r.push("non-Latin words");
+  const n = s.normalize("NFKC"); // (review J354 #1) every detector below sees the normalised text too: ₕₒₘₑ → home
+  if (/(^|[\s"'(=])(~\/|\.{1,2}\/|\/(home|Users|etc|root|var|opt|tmp|mnt|workspace|srv|run)\b)/i.test(n) || /[A-Za-z]:\\/.test(n)) r.push("a file path");
+  if (/\b(sk-[A-Za-z0-9_-]{8,}|sk-or-|nvapi-|ihub_|ghp_|github_pat_|gho_|xox[abprs]-|AKIA[0-9A-Z]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.)/.test(n) || /-----BEGIN/.test(n)) r.push("a key or token");
   const noUrl = toDigits(s.replace(/https?:\/\/\S+/g, ""));
   if (encodedLooking(noUrl, new Set(words(task)))) r.push("a long encoded-looking string");
-  if (/\b[0-9a-f]{16,}\b/i.test(noUrl)) r.push("a long hex string");
-  if (/\d[\d\s.,:-]{14,}\d/.test(noUrl)) r.push("a long run of digits");
-  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(s)) r.push("an email address");
-  if (/\b(\d{1,3}\.){3}\d{1,3}\b/.test(s)) r.push("an IP address");
-  if (/\b[\w-]+\.(nvidia\.com|nvidia\.net|nvidiangn\.net|nvda\.ai|local|internal|lan|corp)\b/i.test(s)) r.push("an internal host name");
-  if (/```|\$\(|`[^`]+`|;\s*(rm|curl|wget)\b|\|\s*(sh|bash)\b/.test(s)) r.push("code or a shell command");
-  if (/https?:\/\/\S+[?#&]\S*=/.test(s)) r.push("a URL with parameters");
+  if (/\b[0-9a-f]{16,}\b/i.test(n)) r.push("a long hex string"); // (review J354 #3: URLs included again)
+  if (/\d[\d\s.,:-]{14,}\d/.test(n)) r.push("a long run of digits");
+  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(n)) r.push("an email address");
+  if (/\b(\d{1,3}\.){3}\d{1,3}\b/.test(n)) r.push("an IP address");
+  if (/\b[\w-]+\.(nvidia\.com|nvidia\.net|nvidiangn\.net|nvda\.ai|local|internal|lan|corp)\b/i.test(n)) r.push("an internal host name");
+  if (/```|\$\(|`[^`]+`|;\s*(rm|curl|wget)\b|\|\s*(sh|bash)\b/.test(n)) r.push("code or a shell command");
+  if (/https?:\/\/\S+[?#&]\S*=/.test(n)) r.push("a URL with parameters");
   return r;
 }
 // J309 (Angus: "the doorman turns the request into searches that it passes to perplexity"): the Doorman's searches must
