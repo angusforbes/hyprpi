@@ -75,11 +75,26 @@ for W in "${worlds[@]}"; do
       log "restore $W: cleared stale daemon socket, lock and temp files"
     else log "restore $W: couldn't clear stale files (sandbox didn't start?); world.sh start will report why"; fi
   fi
+  # 1b. (J322 re-login) host units that talk to Hyprland but were started under an EARLIER Hyprland (a logout/login
+  #     starts a new one; the user manager and its units live on) can't open or find windows any more: their
+  #     hyprctl calls fail. Stop those; world.sh start / doorman.sh start below start them again with this login's.
+  HIS_NOW="${HYPRLAND_INSTANCE_SIGNATURE:-$(systemctl --user show-environment | sed -n 's/^HYPRLAND_INSTANCE_SIGNATURE=//p')}"
+  for U in "hyprpi-$W-helper" hyprpi-sbx-relay "hyprpi-$W-shares" $(jq -r --arg w "$SB" '.sandboxes[] | select(.doorman_for == $w) | "hyprpi-doorman-" + .name' "$CFG/sbx-relay.json" 2>/dev/null); do
+    P="$(systemctl --user show "$U" -p MainPID --value 2>/dev/null)"; [[ "$P" =~ ^[1-9][0-9]*$ ]] || continue
+    HIS_U="$(tr '\0' '\n' < "/proc/$P/environ" 2>/dev/null | sed -n 's/^HYPRLAND_INSTANCE_SIGNATURE=//p')"
+    if [[ -n "$HIS_NOW" && -n "$HIS_U" && "$HIS_U" != "$HIS_NOW" ]]; then
+      if [[ "$U" == hyprpi-sbx-relay && -n "$(node "$H/docker/sbx-relay.mjs" pending 2>/dev/null | grep -v '^nothing waiting')" ]]; then
+        log "restore $W: $U is from an earlier login but holds messages for Angus; restarting it anyway (they're on disk)"
+      fi
+      systemctl --user stop "$U" && log "restore $W: stopped $U (started under an earlier Hyprland; restarted below)"
+    fi
+  done
   # 2. the world itself (idempotent)
   if ! "$H/docker/world/world.sh" start "$W" >>"$LOG" 2>&1; then log "restore $W: world.sh start failed"; rc=1; continue; fi
   # 3. its agents, on their own sessions and workspaces, no focus change
   out="$(sbx exec "$SB" sh -c ". $H/docker/world/g-env.sh; cd \"\$G_WORLD_DIR\" 2>/dev/null; hyprpi restore all 2>&1" 2>&1 | tail -3)"
   log "restore $W: agents: ${out//$'\n'/ | }"
+  [[ "$out" == *"not restored"* ]] && { log "restore $W: some agents did not come back"; rc=1; }
   # 4. its Doorman, if it has one
   for D in $(jq -r --arg w "$SB" '.sandboxes[] | select(.doorman_for == $w) | .name' "$CFG/sbx-relay.json" 2>/dev/null); do
     systemctl --user is-active --quiet "hyprpi-doorman-$D" || { "$H/docker/doorman/doorman.sh" start "$D" >>"$LOG" 2>&1 && log "restore $W: Doorman $D started" || { log "restore $W: Doorman $D failed"; rc=1; }; }
