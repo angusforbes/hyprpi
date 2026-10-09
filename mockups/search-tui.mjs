@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { REVIEW_TAG, heldFor, firstShow, claimReview, clickAction, reviewGate, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { REVIEW_TAG, heldFor, firstShow, claimReview, clickAction, reviewGate, heldStatus, statusText, bareChoice, cardForBareNumber, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -416,9 +416,15 @@ function reviewKey(raw) {
   // that used to lose Angus's "1" silently (stale) now says so instead of going to Thoughts.
   const gate = reviewGate(review, raw, { now: Date.now(), exists: review ? !!heldById(review.id) : false });
   if (!gate.ok) {
-    if (gate.reason === "no-review") { if (raw && room && heldFor(room).length) logHeld({ room, id: "", stage: "early-return", reason: "no-review" }); return false; } // (ordinary chat: not logged, nor its text)
+    if (gate.reason === "gone") { logHeld({ room, id: review.id, raw, stage: "early-return", reason: "gone" }); delete reviews[room]; review = null; }
+    if (gate.reason === "no-review" || gate.reason === "gone") {
+      // J356 (2a): a bare 1/2/3 aimed at a card that is no longer waiting says so here instead of going to Thoughts
+      const card = bareChoice(raw) ? cardForBareNumber(turns, TH.entries) : null, st = card && heldStatus(card.id);
+      if (st && st.state !== "pending") { logHeld({ room, id: card.id, raw, stage: "decided-card", reason: st.state }); setBox(""); note = `🐳 that card is ${st.state === "gone" ? "no longer waiting (expired or withdrawn)" : `already ${st.state}${st.at ? ` at ${new Date(st.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`}: nothing was sent`; render(); return true; }
+      if (gate.reason === "no-review" && raw && room && heldFor(room).length) logHeld({ room, id: "", stage: "early-return", reason: "no-review" }); // (ordinary chat: not logged, nor its text)
+      return false;
+    }
     logHeld({ room, id: review.id, raw, stage: gate.reason === "stale" ? "stale" : "early-return", reason: gate.reason });
-    if (gate.reason === "gone") { delete reviews[room]; review = null; return false; }
     if (gate.reason === "stale") {
       review.typed = ""; // retyping the same choice now answers it
       setBox(""); note = `🐳 that was already in the box when the review opened, so it can't answer it: type ${raw.length <= 12 ? raw : "1, 2 or 3"} again`; render(); return true;
@@ -850,7 +856,8 @@ function render() {
         flat.push({ l: `  ${bar}${bold(` ${e.icon} ${String(e.text).split("\n")[0]} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         add(md(body, tw, "   "), 4);
         add(md(`File: <file://${encodeURI(e.file)}>`, tw, "   ", dim), 4);
-        flat.push({ l: `   ${bold(/\.plan\.md$/.test(e.file) ? "(1) Approve: run these searches  (2) Deny: nothing is sent" : "(1) Approve: deliver it to the sandbox  (2) Deny")}`, meta: { item: k, textX: 4 } });
+        const st = e.id ? heldStatus(e.id) : null; // J356 (2a): while it waits, how to answer; once decided, the decision
+        flat.push({ l: `   ${!st || st.state === "pending" ? bold(/\.plan\.md$/.test(e.file) ? "(1) Approve: run these searches  (2) Deny: nothing is sent" : "(1) Approve: deliver it to the sandbox  (2) Deny") + dim("  · type 1 or 2 here + ⏎") : bold(statusText(st))}`, meta: { item: k, textX: 4 } });
         continue;
       }
       if (e.role === "held") { // J280: a decision on a held sandbox message, highlighted at full brightness
@@ -863,6 +870,10 @@ function render() {
         const bar = `${ESC}${worldBg(room)}m${ESC}38;2;255;255;255m`, off = `${ESC}49m${ESC}39m`; // J293 v2 (truecolor white: the theme maps 97 to a dark colour) (Angus: "ALL notifications white with the world colour highlighting"; a failure keeps its ✗)
         flat.push({ l: "" });
         flat.push({ l: `  ${bar}${bold(` ${plain || e.kind === "request" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${plain ? "" : dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        if (e.kind === "request" && e.id && /^\(1\) Approve/.test(rest[rest.length - 1] || "")) { // J356 (2a): the options line follows the card's state
+          const st = heldStatus(e.id);
+          rest[rest.length - 1] = st.state === "pending" ? `${rest[rest.length - 1]} · type 1, 2 or 3 here + ⏎` : statusText(st);
+        }
         for (const [li, line] of rest.entries()) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(c, "│")} ${e.kind === "request" && li === rest.length - 1 ? bold(w) : w}` })), 6);
         continue;
       }

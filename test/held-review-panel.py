@@ -89,6 +89,60 @@ def scenario(kind):
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def decided():
+    """(2a) the card's options line follows its state, and a bare 1 at a decided card says 'already approved at HH:MM'."""
+    tmp = tempfile.mkdtemp(prefix="j356-decided-")
+    st = os.path.join(tmp, "state"); run = os.path.join(tmp, "run"); relay = os.path.join(st, "hyprpi", "sbx-relay")
+    for d in ("pending", "reviews"):
+        os.makedirs(os.path.join(relay, d), exist_ok=True)
+    os.makedirs(run, mode=0o700, exist_ok=True)
+    env = {**os.environ, "XDG_STATE_HOME": st, "XDG_RUNTIME_DIR": run, "HYPRPI_STATE": os.path.join(tmp, "hp"),
+           "HYPRPI_SOCKET": os.path.join(run, "none.sock"), "HYPRLAND_INSTANCE_SIGNATURE": "bogus-j356", "HYPRPI_TEST": "1",
+           "TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"}
+    for k in ("HYPRPI_AGENT_ID", "HYPRPI_SANDBOX_WORLD", "HYPRPI_G_WORLD"):
+        env.pop(k, None)
+    m = json.load(open(TPL)); hid = "world-g--dec1de"; m["id"] = hid
+    json.dump(m, open(os.path.join(relay, "pending", hid + ".json"), "w"))
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe("node", ["node", os.path.join(REPO, "mockups", "search-tui.mjs"), "A"], env)
+    out = bytearray()
+
+    def pump(sec):
+        end = time.time() + sec
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    out.extend(os.read(fd, 65536))
+                except OSError:
+                    return
+    pump(5)
+    check("decided: while pending the card says 'type 1, 2 or 3 here'", "type 1, 2 or 3 here" in out.decode("utf8", "replace"))
+    # the relay decides it elsewhere (toast / terminal): pending file gone, its decision in the relay log
+    os.unlink(os.path.join(relay, "pending", hid + ".json"))
+    with open(os.path.join(relay, "log.jsonl"), "a") as f:
+        f.write(json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()), "id": hid, "decision": "approved", "delivered": ["Thoughts-A"]}) + "\n")
+    pump(4.5)
+    mark = len(out)
+    os.write(fd, b"1"); pump(0.3); os.write(fd, b"\r"); pump(2)
+    scr = out[mark:].decode("utf8", "replace")
+    try:
+        L = [json.loads(l) for l in open(os.path.join(relay, "panel.jsonl"))]
+    except OSError:
+        L = []
+    check("decided: a bare 1 says 'already approved at HH:MM' and sends nothing", "already approved at" in scr and "nothing was sent" in scr)
+    check("decided: logged stage decided-card", any(e.get("stage") == "decided-card" and e.get("id") == hid for e in L))
+    check("decided: the card now shows the decision", "Approved at" in out[mark - 20000 if mark > 20000 else 0:].decode("utf8", "replace"))
+    os.kill(pid, 9)
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+decided()
 for k in ("stale", "click"):
     scenario(k)
 sys.exit(1 if fails else 0)
