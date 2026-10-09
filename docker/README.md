@@ -106,6 +106,15 @@ Not available inside: host-integrated extensions (hyprcu, WhatsApp, mail, voice,
 name-sync), `ding`/`bonk`, subagents, MCP, SSH/`gh` credentials, GPU (needs the NVIDIA Container Toolkit and
 `--gpus all`; not installed).
 
+## GPU lease (J328): DEVELOPER MODE, not an NVIDIA-approved route
+
+A sandboxed world can ask for a GPU job; the host runs it in a throwaway worker after Angus approves it. NVIDIA's approved sandbox (sbx) has no GPU (v0.47), so the worker is a plain Docker container with the GPU through the NVIDIA Container Toolkit (CDI). That shares the host's kernel and driver and is outside the approved route, which is why the setting is called developer. Design, limits and later levels: agent-config `docs/sandbox/doorman-design.md`, section 13.
+
+- Setting, per sandbox, in `~/.config/hyprpi/worlds/<name>.json`: `"gpu": "developer"` or `"gpu": "off"` (or `{"mode": "developer", "max_seconds": 120, "max_vram_mib": 2048, "image": "python:3.12-slim"}`). Missing means developer for now; it should become off for new users before any public release. Off (or anything unreadable) refuses with a clear message and asks nothing of the owner.
+- Flow: the world's agent asks its Doorman, the Doorman drafts the lease (`hyprpi_gpu_lease`, relay op `gpu_lease`), the relay snapshots the job's files and holds it for Angus ("GPU lease for world-g", marked developer mode), and on approval `docker/gpu/gpu.mjs` runs it: no network, no shared folders (files are copied in), the GPU through CDI, a time limit and a VRAM budget watched with nvidia-smi, killed on overrun. Outputs and the log come back to the sandbox's read-only inbox; the worker is destroyed.
+- Setup: `sudo pacman -S --needed nvidia-container-toolkit` then `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, and `docker pull python:3.12-slim`. Check: `node docker/gpu/gpu.mjs check world-g`.
+- Test: `node docker/gpu/e2e-isolated.mjs` (an isolated daemon and relay that cannot reach the live session; tiny jobs only, a 256 MiB allocation).
+
 ## Research (J309): web research for a sandbox, reviewed by Angus
 
 A sandbox's agent asks Outside `Research: <what I'm looking for>` (or `Research (deep): …`). The request goes to the sandbox's Doorman, never to the web:

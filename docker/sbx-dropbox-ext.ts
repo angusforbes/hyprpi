@@ -275,6 +275,14 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({ for: Type.String({ minLength: 1, maxLength: 120 }), why: Type.String({ minLength: 1, maxLength: 1500 }), tried: Type.Optional(Type.String({ maxLength: 1500 })), action: Type.String({ minLength: 1, maxLength: 1500 }) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => out(await request({ op: "draft", for: p.for, why: p.why, tried: p.tried || "", action: p.action })),
   });
+  // J328: GPU lease (DEVELOPER MODE, not an approved NVIDIA route). The relay refuses it when the sandbox's gpu setting is
+  // off, checks the limits, snapshots the files from the sandbox's workspace and holds the lease for Angus.
+  if (process.env.HYPRPI_DOORMAN === "1") pi.registerTool({
+    name: "hyprpi_gpu_lease", label: "Draft a GPU lease for Angus",
+    description: "Draft a GPU lease for Angus when an agent in your sandbox asks to run a GPU job and your host card's GPU section says leases are possible and the job fits its limits (time, VRAM, small files, no network, Python 3 or sh). It waits for his approval; you can't approve it and nothing runs until he does. Give: for (the agent asking), job (what the job does), why, script (its path relative to the agent's workspace), files (other files it needs, relative paths), runtime (python or sh), time_s, vram_mib (estimates, within the card's limits). If the card says GPU leases are off, say so and don't draft. Say it is developer mode: not an approved NVIDIA route.",
+    parameters: Type.Object({ for: Type.String({ minLength: 1, maxLength: 120 }), job: Type.String({ minLength: 1, maxLength: 1500 }), why: Type.String({ minLength: 1, maxLength: 1500 }), script: Type.String({ minLength: 1, maxLength: 200 }), files: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 20 })), runtime: Type.Optional(Type.Union([Type.Literal("python"), Type.Literal("sh")])), time_s: Type.Optional(Type.Number()), vram_mib: Type.Optional(Type.Number()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => out(await request({ op: "gpu_lease", for: p.for, job: p.job, why: p.why, script: p.script, files: p.files || [], runtime: p.runtime || "python", time_s: p.time_s, vram_mib: p.vram_mib })),
+  });
   pi.registerTool({
     name: "hyprpi_reply", label: "Reply to agent",
     description: "Answer a hyprpi message you received, once, with its request_id.",

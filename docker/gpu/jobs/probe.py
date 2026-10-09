@@ -1,0 +1,16 @@
+# isolation probe: what can a lease's worker see and reach? (printed into the log for the review)
+import os, socket, subprocess
+def tryit(label, f):
+    try: print(f"{label}: {f()}")
+    except Exception as e: print(f"{label}: BLOCKED ({type(e).__name__})")
+tryit("network 1.1.1.1:53", lambda: socket.create_connection(("1.1.1.1", 53), timeout=2) and "OPEN")
+tryit("dns", lambda: socket.gethostbyname("example.com"))
+print("interfaces:", sorted(os.listdir("/sys/class/net")))
+print("/job:", sorted(os.listdir("/job")))
+print("host dirs with content:", [p for p in ("/home", "/mnt", "/media", "/run/user", "/workspace", "/host") if os.path.isdir(p) and os.listdir(p)])
+print("mounts of interest:", [l.split()[1] for l in open("/proc/mounts") if l.split()[1].startswith(("/home", "/mnt", "/run/user", "/var/run/docker"))] or "none")
+tryit("docker socket", lambda: os.path.exists("/var/run/docker.sock"))
+tryit("write rootfs", lambda: open("/etc/probe", "w"))
+tryit("write /job", lambda: open("/job/probe_wrote", "w").write("x") and "writable (job copy only)")
+print("uid", os.getuid(), "caps:", [l.strip() for l in open("/proc/self/status") if l.startswith(("CapEff", "NoNewPrivs"))])
+print("env keys:", sorted(k for k in os.environ if not k.startswith("LC_")))

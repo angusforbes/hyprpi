@@ -72,7 +72,7 @@ start)
   # Refresh the extension and prompt from this checkout (fixes reach it), then a headless Pi kept fed by tail.
   sbx cp "$H/docker/sbx-dropbox-ext.ts" "$NAME:/home/agent/.pi/agent/extensions/hyprpi-dropbox.ts" >/dev/null
   sbx cp "$H/docker/doorman/doorman-prompt.md" "$NAME:/home/agent/doorman-prompt.md" >/dev/null
-  RUN="tail -f /dev/null | sbx exec -i -w /home/agent -e HYPRPI_DROPBOX=$BOX/.hyprpi-dropbox -e HYPRPI_INBOX=$INBOX -e HYPRPI_DOORMAN=1 $NAME sh -c 'exec /home/agent/.local/bin/pi --mode rpc --no-skills --no-context-files --no-prompt-templates --tools read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request --system-prompt \"\$(cat /home/agent/doorman-prompt.md)\"'"
+  RUN="tail -f /dev/null | sbx exec -i -w /home/agent -e HYPRPI_DROPBOX=$BOX/.hyprpi-dropbox -e HYPRPI_INBOX=$INBOX -e HYPRPI_DOORMAN=1 $NAME sh -c 'exec /home/agent/.local/bin/pi --mode rpc --no-skills --no-context-files --no-prompt-templates --tools read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request,hyprpi_gpu_lease --system-prompt \"\$(cat /home/agent/doorman-prompt.md)\"'"
   systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M sh -c "$RUN"
   echo "started $UNIT"
   ;;
