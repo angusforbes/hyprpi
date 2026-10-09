@@ -787,7 +787,7 @@ function render() {
         // indicator lines, and the summary right under it, no blank line between (Angus).
         let { lead, body } = splitLead(e);
         if (e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt) // J280 #6: only the panel's 1/2/3 count while a review is open
-          body = String(lead ? body : e.text).replace(/^(\s*)\d+[.)]\s+/gm, "$1• "); // recheck #6: only the panel's strip is numbered
+          body = String(lead ? body : e.text).replace(/^(\s*(?:#+\s+|>\s*)*)(\*\*|__)?\s*\d+[a-z]?[.)]\s+/gm, "$1$2• "); // only the panel's strip is numbered (also **1.**, # 1., 1a.)
         if (lead) add(md(lead, tw, "   ", dim), 4);
         add(md(e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt ? body : lead ? body : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
         const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
@@ -970,13 +970,14 @@ let daemonInfo = null, lostAt = 0, sysTurns = [];
 async function noteReconnect() {
   let info = null; try { info = await api.call("ping"); } catch { return; }
   const before = daemonInfo; daemonInfo = { pid: info?.pid, started: info?.started };
-  if (!before) return; // the first connection: nothing to say
-  if (!lostAt && before.pid === daemonInfo.pid) return;
+  if (!before) { lostAt = 0; return; } // the first connection: nothing to say
+  const restarted = before.pid !== daemonInfo.pid || before.started !== daemonInfo.started; // (pid reuse: started too)
+  if (!lostAt && !restarted) return;
   const secs = lostAt ? Math.max(1, Math.round((Date.now() - lostAt) / 1000)) : 0, hhmm = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const what = before.pid !== daemonInfo.pid ? `the hyprpi daemon restarted at ${hhmm(daemonInfo.started || Date.now())}` : "the connection to hyprpi dropped";
-  sysTurns.push({ role: "held", icon: "🔌", ok: true, ts: Date.now(), text: `Reconnected: ${what}${secs ? ` (offline ${secs} s)` : ""}\nNothing is lost: the thread is reloaded from hyprpi.` });
+  const what = restarted ? `the hyprpi daemon restarted at ${hhmm(daemonInfo.started || Date.now())}` : "the connection to hyprpi dropped";
+  sysTurns.push({ role: "held", icon: "🔌", ok: true, ts: Date.now(), text: `Reconnected: ${what}${secs ? ` (offline ${secs} s)` : ""}\nThe saved conversation is kept; a reply that was underway may need asking again.` });
   if (sysTurns.length > 20) sysTurns.shift();
-  lostAt = 0; note = `🔌 reconnected: ${what}`; bumpThread(); follow(); render();
+  lostAt = 0; note = `🔌 reconnected: ${what}`; bumpThread(); if (TH.pinned) TH.unseen++; render(); // (review: don't jump a reader to the bottom)
 }
 async function start() {
   try {

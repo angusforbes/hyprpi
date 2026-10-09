@@ -603,9 +603,11 @@ let daemonInfo = null, lostAt = 0, reconn = null;
 async function noteReconnect() {
   let info = null; try { info = await api.call("ping"); } catch { return; }
   const before = daemonInfo; daemonInfo = { pid: info?.pid, started: info?.started };
-  if (!before || (!lostAt && before.pid === daemonInfo.pid)) return;
+  if (!before) { lostAt = 0; return; }
+  const restarted = before.pid !== daemonInfo.pid || before.started !== daemonInfo.started;
+  if (!lostAt && !restarted) return;
   const secs = lostAt ? Math.max(1, Math.round((Date.now() - lostAt) / 1000)) : 0, hhmm = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  reconn = { at: Date.now(), text: `🔌 reconnected: ${before.pid !== daemonInfo.pid ? `the hyprpi daemon restarted at ${hhmm(daemonInfo.started || Date.now())}` : "the connection to hyprpi dropped"}${secs ? ` (offline ${secs} s)` : ""} · nothing is lost` };
+  reconn = { at: Date.now(), text: `🔌 reconnected: ${restarted ? `the hyprpi daemon restarted at ${hhmm(daemonInfo.started || Date.now())}` : "the connection to hyprpi dropped"}${secs ? ` (offline ${secs} s)` : ""} · the saved conversation is kept` };
   lostAt = 0; render();
   setTimeout(render, 5 * 60 * 1000 + 100);
 }
