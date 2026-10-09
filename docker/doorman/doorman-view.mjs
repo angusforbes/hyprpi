@@ -77,10 +77,10 @@ export function lockReason({ write, unitActive, state, lastQuestion }) {
   return "";
 }
 export function headerText(label, write, lock) {
-  return `🚪 ${label} · ${write ? "DEVELOPER MODE" : "OBSERVER (read-only)"}${lock ? `  🔒 typing off: ${lock}` : "  ✎ typing on"}`;
+  return `🚪 ${label} · ${write ? "DEVELOPER MODE" : "OBSERVER (read-only)"}${lock ? ` · 🔒 ${lock}` : " · ✎ typing on"}`;
 }
 const SEG = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-const gw = (g) => (/\p{Extended_Pictographic}|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe6f\uff00-\uff60]/u.test(g) ? 2 : 1);
+const gw = (g) => (/\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe6f\uff00-\uff60]/u.test(g) ? 2 : 1);
 export const cells = (s) => [...SEG.segment(s)].reduce((n, x) => n + gw(x.segment), 0);
 export const clipCells = (s, max) => { let n = 0, o = ""; for (const x of SEG.segment(s)) { const w = gw(x.segment); if (n + w > max) break; n += w; o += x.segment; } return o; };
 const tailCells = (s, max) => { const g = [...SEG.segment(s)].map((x) => x.segment); let n = 0, o = ""; for (let i = g.length - 1; i >= 0; i--) { const w = gw(g[i]); if (n + w > max) break; n += w; o = g[i] + o; } return o; };
@@ -95,8 +95,8 @@ function view(name, write) {
   let lock = "", buf = "", unitOk = true, status = {}, sentAt = 0, seenWorking = false, esc = 0;
   const bar = (txt) => { const w = W(); let t = clipCells(` ${txt}`, w); t += " ".repeat(Math.max(0, w - cells(t))); return `\x1b[48;2;${bg}m\x1b[38;2;255;255;255m\x1b[1m${t}\x1b[0m`; };
   const paintHeader = () => P(`\x1b7\x1b[1;1H${bar(headerText(label, write, lock))}\x1b8\x1b]2;🚪 ${label} · ${mode}${lock ? " 🔒" : ""}\x07`);
-  const prompt = () => lock ? `🔒 (${lock}) ` + (buf ? `held: ${buf}` : "") : `you> ${buf}`;
-  const paintInput = () => P(`\x1b[${Hh()};1H\x1b[2K${tailCells(plain(write ? prompt() : "🔒 read-only: ctrl-c to close this window"), W() - 1)}`);
+  const prompt = () => { const pre = lock ? `🔒 (${lock}) ${buf ? "held: " : ""}` : "you> "; return pre + tailCells(plain(buf), Math.max(4, W() - 1 - cells(pre))); };
+  const paintInput = () => P(`\x1b[${Hh()};1H\x1b[2K${clipCells(write ? prompt() : "🔒 read-only: ctrl-c to close this window", W() - 1)}`);
   const setup = () => { P(`\x1b[2J\x1b[2;${Hh() - 1}r`); paintHeader(); P(`\x1b[2;1H`); paintInput(); };
   const out = (s) => { P(`\x1b7\x1b[${Hh() - 1};1H\r\n${plain(String(s)).replace(/\n/g, "\r\n")}\x1b8`); }; // everything shown passes plain(): no escape sequence from Doorman or sandbox text reaches the terminal
   const refresh = () => {
