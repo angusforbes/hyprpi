@@ -219,7 +219,8 @@ function apply() {
   const want = [...p.mounts.map((m) => ({ host: m.host, at: m.at, ro: m.ro, why: m.why })),
     ...p.hidden.map((h) => ({ host: h.dir ? ph.dir : ph.file, at: h.at, ro: true, why: "hidden" })),
     { host: cardDir(), at: "/home/agent/.sandbox", ro: true, why: "host card" }];
-  writeCard(p);
+  const ports = syncPorts(p.sandbox);
+  writeCard(p, ports);
   const have = current(p.sandbox), key = (m) => `${m.host}\0${m.at}\0${m.ro}`;
   // (ShareTest) a mount sbx still lists but the guest no longer has (e.g. guest root unmounted a placeholder) counts
   // as missing, so it's mounted again; sbx keeps the host-side read-only rule meanwhile either way.
@@ -245,6 +246,27 @@ function apply() {
   return failed ? 1 : 0;
 }
 
+// --- web servers (J320): sandbox ports published on the HOST's localhost only, from the world's "ports" config ---
+// worlds/<world>.json: "ports": [{ "sandbox": 8000, "host": 16100 }, …]  (absent = none). Only 127.0.0.1 is ever used,
+// so nothing is reachable from the network; ports this tool didn't publish (another IP) are left alone.
+function wantPorts() {
+  const { w } = config();
+  return (Array.isArray(w?.ports) ? w.ports : []).map((x) => ({ sandbox: Number(x.sandbox), host: Number(x.host) }))
+    .filter((x) => Number.isInteger(x.sandbox) && Number.isInteger(x.host) && x.sandbox > 0 && x.sandbox < 65536 && x.host >= 1024 && x.host < 65536);
+}
+function syncPorts(sandbox) {
+  const want = wantPorts();
+  let have = []; try { have = JSON.parse(execFileSync("sbx", ["ports", sandbox, "--json"], { encoding: "utf8", timeout: 30000 })) || []; } catch { return want.map((x) => ({ ...x, ok: false })); }
+  const k = (x) => `${x.host}:${x.sandbox}`, wantK = new Set(want.map(k));
+  for (const h of have) if (h.host_ip === "127.0.0.1" && !wantK.has(`${h.host_port}:${h.sandbox_port}`)) { const r = sbx(["ports", sandbox, "--unpublish", `127.0.0.1:${h.host_port}:${h.sandbox_port}`]); log(`${r.ok ? "unpublished" : "couldn't unpublish"} port ${h.host_port}`); }
+  const haveK = new Set(have.filter((h) => h.host_ip === "127.0.0.1").map((h) => `${h.host_port}:${h.sandbox_port}`));
+  return want.map((x) => {
+    if (haveK.has(k(x))) return { ...x, ok: true };
+    const r = sbx(["ports", sandbox, "--publish", `127.0.0.1:${x.host}:${x.sandbox}`]); log(`${r.ok ? "published" : "couldn't publish"} sandbox port ${x.sandbox} at http://localhost:${x.host} on the host${r.ok ? "" : `: ${r.out}`}`);
+    return { ...x, ok: r.ok };
+  });
+}
+
 // --- the host card (format: doorman-design.md, card: host-card/1) ---------------------------------------
 function network(sandbox) {
   let pol; try { pol = JSON.parse(execFileSync("sbx", ["policy", "ls", "--include-inactive", "--json"], { encoding: "utf8", timeout: 30000, maxBuffer: 1 << 26 })); } catch { return null; }
@@ -254,7 +276,7 @@ function network(sandbox) {
   return { profile: [...new Set(rules.map((r) => r.policy_name))].join(", "), tcp: [...tcp].sort(), http: [...http].sort() };
 }
 
-function writeCard(p = plan()) {
+function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true }))) {
   const dir = cardDir(); fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
   const net = network(p.sandbox);
   const rows = p.mounts.map((m) => `| ${m.ro ? "ro" : "rw"} | ${m.at} | ${m.why} |`);
@@ -274,6 +296,10 @@ function writeCard(p = plan()) {
     "The host runs the desktop (windows, notifications, the clipboard) and hyprpi. You can't run host commands; ask the Doorman to have something done there.", "",
     "## Network", "",
     net ? `Your requests go through the sandbox policy proxy, profile ${net.profile} (NVIDIA's central allowlist; the host can't change it, new domains need a request by the owner). A blocked domain answers 403 "Blocked by org policy". The full list (${net.tcp.length} host rules, ${net.http.length} path-limited web rules) is in net-allowlist.md next to this card.` : "Your requests go through the sandbox policy proxy (NVIDIA's central allowlist). The list couldn't be read on the host just now.", "",
+    "## Web servers", "",
+    ...(ports.filter((x) => x.ok).length ? ["A server you run in here is reachable from the owner's laptop (its browser only, not the network) on these ports. Bind to 0.0.0.0 (e.g. `python3 -m http.server 8000 --bind 0.0.0.0`) and give the owner the host address:", "",
+      "| in here | on the host |", "|------|------|", ...ports.filter((x) => x.ok).map((x) => `| port ${x.sandbox} | http://localhost:${x.host} |`), ""]
+      : ["No ports are published to the host: a server in here can't be opened from the owner's laptop. Ask the Doorman if you need one.", ""]),
     "## Web research", "",
     ...(() => { const { mode, note } = modeForSandbox(CFG, p.sandbox); return [`Doorman mode: ${mode}${note ? ` (${note})` : ""}`, "", `Ask Outside "Research: <what you're looking for>" (or "Research (deep): …"): ${MODE_TEXT[mode]}`, ""]; })(),
     "## How to ask", "",
