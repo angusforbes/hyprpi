@@ -461,7 +461,7 @@ function onActionLine(line) {
   log({ note: `toast ${key} for ${id}` });
   if (key === "review") { openReview(id); return; }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(DECISIONS, `${id}.${key}`), "toast", { mode: 0o600 }); // J284: the route, for the Thoughts note
+  writeDecision(id, key, "toast"); // J284: the route, for the Thoughts note
 }
 
 // J274 (Angus: "have it go to the appropriate Thoughts where we can interact and get context"): Review asks the
@@ -550,7 +550,8 @@ class Relay {
       }
       log({ sb: sb.name, op: "talk", decision: "approved", id, delivered: r.delivered, request_id: r.request_id });
       heldNote(sb, msg, via, verdict.startsWith("allow-") ? "Approved and allowed similar" : "Approved", r.delivered.length ? `delivered to ${r.delivered.join(", ")}` : `it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((s) => s.name || s).join(", ")})` : ""}`);
-      inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: r.delivered, request_id: r.request_id, skipped: r.skipped });
+      // (NoteReview #3: the sandbox's receipt failing is not the delivery failing: its own try, no second note)
+      try { inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: r.delivered, request_id: r.request_id, skipped: r.skipped }); } catch (e) { log({ sb: sb.name, error: `inbox (decision receipt): ${e.message}` }); }
     } catch (e) { log({ sb: sb.name, op: "talk", decision: "approved", id, error: e.message }); heldNote(sb, msg, via, "Approved", `but the relay couldn't send it: ${e.message}`); }
   }
   sweepPending() {
@@ -589,10 +590,11 @@ function heldNote(sb, msg, via, what, outcome) {
   if (!rooms.length) return;
   const to = (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")).join(", ");
   const first = clean(String(msg.text || "")).split("\n").map((l) => l.trim()).find(Boolean) || "";
-  const line = first.length > 120 ? first.slice(0, 119) + "…" : first;
+  const plain = first.replace(/[a-z][a-z0-9+.-]*:\/\//gi, "").replace(/[[\]()<>`*_]/g, ""); // (NoteReview #5: no clickable links or markup from sandbox text)
+  const line = plain.length > 120 ? plain.slice(0, 119) + "…" : plain;
   const hm = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const route = via === "rule" ? "" : ` (${via || "terminal"}, ${hm})`;
-  const text = `🐳 ${what}: ${msg.sandbox || sb.name} → ${to}${route}${outcome ? ` · ${outcome}` : ""}\n│ ${line}`;
+  const text = `🐳 ${what}: ${msg.sandbox || sb.name} → ${to}${route}${outcome ? ` · ${outcome}` : ""}\n│ the sandbox wrote: ${line}`;
   sb.conn.call("held.note", { rooms, text }).catch((e) => log({ sb: sb.name, error: `held note: ${e.message}` }));
 }
 
@@ -611,7 +613,15 @@ function decideAsAngus(id, verdict) {
   }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   const via = /^(panel|room panel)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";
-  fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), via, { mode: 0o600 }); // J284: the route, for the Thoughts note
+  writeDecision(id, verdict, via); // J284: the route, for the Thoughts note
+}
+// J284 (NoteReview #2): written under a temporary name and renamed into place, so the relay never reads a decision
+// before its route is in it (the temp name doesn't match the decision pattern, so the watcher ignores it).
+function writeDecision(id, verdict, via) {
+  fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
+  const tmp = path.join(DECISIONS, `.${id}.${verdict}.${process.pid}.tmp`);
+  fs.writeFileSync(tmp, via, { mode: 0o600 });
+  fs.renameSync(tmp, path.join(DECISIONS, `${id}.${verdict}`));
 }
 function agentAncestor() {
   if (process.env.HYPRPI_AGENT_ID || process.env.PI_CODING_AGENT || process.env.PI_SESSION_FILE || process.env.HYPRPI_THOUGHTS_ROOM) return "called from an agent"; // (J274: Thoughts too)
