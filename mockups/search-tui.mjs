@@ -366,7 +366,7 @@ function pollReview() {
       // J285 v2 (Angus: "the 'Request from Alpha (G1)' part should be highlighted … like your Approved"): the request
       // as its own highlighted turn, from the relay's data; Thoughts only adds a one-line flag.
       const rq = requestTurn(h);
-      logTurn({ room, id, ok: true, kind: "request", turn: `${rq.head}\n${rq.body}\n1. Approve, 2. Deny, 3. Allow Similar for 1 hr` });
+      logTurn({ room, id, ok: true, kind: "request", turn: `${rq.head}\n${rq.body}\n(1) Approve (2) Deny (3) Allow similar for 1 hour` });
       turns = heldTurns(room); bumpThread(); follow();
       sendThought(reviewPrompt(h));
     }
@@ -713,7 +713,7 @@ function render() {
     const h = review.h;
     rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})`, W))));
     rows.push(clip("   " + h.text.replace(/\s+/g, " "), W));
-    rows.push(dim(clip(review.confirm ? `   ${review.confirm.label}? y + ⏎ confirms · anything else cancels` : "   1 Approve · 2 Deny · 3 Allow similar 1 h (\"3 for 2 hours\") · anything else goes to Thoughts", W)));
+    rows.push(dim(clip(review.confirm ? `   ${review.confirm.label}? y + ⏎ confirms · anything else cancels` : "   (1) Approve (2) Deny (3) Allow similar for 1 hour · or e.g. \"3 for 2 hours\" · anything else goes to Thoughts", W)));
   }
   const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯" (was a 💭)
   const slash = note.startsWith("✗") ? null : cmds.hint(query); // typing a /command: its matches (shared)
