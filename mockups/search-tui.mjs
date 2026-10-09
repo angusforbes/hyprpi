@@ -382,7 +382,7 @@ function pollReview() {
       // J285 v2 (Angus: "the 'Request from Alpha (G1)' part should be highlighted … like your Approved"): the request
       // as its own highlighted turn, from the relay's data; Thoughts only adds a one-line flag.
       if (h.research) { // J309: the request, the searches that went out and the whole deliverable, drawn from its file; no Thoughts prompt (it would read external web text)
-        logTurn({ room, id, ok: true, kind: "research", file: h.research.file, turn: h.research.plan ? `Searches planned for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`}: nothing sent yet${h.research.mode ? ` · Doorman mode: ${h.research.mode}` : ""}` : `Research for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`} · ${h.research.words} words${h.research.mode ? ` · Doorman mode: ${h.research.mode}` : ""}` });
+        logTurn({ room, id, ok: true, kind: "research", file: h.research.file, turn: h.research.plan ? `${h.research.exception ? `⚠ Off-task research held as an exception (${h.research.exception}) · ` : ""}Searches planned for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`}: nothing sent yet${h.research.mode ? ` · Doorman mode: ${h.research.mode}` : ""}` : `Research for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`} · ${h.research.words} words${h.research.mode ? ` · Doorman mode: ${h.research.mode}` : ""}` });
         turns = heldTurns(room); bumpThread(); if (TH.pinned) TH.unseen++; else follow();
       } else {
       const rq = requestTurn(h);

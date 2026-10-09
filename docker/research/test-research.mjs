@@ -192,6 +192,13 @@ t("task: setTask writes only the task, atomically, keeping the other keys; refus
   WF("zz-copy", { sandbox: "world-t" }); assert.throws(() => TK.setTask(cfg, "world-t", "y"), /2 worlds files/); fs.unlinkSync(path.join(cfg, "worlds", "zz-copy.json"));
   TK.setTask(cfg, "world-t", ""); assert.equal(JSON.parse(fs.readFileSync(path.join(cfg, "worlds", "world-t.json"), "utf8")).task, undefined);
 });
+// ---- J354: scientific writing is not "encoded" (Angus's live test 1) ----
+const J354 = await import("./j354-cases.mjs");
+t("J354: Angus's exact refused request passes the pre-check", () => assert.deepEqual(R.precheckQuery(J354.REFUSED), []));
+J354.GOOD.forEach((q, i) => t(`J354: formula-heavy on-task request ${i + 1} passes`, () => assert.deepEqual(R.precheckQuery(q), [], q)));
+J354.BAD.forEach(([q, why], i) => t(`J354: encoded-data attack ${i + 1} still refused (${why})`, () => assert.ok(R.precheckQuery(q).includes(why), JSON.stringify(R.precheckQuery(q)) + " " + q)));
+t("J354: a slash-joined run of words the task uses passes; random pieces don't", () => { assert.deepEqual(R.precheckQuery("check zxqvplorbium/wqertyuiopasd/perovskite", { task: "zxqvplorbium and wqertyuiopasd perovskites" }), []); assert.ok(R.precheckQuery("check zxqvplorbium/wqertyuiopasd/perovskite").includes("a long encoded-looking string")); });
+t("J354: chemicalFormula reads formulas and rejects base64", () => { for (const f of ["MAPbI3", "CH3NH3PbI3", "PbI2", "Cs0.05FA0.95PbI3", "FAPbI3", "SnO2", "Al2O3"]) assert.ok(R.chemicalFormula(f), f); for (const f of ["QUJDREVG", "Zm9vYmFy", "Hello", "XyZ9"]) assert.ok(!R.chemicalFormula(f), f); });
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`all ${n} passed`);

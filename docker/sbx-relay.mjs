@@ -738,7 +738,10 @@ class Relay {
           const id = this.hold(sb, { to: [sb.agentId], targets: [], shown: [`${sb.name} (research searches)`], rooms: [room0], mode: "talk", text, body: "",
             research: { token, mode: r.mode || researchConf(sb.name).mode, rid: r.rid, file: r.file, depth, from, want, plan: true, searches: r.searches, ...(r.exception ? { exception: clean(r.exception).slice(0, 300) } : {}) } });
           sb.research?.delete(token); this.pumpPlans(sb);
-          try { inboxWrite(sb, { type: "research", token, status: "planned", id }); } catch { /* the decision still comes */ }
+          // J354: the sandbox hears WHY it waits: a strict-mode plan, or an exception (only its kind and the host-set task, never
+          // the Doorman's own words)
+          const ek = !r.exception ? "" : /^no task/.test(r.exception) ? "no-task" : /^topic drift/.test(r.exception) ? "drift" : "off-task";
+          try { inboxWrite(sb, { type: "research", token, status: "planned", id, ...(ek ? { exception: ek, task: clean(r.task || "").slice(0, 300) } : {}) }); } catch { /* the decision still comes */ }
         } catch (e) { done({ status: "error", reason: `couldn't hold the searches: ${e.message}` }); }
         return;
       }

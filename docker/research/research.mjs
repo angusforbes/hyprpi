@@ -94,20 +94,70 @@ function takeCap(sandbox, depth, now = Date.now()) {
 // ---------- deterministic checks (never the only wall: the Doorman's checks and Angus's review come after) ----------
 const clean1 = (s, n) => String(s ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 // Reasons a request must not leave the sandbox, whatever its topic. [] = passes.
-export function precheckQuery(q) {
+// J354 (Angus's live test 1, "how does humidity degrade MAPbI3 … relative humidity/time/temperature/light/oxygen …",
+// refused as "a long encoded-looking string"): the 28-character run was "humidity/time/temperature/light/oxygen" ("/" is
+// in the base64 alphabet). Scientific writing is now read as such, without opening an encoded-data channel:
+//   · a long base64-alphabet run is fine only if EVERY piece between / _ + = - is readable: a dictionary or common tech
+//     word, a chemical formula (element symbols with counts, plus MA FA BA PEA GA EA Cs …), a short number, or a word
+//     the host-set task uses; anything else in it (random letters, base64) still refuses the request;
+//   · superscript/subscript digits and signs (CH₃NH₃PbI₃, cm⁻², m²) and the micro sign are normal, but they count as
+//     digits for the digit-run checks;
+//   · "mixed scripts" means Latin and Greek/Cyrillic letters inside ONE word (a look-alike); a Greek letter on its own
+//     (α-FAPbI₃, δ-phase, μm) is fine.
+const ELEMENTS = new Set("H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu".split(" "));
+const ORGANIC = ["PEA", "MA", "FA", "BA", "GA", "EA", "OA", "PA", "DMA", "TEA", "Me", "Et", "Ph", "Bu"];
+export function chemicalFormula(w) {
+  if (!/^[A-Z][A-Za-z0-9.]{0,23}$/.test(w) || !/[A-Z]/.test(w)) return false;
+  let i = 0, parts = 0;
+  while (i < w.length) {
+    const org = ORGANIC.find((o) => w.startsWith(o, i)), two = w.slice(i, i + 2), one = w[i];
+    const sym = org || (/^[A-Z][a-z]$/.test(two) && ELEMENTS.has(two) ? two : ELEMENTS.has(one) ? one : null);
+    if (!sym) return false;
+    i += sym.length; parts++;
+    const n = /^\d+(?:\.\d+)?/.exec(w.slice(i)); if (n) i += n[0].length;
+  }
+  return parts >= 2 || /\d/.test(w);
+}
+const SCRIPT_MARKS = /[\u2070-\u209f\u00b2\u00b3\u00b9]/g; // super/subscript digits and signs
+const toDigits = (s) => s.normalize("NFKC"); // ₃ → 3, ² → 2: for the digit checks
+// "strong": a word or formula; "weak": a short acronym, unit or number; null: neither (random-looking)
+function pieceKind(p, taskWords) {
+  const l = p.toLowerCase();
+  if (taskWords.has(l) || COMMON.has(l) || STOP.has(l) || chemicalFormula(p)) return "strong";
+  if (/^[a-z]+$/i.test(p) && p.length <= 24 && !rareToken(l)) return "strong"; // a dictionary word
+  // a word the dictionary lacks but that reads like one (chlorobenzene, methylammonium, formamidinium): lowercase,
+  // vowels in a natural proportion, no long consonant runs. Random or base64 text fails this.
+  if (/^[a-z]{4,24}$/.test(p) && (p.match(/[aeiouy]/g) || []).length / p.length >= 0.28 && (p.match(/[aeiouy]/g) || []).length / p.length <= 0.65 && !/[^aeiouy]{5}/.test(p)) return "strong";
+  if (/^\d{1,4}$/.test(p) || /^[A-Z]{1,4}\d{0,2}$/.test(p) || /^[a-z]{1,2}$/.test(p) || /^(eV|meV|nm|cm|mm|mA|mW|mV|kW|Wh|kWh|ppm|ppb|wt|vol|at|RH|AM)$/.test(p)) return "weak";
+  return null;
+}
+// Any long base64-alphabet run that isn't made of readable pieces (see above): every piece a word, formula, acronym,
+// unit or short number, and at least as many words/formulas as acronyms/numbers (so "QWE/RTY/UIO/…" still refuses).
+function encodedLooking(text, taskWords) {
+  for (const m of text.matchAll(/[A-Za-z0-9+/=_-]{24,}/g)) {
+    const run = m[0];
+    if (!/[A-Za-z0-9+/=_]{28,}/.test(run) && !/\d\D*\d\D*\d/.test(run)) continue; // (the old two triggers: 28+ without hyphens, or 24+ with 3 digits)
+    const kinds = run.split(/[\/_+=-]+/).filter(Boolean).map((p) => pieceKind(p, taskWords));
+    if (kinds.every(Boolean) && kinds.filter((k) => k === "strong").length >= kinds.filter((k) => k === "weak").length) continue;
+    return true;
+  }
+  return false;
+}
+export function precheckQuery(q, { task = "" } = {}) {
   const r = [], s = String(q ?? "");
   if (!s.trim()) r.push("empty request");
   if (s.length > LIMITS.requestChars) r.push(`longer than ${LIMITS.requestChars} characters`);
   if (s.trim().split(/\r?\n/).length > LIMITS.requestLines) r.push(`more than ${LIMITS.requestLines} lines`);
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]|[\u{e0000}-\u{e0fff}]/u.test(s)) r.push("control or invisible characters");
-  if (s.normalize("NFKC") !== s) r.push("unusual Unicode forms");
-  if (/\p{Script=Latin}/u.test(s) && /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]/u.test(s)) r.push("mixed scripts (look-alike letters)");
+  const sv = s.replace(SCRIPT_MARKS, "").replace(/\u00b5/g, "\u03bc"); // (J354) CH₃, cm⁻², the micro sign
+  if (sv.normalize("NFKC") !== sv) r.push("unusual Unicode forms");
+  if ((s.match(/[\p{L}\p{M}]+/gu) || []).some((w) => /\p{Script=Latin}/u.test(w) && /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]/u.test(w) && !/^[\u00b5\u03bc][A-Za-z]{1,2}$/u.test(w))) r.push("mixed scripts (look-alike letters)");
   if (/(^|[\s"'(=])(~\/|\.{1,2}\/|\/(home|Users|etc|root|var|opt|tmp|mnt|workspace|srv|run)\b)/i.test(s) || /[A-Za-z]:\\/.test(s)) r.push("a file path");
   if (/\b(sk-[A-Za-z0-9_-]{8,}|sk-or-|nvapi-|ihub_|ghp_|github_pat_|gho_|xox[abprs]-|AKIA[0-9A-Z]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.)/.test(s) || /-----BEGIN/.test(s)) r.push("a key or token");
-  const noUrl = s.replace(/https?:\/\/\S+/g, "");
-  if (/[A-Za-z0-9+/=_]{28,}/.test(noUrl) || /(?=[A-Za-z0-9+/=_-]{24,})(?=[^\s]*\d[^\s]*\d[^\s]*\d)[A-Za-z0-9+/=_-]{24,}/.test(noUrl)) r.push("a long encoded-looking string");
-  if (/\b[0-9a-f]{16,}\b/i.test(s)) r.push("a long hex string");
-  if (/\d[\d\s.,:-]{14,}\d/.test(s)) r.push("a long run of digits");
+  const noUrl = toDigits(s.replace(/https?:\/\/\S+/g, ""));
+  if (encodedLooking(noUrl, new Set(words(task)))) r.push("a long encoded-looking string");
+  if (/\b[0-9a-f]{16,}\b/i.test(noUrl)) r.push("a long hex string");
+  if (/\d[\d\s.,:-]{14,}\d/.test(noUrl)) r.push("a long run of digits");
   if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(s)) r.push("an email address");
   if (/\b(\d{1,3}\.){3}\d{1,3}\b/.test(s)) r.push("an IP address");
   if (/\b[\w-]+\.(nvidia\.com|nvidia\.net|nvidiangn\.net|nvda\.ai|local|internal|lan|corp)\b/i.test(s)) r.push("an internal host name");
@@ -153,7 +203,7 @@ export function planCheck(request, plan, { strict = false, task = "" } = {}) {
   const reqRare = new Set(req.filter(rareToken));
   const copied = new Set();
   for (const t of texts) {
-    const pre = precheckQuery(t).filter((x) => !/more than \d+ lines/.test(x));
+    const pre = precheckQuery(t, { task }).filter((x) => !/more than \d+ lines/.test(x));
     // J314 review #1: what Angus reads must be exactly what goes out: no markup or links that a renderer could hide
     if (/[[\]<>`*_|\\~{}]|https?:|www\.|\]\(/i.test(t)) r.push("a search contains markup or a link"); // (J314 strict only; J352 review #1: every mode, since any plan may be held for a human as an exception)
     if (pre.length) r.push(`a search contains ${pre.join(", ")}`);
@@ -237,7 +287,8 @@ export function recentRequests(sandbox, n = 6) {
   for (const l of lines.reverse()) {
     let e; try { e = JSON.parse(l); } catch { continue; }
     if (e.sandbox !== sandbox || !e.looking_for || !e.rid || seen.has(e.rid) || !(Date.parse(e.ts) >= since)) continue;
-    seen.add(e.rid); out.push(String(e.looking_for).replace(/\s+/g, " ").slice(0, 200));
+    seen.add(e.rid); const t = String(e.looking_for).replace(/\s+/g, " ").slice(0, 200);
+    if (!out.includes(t)) out.push(t); // (J354: the same request logged twice, e.g. a retry, shows once)
     if (out.length >= n) break;
   }
   return out.reverse();
@@ -267,7 +318,7 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   const cfg = conf(sandbox), q = String(lookingFor ?? "").replace(/\r\n/g, "\n").trim();
   const rid = "q" + crypto.randomBytes(4).toString("hex");
   const base = { rid, sandbox, mode: cfg.mode, from: clean1(from, 40), depth, looking_for: clean1(q, LIMITS.requestChars + 50), why: clean1(why, LIMITS.whyChars) };
-  const pre = precheckQuery(q);
+  const pre = precheckQuery(q, { task: cfg.task });
   if (pre.length) { logEvent({ ev: "refused", stage: "precheck", ...base, reason: pre.join(", ") }); return { status: "refused", rid, reason: `The request can't leave the sandbox: it contains ${pre.join(", ")}.` }; }
   const over = takeCap(sandbox, depth);
   if (over) { logEvent({ ev: "refused", stage: "cap", ...base, reason: `over ${over} ${depth} requests this hour` }); return { status: "refused", rid, reason: `The limit of ${over} ${depth} research requests an hour is used up.` }; }
@@ -287,8 +338,8 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   // J352 task-bound research: off-task, drifting, or no task set → held for Angus as an exception, in EVERY mode (the
   // code decides from the Doorman's verdict; a missing verdict counts as off-task). Beyond a few an hour: refused.
   const exception = !cfg.task ? (cfg.taskNote ? `${NO_TASK} (${cfg.taskNote})` : NO_TASK)
-    : plan.on_task !== true ? `unrelated to this sandbox's task: ${plan.on_task === false ? clean1(plan.task_reason || "(no reason given)", 200) : "the Doorman gave no task verdict"}`
-    : plan.drift !== false ? `topic drift across this sandbox's recent requests: ${plan.drift === true ? clean1(plan.drift_reason || "(no reason given)", 200) : "the Doorman gave no drift verdict"}` : "";
+    : plan.on_task !== true ? `unrelated to this sandbox's task: ${plan.on_task === false ? clean1(plan.task_reason || "(no reason given)", 200).replace(/[.\s]+$/, "") : "the Doorman gave no task verdict"}`
+    : plan.drift !== false ? `topic drift across this sandbox's recent requests: ${plan.drift === true ? clean1(plan.drift_reason || "(no reason given)", 200).replace(/[.\s]+$/, "") : "the Doorman gave no drift verdict"}` : "";
   if (exception && !takeException(sandbox)) {
     logEvent({ ev: "refused", stage: "task", ...base, reason: `${exception}; over ${LIMITS.exceptionsPerHour} held exceptions this hour`, searches: sent });
     return { status: "refused", rid, reason: `Not sent: ${exception}. ${LIMITS.exceptionsPerHour} such requests already wait for Angus this hour; ask again later, or stay on the task.` };
