@@ -3,6 +3,7 @@
 # plugin agf.hyprpi-finder) listing THIS world's agents, panels and projects; Tab marks several, ⏎
 # summons. Pressing it again closes the open one (summon.pid). Without the plugin, finder falls back
 # to the old small kitty pop-up (mockups/summon.mjs, class hyprpi.summon).
+. "$(dirname "$(readlink -f "$0")")/../lib/isolated-guard.sh" # J333: no windows from an isolated hyprpi
 a=$(hyprctl clients -j | jq -r '.[] | select(.class=="hyprpi.summon") | .address' | head -1)
 if [ -n "$a" ]; then hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null; exit 0; fi
 unset HYPRPI_AGENT_ID

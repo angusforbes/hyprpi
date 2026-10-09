@@ -154,6 +154,13 @@ def overview():
     lines.append(f"Tools inside: {', '.join(tools)}. Desktop tools (hyprctl, notify-send, a real clipboard) are the host's.")
     c = host_card()
     lines.append(f"Host card: {c}" if c else "Host card: none yet. Ask your host contact: 'would you build us a host card?' (format: see the sandbox-guide skill).")
+    if c:  # J325: the Doorman mode for web research, as the host card states it
+        try:
+            m = re.search(r"^Doorman mode: (doorman-[a-z]+)", open(c).read(), re.M)
+            if m:
+                lines.append(f"Web research: ask Outside 'Research: <what you're looking for>' (Doorman mode: {m.group(1)}; the host card's Web research section says what that means).")
+        except OSError:
+            pass
     lines.append("Ask: sandbox-guide why PATH | URL | COMMAND")
     return "\n".join(lines)
 

@@ -7,6 +7,8 @@
 //   ~/Work/hyprpi/mockups/panel-jump 1|2|3|4 [ROOM] [--dry]     (1 Agents · 2 Stream · 3 Thoughts · 4 Projects)
 import { spawn } from "node:child_process";
 import * as hypr from "../lib/hypr.mjs";
+// J333: an isolated hyprpi (test socket/state) opens no windows on the real desktop.
+{ const why = hypr.hyprBlocked(); if (why) { console.error(`hypr actions disabled (isolated daemon: ${why}); HYPRPI_ALLOW_HYPR=1 allows them`); process.exit(1); } }
 import { request } from "../lib/client.mjs";
 
 const args = process.argv.slice(2), dry = args.includes("--dry");

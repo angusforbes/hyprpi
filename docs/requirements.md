@@ -43,12 +43,15 @@ On Arch / Omarchy, in one line:
 
 ## Pi packages (separate repos, installed by `./install.sh`)
 
-pi-twin and pi-jot are their own repos; neither needs hyprpi (pi-twin only uses it when it runs inside a hyprpi agent, pi-jot works in any pi). `./install.sh` (the `pi-packages` piece, or `hyprpi integration install pi-packages`) runs `pi install git:github.com/angusforbes/<name>` for any that pi doesn't already list; a local checkout already listed in pi's packages is left as is. Undo: `hyprpi integration uninstall pi-packages`.
+pi-twin, pi-jot and pi-doorman are their own repos; none needs hyprpi (pi-twin only uses it when it runs inside a hyprpi agent, pi-jot works in any pi). `./install.sh` (the `pi-packages` piece, or `hyprpi integration install pi-packages`) runs `pi install git:github.com/angusforbes/<name>` for any that pi doesn't already list; a local checkout already listed in pi's packages is left as is. Undo: `hyprpi integration uninstall pi-packages`.
 
 - **[pi-twin](https://github.com/angusforbes/pi-twin)**: split / fork an agent's conversation into a
   second live agent (`/twin-split`, `/twin-fork`).
 - **[pi-jot](https://github.com/angusforbes/pi-jot)**: `/jot-note`, `/jot-idea`, … into a notes folder;
   Thoughts loads it for `jot_save` (see `jotExtension` in `config.json`).
+- **[pi-doorman](https://github.com/angusforbes/pi-doorman)**: the Doorman for sandboxed agents (host card, rules,
+  request queue, review, MCP/CLI/hook, the developer window). hyprpi's `docker/doorman` runs its window and log from
+  it; hyprpi adds the relay, Thoughts review, world colours and the research / gpu-lease plug-ins.
 
 ## Optional companions (not in this repo)
 

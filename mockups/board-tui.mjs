@@ -37,6 +37,7 @@ import { createDecisionsView } from "../lib/tui/decisions-view.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 import { SENT_STICKY_MS } from "../lib/tui/sent.mjs";
+import { isolatedReason } from "../lib/paths.mjs";
 
 let room = (process.argv[2] || "").toUpperCase(), rooms = [], agents = [], online = false, api = null, note = "";
 let board = { room: "", projects: [], names: {}, live: {} };
@@ -139,6 +140,7 @@ function wordAt(x, y) {
 function ctrlClick(x, y) { // a link opens; an agent's name ("Sankey[e]" too) → its window (lib/tui/agent-click.mjs)
   const w = wordAt(x, y); if (!w) return;
   const url = urlIn(w.word);
+  if (url && isolatedReason(process.env)) { note = "link not opened (isolated hyprpi)"; return render(); } // J333
   if (url) { try { spawn("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
   if (!api) return;
   const hit = agentIn(w.word, agents);

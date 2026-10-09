@@ -1,0 +1,479 @@
+#!/bin/bash
+# voice-agent — dictate straight to a hyprpi agent (or a hyprpi room)
+# instead of the focused text field.   Part of hyprpi's voice-routing (voice-routing/README.md);
+# it started as herdr-voice-to-agents (Herdr retired 2026-10-05).
+#
+# Bind it to a key (the reference setup uses SUPER + Caps Lock). Toggle semantics:
+#   1st press  -> start recording the microphone
+#   2nd press  -> stop, transcribe with faster-whisper, submit the text to the
+#                 currently selected hyprpi agent via `hyprpi send` (a room target: the focused
+#                 world's Thoughts via `hyprpi thoughts --via voice`, J98)
+#
+# Nothing is typed into the focused window; any ordinary dictation tool you
+# already use is untouched.
+#
+# Subcommands:
+#   voice-agent            toggle record/stop (default)
+#   voice-agent target     pick the destination agent (menu)
+#   voice-agent status     print current target / recording state
+#   voice-agent cancel     discard an in-progress recording
+#   voice-agent set <who>  switch target without the picker. <who> is an agent
+#                          name (case-insensitive, icon optional, unique prefix
+#                          ok), a pane id (w8:p4), "room" / "here" (room of the
+#                          calling hyprpi agent), "room:hp-<room>", "room <label>",
+#                          "me"/"this" (the calling pane), or "none".
+#                          Exit 0 = switched (prints new target), 1 = could
+#                          not (prints the reason). Never interrupts the agent.
+#   voice-agent handsfree on|off|toggle|status
+#                          hands-free mode = keyword listener (voice-listen) +
+#                          resident whisper (voice-whisper) started/stopped together
+#   voice-agent list       machine-readable list of possible targets
+#   voice-agent deliver <wav>  transcribe a finished segment and route it (used by
+#                          the voice-listen keyword service); the wav is deleted
+#
+# State lives in $XDG_RUNTIME_DIR/voice-agent/. Env overrides:
+#   VOICE_AGENT_MODEL   whisper model for this path (default small.en; the
+#                       daemon's tiny.en is too weak for short commands)
+#   VOICE_AGENT_MAX     safety stop in seconds (default 90)
+
+set -u
+
+RT="${XDG_RUNTIME_DIR:-/tmp}/voice-agent"
+mkdir -p "$RT"
+# This checkout's voice-routing folder (the script is linked into ~/.local/bin from it), and the data
+# folder with the Python venv and models: $VOICE_ROUTING_HOME, else ~/.local/share/voice-routing (an older
+# install's ~/.local/share/herdr-voice-to-agents is still found).
+VR_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+VOICE_HOME="${VOICE_ROUTING_HOME:-${VOICE_TO_AGENTS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/voice-routing}}"
+[[ -d $VOICE_HOME || -n ${VOICE_ROUTING_HOME:-}${VOICE_TO_AGENTS_HOME:-} ]] || VOICE_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/herdr-voice-to-agents"
+VOICE_PY="$VOICE_HOME/.venv/bin/python"
+PIDF="$RT/rec.pid"
+WAV="$RT/rec.wav"
+TARGETF="$RT/target"          # "<pane_id>\t<display name>"  or  "room:<ws>\tRoom <label>"
+MODEL="${VOICE_AGENT_MODEL:-small.en}"   # faster-whisper model for the cold path
+MAX="${VOICE_AGENT_MAX:-90}"
+NOTIFY_ID=91177               # stable id so notifications replace each other
+
+# Desktop toasts. Omarchy's own sender when present (its default app-name is
+# what its notification plugin lets through under DND); plain notify-send elsewhere.
+notify() { # title body [timeout_ms]
+  [[ ${VOICE_AGENT_QUIET:-0} == 1 ]] && return 0   # the bar widget shows state itself
+  if command -v omarchy-notification-send >/dev/null; then
+    omarchy-notification-send -g 🎙 -u normal -t "${3:-3000}" "$1" "${2:-}" >/dev/null 2>&1 || true
+  else
+    notify-send -a "Voice" -t "${3:-3000}" "🎙 $1" "${2:-}" >/dev/null 2>&1 || true
+  fi
+}
+
+strip_markup() { sed -E 's/\{#[0-9a-fA-F]{6}\}//g'; }
+
+recording_pid() {
+  [[ -f $PIDF ]] || return 1
+  local pid; pid=$(<"$PIDF")
+  [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && { echo "$pid"; return 0; }
+  rm -f "$PIDF"; return 1
+}
+
+# Targets: one "<id>\t<name>" per line (agent pane id or room:<ws>). Several
+# lines = fan-out. read_target loads the FIRST for legacy single-target code
+# and fills TARGETS_IDS/TARGETS_NAMES arrays for fan-out.
+declare -a TARGETS_IDS=() TARGETS_NAMES=()
+read_target() { # returns 1 if none
+  TARGETS_IDS=(); TARGETS_NAMES=()
+  [[ -s $TARGETF ]] || return 1
+  local id name
+  while IFS=$'\t' read -r id name; do
+    [[ -n $id ]] || continue
+    TARGETS_IDS+=("$id"); TARGETS_NAMES+=("${name:-$id}")
+  done <"$TARGETF"
+  (( ${#TARGETS_IDS[@]} )) || return 1
+  TARGET_PANE=${TARGETS_IDS[0]}; TARGET_NAME=${TARGETS_NAMES[0]}
+  (( ${#TARGETS_IDS[@]} > 1 )) && TARGET_NAME="${#TARGETS_IDS[@]} targets"
+  return 0
+}
+targets_label() { local out="" n; for n in "${TARGETS_NAMES[@]}"; do out+="${out:+, }$n"; done; echo "$out"; }
+has_target() { local t; for t in "${TARGETS_IDS[@]}"; do [[ $t == "$1" ]] && return 0; done; return 1; }
+write_targets() { # args: id<TAB>name ...
+  : >"$TARGETF"; local l; for l in "$@"; do printf '%s\n' "$l" >>"$TARGETF"; done
+}
+
+is_room() { [[ ${TARGET_PANE:-} == room:* ]]; }
+# J98 v2 (Angus: "make the current world the default"): the Thoughts of the world he is in; a spoken
+# "Knock, …" / "project system, …" at the start goes to that agent / project instead (hyprpi dictate).
+DEFAULT_TARGET=$'thoughts\t💭 Thoughts (current world)'
+
+# Drop targets that are gone, refresh agent names. Returns 1 if none remain.
+target_alive() {
+  local keep=() i row   # Herdr retired 2026-10-05: only hyprpi targets (hp:*, room:hp-*) survive
+  for i in "${!TARGETS_IDS[@]}"; do
+    local id=${TARGETS_IDS[$i]}
+    if [[ $id == thoughts || $id == proj:* ]]; then keep+=("$id"$'\t'"${TARGETS_NAMES[$i]}")   # J98 v2
+    elif [[ $id == room:hp-* ]]; then   # hyprpi room: always postable while the daemon runs
+      hp_json >/dev/null && keep+=("$id"$'\t'"${TARGETS_NAMES[$i]}")
+    elif [[ $id == hp:* ]]; then
+      row=$(hp_agents_tsv | awk -F'\t' -v p="$id" '$1==p {print $1"\t"$2}' | head -1)
+      [[ -n $row ]] && keep+=("$row")
+    fi
+  done
+  write_targets "${keep[@]}"
+  read_target
+}
+
+cmd_status() {
+  if read_target; then echo "target: $(targets_label) (${TARGETS_IDS[*]})"; else echo "target: none"; fi
+  if recording_pid >/dev/null; then echo "recording: yes"; else echo "recording: no"; fi
+  cmd_handsfree status
+}
+
+cmd_cancel() {
+  local pid
+  if pid=$(recording_pid); then kill -INT "$pid" 2>/dev/null; rm -f "$PIDF" "$WAV"; notify "Cancelled" "Recording discarded" 1500; fi
+}
+
+start_recording() {
+  if ! read_target || ! target_alive; then   # J98 v2: no target = the focused world's Thoughts (no picker)
+    write_targets "$DEFAULT_TARGET"; read_target || exit 1
+  fi
+  rm -f "$WAV"
+  pw-record --rate 16000 --channels 1 --format s16 "$WAV" &
+  local recpid=$!
+  echo "$recpid" >"$PIDF"
+  notify "Recording → $(targets_label)" "press the key again to send" 6000
+  # Safety stop: if still recording after $MAX seconds, toggle ourselves.
+  ( sleep "$MAX"; [[ -f $PIDF && $(<"$PIDF") == "$recpid" ]] && exec "$0" ) >/dev/null 2>&1 &
+  disown
+}
+
+stop_and_route() {
+  local pid=$1
+  kill -INT "$pid" 2>/dev/null
+  # wait for pw-record to flush the WAV header
+  for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.05; done
+  rm -f "$PIDF"
+  deliver_wav "$WAV"
+}
+
+# Transcribe a WAV and route the text to the current target. Used by the
+# manual key path and by the voice-listen keyword service (`voice-agent deliver`).
+deliver_wav() {
+  local wav=$1
+  read_target || { write_targets "$DEFAULT_TARGET"; read_target; }   # J98 v2: the default
+  notify "⏳ Transcribing → $(targets_label)" "" 4000
+
+  local text
+  # Fast path: resident voice-whisper server (~0.2 s). Fallback: one-shot
+  # faster-whisper from the package venv (a few seconds, model load included).
+  if ! text=$(voice-whisper-client "$wav" 2>/dev/null); then
+    # Offline first (J323): with network access faster-whisper checks the Hub before loading even a cached
+    # model, which made this path ~30 s instead of ~4 s; only a model that isn't downloaded yet needs it.
+    if ! text=$(HF_HUB_OFFLINE=1 VOICE_WHISPER_MODEL="$MODEL" "$VOICE_PY" "$VR_DIR/listen/voice_whisper.py" --once "$wav" 2>"$RT/transcribe.log") &&
+       ! text=$(VOICE_WHISPER_MODEL="$MODEL" "$VOICE_PY" "$VR_DIR/listen/voice_whisper.py" --once "$wav" 2>>"$RT/transcribe.log"); then
+      notify "⚠ Transcription failed" "see $RT/transcribe.log (model missing? run voice-agent handsfree on once to fetch it)" 6000
+      return 1
+    fi
+  fi
+  text=$(tr -s '[:space:]' ' ' <<<"$text" | sed -E 's/^ +| +$//g')
+  # Safety net: strip a trailing spoken command phrase if the cut missed it.
+  text=$(sed -E 's/[[:space:],.!?-]*((send|off|on)[[:space:],.!?-]*){2,3}$//I' <<<"$text" | sed -E 's/ +$//')
+  # Whisper hallucinates on silence; drop the usual suspects.
+  local lc; lc=$(tr '[:upper:]' '[:lower:]' <<<"$text" | sed -E 's/[[:punct:]]//g; s/ +$//')
+  case "$lc" in
+    ""|"you"|"thank you"|"thanks for watching"|"thank you for watching"|"bye"|"blankaudio"|"silence"|"music"|"inaudible")
+      notify "Nothing heard" "No speech recognised" 2500; return 1 ;;
+  esac
+  if ! target_alive; then
+    notify "Voice agent" "Target is gone — pick a new one" 3000
+    return 1
+  fi
+
+  local win title cls
+  win=$(hyprctl activewindow -j 2>/dev/null) || win='{}'
+  cls=$(jq -r '.class // empty' <<<"$win"); title=$(jq -r '.title // empty' <<<"$win")
+  local prompt="🎤 Voice command (spoken; transcription may contain misheard words): $text"
+  [[ -n $cls ]] && prompt+=$'\n'"(Focused window when spoken: ${cls} — ${title})"
+
+  # J98: rooms are no longer posted to (dictation goes to Thoughts), so nobody is "covered" by a room post.
+  local covered="" id
+
+  local ok=() failed=() i
+  for i in "${!TARGETS_IDS[@]}"; do
+    id=${TARGETS_IDS[$i]}; local name=${TARGETS_NAMES[$i]} out
+    if [[ $id == room:hp-* ]]; then
+      # J98: a room target counts as the default (the focused world's Thoughts)
+      if out=$("$HYPRPI" dictate "$text" 2>/dev/null); then ok+=("${out#→ }"); else failed+=("$name"); fi
+      continue
+    fi
+    if [[ $id == thoughts || $id == proj:* ]]; then   # J98 v2: the default, or a sticky @project
+      local to=(); [[ $id == proj:* ]] && to=(--to "$id")
+      if out=$("$HYPRPI" dictate "${to[@]}" "$text" 2>/dev/null); then ok+=("${out#→ }"); else failed+=("$name"); fi
+      continue
+    fi
+    if [[ $id == room:* ]]; then failed+=("$name"); continue; fi   # old Herdr room: Herdr retired
+    [[ " $covered " == *" $id "* ]] && continue
+    deliver_prompt "$id" "$name" "$prompt" && ok+=("$name") || failed+=("$name")
+  done
+  if (( ${#failed[@]} )); then
+    wl-copy <<<"$text" 2>/dev/null
+    notify "⚠ Not delivered to $(IFS=', '; echo "${failed[*]}")" "text copied to clipboard${ok[*]:+ · sent to ${ok[*]}}" 5000
+    return 1
+  fi
+  notify "✅ Sent → $(IFS=', '; echo "${ok[*]}")" "$text" 4000
+}
+
+# Submit one prompt to one agent pane, waiting for it to be idle first.
+deliver_prompt() {
+  local pane=$1 name=$2 prompt=$3
+  # hyprpi agents queue the prompt as a follow-up themselves; no waiting needed.
+  if [[ $pane == hp:* ]]; then "$HYPRPI" send "${pane#hp:}" "$prompt" >/dev/null 2>&1; return; fi
+  return 1   # non-hyprpi (old Herdr pane) target: Herdr retired 2026-10-05
+}
+
+# Is the always-on keyword listener (voice-listen.service) running?
+listener_active() {
+  [[ -f ${XDG_RUNTIME_DIR:-/tmp}/voice-listen/state ]] && systemctl --user is-active --quiet voice-listen.service
+}
+
+# ---- switching without the picker -------------------------------------------
+agents_tsv() { # pane \t name \t status \t workspace \t model \t topic
+  hp_agents_tsv
+}
+# hyprpi: agents in their own windows. Ids: hp:<agent>, rooms room:hp-<room>. The hyprpi of this checkout
+# (voice-routing sits inside it), else $HYPRPI_BIN, else the one on PATH.
+HYPRPI="${HYPRPI_BIN:-$VR_DIR/../bin/hyprpi}"
+[[ -x $HYPRPI ]] || HYPRPI=$(command -v hyprpi || echo hyprpi)
+hp_json() { [[ -x $HYPRPI ]] && timeout 3 "$HYPRPI" list --json 2>/dev/null; }
+hp_agents_tsv() {
+  hp_json | jq -r '.agents[] | ["hp:"+.id, ((if .icon != "" then .icon+" " else "" end)+.display), .status, ("hyprpi "+.room+" · "+.workspace_label), .model, ""] | @tsv' 2>/dev/null
+}
+hp_rooms_tsv() { # hp-<room> \t <room> (hyprpi) \t members
+  hp_json | jq -r '. as $r | .rooms[] | .id as $id | [$r.agents[] | select(.room==$id) | .display] | select(length>0) | ["hp-"+$id, $id+" (hyprpi)", join(", ")] | @tsv' 2>/dev/null
+}
+rooms_tsv() { # ws \t label \t members
+  hp_rooms_tsv
+}
+norm() { tr '[:upper:]' '[:lower:]' <<<"$1" | sed -E 's/[^a-z0-9 ]//g; s/^ +| +$//g; s/ +/ /g'; }
+
+cmd_list() {
+  echo "# pane/room<TAB>name<TAB>status/members<TAB>workspace"
+  agents_tsv
+  rooms_tsv | awk -F'\t' '{printf "room:%s\tRoom %s (%s)\t%s\t%s\n",$1,$2,$1,$3,$1}'
+}
+
+# resolve_target <who> -> prints "<id>\t<name>" or an error message (exit 1)
+resolve_target() {
+  local who="$*"; [[ -n $who ]] || { echo "no target given"; return 1; }
+  local q; q=$(norm "$who")
+  local pane name
+  # J98 v2: the default (the focused world's Thoughts) and sticky projects
+  local lw; lw=$(tr '[:upper:]' '[:lower:]' <<<"$who" | sed -E 's/^ +| +$//g')   # norm() would strip the ":" / "@"
+  case "$lw" in
+    thoughts|default|world|"current world"|"this world"|"thoughts here") printf '%s\n' "$DEFAULT_TARGET"; return 0 ;;
+    proj:*|@*|"project "*) local pn=${lw#proj:}; pn=${pn#@}; pn=${pn#project }; pn=${pn// /-}; printf 'proj:%s\t📋 @%s\n' "$pn" "$pn"; return 0 ;;
+  esac
+
+  if [[ -n ${HYPRPI_AGENT_ID:-} ]]; then
+    case "$q" in
+      me|this|myself|you|"this pane") pane="hp:$HYPRPI_AGENT_ID" ;;
+      room|here|"this room"|"the room"|"this space"|"everyone here"|"room here")
+        pane="room:hp-$("$HYPRPI" whoami 2>/dev/null | jq -r .room)" ;;
+    esac
+  fi
+  [[ -z ${pane:-} ]] && case "$q" in
+    me|this|myself|you|"this pane")
+      echo "cannot resolve 'me': not running inside a hyprpi agent"; return 1 ;;
+    room|here|"this room"|"the room"|"this space"|"everyone here"|"room here")
+      echo "cannot resolve the current room: not running inside a hyprpi agent"; return 1 ;;
+  esac
+
+  if [[ -z ${pane:-} ]]; then
+    local re_room='^room:((w|hp-)[0-9A-Za-z_-]+)$' re_pane='^(w[0-9A-Za-z]+:p[0-9A-Za-z]+|hp:[A-Za-z0-9_.-]+)$' re_rl='^(room|space|workspace) (.+)$'
+    if [[ $who =~ $re_room ]]; then pane="room:${BASH_REMATCH[1]}"
+    elif [[ $who =~ $re_pane ]]; then pane=${BASH_REMATCH[1]}
+    elif [[ $q =~ $re_rl ]]; then
+      local rl=${BASH_REMATCH[2]} hits
+      hits=$(rooms_tsv | while IFS=$'\t' read -r ws label m; do
+        [[ $(norm "$label") == "$rl" || $ws == "$rl" || $(norm "$label") == "$rl"* ]] && printf '%s\t%s\n' "$ws" "$label"; done)
+      local n; n=$(grep -c . <<<"${hits:-}")
+      if (( n == 0 )); then echo "no room matches '$rl' — rooms: $(rooms_tsv | awk -F'\t' '{printf "%s (%s) ", $2, $1}')"; return 1
+      elif (( n > 1 )); then echo "ambiguous room '$rl' — matches: $(awk -F'\t' '{printf "%s (%s) ", $2, $1}' <<<"$hits")— say the workspace id (e.g. room:w4)"; return 1; fi
+      pane="room:$(cut -f1 <<<"$hits")"
+    fi
+  fi
+
+  if [[ -z ${pane:-} ]]; then
+    local all exact pref
+    all=$(agents_tsv)
+    exact=$(while IFS=$'\t' read -r p n s w rest; do
+      nn=$(norm "$n"); [[ $nn == "$q" || ${nn#* } == "$q" || ${nn%% *} == "$q" ]] && printf '%s\t%s\n' "$p" "$n"; done <<<"$all")
+    if [[ -z $exact ]]; then
+      pref=$(while IFS=$'\t' read -r p n s w rest; do
+        nn=$(norm "$n"); [[ $nn == "$q"* || $nn == *" $q"* ]] && printf '%s\t%s\n' "$p" "$n"; done <<<"$all")
+    fi
+    local hits=${exact:-$pref}
+    local n; n=$(grep -c . <<<"${hits:-}")
+    if (( n == 0 )); then
+      echo "no agent named '$who' — live agents: $(cut -f2 <<<"$all" | paste -sd, - | sed 's/,/, /g')"; return 1
+    elif (( n > 1 )); then
+      echo "ambiguous: '$who' matches $(cut -f2 <<<"$hits" | paste -sd, - | sed 's/,/, /g') — say the full name or pane id"; return 1
+    fi
+    pane=$(cut -f1 <<<"$hits")
+  fi
+
+  if [[ $pane == room:* ]]; then
+    local ws=${pane#room:} row
+    row=$(rooms_tsv | awk -F'\t' -v ws="$ws" '$1==ws')
+    [[ -n $row ]] || { echo "room for workspace $ws not found or has no members"; return 1; }
+    name="Room $(cut -f2 <<<"$row") ($ws)"
+  else
+    local row; row=$(agents_tsv | awk -F'\t' -v p="$pane" '$1==p')
+    [[ -n $row ]] || { echo "pane $pane has no live Pi agent"; return 1; }
+    name=$(cut -f2 <<<"$row")
+  fi
+  printf '%s\t%s\n' "$pane" "$name"
+}
+
+# focus the workspace/pane of one target (VOICE_AGENT_NO_FOCUS=1 disables, used by the bar widget)
+focus_target() {
+  [[ ${VOICE_AGENT_NO_FOCUS:-0} == 1 ]] && return 0
+  if [[ $1 == room:hp-* ]]; then "$HYPRPI" room "${1#room:hp-}" >/dev/null 2>&1 || true
+  elif [[ $1 == hp:* ]]; then "$HYPRPI" focus "${1#hp:}" >/dev/null 2>&1 || true
+  fi
+}
+
+# cmd_targets <set|add|remove|toggle> <who>   (serialised: concurrent widget
+# clicks and hands-free startup were racing on the target file)
+cmd_targets() {
+  exec 9>"$RT/targets.lock"; flock -w 5 9 || { echo "busy, try again"; return 1; }
+  local mode=$1; shift
+  local who="$*" q; q=$(norm "$who")
+  case "$q" in none|off|nobody|stop|clear)
+    rm -f "$TARGETF"; notify "Voice routing off" "" 2000; echo "switched: none"; return 0 ;;
+  esac
+  local res; res=$(resolve_target "$who") || { echo "$res"; return 1; }
+  local id=${res%%$'\t'*} name=${res#*$'\t'}
+  read_target || true
+  local lines=() i present=0
+  for i in "${!TARGETS_IDS[@]}"; do
+    if [[ ${TARGETS_IDS[$i]} == "$id" ]]; then present=1; continue; fi
+    lines+=("${TARGETS_IDS[$i]}"$'\t'"${TARGETS_NAMES[$i]}")
+  done
+  # J98 v3: the Thoughts default is exclusive: picking it resets the set; picking an agent / project replaces it
+  if [[ $id == thoughts && $mode != remove ]]; then mode=set
+  else local keep2=() l; for l in "${lines[@]}"; do [[ $l == thoughts$'\t'* ]] || keep2+=("$l"); done; lines=("${keep2[@]}"); fi
+  case "$mode" in
+    set)    lines=("$res") ;;
+    add)    lines+=("$res") ;;
+    remove) ;;
+    toggle) (( present )) || lines+=("$res") ;;
+  esac
+  write_targets "${lines[@]}"
+  if read_target; then
+    local label; label=$(targets_label)
+    notify "Voice → $label" "" 3000
+    case "$mode" in remove) ;; toggle) (( present )) || focus_target "$id" ;; *) focus_target "$id" ;; esac
+    if [[ $mode == remove || ( $mode == toggle && $present == 1 ) ]]; then echo "removed $name — now: $label"; else echo "switched: $label"; fi
+  else
+    notify "Voice routing off" "" 2000; echo "removed $name — no targets left"
+  fi
+}
+cmd_set() { cmd_targets set "$@"; }
+
+# ---- hands-free mode (keyword listener + resident whisper, as one unit) -----
+cmd_handsfree() {
+  case "${1:-status}" in
+    on)
+      systemctl --user start voice-whisper.service voice-listen.service 2>&1
+      for _ in $(seq 1 40); do [[ -f ${XDG_RUNTIME_DIR:-/tmp}/voice-listen/state ]] && break; sleep 0.25; done
+      notify "🎧 Hands-free ON" "say the start phrase to begin · the key does the same" 5000
+      echo "hands-free: on (listening for phrases)" ;;
+    off)
+      systemctl --user stop voice-listen.service voice-whisper.service 2>&1
+      rm -f "${XDG_RUNTIME_DIR:-/tmp}/voice-listen/state"
+      notify "🎧 Hands-free OFF" "mic closed · push-to-talk key only" 4000
+      echo "hands-free: off (push-to-talk key only)" ;;
+    toggle) if listener_active; then cmd_handsfree off; else cmd_handsfree on; fi ;;
+    status)
+      if listener_active; then echo "hands-free: on ($(cat "${XDG_RUNTIME_DIR:-/tmp}/voice-listen/state" 2>/dev/null))"; else echo "hands-free: off"; fi ;;
+    *) echo "usage: voice-agent handsfree on|off|toggle|status" >&2; return 2 ;;
+  esac
+}
+
+# ---- for the bar widget (omarchy-plugin/herdr.voice) and other UIs -------------------------------------------
+CFG="$HOME/.config/voice-listen/config.json"
+LSTATE="${XDG_RUNTIME_DIR:-/tmp}/voice-listen/state"
+
+cmd_autostart() {
+  case "${1:-status}" in
+    on)  systemctl --user enable voice-whisper.service voice-listen.service >/dev/null 2>&1; echo "autostart: on" ;;
+    off) systemctl --user disable voice-whisper.service voice-listen.service >/dev/null 2>&1; echo "autostart: off" ;;
+    status) systemctl --user is-enabled --quiet voice-listen.service && echo "autostart: on" || echo "autostart: off" ;;
+    *) echo "usage: voice-agent autostart on|off|status" >&2; return 2 ;;
+  esac
+}
+
+# voice-agent phrase <on|send|off> "<words>"  — validated, saved, listener restarted if running
+cmd_phrase() {
+  local key=$1 val; val=$(tr '[:upper:]' '[:lower:]' <<<"${2:-}" | sed -E "s/[^a-z' ]//g; s/ +/ /g; s/^ | $//g")
+  [[ $key =~ ^(on|send|off)$ ]] || { echo "key must be on|send|off"; return 2; }
+  local n; n=$(wc -w <<<"$val")
+  (( n >= 2 )) || { echo "phrase needs at least 2 words"; return 1; }
+  local last=${val##* } other olast
+  for other in on send off; do
+    [[ $other == "$key" ]] && continue
+    olast=$(jq -r --arg k "$other" '.phrases[$k]' "$CFG" 2>/dev/null); olast=${olast##* }
+    [[ $olast == "$last" ]] && { echo "last word '$last' clashes with the $other phrase"; return 1; }
+  done
+  python3 - "$CFG" "$key" "$val" <<'PY'
+import json,sys; p,k,v=sys.argv[1:]
+c=json.load(open(p)); c.setdefault("phrases",{})[k]=v; json.dump(c,open(p,'w'),indent=2)
+PY
+  systemctl --user is-active --quiet voice-listen.service && systemctl --user restart voice-listen.service
+  echo "phrase $key: $val"
+}
+
+cmd_panel_state() {
+  local hf=false; listener_active && hf=true
+  local lst="off"; $hf && lst=$(cat "$LSTATE" 2>/dev/null || echo idle)
+  local auto=false; systemctl --user is-enabled --quiet voice-listen.service && auto=true
+  local rec=false; recording_pid >/dev/null && rec=true
+  local tp="" tn="" tids='[]'
+  # J98 v3: no target = the default, the focused world's Thoughts (shown as the selected row)
+  read_target || { TARGETS_IDS=(thoughts); TARGETS_NAMES=("💭 Thoughts (current world)"); TARGET_PANE=thoughts; }
+  tp=$TARGET_PANE; tn=$(targets_label); tids=$(printf '%s\n' "${TARGETS_IDS[@]}" | jq -R -s 'split("\n") | map(select(length>0))')
+  local agents rooms phrases model vt
+  # J98 v3: agents and projects, this world first (hyprpi voice-targets); rooms are gone (the Thoughts row replaces them)
+  vt=$(timeout 5 "$HYPRPI" voice-targets 2>/dev/null) || vt='{"world":"","thoughts":{"id":"thoughts","name":"Thoughts (current world)"},"agents":[],"projects":[]}'
+  agents=$(jq -c '[.agents[] | {pane:.id, name:((.icon // "🤖")+" "+.name), status:.status, workspace:("hyprpi "+.room+" · "+.ws), model:"", topic:"", room:.room}]' <<<"$vt")
+  rooms='[]'
+  local thoughts projects; thoughts=$(jq -c '.thoughts + {world:.world}' <<<"$vt"); projects=$(jq -c '.projects' <<<"$vt")
+  phrases=$(jq -c '.phrases // {}' "$CFG" 2>/dev/null || echo '{}')
+  model=$(systemctl --user show -p Environment --value voice-whisper.service 2>/dev/null | tr ' ' '\n' | sed -n 's/^VOICE_WHISPER_MODEL=//p'); model=${model:-small.en}
+  jq -n --argjson hf "$hf" --arg lst "$lst" --argjson auto "$auto" --argjson rec "$rec" --arg tp "$tp" --arg tn "$tn" --argjson tids "$tids" \
+        --argjson agents "$agents" --argjson rooms "$rooms" --argjson phrases "$phrases" --arg model "$model" \
+        --argjson thoughts "$thoughts" --argjson projects "$projects" \
+        '{handsfree:$hf, listener:$lst, autostart:$auto, recording:$rec, target:{id:$tp, name:$tn, ids:$tids}, thoughts:$thoughts, agents:$agents, projects:$projects, rooms:$rooms, phrases:$phrases, model:$model}'
+}
+
+case "${1:-toggle}" in
+  target) exec voice-agent-target ;;
+  handsfree) shift; cmd_handsfree "$@" ;;
+  autostart) shift; cmd_autostart "$@" ;;
+  phrase) shift; cmd_phrase "$@" ;;
+  panel-state) cmd_panel_state ;;
+  notify) shift; notify "$1" "${2:-}" "${3:-3000}" ;;
+  set) shift; cmd_targets set "$@" ;;
+  add) shift; cmd_targets add "$@" ;;
+  remove|rm) shift; cmd_targets remove "$@" ;;
+  toggle-target) shift; cmd_targets toggle "$@" ;;
+  list) cmd_list ;;
+  status) cmd_status ;;
+  cancel) cmd_cancel ;;
+  deliver) shift; deliver_wav "$1"; rc=$?; rm -f "$1"; exit $rc ;;
+  toggle)
+    if pid=$(recording_pid); then stop_and_route "$pid"
+    elif listener_active; then
+      # hands-free mode: the key mirrors the spoken on/off phrases
+      if [[ $(<"${XDG_RUNTIME_DIR:-/tmp}/voice-listen/state") == on ]]; then voice-listen off; else voice-listen on; fi
+    else start_recording; fi ;;
+  *) echo "usage: voice-agent [toggle|target|status|cancel|list|set|add|remove|toggle-target <who>|deliver <wav>|handsfree on|off|toggle|status]" >&2; exit 2 ;;
+esac

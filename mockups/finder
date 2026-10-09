@@ -17,6 +17,8 @@ import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
 import * as hypr from "../lib/hypr.mjs";
+// J333: an isolated hyprpi (test socket/state) opens no windows on the real desktop.
+{ const why = hypr.hyprBlocked(); if (why) { console.error(`hypr actions disabled (isolated daemon: ${why}); HYPRPI_ALLOW_HYPR=1 allows them`); process.exit(1); } }
 import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib/paths.mjs";
 import { worldHex, unnamed } from "../lib/tui/term.mjs";
 import { isAppWindow, appLabel, stateNote } from "../lib/apps.mjs";

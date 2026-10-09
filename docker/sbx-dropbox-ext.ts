@@ -214,6 +214,26 @@ export default function (pi: ExtensionAPI) {
       let s = j; while (s > 0 && !own(ms[s - 1])) s--;
       return s > 0 ? { messages: ms.slice(s) } : undefined;
     });
+    // J327: a turn started by Angus himself in the developer window (its prompt opens with this marker, put there by
+    // doorman-view.mjs on the host) is a conversation with him only: the three tools that reach anyone else are
+    // blocked for that turn, so nothing he types can be sent to the sandbox or drafted as a request. A forged
+    // marker in a sandbox message can only block tools, which is the safe direction.
+    let devTurn = false;
+    // Decided before every model call, fail-closed: if ANY message of the batch the model is about to see (the same
+    // cropping as above) is Angus's developer-window text, the three reaching tools are off for this call.
+    pi.on("context", async (e: any) => {
+      const ms: any[] = e?.messages || []; const own = (m: any) => m?.role === "assistant" || m?.role === "toolResult";
+      let j = ms.length - 1; while (j >= 0 && own(ms[j])) j--;
+      let s = j; while (s > 0 && !own(ms[s - 1])) s--; if (s < 0) s = 0;
+      const text = (m: any) => { const c = m?.content; return typeof c === "string" ? c : Array.isArray(c) ? c.map((x: any) => x?.text || "").join("") : ""; };
+      devTurn = ms.slice(Math.max(s, 0)).some((m) => !own(m) && text(m).startsWith("[Angus · developer window"));
+    });
+    pi.on("tool_call", async (e: any) => {
+      const n = e?.toolName || e?.name;
+      // The Doorman reads only its host card share: not its own session files (which hold what Angus typed).
+      if (n === "read") { const q = String(e?.input?.path ?? e?.args?.path ?? ""); const r = path.resolve("/home/agent", q.replace(/^~(?=\/|$)/, "/home/agent")); if (!(r === "/home/agent/.sandbox" || r.startsWith("/home/agent/.sandbox/"))) return { block: true, reason: "you may read only your host card folder, /home/agent/.sandbox/" }; }
+      if (devTurn && (n === "hyprpi_reply" || n === "hyprpi_talk" || n === "hyprpi_draft_request")) return { block: true, reason: "Angus is talking to you in the developer window: answer him in plain text here; nothing goes to the sandbox, other agents or the relay from this turn." };
+    });
     let lastErr = "";
     pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "assistant") lastErr = m.stopReason === "error" ? String(m.errorMessage || "error") : ""; });
     pi.on("tool_call", async (e: any) => { if ((e?.toolName || e?.name) === "hyprpi_reply") asked.delete(String(e?.input?.request_id ?? e?.args?.request_id ?? "")); });

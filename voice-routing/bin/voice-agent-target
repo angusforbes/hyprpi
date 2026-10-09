@@ -1,0 +1,83 @@
+#!/bin/bash
+# voice-agent-target — pop-up picker for voice targets (hyprpi voice-routing).
+# Uses the Omarchy menu when available, else fuzzel / wofi / rofi (dmenu mode).
+# Each pick TOGGLES membership in the target set.
+#
+# Lists live hyprpi agents and rooms (`hyprpi list --json`), plus:
+#   ➕ New desktop agent  — opens a hyprpi agent with the desktop-control prompt (as pi-desktop did)
+#                            (a Pi session with desktop-control tools)
+#   💭 Thoughts (current world, default) — the focused world's Thoughts (J98); also the target when none is set
+#   ⏏ None                — clear the target (next SUPER+Caps goes to the default, the current world's Thoughts)
+#
+# Writes "<pane_id>\t<name>" (or "room:<workspace_id>\tRoom <label>") to
+# $XDG_RUNTIME_DIR/voice-agent/target.
+
+set -uo pipefail
+
+RT="${XDG_RUNTIME_DIR:-/tmp}/voice-agent"
+# the hyprpi of this checkout (voice-routing sits inside it), else $HYPRPI_BIN, else the one on PATH
+VR_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+HYPRPI="${HYPRPI_BIN:-$VR_DIR/../bin/hyprpi}"
+[[ -x $HYPRPI ]] || HYPRPI=$(command -v hyprpi || echo hyprpi)
+# the desktop agent's system prompt (pi-desktop-control); the option is left out when the file is missing
+DESKTOP_PROMPT="${VOICE_DESKTOP_PROMPT:-$HOME/.pi/agent/desktop-control/SYSTEM.md}"
+mkdir -p "$RT"
+TARGETF="$RT/target"
+
+strip_markup() { sed -E 's/\{#[0-9a-fA-F]{6}\}//g'; }
+
+rows=()   # Herdr retired 2026-10-05: only hyprpi agents and rooms are listed
+
+# hyprpi agents (own windows) and rooms (one per hyprwrld)
+hpj=$(timeout 3 "$HYPRPI" list --json 2>/dev/null) || hpj='{"agents":[],"rooms":[]}'
+while IFS=$'\t' read -r glyph label sub; do
+  [[ -n $label ]] && rows+=("$(printf '%s\t%s\t%s' "$glyph" "$label" "$sub")")
+done < <(jq -r '.agents[] | [(if .icon != "" then .icon else "🤖" end), .display, ("hp:"+.id+" · hyprpi "+.room+" · "+.workspace_label+" · "+(if .model != "" then .model else "?" end)+" · "+.status)] | @tsv' <<<"$hpj")
+# J98 v2 (Angus: "make the current world the default"): rooms are replaced by the focused world's Thoughts
+# (first row); "Knock, …" / "project system, …" spoken at the start still goes to that agent / project.
+rows=("$(printf '💭\tThoughts (current world, default)\tthoughts · say "Name, …" or "project name, …" first to send to an agent or project')" "${rows[@]}")
+
+if systemctl --user is-active --quiet voice-listen.service; then
+  rows+=($'🎧\tHands-free: ON → turn off\tstop listening for “on on on” etc.; SUPER+Caps = push-to-talk')
+else
+  rows+=($'🎧\tHands-free: OFF → turn on\tlisten for “on on on / send send send / off off off”')
+fi
+[[ -f $DESKTOP_PROMPT ]] && rows+=($'➕\tNew desktop agent\tspawn a Pi session with desktop-control tools')
+rows+=($'⏏\tNone\tclear the target (dictation then goes to the current world\'s Thoughts)')
+
+pick() { # rows on stdin: glyph<TAB>label<TAB>subtext ; prints "label<TAB>subtext"
+  if command -v omarchy-menu-select >/dev/null; then
+    omarchy-menu-select "Voice → agent" -- --width 640
+  else
+    local menu
+    if command -v fuzzel >/dev/null; then menu=(fuzzel --dmenu --prompt "Voice → ")
+    elif command -v wofi >/dev/null; then menu=(wofi --dmenu --prompt "Voice →")
+    elif command -v rofi >/dev/null; then menu=(rofi -dmenu -p "Voice →")
+    else echo "voice-agent-target: no menu program (omarchy-menu-select, fuzzel, wofi or rofi)" >&2; return 1; fi
+    # show "glyph  label — subtext", return "label<TAB>subtext"
+    local shown; shown=$(awk -F'\t' '{printf "%s  %s — %s\n", $1, $2, $3}' | "${menu[@]}") || return 1
+    shown=${shown#* }; shown=${shown# }                 # drop glyph
+    printf '%s\t%s\n' "${shown%% — *}" "${shown#* — }"
+  fi
+}
+choice=$(printf '%s\n' "${rows[@]}" | pick) || exit 1
+label=${choice%%$'\t'*}
+sub=${choice#*$'\t'}
+
+case "$label" in
+  "Hands-free: ON → turn off") exec voice-agent handsfree off ;;
+  "Hands-free: OFF → turn on") exec voice-agent handsfree on ;;
+  "None")
+    rm -f "$TARGETF"
+    voice-agent notify "Voice routing off" ""
+    exit 0 ;;
+  "New desktop agent")
+    # Herdr retired 2026-10-05: open the desktop agent as a hyprpi agent instead (was: a Herdr tab running pi-desktop)
+    id="hp-desk$(date +%s)"
+    "$HYPRPI" new --id "$id" --cwd "$HOME" --name Desktop --icon 🖥 -- --append-system-prompt "$DESKTOP_PROMPT" >/dev/null 2>&1 || { voice-agent notify "Could not open the desktop agent" ""; exit 1; }
+    printf '%s\t%s\n' "hp:$id" "🖥 Desktop" >"$TARGETF"
+    voice-agent notify "Voice → 🖥 Desktop" "Starting desktop agent ($id)" ;;
+  *)
+    pane=${sub%% *}   # pane id, or room:<workspace_id>
+    exec voice-agent toggle-target "$pane" ;;
+esac

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "herdr.voice",
+  "name": "Voice",
+  "version": "0.1.0",
+  "author": "hyprpi voice-routing",
+  "description": "Voice dictation to hyprpi agents and Thoughts: hands-free toggle, target picker, command phrases.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Voice",
+    "description": "Hands-free listener toggle, voice target (agent or room), spoken command phrases.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

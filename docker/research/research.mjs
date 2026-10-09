@@ -20,6 +20,7 @@
 // Usage:
 //   research.mjs ask --sandbox S [--from NAME] [--depth quick|deep] [--why TEXT] LOOKING_FOR   → one JSON line
 //   research.mjs run --rid R | drop --rid R                  strict mode (J314): run / drop a plan Angus decided
+//   research.mjs mode [--sandbox S]                           the sandbox's Doorman mode (J325) and what it means
 //   research.mjs digest [--since 1h] [--send] [--json]       the hourly digest (--send: to the reporting Thoughts)
 //   research.mjs reader create|rm [--sandbox S]              the reader sandbox (reader-<world>)
 // Config (optional): ~/.config/hyprpi/research.json
@@ -33,6 +34,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { modeForSandbox, MODE_TEXT } from "./mode.mjs"; // J325: doorman-strict / doorman-safe (default) / doorman-open
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -50,9 +52,9 @@ export function conf(sandbox) {
   let c = {}; try { c = JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sandbox] || {}; } catch { /* defaults */ }
   const world = String(sandbox).replace(/^world-/, "");
   // J314 (Angus "2a"): strict mode, off by default: ~/.config/hyprpi/worlds/<name>.json "research": { "strict": true }
-  let strict = false;
-  try { const wd = path.join(path.dirname(CONFIG), "worlds"); for (const f of fs.readdirSync(wd)) { if (!f.endsWith(".json")) continue; let w; try { w = JSON.parse(fs.readFileSync(path.join(wd, f), "utf8")); } catch { continue; } if ((w.sandbox || f.slice(0, -5)) === sandbox) { strict = w?.research?.strict === true; break; } } } catch { /* no worlds folder: off */ }
-  return { strict,
+  // J325: the Doorman mode, per sandbox in ~/.config/hyprpi/worlds/<name>.json (docker/research/mode.mjs)
+  const { mode, note: modeNote } = modeForSandbox(path.dirname(CONFIG), String(sandbox));
+  return { mode, modeNote, strict: mode === "doorman-strict",
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
     key_file: c.key_file ? tilde(c.key_file) : "", shape_model: c.shape_model || "",
   };
@@ -230,7 +232,7 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   depth = depth === "deep" ? "deep" : "quick";
   const cfg = conf(sandbox), q = String(lookingFor ?? "").replace(/\r\n/g, "\n").trim();
   const rid = "q" + crypto.randomBytes(4).toString("hex");
-  const base = { rid, sandbox, from: clean1(from, 40), depth, looking_for: clean1(q, LIMITS.requestChars + 50), why: clean1(why, LIMITS.whyChars) };
+  const base = { rid, sandbox, mode: cfg.mode, from: clean1(from, 40), depth, looking_for: clean1(q, LIMITS.requestChars + 50), why: clean1(why, LIMITS.whyChars) };
   const pre = precheckQuery(q);
   if (pre.length) { logEvent({ ev: "refused", stage: "precheck", ...base, reason: pre.join(", ") }); return { status: "refused", rid, reason: `The request can't leave the sandbox: it contains ${pre.join(", ")}.` }; }
   const over = takeCap(sandbox, depth);
@@ -251,7 +253,7 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
     mkState(); fs.mkdirSync(PLANS(), { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(PLANS(), `${rid}.json`), JSON.stringify({ created: Date.now(), base, q, depth, plan: { searches: plan.searches || [], brief: plan.brief || "" } }), { mode: 0o600 });
     const file = path.join(DELIVERABLES(), `${rid}.plan.md`);
-    fs.writeFileSync(file, `# Searches planned for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches to send (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\nNothing has been sent yet. Approve to run exactly these; deny and nothing goes out.\n`, { mode: 0o600 });
+    fs.writeFileSync(file, `# Searches planned for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${cfg.modeNote ? ` (${cfg.modeNote})` : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches to send (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\nNothing has been sent yet. Approve to run exactly these; deny and nothing goes out.\n`, { mode: 0o600 });
     logEvent({ ev: "planned", ...base, searches: sent });
     return { status: "planned", rid, file, searches: sent, depth, looking_for: q, from: base.from };
   }
@@ -288,21 +290,25 @@ function research({ cfg, base, q, depth, plan, sent }) {
   mkState();
   const file = path.join(DELIVERABLES(), `${rid}.md`), words = res.deliverable.split(/\s+/).filter(Boolean).length;
   // Angus (J309): the searches that actually went to Perplexity are part of what he reviews.
-  const md = `# Research for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches sent (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\n## Deliverable\n\n${res.deliverable}\n\n## Sources\n\n${res.sources.map((u) => `- ${u}`).join("\n") || "(none listed)"}\n`;
+  const open = cfg.mode === "doorman-open";
+  const md = `# Research for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${open ? " (no human review: external web data, vetted by the Doorman only)" : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches sent (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\n## Deliverable\n\n${res.deliverable}\n\n## Sources\n\n${res.sources.map((u) => `- ${u}`).join("\n") || "(none listed)"}\n`;
   fs.writeFileSync(file, md, { mode: 0o600 });
-  logEvent({ ev: "ready", ...base, words, sources: res.sources.length, flags, models: raw.models, sha: sha(md) });
-  return { status: "ready", rid, file, words, sources: res.sources.length, flags, models: raw.models, searches: sent, depth, looking_for: q, from: base.from };
+  logEvent({ ev: "ready", ...base, mode: cfg.mode, words, sources: res.sources.length, flags, models: raw.models, sha: sha(md) });
+  return { status: "ready", mode: cfg.mode, rid, file, words, sources: res.sources.length, flags, models: raw.models, searches: sent, depth, looking_for: q, from: base.from };
 }
 
 // ---------- digest ----------
 export function digest({ sinceMs = 3600e3, now = Date.now() } = {}) {
   let lines = []; try { lines = fs.readFileSync(LOG(), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none */ }
-  const ev = lines.filter((e) => Date.parse(e.ts) > now - sinceMs && /^(ready|refused|error|approved|denied|planned|plan-denied)$/.test(e.ev));
+  const ev = lines.filter((e) => Date.parse(e.ts) > now - sinceMs && /^(ready|refused|error|approved|denied|planned|plan-denied|delivered-open)$/.test(e.ev));
   if (!ev.length) return { count: 0, text: "" };
   const by = (k) => ev.filter((e) => e.ev === k);
   const q = (e) => `"${String(e.looking_for || e.query || "").slice(0, 90)}"${e.from ? ` (${e.from}, ${e.depth || "quick"})` : ""}`;
-  const out = [`🔎 Research digest, ${[...new Set(ev.map((e) => e.sandbox))].join(", ")}, last ${Math.round(sinceMs / 60e3)} min: ${by("ready").length} deliverables ready for review, ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
-  for (const e of by("ready")) out.push(`✓ ${q(e)}: ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
+  const modes = [...new Set(ev.map((e) => e.sandbox))].map((s) => `${s}: ${conf(s).mode}`).join(", ");
+  const openRids = new Set(ev.filter((e) => e.ev === "delivered-open").map((e) => e.rid)), forReview = (e) => !openRids.has(e.rid); // (review #3: by what the relay did, not the runner's mode)
+  const out = [`🔎 Research digest (Doorman mode: ${modes}), last ${Math.round(sinceMs / 60e3)} min: ${by("ready").filter(forReview).length} deliverables ready for review, ${by("delivered-open").length} delivered without human review (doorman-open), ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
+  for (const e of by("delivered-open")) out.push(`⚠ ${q(e)} delivered WITHOUT human review (doorman-open): ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
+  for (const e of by("ready").filter(forReview)) out.push(`✓ ${q(e)}: ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
   for (const e of by("planned")) out.push(`⏸ ${q(e)}: searches held for Angus (strict mode): ${(e.searches || []).map((x) => `"${String(x).slice(0, 80)}"`).join(", ")}`);
   for (const e of by("plan-denied")) out.push(`✗ ${q(e)}: Angus denied the searches; nothing was sent`);
   for (const e of [...by("approved"), ...by("denied")]) out.push(`${e.ev === "approved" ? "→" : "✗"} ${q(e)} ${e.ev} by Angus${e.via ? ` (${e.via})` : ""}`);
@@ -320,6 +326,7 @@ async function main(argv) {
     if (flags.plan) { const p = doormanCheck(conf(flags.sandbox), { mode: "plan", looking_for: rest.join(" "), depth: flags.depth }); console.log(JSON.stringify({ plan: p, check: planCheck(rest.join(" "), p) })); return; }
     const lookingFor = flags.stdin ? fs.readFileSync(0, "utf8") : rest.join(" ");
     console.log(JSON.stringify(ask({ sandbox: flags.sandbox, from: flags.from, why: flags.why, depth: flags.depth, lookingFor })));
+  } else if (cmd === "mode") { const c = conf(flags.sandbox || "world-g"); console.log(JSON.stringify({ sandbox: flags.sandbox || "world-g", mode: c.mode, note: c.modeNote, means: MODE_TEXT[c.mode] }));
   } else if (cmd === "run") { console.log(JSON.stringify(runPlan(flags.rid))); // J314: only the relay calls this, after Angus approved the plan
   } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, flags.why === "expired" ? "expired" : "denied") }));
   } else if (cmd === "digest") {

@@ -112,3 +112,14 @@ local function hyprpi_click()
 end
 
 hl.bind("mouse:272", hyprpi_click, { non_consuming = true })
+
+-- J335: world G's own Brave (a separate profile, class hyprpi.g-brave, started by docker/world/g_open_url.py for
+-- links G's agents open themselves). It always maps on G's workspace 67 without focus, and its activation requests
+-- (a new tab) never move Angus's focus there, so an agent-opened link can't pull him out of the world he's in.
+hl.window_rule({
+  name = "hyprpi-g-brave",
+  match = { class = "^(hyprpi\\.g-brave)$" },
+  workspace = "67 silent",
+  no_initial_focus = true,
+  suppress_event = "activate activatefocus",
+})
