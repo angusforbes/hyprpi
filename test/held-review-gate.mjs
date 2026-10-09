@@ -48,6 +48,7 @@ assert.ok(/heldStatus\(e\.id\)/.test(tui) && /type 1, 2 or 3 here \+ ⏎/.test(t
 assert.ok(/stage: "decided-card"/.test(body) && /already \$\{st\.state\}/.test(body), "a bare number at a decided card says so");
 assert.ok(body.includes("if (parseChoice(raw)) { setBox(\"\"); note = `🐳 the review just opened"), "an early choice is held back with a notice, not sent to Thoughts");
 assert.ok(/reason: "not-armed-yet"/.test(body), "a number at a pending card not yet armed is held back");
+assert.ok(/if \(st && st\.state === "pending"\) \{/.test(body), "held back after a gone review too (HeldRecheck), not only with no review");
 // (2b)
 const th = fs.readFileSync(new URL("../lib/thoughts.mjs", import.meta.url), "utf8");
 assert.ok(/a bare 1, 2 or 3[\s\S]{0,200}the panel missed it[\s\S]{0,120}type it again here, in this panel/.test(th), "Thoughts' prompt line");

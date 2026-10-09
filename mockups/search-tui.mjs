@@ -428,7 +428,7 @@ function reviewKey(raw) {
       const card = bareChoice(raw) ? cardForBareNumber(turns, TH.entries) : null, st = card && heldStatus(card.id, Date.now(), { fresh: true }); // (fresh: not the drawing cache)
       if (st && st.state !== "pending") { logHeld({ room, id: card.id, raw, stage: "decided-card", reason: st.state }); setBox(""); note = `🐳 that card is ${st.state === "gone" ? "no longer waiting (expired or withdrawn)" : `already ${st.state}${st.at ? ` at ${new Date(st.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`}: nothing was sent`; render(); return true; }
       // (HeldReview #1) the card waits but its review isn't armed in this panel yet (a click lands on the next 2 s poll): hold the number back
-      if (st && st.state === "pending" && gate.reason === "no-review") { logHeld({ room, id: card.id, raw, stage: "early-return", reason: "not-armed-yet" }); setBox(""); note = `🐳 the review of that card is just opening: type ${raw.trim()} again in a moment`; render(); return true; }
+      if (st && st.state === "pending") { /* also after a review went away while a newer card waits (HeldRecheck) */ logHeld({ room, id: card.id, raw, stage: "early-return", reason: "not-armed-yet" }); setBox(""); note = `🐳 the review of that card is just opening: type ${raw.trim()} again in a moment`; render(); return true; }
       if (gate.reason === "no-review" && raw && room && heldFor(room).length) logHeld({ room, id: "", stage: "early-return", reason: "no-review" }); // (ordinary chat: not logged, nor its text)
       return false;
     }
