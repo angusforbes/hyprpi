@@ -517,11 +517,27 @@ function openReview(id) {
   if (!/^[A-I]$/.test(world)) { log({ note: `review ${id}: no receiving world` }); return false; }
   fs.mkdirSync(REVIEWS, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(REVIEWS, world + ".json"), JSON.stringify({ id, at: now() }), { mode: 0o600 });
-  // Hyprland starts the panel (outside this unit's limits); world is one letter A-I and the path is ours.
-  const panels = fileURLToPath(new URL("../mockups/panels", import.meta.url));
-  try { const k = spawn("hyprctl", ["dispatch", `hl.dsp.exec_cmd("${panels} ${world} --only 3")`], { stdio: "ignore" }); k.on("error", (e) => log({ error: `review panel: ${e.message}` })); } catch { /* */ }
+  takeToThoughts(world).catch((e) => log({ error: `review panel: ${e.message}` }));
   log({ note: `review ${id} → Thoughts-${world} panel` });
   return true;
+}
+// J292 (Angus: "why did Thoughts A appear in World B? You should TAKE ME TO World A"): Review never brings the panel
+// to him; it takes HIM to the recipient world's Thoughts panel. It is focused where it is (Hyprland switches to its
+// workspace); a panel that sits outside its own world is first moved home (the world's first workspace); with no
+// panel open, one is opened there. world is one letter A-I (checked above), so the dispatch strings are safe.
+async function takeToThoughts(world) {
+  const lo = "ABCDEFGHI".indexOf(world) * 10 + 1, inWorld = (ws) => ws >= lo && ws < lo + 10;
+  const hy = (args) => new Promise((res) => { const k = spawn("hyprctl", args, { stdio: ["ignore", "pipe", "ignore"] }); let o = ""; k.stdout.on("data", (d) => { o += d; }); k.on("error", () => res("")); k.on("close", () => res(o)); });
+  const find = async () => { try { return JSON.parse(await hy(["clients", "-j"])).find((c) => c.title === `hyprpi-search ${world}`) || null; } catch { return null; } };
+  let w = await find();
+  if (!w) {
+    const panels = fileURLToPath(new URL("../mockups/panels", import.meta.url));
+    await hy(["dispatch", `hl.dsp.exec_cmd("${panels} ${world} --only 3 --workspace ${lo}")`]);
+    for (let i = 0; i < 30 && !(w = await find()); i++) await new Promise((r) => setTimeout(r, 200));
+    if (!w) { log({ error: `review: no Thoughts-${world} panel appeared` }); return; }
+  }
+  if (!inWorld(w.workspace?.id)) { await hy(["dispatch", `hl.dsp.window.move({ window = "address:${w.address}", workspace = "${lo}", follow = false })`]); await new Promise((r) => setTimeout(r, 150)); }
+  await hy(["dispatch", `hl.dsp.focus({ window = "address:${w.address}" })`]);
 }
 
 // --- the relay: all sandboxes, the approval queue, the watchers -----------------------------------------
