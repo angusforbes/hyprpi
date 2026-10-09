@@ -214,7 +214,7 @@ export function rareToken(w) {
 // number of 2 to 5 digits (ASTM: one letter first), optional parts (-1, .3, at most 2 of up to 3 digits) and an optional
 // :year. Anything else, a longer number ("ISO 4111111111111"), or an identifier neither the request nor the task
 // names, is checked as before.
-const STD_RE = /\b(IEC|ISO|IEEE|ASTM|RFC|EN|UL|ANSI|DIN|JIS|BS|NFPA|SAE|ETSI)[ \u00a0-]?([A-Z]?\d{2,5})((?:[-.]\d{1,3}){0,2})(:(?:19|20)\d\d)?(?![\w.:-]*\d)/g;
+const STD_RE = /\b(IEC|ISO|IEEE|ASTM|RFC|EN|UL|ANSI|DIN|JIS|BS|NFPA|SAE|ETSI)[ \u00a0-]?([A-Z]?\d{2,5})((?:[-.]\d{1,3}){0,2})(:(?:19|20)\d\d)?(?![\w.:-]*\d)(?![A-Za-z0-9_])/g; // (recheck J361: a true right boundary: "ISO 9001MCMLVII" isn't ISO 9001)
 export const STD_KNOWN = new Set([
   // photovoltaics and perovskite stability
   "IEC 61215", "IEC 61215-1", "IEC 61215-2", "IEC 61730", "IEC 61730-1", "IEC 61730-2", "IEC 60904", "IEC 60904-1", "IEC 60904-3", "IEC 60904-9", "IEC 61853", "IEC 61853-1", "IEC 62108", "IEC 62788", "IEC 62804", "IEC 62805", "IEC 63202", "IEC 60068", "IEC 60891", "IEC 61701", "IEC 61724", "IEC 62716", "IEC 62759", "IEC 62941",

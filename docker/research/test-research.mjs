@@ -265,6 +265,7 @@ t("J361 review: unlisted parts and edition years can't carry digits", () => {
   assert.match(R.planCheck("What does ISO 9001:1957 specify? perovskite plants", { searches: ["ISO 9001:1957 summary perovskite"], public_terms: ["ISO 9001"] }, { task: PT }).join(), /number from the request \(1957\)/);
   assert.deepEqual(R.planCheck("IEC 61215-2 test sequences for perovskite modules", { searches: ["IEC 61215-2 test sequence perovskite modules"], public_terms: ["IEC 61215-2"] }, { task: PT }).filter((x) => /number/.test(x)), []);
 });
+t("J361 recheck: an identifier glued to more text isn't the identifier (ISO 9001MCMLVII)", () => { assert.equal(R.standardIds("ISO 9001MCMLVII").size, 0); assert.match(R.planCheck("ISO 9001; perovskite measurements in 1957", { searches: ["ISO 9001MCMLVII perovskite reliability"], public_terms: ["ISO 9001"] }, { task: "Perovskite solar cells" }).join(), /number from the request/); });
 t("J361: standardIds reads the strict forms only", () => { assert.deepEqual([...R.standardIds("IEC 61215, ISO 9001:2015, RFC 9110, IEEE 802.11, ASTM E1171, EN 50583-1, UL 1703, ISO 4111111111111, FOO 1234, ASTM 1171, RFC 9110.1.2.3")], ["IEC 61215", "ISO 9001", "RFC 9110", "IEEE 802.11", "ASTM E1171", "EN 50583-1", "UL 1703"]); });
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });
