@@ -12,13 +12,38 @@ let spec; try { spec = JSON.parse(fs.readFileSync(f, "utf8")); fs.unlinkSync(f);
 try { process.chdir(spec.cwd); } catch { /* stay */ }
 // J362: never two pi processes on one agent (session): a reopen while the old pi still runs inside the sandbox (its
 // window closed, it wasn't ended) would put two writers on the same session. Refuse, and say so in the window.
-const agentId = String(spec.env?.HYPRPI_AGENT_ID || "");
-const running = agentId ? otherPiFor(agentId) : [];
+const agentId = /^[A-Za-z0-9._-]{1,80}$/.test(String(spec.env?.HYPRPI_AGENT_ID || "")) ? String(spec.env.HYPRPI_AGENT_ID) : "";
+// (GrunReview) an agent-scoped lock held for this g-run's lifetime makes the check atomic: two g-runs started at
+// the same moment can't both pass. Its pid is checked, so a lock left by a killed g-run is taken over.
+const holder = agentId ? lockAgent(agentId) : 0;
+const running = holder ? [holder] : agentId ? otherPiFor(agentId) : [];
 if (running.length) {
-  process.stdout.write(`g-run: ${agentId} is already running in this sandbox (pid ${running.join(", ")}), so a second pi isn't started on its session.\r\nClose the other window, or end that pi, then reopen. Press Enter to close this window.\r\n`);
+  process.stdout.write(`g-run: ${agentId} is already running in this sandbox (pid ${running.join(", ")}${holder ? ", its window's g-run" : ""}), so a second pi isn't started on its session.\r\nClose the other window, or end that pi, then reopen. Press Enter to close this window.\r\n`);
   if (process.stdin.isTTY) { process.stdin.setRawMode?.(false); process.stdin.once("data", () => process.exit(3)); setTimeout(() => process.exit(3), 120000).unref(); }
   else process.exit(3);
 } else start();
+function lockAgent(id) {
+  const dir = path.join(os.homedir(), ".hyprpi-g", "run"), f = path.join(dir, `agent-${id}.lock`);
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* */ }
+  for (let i = 0; i < 3; i++) {
+    // the lock appears atomically WITH its pid (a temp file linked into place), so nobody ever reads it empty
+    const tmp = `${f}.${process.pid}`;
+    try {
+      fs.writeFileSync(tmp, String(process.pid), { mode: 0o600 });
+      fs.linkSync(tmp, f);
+      process.on("exit", () => { try { if (fs.readFileSync(f, "utf8").trim() === String(process.pid)) fs.unlinkSync(f); } catch { /* */ } });
+      return 0;
+    } catch (e) {
+      if (e.code !== "EEXIST") return 0; // no lock possible: the /proc scan below still guards
+      let pid = 0; try { pid = Number(fs.readFileSync(f, "utf8").trim()); } catch { /* */ }
+      let alive = false; try { alive = pid > 0 && /g-run/.test(fs.readFileSync(`/proc/${pid}/cmdline`, "utf8")); } catch { /* */ }
+      if (alive) return pid;
+      // a lock left by a killed g-run: take it over, but only if it still names that dead pid
+      try { if (Number(fs.readFileSync(f, "utf8").trim()) === pid) fs.unlinkSync(f); } catch { /* */ }
+    } finally { try { fs.unlinkSync(tmp); } catch { /* */ } }
+  }
+  return 0;
+}
 function otherPiFor(id) {
   const out = [];
   let ents = []; try { ents = fs.readdirSync("/proc"); } catch { return out; }

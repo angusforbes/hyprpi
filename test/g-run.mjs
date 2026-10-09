@@ -56,5 +56,30 @@ function run(t, argv, env = {}) {
   fake.kill("SIGKILL");
   console.log("ok 3 a second pi on a running agent is refused; another agent starts");
 }
+// 4. (GrunReview) two g-runs for the same agent started at the same moment: exactly one program starts, every time
+{
+  let dup = 0;
+  for (let i = 0; i < 12; i++) {
+    const a = run(tok(100 + 2 * i), ["bash", "-c", "echo STARTED; sleep 60"], { HYPRPI_AGENT_ID: "hp-race" + i });
+    const b = run(tok(101 + 2 * i), ["bash", "-c", "echo STARTED; sleep 60"], { HYPRPI_AGENT_ID: "hp-race" + i });
+    await sleep(900);
+    const started = [a, b].filter((p) => /STARTED/.test(p.out)).length;
+    if (started !== 1) dup++;
+    for (const p of [a, b]) p.kill("SIGTERM");
+    await Promise.race([Promise.all([a.done, b.done]), sleep(3000)]);
+  }
+  assert.equal(dup, 0, `exactly one of two simultaneous launches starts (${dup}/12 wrong)`);
+  console.log("ok 4 simultaneous launches for one agent: exactly one starts (12/12)");
+}
+// 5. a lock left by a killed g-run is taken over
+{
+  const lock = path.join(home, ".hyprpi-g", "run", "agent-hp-stale.lock");
+  fs.mkdirSync(path.dirname(lock), { recursive: true }); fs.writeFileSync(lock, "999999");
+  const p = run(tok(200), ["bash", "-c", "echo STARTED; sleep 60"], { HYPRPI_AGENT_ID: "hp-stale" });
+  await sleep(900); assert.match(p.out, /STARTED/, "a stale lock doesn't block");
+  p.kill("SIGTERM"); await Promise.race([p.done, sleep(3000)]); await sleep(200);
+  assert.ok(!fs.existsSync(lock), "the lock is released on exit");
+  console.log("ok 5 a stale lock is taken over, and released on exit");
+}
 fs.rmSync(home, { recursive: true, force: true });
 console.log("g-run: all pass");
