@@ -30,7 +30,18 @@ case "$CMD" in
   start)
     systemctl --user is-active --quiet hyprpi-sbx-relay || node "$H/docker/sbx-relay.mjs" start
     systemctl --user is-active --quiet "hyprpi-$WORLD-helper" || node "$H/docker/world/world-helper.mjs" start "$WORLD"
-    in_sb true >/dev/null   # starts the sandbox (mounts are restored by sbx)
+    # J322: sbx refuses to start when a saved mount's host folder is gone (moved or deleted while it was stopped):
+    # drop those first (the shares watcher re-plans from config after the start).
+    RT="$HOME/.local/state/sandboxes/sandboxes/sandboxd/runtimes/$SB.json"
+    if ! sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}' && [[ -f "$RT" ]]; then
+      jq -r '.State.runtime_mounts[]? | "\(.host_path)\t\(.container_target)"' "$RT" | while IFS=$'\t' read -r hp ct; do
+        [[ -e "$hp" ]] || { sbx umount "$SB" "$hp:$ct" >/dev/null 2>&1 && echo "world.sh: dropped the saved mount of a missing folder: $hp" >&2; }
+      done
+    fi
+    sbx exec "$SB" true >/dev/null   # starts the sandbox (mounts are restored by sbx)
+    # J322: apply the shares BEFORE anything inside runs from hyprpi's checkout: after a move (J317 ~/Work → ~/Harness)
+    # the saved mounts no longer include it, and only the share plan puts it back.
+    node "$H/docker/world/shares.mjs" apply "$WORLD" >/dev/null || echo "world.sh: shares apply failed" >&2
     in_sb 'pgrep -f "^node .*/bin/hyprpi daemon" >/dev/null || { cd "$G_WORLD_DIR"; setsid -f sh -c "exec node $G_HOST_HYPRPI/bin/hyprpi daemon" >> $HOME/.hyprpi-g/daemon.log 2>&1 < /dev/null; sleep 3; }'
     in_sb 'pgrep -f "^node .*/g-gate[.]mjs" >/dev/null || HYPRPI_GATE_WORKSPACE='"$HI"' setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/g-gate.mjs; sleep 3; done" >> $HOME/.hyprpi-g/gate.log 2>&1 < /dev/null'
     in_sb 'for p in agents-tui room-tui board-tui search-tui; do pgrep -f "$p.mjs" >/dev/null || G_WS='"$HI"' setsid -f $G_HOST_HYPRPI/mockups/$p G >/dev/null 2>&1 < /dev/null; done'

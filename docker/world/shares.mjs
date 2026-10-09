@@ -9,7 +9,7 @@
 //
 // Config. Global, in ~/.config/hyprpi/config.json:
 //   "projectFolders": ["~/Work"]                 where projects live (default: none)
-//   "protected": ["~/Work/agent-config"]         always read-only (hyprpi's own checkout is added anyway)
+//   "protected": ["~/Harness/agent-config"]         always read-only (hyprpi's own checkout is added anyway)
 //   "roleFolders": { "screenshots": "~/Screenshots", "jot": "~/Obsidian", "downloads": "~/Downloads" }
 //                                                (defaults: screenshotsDir, the jot root, ~/Downloads)
 // Per sandbox, in ~/.config/hyprpi/worlds/<world>.json:
@@ -135,7 +135,7 @@ function plan() {
   // J316: entries may be glob patterns over the project folders' children ("hyprpi*", "pi-*", "*-pi"), and every git
   // worktree of a protected repo is protected too (its edits could be merged and pushed).
   const globRe = (g) => new RegExp("^" + g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
-  const prot = new Set([ROOT, exp("~/Work/agent-config")]);
+  const prot = new Set([ROOT, exp("~/Harness/agent-config")]);
   for (const e of g.protected || []) {
     if (!/[*?]/.test(e)) { prot.add(exp(e)); continue; }
     const base = /\//.test(e) ? [exp(path.dirname(e))] : pf, re = globRe(path.basename(e));
