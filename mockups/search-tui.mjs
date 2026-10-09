@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, logHeld, heldTurns } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -179,7 +179,7 @@ const wrapP = (t, n) => String(t || "").split(/\r?\n/).flatMap((q) => q.trim() ?
 function loadThoughts() {
   if (!api) return;
   const r = room;
-  api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; TH.busy = !!t.busy; seedThoughtsHistory(r); bumpThread(); render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  api.call("thoughts.get", { room: r }).then((t) => { if (r !== room) return; TH.room = r; TH.entries = t.entries || []; turns = heldTurns(r); TH.busy = !!t.busy; seedThoughtsHistory(r); bumpThread(); render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function setThoughts(on) { thoughtsOn = on; follow(); note = ""; if (on) loadThoughts(); render(); }
 // Pasted screenshots (Angus, N54: like pi's own windows): Ctrl+V / SUPER+V with an image on the
@@ -370,7 +370,9 @@ function pollReview() {
 }
 setInterval(pollReview, 2000);
 let reviewRoom = room;
+let lastRaw = "", turns = [];
 function reviewKey(raw) {
+  lastRaw = raw;
   if (reviewRoom !== room) { for (const rv of Object.values(reviews)) rv.confirm = null; reviewRoom = room; } // world switched: no half-confirmed choice survives
   review = reviews[room] || null;
   if (!review) return false;
@@ -379,6 +381,15 @@ function reviewKey(raw) {
   const decide = (ch) => {
     const r = actOnHeld(review.id, ch), h = review.h;
     note = r.ok ? `✓ ${ch.label}: ${h.sandbox} → ${h.to.join(", ")}` : "✗ " + (r.text || "couldn't decide");
+    // J280 (Angus: "it should be a real turn that i can read … maybe even highlighted"): the decision as its own
+    // highlighted turn in the thread (kept in the panel log, so it survives a reload), failures too.
+    const what = ch.verdict === "deny" ? "Denied" : ch.verdict === "approve" ? "Approved: sent" : ch.dur === "once" ? "Approved: sent (just this one, no rule)" : `Approved: sent, and similar messages allowed for ${ch.dur === "1h" ? "1 hour" : ch.dur}${/capped/.test(ch.label) ? " (capped at 24 hours)" : ""}`;
+    const msg = `${h.sandbox} → ${h.to.join(", ")}: "${h.text.replace(/\s+/g, " ").slice(0, 160)}"`;
+    const turn = r.ok
+      ? `${what}\n${msg}\n${ch.verdict === "allow" && ch.dur !== "once" ? "Same sandbox → same recipient, talk only, up to 30 an hour. See or end it: /rules in the room panel.\n" : ""}Relay: ${r.text || "ok"}`
+      : `Not decided: ${r.text || "the relay refused"}\n${msg}\nThe message is still waiting: try again, or use the toast.`;
+    logHeld({ room, id: review.id, raw: lastRaw, choice: ch, ok: r.ok, cli: r.text, turn });
+    turns = heldTurns(room); bumpThread(); follow();
     setBox("");
     if (r.ok) { const { id, draft } = review; delete reviews[room]; review = null; if (draft) setBox(draft); sendThought(`[Angus decided held ${id}: ${ch.label}]`); }
     render(); return true;
@@ -390,9 +401,11 @@ function reviewKey(raw) {
   }
   if (!raw) return false;
   const ch = parseChoice(raw);
-  if (!ch) return false;
-  if (ch.verdict === "unclear") { note = "✗ no usable duration (e.g. \"3 for 2 hours\", \"3 today\"); sent to Thoughts as a question"; return false; }
-  if (ch.confirm) { review.confirm = ch; setBox(""); note = `${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
+  logHeld({ room, id: review.id, raw, choice: ch || null, stage: "typed" });
+  // J280: a line that isn't a choice goes to Thoughts as a question; say so where he is looking.
+  if (!ch) { note = "🐳 that went to Thoughts as a question · to decide, type just 1, 2 or 3 (or \"3, but for 2 hours\")"; return false; }
+  if (ch.verdict === "unclear") { note = "🐳 no usable duration (e.g. \"3 for 2 hours\", \"3 today\"): that went to Thoughts as a question"; return false; }
+  if (ch.confirm) { review.confirm = ch; setBox(""); note = `🐳 ${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
   return decide(ch);
 }
 
@@ -681,7 +694,7 @@ function render() {
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
   const status = note || S.status;
-  const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : dim(status);
+  const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : status.startsWith("🐳") || status.startsWith("✓") ? fg(c, bold(status)) : dim(status); // J280: review hints and results readable
   const bottom = [];
   // One animation only (Angus): "thinking…" / "searching…" in the thread; this line stays still.
   // (J247: "↓ N new" is the pill at the bottom right of the thread now, not this line.)
@@ -714,7 +727,9 @@ function render() {
     // Which entries show and how: lib/thoughts-lines.mjs (the same rule as the phone app).
     let tagFrom = 0, tagKey = null;
     const tag = () => { for (let i = tagFrom; i < flat.length; i++) flat[i].ek = tagKey; }; // J247: each row knows its entry
-    for (const [ei, e] of TH.entries.entries()) {
+    // J280: the held-message decision turns (lib/held.mjs heldTurns) merged in by time
+    const merged = turns.length ? [...TH.entries, ...turns].sort((a, b) => (a.ts || 0) - (b.ts || 0)) : TH.entries;
+    for (const [ei, e] of merged.entries()) {
       tag(); tagFrom = flat.length; tagKey = entryKey(e);
       const kind = threadKind(e);
       if (kind === "hidden" || kind === "quiet") continue; // J147: quiet = hyprpi's automatic notes (in the Stream's all-activity view)
@@ -728,6 +743,14 @@ function render() {
       }
       const k = items.push({ copy: e.text }) - 1, red = (l) => `${ESC}31m${l}${ESC}39m`;
       const add = (rs, textX) => { for (const r of rs) flat.push({ ...r, meta: { item: k, textX } }); };
+      if (e.role === "held") { // J280: a decision on a held sandbox message, highlighted at full brightness
+        const bar = e.ok ? `${ESC}${worldBg(room)}m${ESC}30m` : `${ESC}41m${ESC}97m`, off = `${ESC}49m${ESC}39m`;
+        const [head, ...rest] = String(e.text).split("\n");
+        flat.push({ l: "" });
+        flat.push({ l: `  ${bar}${bold(` ${e.ok ? "✓" : "✗"} 🐳 ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        for (const line of rest) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(e.ok ? c : "31", "│")} ${w}` })), 6);
+        continue;
+      }
       if (kind === "full") {
         flat.push({ l: "" });
         flat.push({ l: `  ${who(e)}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
