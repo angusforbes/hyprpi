@@ -1,0 +1,23 @@
+// node test/held-status.mjs  (J356: a card's status, fresh for input, cached for drawing; isolated state dir)
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "j356-status-"));
+process.env.XDG_STATE_HOME = tmp;
+const relay = path.join(tmp, "hyprpi", "sbx-relay");
+fs.mkdirSync(path.join(relay, "pending"), { recursive: true });
+const { heldStatus } = await import("../lib/held.mjs");
+const id = "world-g--5a7e55", pf = path.join(relay, "pending", id + ".json"), t = Date.now();
+fs.writeFileSync(pf, "{}");
+assert.equal(heldStatus(id, t).state, "pending");
+fs.unlinkSync(pf);
+assert.equal(heldStatus(id, t + 1).state, "pending", "drawing may use the 2 s cache");
+assert.equal(heldStatus(id, t + 1, { fresh: true }).state, "gone", "input checks now (HeldReview #3)");
+fs.appendFileSync(path.join(relay, "log.jsonl"), JSON.stringify({ t: new Date(t).toISOString(), id, decision: "denied" }) + "\n");
+assert.equal(heldStatus(id, t + 2, { fresh: true }).state, "denied");
+const other = "world-g--0e0e0e";
+fs.appendFileSync(path.join(relay, "log.jsonl"), JSON.stringify({ t: new Date(t).toISOString(), id: other, decision: "approved" }) + "\n");
+assert.equal(heldStatus(other, t + 3, { fresh: true }).state, "approved");
+fs.rmSync(tmp, { recursive: true, force: true });
+console.log("held-status: all pass");
