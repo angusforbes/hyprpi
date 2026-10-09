@@ -90,7 +90,7 @@ def why_path(arg):
     s = share_for(p)
     hid = [t for t in hidden_targets() if p == t or p.startswith(t.rstrip("/") + "/")]
     if hid:
-        return (f"{p} is hidden by the host owner: a gitignored file or folder in a shared project shows as empty (a folder: not readable) here "
+        return (f"{p} is hidden by the host owner: a gitignored file or folder in a shared project shows as empty here "
                 f"(on purpose; it may hold secrets). Don't try to get around it. If you need it, ask the host owner to show it.")
     if s and s[0] == os.path.expanduser("~/.sandbox"):
         return f"{p} is the host card's folder, written by the host and read-only in here."
