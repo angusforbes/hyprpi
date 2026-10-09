@@ -173,6 +173,15 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     parameters: Type.Object({ id: Type.String(), reason: Type.String(), explicit: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => { const r = await call("orch.escalate", p, { timeoutMs: 20000 }); return text(r.skipped ? `Not escalated: ${r.skipped}.` : `${r.name}: ${r.before} → ${r.model}/${r.thinking}.`, r); },
   });
+  // J288: never wait idle for an event with nothing to wake you.
+  pi.registerTool({
+    name: "wake_me",
+    label: "Wake me after an event",
+    description: "Ask hyprpi to wake you (a new turn; held if you're busy) when an event happens, so you can end your turn instead of waiting idle with nothing to wake you: event \"restart\" = after the next hyprpi daemon restart (anyone's guarded restart, or a restart after a crash), event \"agent\" with agent = when that agent ends its turn (or goes away). note = what you'll do then (you get it back). Once each; kept across restarts, 24 h at most. Your world's Thoughts sees a ⏰ line when you're woken.",
+    promptSnippet: "Be woken after a daemon restart or when an agent ends its turn",
+    parameters: Type.Object({ event: Type.Union([Type.Literal("restart"), Type.Literal("agent")]), agent: Type.Optional(Type.String({ description: "for event agent: its name" })), note: Type.Optional(Type.String({ description: "what you'll do then, e.g. 'start test A'" })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r = await call("wake.when", p); return text(`OK: you'll be woken ${r.event === "restart" ? "after the next daemon restart" : `when ${r.agent} ends its turn`}. End your turn now; nothing else to do while you wait.`, r); },
+  });
   pi.registerTool({
     name: "my_children",
     label: "My children",

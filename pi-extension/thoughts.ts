@@ -275,6 +275,16 @@ export default function thoughts(pi: ExtensionAPI) {
     },
   });
 
+  // J288: wake an agent (or yourself) when an event happens, so a handoff can't hang.
+  pi.registerTool({
+    name: "wake_agent",
+    label: "Wake an agent after an event",
+    description: "Arrange for an agent (who; default you, Thoughts) to be woken when an event happens: event \"restart\" = after the next hyprpi daemon restart, event \"agent\" with agent = when that agent ends its turn (or goes away). The woken agent gets a turn with your note (\"start test A\"); you get a ⏰ line, or a turn if it was you. Use it whenever someone has to act after a restart or after another agent's step, instead of hoping someone remembers.",
+    promptSnippet: "Wake an agent after a restart or another agent's turn",
+    parameters: Type.Object({ who: Type.Optional(Type.String({ description: "the agent to wake (default: you)" })), event: Type.Union([Type.Literal("restart"), Type.Literal("agent")]), agent: Type.Optional(Type.String({ description: "for event agent: the agent whose turn end counts" })), note: Type.Optional(Type.String()) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.wake", p); return out(`${r.who} will be woken (${r.event}).`, { action: `⏰ ${r.who} wakes on ${r.event}` }); },
+  });
+
   // interrupt_agent (Angus, brief J12): a real interrupt for ANY live agent.
   pi.registerTool({
     name: "interrupt_agent",

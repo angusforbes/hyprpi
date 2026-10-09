@@ -472,7 +472,7 @@ const commands = {
       flag("--when-idle"); // the only kind there is
       const reason = opt("--reason") || "", ttl = opt("--ttl");
       const r = await request("daemon.restartRequest", { agentId: process.env.HYPRPI_AGENT_ID || "", reason: reason || args.join(" "), ...(ttl ? { ttlMin: Number(ttl) } : {}) });
-      console.log(`${r.merged ? "merged into the pending restart" : "restart queued"}: ${show(r)}. The daemon restarts itself when everyone is idle; you don't need to wait (end your turn).`);
+      console.log(`${r.merged ? "merged into the pending restart" : "restart queued"}: ${show(r)}. The daemon restarts itself when everyone is idle; you don't need to wait (end your turn). You (the asker) are told when it has happened; anyone else who must act after it: the wake_me tool (event restart), or Thoughts' wake_agent.`);
       return;
     }
     const { runDaemon } = await import("../lib/daemon.mjs"); await runDaemon();
