@@ -43,7 +43,14 @@ export default function thoughts(pi: ExtensionAPI) {
     description: `World ${ROOM} as the hyprpi panels show it: its agents (status, topic, projects), its project board, and recent room posts.`,
     promptSnippet: "See the world: agents, board, recent room posts",
     parameters: Type.Object({ room_posts: Type.Optional(Type.Number({ description: "how many recent room posts (default 15)" })) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { const r: any = await call("thoughts.world", { posts: p.room_posts }); return out(r.text); },
+    // J297 (Angus: "be able to … know" your own model): the first line is read live from this session, so it's
+    // right after any set_model / /model / /thinking change, never a stale prompt line.
+    execute: async (_id: string, p: any, _s?: any, _u?: any, ctx?: any) => {
+      const r: any = await call("thoughts.world", { posts: p.room_posts });
+      let me = "";
+      try { const m = ctx?.model; let th = ""; try { th = pi.getThinkingLevel(); } catch { /* none */ } me = m ? `You (Thoughts-${ROOM}) run on ${m.provider}/${m.id}${th ? `, thinking ${th}` : ""} (live from your own session).\n\n` : ""; } catch { /* unknown */ }
+      return out(me + r.text);
+    },
   });
 
   pi.registerTool({
