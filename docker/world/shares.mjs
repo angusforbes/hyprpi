@@ -66,6 +66,38 @@ const isGit = (d) => fs.existsSync(path.join(d, ".git"));
 const subdirs = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => path.join(d, e.name)); } catch { return []; } };
 const under = (p, base) => p === base || p.startsWith(base + "/");
 
+// J316: projects the HOST runs or loads (a sandbox editing them would change what the laptop runs), found in the
+// usual places: pi packages and agent symlinks, ~/.local/bin (links and scripts), systemd --user units, Hyprland /
+// Omarchy plugin links, desktop entries, MCP server configs, shell rc. Each hit is the projectFolder child it points
+// into. These are protected automatically; the `protected` list in config.json can add more.
+function hostRun(pf) {
+  const hits = new Map(), add = (p, how) => {
+    const abs = exp(p);
+    for (const f of pf) if (abs.startsWith(f + "/")) { const proj = path.join(f, abs.slice(f.length + 1).split("/")[0]); if (!hits.has(proj)) hits.set(proj, how); }
+  };
+  const text = (f) => { try { const st = fs.statSync(f); if (!st.isFile() || st.size > 2e6) return ""; const b = fs.readFileSync(f); return b.includes(0) ? "" : b.toString("utf8"); } catch { return ""; } };
+  const scan = (f, how) => { for (const m of text(f).matchAll(/(?:\/home\/[^/\s"']+|~|\$HOME)\/[^\s"'`)<>;:]+/g)) add(m[0].replace(/^\$HOME/, HOME), how); };
+  const links = (d, how, depth = 1) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of es) { const p = path.join(d, e.name); try { if (fs.lstatSync(p).isSymbolicLink()) add(fs.realpathSync(p), `${how}: ${p.replace(HOME, "~")}`); else if (e.isDirectory() && depth > 1) links(p, how, depth - 1); } catch { /* dangling */ } } };
+  const piAgent = path.join(HOME, ".pi", "agent");
+  for (const s of JSON.stringify(readJson(path.join(piAgent, "settings.json"))).match(/"[^"]*Work\/[^"]*"/g) || []) add(path.resolve(piAgent, s.slice(1, -1).replace(/^~/, HOME)), "pi settings (package or extension)");
+  for (const d of ["extensions", "skills", "agents", "prompts", "themes"]) links(path.join(piAgent, d), `pi ${d} link`, 2);
+  for (const f of fs.existsSync(path.join(piAgent, "extensions")) ? fs.readdirSync(path.join(piAgent, "extensions"), { recursive: true }) : []) if (/\.(ts|js|mjs)$/.test(f) && !String(f).includes("node_modules")) scan(path.join(piAgent, "extensions", f), "pi extension imports it");
+  scan(path.join(piAgent, "mcp.json"), "MCP server (pi)");
+  for (const f of fs.existsSync(path.join(CFG, "..", "mcp-gateway")) ? fs.readdirSync(path.join(CFG, "..", "mcp-gateway")) : []) scan(path.join(CFG, "..", "mcp-gateway", f), "MCP server (gateway)");
+  const bin = path.join(HOME, ".local", "bin");
+  links(bin, "on PATH");
+  for (const f of fs.existsSync(bin) ? fs.readdirSync(bin) : []) { const p = path.join(bin, f); try { if (!fs.lstatSync(p).isSymbolicLink()) scan(p, `~/.local/bin/${f}`); } catch { /* */ } }
+  const units = path.join(HOME, ".config", "systemd", "user");
+  for (const f of fs.existsSync(units) ? fs.readdirSync(units, { recursive: true }) : []) if (/\.(service|timer|conf|path)$/.test(f)) scan(path.join(units, f), `systemd unit ${f}`);
+  links(path.join(HOME, ".config", "omarchy", "plugins"), "Omarchy plugin link"); links(path.join(HOME, ".config", "hypr"), "Hyprland config link");
+  for (const f of fs.existsSync(path.join(HOME, ".config", "hypr")) ? fs.readdirSync(path.join(HOME, ".config", "hypr")) : []) if (/\.(lua|conf)$/.test(f)) scan(path.join(HOME, ".config", "hypr", f), `Hyprland ${f}`);
+  const apps = path.join(HOME, ".local", "share", "applications");
+  for (const f of fs.existsSync(apps) ? fs.readdirSync(apps) : []) if (f.endsWith(".desktop")) { const ex = (text(path.join(apps, f)).match(/^Exec=.*$/m) || [""])[0]; for (const m of ex.matchAll(/\/home\/[^\s"']+/g)) add(m[0], `desktop entry ${f}`); }
+  for (const f of [".bashrc", ".zshrc", ".profile", ".bash_profile"]) { for (const l of text(path.join(HOME, f)).split("\n")) if (!/^\s*#/.test(l)) for (const m of l.matchAll(/(?:\/home\/[^/\s"']+|~|\$HOME)\/[^\s"'`)<>;:]+/g)) add(m[0].replace(/^\$HOME/, HOME), `~/${f}`); }
+  return hits;
+}
+
 // What should be mounted: [{ host, at, ro, why }], and the hidden gitignored paths.
 function plan() {
   const { g, w, roleDirs, relay, sandbox } = config();
@@ -97,7 +129,19 @@ function plan() {
   // 4. read-only on top, wherever a writable share would cover them: protected projects, every relay inbox,
   // the other sandboxes' workspaces (this one's own workspace is sbx's own rw mount).
   const own = exp(w.workspace || "~/Work/" + WORLD);
-  const prot = new Set([ROOT, exp("~/Work/agent-config"), ...(g.protected || []).map(exp)]);
+  // J316: entries may be glob patterns over the project folders' children ("hyprpi*", "pi-*", "*-pi"), and every git
+  // worktree of a protected repo is protected too (its edits could be merged and pushed).
+  const globRe = (g) => new RegExp("^" + g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+  const prot = new Set([ROOT, exp("~/Work/agent-config")]);
+  for (const e of g.protected || []) {
+    if (!/[*?]/.test(e)) { prot.add(exp(e)); continue; }
+    const base = /\//.test(e) ? [exp(path.dirname(e))] : pf, re = globRe(path.basename(e));
+    for (const f of base) for (const d of subdirs(f)) if (re.test(path.basename(d))) prot.add(d);
+  }
+  const worktrees = (repo) => { try { return execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8", timeout: 10000 }).split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)); } catch { return []; } };
+  const auto = hostRun(pf); // J316
+  for (const [proj, how] of auto) if (!prot.has(proj)) { prot.add(proj); skipped.push(`auto-protected ${proj} (the host runs it: ${how}); add it to "protected" to make that explicit`); }
+  for (const p of [...prot]) if (isGit(p)) for (const w of worktrees(p)) if (pf.some((f) => under(w, f)) && w !== p) prot.add(w);
   for (const s of relay.sandboxes || []) { if (s.inbox) prot.add(exp(s.inbox)); if (s.workspace && exp(s.workspace) !== own) prot.add(exp(s.workspace)); }
   for (const f of fs.existsSync(path.join(CFG, "worlds")) ? fs.readdirSync(path.join(CFG, "worlds")) : []) {
     const o = readJson(path.join(CFG, "worlds", f)); if (o.inbox) prot.add(exp(o.inbox)); if (o.workspace && exp(o.workspace) !== own) prot.add(exp(o.workspace));
@@ -115,8 +159,9 @@ function plan() {
     }
     for (const r of repos) {
       if (under(own, r) || under(r, own)) continue;
-      // a placeholder can't be mounted inside a read-only share (sbx creates the target): those stay visible
-      if (mounts.some((m) => m.ro && under(r, m.host))) { skipped.push(`gitignored files in ${r} stay visible (read-only share)`); continue; }
+      // In a read-only share sbx can place a placeholder over a FOLDER but not over a file (it opens the target for
+      // writing): there, ignored folders are hidden and ignored files stay visible, read-only (listed).
+      const roRepo = mounts.some((m) => m.ro && under(r, m.host));
       const name = path.relative(pf.find((f) => under(r, f)) || path.dirname(r), r);
       if (show.includes(name)) continue;
       let out = "";
@@ -127,6 +172,7 @@ function plan() {
         const abs = path.join(r, rel);
         let st; try { st = fs.lstatSync(abs); } catch { continue; }
         if (st.isSymbolicLink()) continue;
+        if (roRepo && !st.isDirectory()) { skipped.push(`visible (read-only, a file in a protected project): ${abs}`); continue; }
         hidden.push({ at: abs.replace(/\/$/, ""), dir: st.isDirectory() });
       }
     }
