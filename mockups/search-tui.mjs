@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { REVIEW_TAG, claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -414,7 +414,7 @@ function reviewKey(raw) {
           const head = !o.ok ? `${what}, but it failed` : ch.verdict === "deny" ? "Denied" : o.ruled ? what : ch.verdict === "allow" && ch.dur !== "once" ? "Approved (no rule: rules cover plain talks only)" : "Approved";
           finish(o.ok, head, `Relay: ${o.text}${o.ok && o.ruled ? "\nSame sandbox → same recipient, talk only, up to 30 an hour. See or end it: /rules in the room panel." : ""}`);
           // Thoughts of the world it was decided in (recheck #3), and only while connected
-          if (o.ok && api) api.call("thoughts.send", { room: at, text: `[Angus decided held ${id}: ${head}. Relay: ${o.text}]` }).catch(() => {});
+          if (o.ok && api) api.call("thoughts.send", { room: at, text: `[Angus decided held ${id}: ${head}. Relay: ${o.text}] (no reply needed: answer exactly OK)` }).catch(() => {});
         }
       }
     }, 400);
@@ -763,7 +763,21 @@ function render() {
     let lastTs = 0; const dated = TH.entries.map((e) => ({ e, ts: (lastTs = Number(e.ts) || lastTs) })); // undated: keep their place (#7)
     const extra = [...turns, ...sysTurns]; // J280 decision turns, J283 reconnect turns
     const merged = extra.length ? [...dated, ...extra.map((e) => ({ e, ts: e.ts }))].sort((a, b) => a.ts - b.ts).map((x) => x.e) : TH.entries;
+    let afterHidden = false; // J294: the reply to a hidden review prompt / decision notice
     for (const [ei, e] of merged.entries()) {
+      // J294: the review prompt and the "[Angus decided held …]" notice are for Thoughts only; its "OK" is not shown,
+      // and a concern ("⚠ …") is drawn as a highlighted line under the request.
+      if (e.role === "you" && (String(e.text || "").startsWith(REVIEW_TAG) || String(e.text || "").startsWith("[Angus decided held "))) { afterHidden = true; continue; }
+      if (e.role === "thoughts" && afterHidden) {
+        afterHidden = false;
+        const t = String(e.text || "").trim();
+        if (/^ok\.?$/i.test(t)) continue;
+        if (/^⚠/.test(t)) {
+          flat.push({ l: "" });
+          for (const w of wrap(t, tw - 2)) flat.push({ l: `  ${ESC}${worldBg(room)}m${ESC}38;2;255;255;255m${bold(" " + w + " ")}${ESC}49m${ESC}39m`, meta: { item: items.push({ copy: t }) - 1, textX: 3 } });
+          continue;
+        }
+      } else if (e.role === "thoughts") afterHidden = false;
       tag(); tagFrom = flat.length; tagKey = entryKey(e);
       const kind = threadKind(e);
       if (kind === "hidden" || kind === "quiet") continue;
