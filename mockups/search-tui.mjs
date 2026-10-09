@@ -767,7 +767,7 @@ function render() {
       tag(); tagFrom = flat.length; tagKey = entryKey(e);
       const kind = threadKind(e);
       if (kind === "hidden" || kind === "quiet") continue;
-      if (e.role === "note" && /^🐳 (Approved|Denied|Sent under)/u.test(String(e.text || ""))) continue; // J289: drawn as a highlighted turn from panel-turns.jsonl instead // J147: quiet = hyprpi's automatic notes (in the Stream's all-activity view)
+      if (e.role === "note" && /^🐳 (Approved|Denied|Sent under|Reply from)/u.test(String(e.text || ""))) continue; // J289/J290: drawn as a highlighted turn from panel-turns.jsonl instead // J147: quiet = hyprpi's automatic notes (in the Stream's all-activity view)
       if (kind === "answer") {
         const { to, raw, said, cutOld } = answerLine(e);
         const k2 = items.push({ copy: `to ${to}: ${raw}` }) - 1;
@@ -782,7 +782,7 @@ function render() {
         const bar = e.ok ? `${ESC}${worldBg(room)}m${ESC}30m` : `${ESC}41m${ESC}97m`, off = `${ESC}49m${ESC}39m`;
         const [head, ...rest] = String(e.text).split("\n");
         flat.push({ l: "" });
-        flat.push({ l: `  ${bar}${bold(` ${e.kind === "request" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        flat.push({ l: `  ${bar}${bold(` ${e.kind === "request" || e.kind === "reply" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         for (const [li, line] of rest.entries()) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(e.ok ? c : "31", "│")} ${e.kind === "request" && li === rest.length - 1 ? bold(w) : w}` })), 6);
         continue;
       }

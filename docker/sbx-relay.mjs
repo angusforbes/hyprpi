@@ -220,6 +220,7 @@ class Sandbox {
         log({ sb: this.name, dir: "in", type: d.mode, from: d.from?.name, request_id: d.request_id, ...textMeta(d.text) });
       } else if (ev === "talk.reply") {
         inboxWrite(this, { type: "reply", from: d.from?.name, request_id: d.request_id, text: d.text });
+        replyNote(this, d); // J290: the answer to a message Angus let through, shown in the receiving world's Thoughts
         log({ sb: this.name, dir: "in", type: "reply", from: d.from?.name, request_id: d.request_id, ...textMeta(d.text) });
       } else if (ev === "prompt") {
         inboxWrite(this, { type: "prompt", from: d.via === "room-tui" ? "Angus (room panel)" : "hyprpi", text: d.text });
@@ -355,6 +356,7 @@ class Sandbox {
           try { fs.appendFileSync(AUTO, JSON.stringify({ t: now(), sandbox: this.name, rooms, to: gated.map((x) => x.shown), rule: ns, preview: clean(t).replace(/\s+/g, " ").slice(0, 120) }) + "\n", { mode: 0o600 }); } catch { /* best effort */ }
           log({ sb: this.name, op: "talk", rule: ns, to: gated.map((x) => x.id), ...textMeta(t) });
           heldNote(this, { sandbox: this.name, rooms, shown: gated.map((x) => x.shown), text: t }, "rule", `Sent under your rule ${ns}`, ""); // J284
+          watchReply(out.request_id, { sandbox: this.name, id: "", rooms, to: gated.map((x) => String(x.shown).replace(/ \(.*\)$/, "")) }); // J290
           out.ruled = ns;
         } else if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), targets: gated.map((x) => ({ kind: x.kind, id: x.id })), shown: gated.map((x) => x.shown), rooms: [...new Set(gated.map((x) => x.room).filter(Boolean))], mode, text: t, body })];
         out.log = { to: targets.map((x) => x.id), open: open.length, gated: gated.length, ...textMeta(t) };
@@ -550,6 +552,7 @@ class Relay {
         r.delivered.push(...(x.delivered || [])); r.skipped.push(...(x.skipped || [])); r.request_id ||= x.request_id;
       }
       log({ sb: sb.name, op: "talk", decision: "approved", id, delivered: r.delivered, request_id: r.request_id });
+      watchReply(r.request_id, { sandbox: sb.name, id, rooms: msg.rooms, to: (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")) }); // J290
       heldNote(sb, msg, via, verdict.startsWith("allow-") ? "Approved and allowed similar" : "Approved", r.delivered.length ? `delivered to ${r.delivered.join(", ")}` : `it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((s) => s.name || s).join(", ")})` : ""}`);
       // (NoteReview #3: the sandbox's receipt failing is not the delivery failing: its own try, no second note)
       try { inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: r.delivered, request_id: r.request_id, skipped: r.skipped }); } catch (e) { log({ sb: sb.name, error: `inbox (decision receipt): ${e.message}` }); }
@@ -581,6 +584,29 @@ class Relay {
   }
 }
 
+// J290 (Angus: "you should also report the agent's response"): the talk request ids of messages Angus let through
+// (approved or under a rule), so the recipient's answer going back to the sandbox is shown in the receiving world's
+// Thoughts too: a highlighted "↩ X replied" turn with the full text, and the same in Thoughts' context.
+const REPLYWATCH = path.join(STATE, "replywatch.json");
+function watchReply(rid, info) {
+  if (!rid || !Array.isArray(info.rooms) || !info.rooms.length) return;
+  let m = {}; try { m = JSON.parse(fs.readFileSync(REPLYWATCH, "utf8")); } catch { /* new */ }
+  const t = Date.now(); for (const [k, v] of Object.entries(m)) if (t - (v.at || 0) > 12 * 3600 * 1000) delete m[k];
+  m[rid] = { ...info, at: t };
+  try { fs.writeFileSync(REPLYWATCH, JSON.stringify(m), { mode: 0o600 }); } catch { /* best effort */ }
+}
+function replyNote(sb, d) {
+  let m = {}; try { m = JSON.parse(fs.readFileSync(REPLYWATCH, "utf8")); } catch { return; }
+  const w = m[d?.request_id]; if (!w || w.sandbox !== sb.name) return;
+  const from = clean(String(d.from?.name || "the recipient")), text = clean(String(d.text || "")).replace(/\s+/g, " ").trim();
+  const hm = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const rooms = w.rooms.map((r) => String(r).toUpperCase()).filter((r) => /^[A-I]$/.test(r));
+  const id = /^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(String(w.id || "")) ? w.id : `${sb.name}--000000`;
+  for (const r of rooms) logTurn({ room: r, id, ok: true, kind: "reply", turn: `${from} replied to ${w.sandbox} (${hm})\n"${text}"` });
+  const plain = text.replace(/[a-z][a-z0-9+.-]*:\/\//gi, "").replace(/[[\]()<>`*_]/g, "").replace(/\//g, "∕").replace(/\\/g, "∖").replace(/~/g, "∼");
+  sb.conn?.call("held.note", { rooms, text: `🐳 Reply from ${from} to ${w.sandbox} (${hm})\n│ ${plain}` }).catch((e) => log({ sb: sb.name, error: `reply note: ${e.message}` }));
+}
+
 // J284 (Angus: "I'd like to see … a note in Thoughts-B"): every decision about a held message, and every message a
 // rule let through, leaves a short 🐳 note in the RECEIVING world's Thoughts thread (desktop and phone) and in its
 // context, whatever the route: the toast, the room panel's y/n, the terminal, a rule. Not for a decision taken in the
@@ -590,11 +616,11 @@ function heldNote(sb, msg, via, what, outcome) {
   const rooms = (Array.isArray(msg.rooms) ? msg.rooms : []).map((r) => String(r).toUpperCase()).filter((r) => /^[A-I]$/.test(r));
   if (!rooms.length) return;
   const to = (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")).join(", ");
-  const first = clean(String(msg.text || "")).split("\n").map((l) => l.trim()).find(Boolean) || "";
+  const first = clean(String(msg.text || "")).replace(/\s+/g, " ").trim(); // J290: the whole message (was its first line, cut at 120)
   // (NoteReview #5) no clickable links, paths or markup from sandbox text: schemes dropped, markup characters dropped,
   // slashes shown as look-alikes (∕ ∖) so a path isn't auto-linked.
   const plain = first.replace(/[a-z][a-z0-9+.-]*:\/\//gi, "").replace(/[[\]()<>`*_]/g, "").replace(/\//g, "∕").replace(/\\/g, "∖").replace(/~/g, "∼");
-  const line = plain.length > 120 ? plain.slice(0, 119) + "…" : plain;
+  const line = plain;
   const hm = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const route = via === "rule" ? "" : ` (${via || "terminal"}, ${hm})`;
   const text = `🐳 ${what}: ${msg.sandbox || sb.name} → ${to}${route}${outcome ? ` · ${outcome}` : ""}\n│ the sandbox wrote: ${line}`;
