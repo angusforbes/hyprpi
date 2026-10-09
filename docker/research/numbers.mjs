@@ -29,12 +29,14 @@ function toRoman(n) {
 // The text as tokens: {k: "word"|"digits"|"roman"|"sep"|"other", v, w}
 function tokens(text) {
   const out = [];
-  const re = /\d+(?:,\d{3})+(?!\d)|\d+|[A-Za-z]+|[-–—,]|\s+|./g;
+  // (recheck J352: a word of letters AND digits, like MAPbI3 or IPU6, is one "other" token, never a number)
+  const re = /\d+(?:,\d{3})+(?![\dA-Za-z])|[A-Za-z0-9]+|[-–—,]|\s+|./g;
   let m;
   while ((m = re.exec(String(text).normalize("NFKC")))) {
     const t = m[0];
     if (/^\s+$/.test(t)) continue;
-    if (/^\d/.test(t)) out.push({ k: "digits", v: t.replace(/,/g, "") });
+    if (/^\d[\d,]*$/.test(t)) out.push({ k: "digits", v: t.replace(/,/g, "") });
+    else if (/\d/.test(t)) out.push({ k: "other", inner: t.match(/\d{3,}/g) || [] }); // RFC7731 → 7731 on its own, never joined to a neighbour
     else if (/^[A-Za-z]+$/.test(t)) {
       const w = t.toLowerCase(), r = romanValue(t);
       if (r != null) out.push({ k: "roman", v: String(r) });
@@ -50,9 +52,13 @@ function tokens(text) {
 // Standard value of a span of number words and digits ("one thousand nine hundred fifty seven" → 1957,
 // "5 thousand 3 hundred twenty-two" → 5322: a digit token counts like a unit), or null.
 function standard(items) {
-  let total = 0, cur = 0, any = false;
+  let total = 0, cur = 0, any = false, prev = "";
   for (const it of items) {
-    const w = it.w;
+    const w = it.w, kind = it.d != null ? (/^[2-9]0$/.test(it.d) ? "tens" : "digit") : w in UNITS ? "unit" : w in TEENS ? "teen" : w in TENS ? "tens" : "scale"; // ("20" acts as tens: "20 two")
+    // (recheck J352) values side by side ("3 1000", "5 three", "twenty 4", "twenty thirty") aren't one number in this
+    // reading; only "twenty" + a unit word ("twenty-two") joins
+    if (prev && prev !== "scale" && kind !== "scale" && !(prev === "tens" && ((kind === "unit" && UNITS[w] > 0) || (kind === "digit" && /^[1-9]$/.test(it.d))))) return null;
+    prev = kind;
     if (it.d != null) { cur += Number(it.d); any = true; }
     else if (w in UNITS) { cur += UNITS[w]; any = true; }
     else if (w in TEENS) { cur += TEENS[w]; any = true; }
@@ -79,20 +85,24 @@ function chunked(items, merge) {
 }
 
 const SPAN = 10; // the longest span of number tokens read as one number (review J352 #2: every sub-span, not only the whole run)
-export function numbersIn(text) {
+// spans: true (default, for the request: defensive, every sub-span); false (for the task's allowlist: only whole runs,
+// so a task can't allowlist a number it merely contains a piece of; recheck J352)
+export function numbersIn(text, { spans = true } = {}) {
   const out = new Set(), toks = tokens(text);
   const add = (v) => { const s = v == null ? "" : String(v); if (/^\d{3,}$/.test(s)) out.add(s.replace(/^0+(?=\d{3})/, "")); };
   let run = [];
   const flush = () => {
     const items = run.map((t) => (t.k === "word" ? { w: t.w } : { d: t.v }));
     for (const it of items) if (it.d != null) add(it.d);
-    for (let i = 0; i < items.length; i++) for (let j = i + 1; j <= Math.min(items.length, i + SPAN); j++) {
+    for (let i = 0; i < items.length; i++) for (let j = spans ? i + 1 : items.length; j <= Math.min(items.length, spans ? i + SPAN : items.length); j++) {
+      if (!spans && i > 0) break;
       const sp = items.slice(i, j);
       add(standard(sp)); add(chunked(sp, true)); add(chunked(sp, false));
     }
     run = [];
   };
   for (const t of toks) {
+    for (const d of t.inner || []) add(d);
     if (t.k === "word" || t.k === "digits" || t.k === "roman") run.push(t);
     else if (t.k === "sep" && run.length) continue;
     else flush();
@@ -103,7 +113,7 @@ export function numbersIn(text) {
 
 // The numbers (3+ digits) from `request` that any of `texts` carries in any written form.
 export function numberLeaks(request, texts, { allow = "" } = {}) {
-  const req = numbersIn(request), ok = numbersIn(allow), hits = new Set();
+  const req = numbersIn(request), ok = numbersIn(allow, { spans: false }), hits = new Set();
   for (const r of req) {
     if (ok.has(r)) continue;
     for (const t of texts) for (const n of numbersIn(t)) if (n === r || (r.length >= 4 && n.includes(r)) || (n.length >= 4 && r.includes(n))) hits.add(n); // (3-digit parts only when equal: the span readings make many)

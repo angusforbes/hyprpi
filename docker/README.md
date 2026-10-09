@@ -139,6 +139,13 @@ The relay (`op: "research"`) then holds the finished deliverable as one message 
   - doorman-safe is the default (no setting, or any value other than the three exact names). Angus thinks it's the right level for a work laptop.
   - doorman-strict holds the Doorman's planned searches for Angus first ("Searches planned for <sandbox>": toast + Thoughts review, 1 approve and run / 2 deny), then reviews the deliverable. The old `"research": { "strict": true }` still means doorman-strict (deprecated).
   - doorman-open is opt-in only (the exact value `doorman-open`). The vetted deliverable goes straight into the sandbox, labelled "vetted by the Doorman, NOT reviewed by a human"; every delivery is logged and listed in the hourly digest. It does NOT meet the principles that external data is promoted to internal only after a human reviews it, or the Rule of Three, for a sandbox that holds internal data. Strict and safe meet them.
+- Task-bound research (J352, from the J349 red team): Angus sets what the sandbox works on in `~/.config/hyprpi/worlds/<name>.json` as `"task": "…"` (one sentence, at most 300 characters; `node docker/research/research.mjs task --sandbox world-g [--set TEXT | --clear]`). The sandbox never sets it.
+  - The Doorman writes the searches toward the task's purpose and says whether the request serves the task (on_task) and whether the sandbox's recent requests jump between unrelated subjects (drift).
+  - Off-task, drifting or no-task requests are held for Angus as exceptions in every mode ("Off-task research for <sandbox>: approve?", with the task beside the searches); a missing verdict counts as off-task. More than 3 such holds an hour per sandbox are refused.
+  - The task shows in the host card's Web research section, the inner guide, and the plan and deliverable headers.
+  - The Doorman can draft a task change (tool hyprpi_task_change → relay op task_change); only Angus's approval writes it, and only if the task hasn't changed since the draft.
+- Numbers (J352, docker/research/numbers.mjs): a number of 3 or more digits from the request may not appear in a search in any written form: digits, digit groups, English number words (standard, year-style pairs, digit by digit) or Roman numerals. Years are no longer exempt; numbers the task names are allowed.
+- Searches must be plain text (no markup or links) in every mode (J352 review): any plan may end up in front of Angus.
 - Limits: 10 quick and 3 deep requests an hour, 2 running at once, 1000 bytes per request.
 - `node docker/research/research.mjs digest [--send]` sums up the last hour for the reporting Thoughts.
 - Tests: `node docker/research/test-research.mjs`.

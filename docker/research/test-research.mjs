@@ -125,6 +125,14 @@ t("review #1: a search with a link or markup is refused (Angus must see exactly 
 t("J352 review #1: markup-like search text is refused in every mode now (any plan may be held for a human)", () => assert.match(R.planCheck("C++ question", { searches: ["modern C++ std::vector<T> iterator validity"], public_terms: [] }).join(), /markup or a link/));
 t("J352 review #1: an off-task exception in doorman-safe can't carry a hidden link into Angus's review", () => assert.match(R.planCheck("solar absorbers", { searches: ["[Solar absorber stability](https://example.org/sandbox-marker)"], public_terms: [] }).join(), /markup or a link/));
 t("J352 review #2: number lists and mixed digits and words", () => { assert.match(R.planCheck("one hundred, two hundred", { searches: ["top 100 list"], public_terms: [] }).join(), /number from the request \(100\)/); assert.match(R.planCheck("standard 5 thousand 3 hundred twenty-two", { searches: ["RFC 5322"], public_terms: [] }).join(), /number from the request \(5322\)/); });
+t("J352 recheck: digits inside a name (MAPbI3, IPU6) never join a neighbouring number, and a task can't allowlist a sum", () => {
+  assert.deepEqual(R.planCheck("Describe perovskite report 1003", { searches: ["MAPbI3 1000 hours stability testing"], public_terms: [] }, { task: "Perovskite solar cells" }).filter((x) => /number/.test(x)), []);
+  assert.match(R.planCheck("Research one thousand three failures", { searches: ["perovskite lifetime study 1003"], public_terms: [] }, { task: "Perovskite MAPbI3 1000 hours testing" }).join(), /number from the request \(1003\)/);
+});
+t("J352 recheck 2: tens + a digit joins; a task allowlists whole numbers only, not pieces", () => {
+  assert.match(R.planCheck("Research 5 thousand 3 hundred twenty 2 failures", { searches: ["perovskite lifetime study 5322"], public_terms: [] }).join(), /number from the request \(5322\)/);
+  assert.match(R.planCheck("Research one thousand twenty-four failures", { searches: ["perovskite lifetime study 1024"], public_terms: [] }, { task: "Perovskite solar cells since two thousand twenty-four" }).join(), /number from the request \(1024\)/);
+});
 t("J352 review #4: a number-like name the task names (IEC 61215) is fine in a search", () => assert.deepEqual(R.planCheck("IEC 61215 damp heat test for perovskites", { searches: ["damp-heat testing of perovskite modules under IEC 61215"], public_terms: ["IEC 61215"] }, { task: "perovskite module qualification under IEC 61215" }), []));
 t("review #3: an old plan can't run", () => {
   const p = R.ask({ sandbox: "world-x", lookingFor: "IPU6 strict old" }), f = path.join(R.STATE, "plans", p.rid + ".json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
