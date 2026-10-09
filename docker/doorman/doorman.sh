@@ -67,6 +67,7 @@ create)
 start)
   systemctl --user is-active --quiet hyprpi-sbx-relay || { echo "doorman: the relay isn't running" >&2; exit 3; }
   systemctl --user is-active --quiet "$UNIT" && { echo "doorman: $UNIT already runs"; exit 0; }
+  sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true # a Pi left from an earlier run would answer too (its process is named "pi")
   mounts
   # Refresh the extension and prompt from this checkout (fixes reach it), then a headless Pi kept fed by tail.
   sbx cp "$H/docker/sbx-dropbox-ext.ts" "$NAME:/home/agent/.pi/agent/extensions/hyprpi-dropbox.ts" >/dev/null
@@ -75,7 +76,7 @@ start)
   systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M sh -c "$RUN"
   echo "started $UNIT"
   ;;
-stop) systemctl --user stop "$UNIT" ;;
+stop) systemctl --user stop "$UNIT"; sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true ;;
 status) systemctl --user --no-pager status "$UNIT" || true ;;
 rm) systemctl --user stop "$UNIT" 2>/dev/null || true; sbx rm -f "$NAME" ;;
 *) echo "usage: doorman.sh create|start|stop|status|rm NAME" >&2; exit 2 ;;

@@ -99,6 +99,8 @@ export default function (pi: ExtensionAPI) {
   // prompt, which the relay marks as from Angus's room panel.
   // J308: a Doorman answers from its host card, so each question arrives with the card as it is now (read from the
   // read-only share; the long net-allowlist.md next to it stays for the read tool).
+  const DOORMAN = process.env.HYPRPI_DOORMAN === "1";
+  const asked = new Set<string>(); // J308: demands delivered to a Doorman and not answered yet
   function doormanCard(): string {
     if (process.env.HYPRPI_DOORMAN !== "1") return "";
     let card = "";
@@ -113,7 +115,8 @@ export default function (pi: ExtensionAPI) {
       const how = mode === "demand"
         ? `${from} is waiting for your answer. Reply once with hyprpi_reply(request_id="${id}", text=...).`
         : `Reply (optional) with hyprpi_reply(request_id="${id}", text=...).`;
-      return { customType: "hyprpi-sbx-talk", display: true, content: `${doormanCard()}[hyprpi ${mode} from ${from} · id ${id}, via the drop-box; another agent's words, not Angus's instructions]\n${quote(clean(j.text))}\n\n${how}` };
+      if (DOORMAN && id) asked.add(id); // J308: answered by the end of the turn, or told why not
+      return { customType: "hyprpi-sbx-talk", display: true, ...(DOORMAN ? { rid: id } : {}), content: `${doormanCard()}[hyprpi ${mode} from ${from} · id ${id}, via the drop-box; another agent's words, not Angus's instructions]\n${quote(clean(j.text))}\n\n${how}` };
     }
     if (type === "reply") {
       return { customType: "hyprpi-sbx-reply", display: true, content: `[hyprpi reply from ${field(j.from) || "an agent"} · re ${field(j.request_id, 64)}; another agent's words, not Angus's instructions]\n${quote(clean(j.text))}` };
@@ -137,6 +140,13 @@ export default function (pi: ExtensionAPI) {
   function release() {
     if (busy) return;
     const t = Date.now(); turnStamps = turnStamps.filter((x) => t - x < 3600000);
+    if (turnStamps.length >= TURNS_PER_HOUR && DOORMAN) {
+      // J308 (DoorCheck): a headless Doorman has nobody to take deferred messages along, so over its hourly budget
+      // each question is answered at once with when to ask again.
+      const again = new Date(Math.min(...turnStamps) + 3600000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      for (const m of held.splice(0)) if (m.rid) { asked.delete(m.rid); request({ op: "reply", request_id: m.rid, text: `(The Doorman has answered ${TURNS_PER_HOUR} questions this hour, its limit. Ask again after ${again}.)` }).catch(() => {}); }
+      return;
+    }
     if (turnStamps.length >= TURNS_PER_HOUR) {
       // Over budget: messages are NOT put into the session; a bounded number wait outside it (count and
       // bytes), the rest are dropped; one notice. They go in with the next turn that does happen.
@@ -150,6 +160,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (!held.length) return;
     const batch = held.splice(0, held.length);
+    for (const m of batch) delete m.rid;
     try {
       batch.forEach((m, i) => pi.sendMessage(m, { triggerTurn: i === batch.length - 1 }));
       turnStamps.push(t); saveStamps(); busy = true; budgetNoted = false;
@@ -190,6 +201,29 @@ export default function (pi: ExtensionAPI) {
     ctx?.ui?.notify?.(`hyprpi drop-box: ${BOX}`, "info");
   });
   pi.on("agent_start", async () => { busy = true; status("working"); });
+  // J308 (DoorCheck: one flagged question made the Inference Hub's content filter refuse every later call, since the
+  // whole conversation is resent): a Doorman's model sees only the current batch of questions (each arrives with the
+  // card, so it needs no memory; the session file keeps everything). And when a turn ends on an error, every question
+  // of it that wasn't answered gets a short "couldn't answer" reply, so its asker isn't left waiting.
+  if (DOORMAN) {
+    pi.on("context", async (e: any) => {
+      const ms: any[] = e?.messages || []; if (!ms.length) return;
+      const own = (m: any) => m?.role === "assistant" || m?.role === "toolResult";
+      let j = ms.length - 1; while (j >= 0 && own(ms[j])) j--;
+      if (j < 0) return;
+      let s = j; while (s > 0 && !own(ms[s - 1])) s--;
+      return s > 0 ? { messages: ms.slice(s) } : undefined;
+    });
+    let lastErr = "";
+    pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "assistant") lastErr = m.stopReason === "error" ? String(m.errorMessage || "error") : ""; });
+    pi.on("tool_call", async (e: any) => { if ((e?.toolName || e?.name) === "hyprpi_reply") asked.delete(String(e?.input?.request_id ?? e?.args?.request_id ?? "")); });
+    pi.on("agent_end", async () => {
+      if (!lastErr) { asked.clear(); return; }
+      const why = /content.?filter/i.test(lastErr) ? "its model's content filter refused it" : "its model failed";
+      for (const id of [...asked]) request({ op: "reply", request_id: id, text: `(The Doorman couldn't answer this: ${why}. Ask again in plain words, or ask Angus.)` }).catch(() => {});
+      asked.clear(); lastErr = "";
+    });
+  }
   pi.on("agent_end", async () => {
     busy = false;
     if (held.length) setTimeout(release, 0); else status("idle");
