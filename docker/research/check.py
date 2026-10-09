@@ -5,7 +5,7 @@ models.json, written by docker/doorman/doorman.sh create; the key never leaves t
 the Doorman's running Pi or its sessions: one fresh model call per check, no memory, so nothing a page or a
 query says can persist.
 
-stdin: JSON {"mode": "query"|"summary", "scope": {...}, "query": "...", "why": "...", "summary": "...", "sources": [...]}
+stdin: JSON {"mode": "query"|"summary", "scope": {...}, "query": "...", "summary": "...", "sources": [...]}
 stdout: JSON verdict
   query:   {"ok": bool, "on_topic": bool, "carries_inside_data": bool, "reason": "..."}
   summary: {"ok": bool, "injection": bool, "off_topic": bool, "odd": bool, "reason": "..."}
@@ -85,8 +85,7 @@ def main():
     scope_txt = f"topic: {scope.get('topic', '')}\nabout: {scope.get('about', '')}"
     if req.get("mode") == "query":
         v = ask(base, model, key, QUERY_RULES,
-                "APPROVED SCOPE:\n" + scope_txt + "\n\n" + fence("QUERY", str(req.get("query", ""))[:600])
-                + "\n\n" + fence("STATED-REASON", str(req.get("why", ""))[:300]))
+                "APPROVED SCOPE:\n" + scope_txt + "\n\n" + fence("QUERY", str(req.get("query", ""))[:600]))
         on, carries = v.get("on_topic") is True, v.get("carries_inside_data") is not False
         out = {"ok": on and not carries, "on_topic": on, "carries_inside_data": carries, "reason": str(v.get("reason", ""))[:300]}
     elif req.get("mode") == "summary":
