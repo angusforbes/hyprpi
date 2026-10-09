@@ -455,6 +455,7 @@ function watchActions() {
 // right-click, SUPER+comma, "dismiss all") of a still-held message counts as Deny. Not after a button (its
 // ActionInvoked comes first) or a card click (the review CLI marks it), never for an expiry (reason 1) or the relay
 // closing it itself (reason 3). Checked 2.5 s later, so the button or review has landed first.
+// J302 (Angus chose 1b): no longer a Deny; a dismiss just hides the toast (see below).
 const acted = new Set();          // "owner:notifId" that had a button pressed
 const SEEN = path.join(STATE, "reviewed"); // <id> written by `sbx-relay.mjs review` (the card click)
 function onClosedLine(line) {
@@ -467,8 +468,11 @@ function onClosedLine(line) {
       let r; try { r = JSON.parse(fs.readFileSync(path.join(PENDING, f), "utf8")); } catch { continue; }
       if (!r.notif || r.notif.id !== n || r.notif.owner !== owner || !/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(r.id || "")) continue;
       if (fs.existsSync(path.join(SEEN, r.id))) { log({ note: `toast for ${r.id} closed after a review click: still held` }); return; }
-      log({ note: `toast for ${r.id} dismissed: denied` });
-      writeDecision(r.id, "deny", "dismissed");
+      // J302 (Angus: "1b"): a dismiss only hides the toast. The message stays held, shown in the receiving world's
+      // Thoughts panel and room strip, and is decided only by an explicit choice. The toast isn't shown again by the
+      // 5 s check (that only reacts to a new notification server); a relay or shell restart re-shows it.
+      log({ note: `toast for ${r.id} dismissed (still held)` });
+      try { const pf = path.join(PENDING, f), cur = JSON.parse(fs.readFileSync(pf, "utf8")); cur.notif = { ...cur.notif, dismissed: true }; fs.writeFileSync(pf, JSON.stringify(cur, null, 2), { mode: 0o600 }); } catch { /* decided meanwhile */ }
       return;
     }
   }, 2500);
