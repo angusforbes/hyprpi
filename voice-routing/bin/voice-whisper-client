@@ -1,0 +1,7 @@
+#!/bin/bash
+# voice-whisper-client <wav> — transcribe via the resident voice-whisper server.
+# Prints the text; exit 1 if the server is unavailable or errored (caller falls back).
+sock="${XDG_RUNTIME_DIR:-/tmp}/voice-listen/whisper.sock"
+[[ -S $sock && -f $1 ]] || exit 1
+resp=$(printf '{"path":"%s"}\n' "$(realpath "$1")" | socat -t 30 - "UNIX-CONNECT:$sock" 2>/dev/null) || exit 1
+jq -e -r 'if .error then halt_error(1) else .text end' <<<"$resp" 2>/dev/null

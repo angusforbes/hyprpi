@@ -1,0 +1,18 @@
+[Unit]
+Description=hyprpi voice-routing: resident faster-whisper server
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# voice-listen is linked into ~/.local/bin from hyprpi/voice-routing/bin; `whisper` finds the venv, the
+# server script and any pip CUDA libraries itself, so this unit holds no checkout or machine paths.
+ExecStart=%h/.local/bin/voice-listen whisper
+Environment=VOICE_WHISPER_MODEL=small.en
+Environment=HF_HUB_OFFLINE=1
+Restart=on-failure
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=graphical-session.target

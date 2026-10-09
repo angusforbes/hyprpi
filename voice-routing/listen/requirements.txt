@@ -1,0 +1,7 @@
+# installed by install.sh into ~/.local/share/voice-routing/.venv via uv
+vosk
+sounddevice
+faster-whisper
+# GPU only (install.sh adds these when an NVIDIA GPU is detected):
+# nvidia-cublas-cu12
+# nvidia-cudnn-cu12

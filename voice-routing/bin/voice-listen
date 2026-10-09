@@ -1,0 +1,31 @@
+#!/bin/bash
+# voice-listen — control the always-on keyword listener (voice-listen.service).   hyprpi voice-routing.
+#   voice-listen on|off|send|toggle|pause|resume   send a command to the service
+#   voice-listen status                            idle | on | paused | (stopped)
+#   voice-listen start|stop|restart|log            manage the systemd user service
+#   voice-listen run                               run the keyword listener in the foreground (the unit runs this)
+#   voice-listen whisper                           run the resident whisper server (voice-whisper.service runs this)
+RT="${XDG_RUNTIME_DIR:-/tmp}/voice-listen"
+# This checkout's voice-routing folder (the script is linked into ~/.local/bin from it) and the data folder
+# (Python venv, Vosk model): $VOICE_ROUTING_HOME, else ~/.local/share/voice-routing (an older install's
+# ~/.local/share/herdr-voice-to-agents is still found).
+VR_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+VOICE_HOME="${VOICE_ROUTING_HOME:-${VOICE_TO_AGENTS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/voice-routing}}"
+[[ -d $VOICE_HOME || -n ${VOICE_ROUTING_HOME:-}${VOICE_TO_AGENTS_HOME:-} ]] || VOICE_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/herdr-voice-to-agents"
+export VOICE_ROUTING_HOME="$VOICE_HOME"
+# pip-installed CUDA libraries (NVIDIA GPUs), found at run time so the unit holds no machine paths
+cuda_libs() {
+  local d libs=""
+  for d in "$VOICE_HOME"/.venv/lib/python*/site-packages/nvidia/*/lib; do [[ -d $d ]] && libs+="${libs:+:}$d"; done
+  [[ -n $libs ]] && export LD_LIBRARY_PATH="$libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+}
+case "${1:-status}" in
+  on|off|send|toggle|pause|resume) mkdir -p "$RT"; printf "%s\n" "$1" > "$RT/cmd" ;;
+  inject) mkdir -p "$RT"; printf "inject %s\n" "$(realpath "$2")" > "$RT/cmd" ;;
+  status) if systemctl --user is-active --quiet voice-listen.service; then cat "$RT/state" 2>/dev/null || echo starting; else echo stopped; fi ;;
+  start|stop|restart) systemctl --user "$1" voice-listen.service ;;
+  log) journalctl --user -u voice-listen.service -n "${2:-40}" --no-pager ;;
+  run) exec "$VOICE_HOME/.venv/bin/python" "$VR_DIR/listen/voice_listen.py" ;;
+  whisper) cuda_libs; exec "$VOICE_HOME/.venv/bin/python" "$VR_DIR/listen/voice_whisper.py" ;;
+  *) echo "usage: voice-listen on|off|send|toggle|pause|resume|status|start|stop|restart|log|run|whisper" >&2; exit 2 ;;
+esac

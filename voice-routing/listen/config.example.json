@@ -1,0 +1,15 @@
+{
+  "phrases": {
+    "on": "on on on",
+    "send": "send send send",
+    "off": "off off off"
+  },
+  "min_segment_secs": 0.6,
+  "phrase_lead_secs": 0.15,
+  "deliver": [
+    "voice-agent",
+    "deliver"
+  ],
+  "device": null,
+  "match_min_hits": 3
+}

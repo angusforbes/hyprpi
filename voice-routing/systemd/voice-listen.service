@@ -1,0 +1,16 @@
+[Unit]
+Description=hyprpi voice-routing: keyword listener (hands-free phrases)
+After=pipewire.service wireplumber.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# voice-listen is linked into ~/.local/bin from hyprpi/voice-routing/bin; `run` finds the venv and the script.
+ExecStart=%h/.local/bin/voice-listen run
+Environment=PATH=%h/.local/bin:/usr/share/omarchy/bin:/usr/local/bin:/usr/bin
+Restart=on-failure
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=graphical-session.target
