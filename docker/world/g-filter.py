@@ -4,7 +4,9 @@
 # act on some escape sequences in ways that reach the host:
 #   APC _G…   kitty graphics protocol (t=f / t=t / t=s can make kitty read a HOST file or shared memory)
 #   OSC 52    clipboard write / read
-#   OSC 8     hyperlinks (Ctrl+click opens them on the host)
+#   OSC 8     hyperlinks (Ctrl+click opens them on the host), EXCEPT (J359) a file:// link to a folder shared with the
+#             sandbox (not hidden, no symlink; g_open_url.check) whose visible text is exactly that path: it is
+#             re-emitted in canonical form so Pi's clickable tool-line paths work; everything else is stripped
 #   OSC 5113  kitty file transfer
 #   OSC 99 / 777 / 9   desktop notifications
 #   OSC 1337 / 7 / 133 / 633 / 6 / 7772   misc integrations (file names, cwd reports, …)
@@ -12,7 +14,24 @@
 # This filter passes everything else unchanged (normal text, colours, cursor movement, mouse and title
 # OSC 0/1/2, colour OSC 4/10/11/12/104/110-112) and drops those sequences whole. Input (keys, mouse, paste)
 # goes to the program unchanged. Usage: g-filter.py COMMAND [ARGS…]
-import os, pty, sys, select, signal, termios, tty, fcntl, struct
+import os, pty, re, sys, select, signal, termios, tty, fcntl, struct, urllib.parse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+WORLD = os.environ.get("G_WORLD", "")
+LINK_MAX = 2048   # bytes of visible text a vetted link may span
+CSI = re.compile(rb"\x1b\[[0-9;:?<=>]*[ -/]*[@-~]")
+
+
+def vet_link(uri: bytes, world: str):
+    """The canonical file:// URI for a link the filter may let through, else None. Only g_open_url's own check decides."""
+    try:
+        u = uri.decode("utf-8")
+        if not u.startswith("file://") or not world: return None
+        import g_open_url
+        ok, out = g_open_url.check(u, world, snap=False)
+        return out if ok else None
+    except Exception:
+        return None
 
 ESC = 0x1b
 KEEP_OSC = {b"0", b"1", b"2", b"4", b"10", b"11", b"12", b"104", b"110", b"111", b"112", b"22", b"30001", b"30101"}
@@ -23,11 +42,25 @@ class Filter:
     """Streaming filter over UTF-8 output: holds an unfinished escape sequence until it completes (max 1 MiB,
     then drops it). C1 controls are only recognised as UTF-8-encoded code points (C2 9D …), never as a
     raw byte: 0x9D is an ordinary continuation byte inside characters like ❯ (E2 9D AF)."""
-    def __init__(self):
+    def __init__(self, world: str = ""):
         self.buf = b""
+        self.world = world
+        self.link = None   # a vetted OSC 8 open being checked: {"uri": canonical, "path": str, "text": bytearray, "bad": bool}
+    def _finish_link(self, out, ok_close=True):
+        """The visible text between open and close decides: exactly the path (SGR colours around it are fine), else no link."""
+        L, self.link = self.link, None
+        text = bytes(L["text"])
+        plain = CSI.sub(b"", text)
+        good = ok_close and not L["bad"] and b"\x1b" not in plain and b"\n" not in plain and re.fullmatch(re.escape(L["path"]) + r"(:\d+(-\d+)?)?", plain.decode("utf-8", "replace")) is not None
+        if good: out += b"\x1b]8;;" + L["uri"].encode() + b"\x1b\\" + text + b"\x1b]8;;\x1b\\"
+        else: out += text
     def feed(self, data: bytes) -> bytes:
         self.buf += data
         out = bytearray()
+        def put(x):  # plain output goes to the output, or into the link being checked
+            if self.link is None: out.extend(x); return
+            self.link["text"] += x
+            if len(self.link["text"]) > LINK_MAX: self._finish_link(out, ok_close=False)
         b = self.buf
         i, n = 0, len(b)
         while i < n:
@@ -40,11 +73,15 @@ class Filter:
                     if end < 0:
                         if n - i > (1 << 20): i = n  # absurd: drop it
                         break
-                    if k == 0x5d and self._keep_osc(b[i + 2:end]):
-                        out += b[i:end + tl]
+                    body = b[i + 2:end]
+                    if k == 0x5d and body.startswith(b"8;"):
+                        self._osc8(body, out)
+                    elif k == 0x5d and self._keep_osc(body):
+                        if self.link is not None: self.link["bad"] = True  # anything but text inside a link: no link
+                        put(b[i:end + tl])
                     i = end + tl
                     continue
-                out += b[i:i + 2]; i += 2  # other ESC x (CSI etc.): the rest follows as plain bytes
+                put(b[i:i + 2]); i += 2  # other ESC x (CSI etc.): the rest follows as plain bytes
                 continue
             if c == 0xC2:
                 if i + 1 >= n: break  # need the second byte
@@ -59,9 +96,27 @@ class Filter:
             j = i + 1
             while j < n and b[j] != ESC and b[j] != 0xC2:
                 j += 1
-            out += b[i:j]; i = j
+            put(b[i:j]); i = j
         self.buf = b[i:]
         return bytes(out)
+    def flush_pending(self) -> bytes:
+        """No close arrived and the stream went quiet: show the held text as plain text (never as a link)."""
+        out = bytearray()
+        if self.link is not None: self._finish_link(out, ok_close=False)
+        return bytes(out)
+    def _osc8(self, body: bytes, out):
+        """OSC 8 ; params ; URI. A close (empty URI) ends a vetted link; any other open is vetted: a file link to a shared,
+        visible path may start a link (re-emitted canonically at its close if the text matches); everything else is dropped."""
+        parts = body.split(b";", 2)
+        uri = parts[2] if len(parts) == 3 else b""
+        if self.link is not None:
+            self._finish_link(out, ok_close=(uri == b""))  # a new open inside a link, or the close
+            if uri == b"": return
+        if uri == b"": return
+        canon = vet_link(uri, self.world)
+        if canon:
+            path = urllib.parse.unquote(urllib.parse.urlsplit(canon).path)
+            self.link = {"uri": canon, "path": path, "text": bytearray(), "bad": False}
     @staticmethod
     def _string_end(b, start, bel=True):
         # BEL ends only an OSC (xterm); DCS / APC / PM / SOS end only at ST (ESC \ or C1 ST = C2 9C)
@@ -95,11 +150,15 @@ def main():
     old = None
     if os.isatty(0):
         old = termios.tcgetattr(0); tty.setraw(0)
-    f = Filter()
+    f = Filter(WORLD)
     try:
         while True:
-            try: r, _, _ = select.select([0, fd], [], [])
+            try: r, _, _ = select.select([0, fd], [], [], 0.3 if f.link is not None else None)
             except InterruptedError: continue
+            if not r:
+                o = f.flush_pending()
+                if o: os.write(1, o)
+                continue
             if fd in r:
                 try: d = os.read(fd, 65536)
                 except OSError: break

@@ -10,7 +10,7 @@ if (!/^[0-9a-f]{24}$/.test(tok)) { console.error("g-run: bad token"); process.ex
 const f = path.join(os.homedir(), ".hyprpi-g", "launch", `${tok}.json`);
 let spec; try { spec = JSON.parse(fs.readFileSync(f, "utf8")); fs.unlinkSync(f); } catch { console.error("g-run: no such launch"); process.exit(2); }
 try { process.chdir(spec.cwd); } catch { /* stay */ }
-const c = spawn(spec.argv[0], spec.argv.slice(1), { stdio: "inherit", env: spec.env });
+const c = spawn(spec.argv[0], spec.argv.slice(1), { stdio: "inherit", env: { ...spec.env, PI_HYPERLINKS: "1" } });
 c.on("exit", (code, sig) => process.exit(sig ? 1 : code ?? 0));
 c.on("error", (e) => { console.error(`g-run: ${e.message}`); process.exit(1); });
 for (const s of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(s, () => c.kill(s));
