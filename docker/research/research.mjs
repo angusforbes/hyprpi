@@ -137,7 +137,7 @@ export function rareToken(w) {
   const stem = [w, w.replace(/(ies)$/, "y"), w.replace(/(es|s|ed|ing|ly|er)$/, "")];
   return !stem.some((x) => d.has(x));
 }
-export function planCheck(request, plan) {
+export function planCheck(request, plan, { strict = false } = {}) {
   const r = [], texts = [...(plan?.searches || []), ...(plan?.brief ? [plan.brief] : [])].map(String);
   if (!texts.length) return ["the Doorman wrote no searches"];
   const req = words(request), grams = new Set();
@@ -148,7 +148,7 @@ export function planCheck(request, plan) {
   for (const t of texts) {
     const pre = precheckQuery(t).filter((x) => !/more than \d+ lines/.test(x));
     // J314 review #1: what Angus reads must be exactly what goes out: no markup or links that a renderer could hide
-    if (/[[\]<>`*_|\\~{}]|https?:|www\.|\]\(/i.test(t)) r.push("a search contains markup or a link");
+    if (strict && /[[\]<>`*_|\\~{}]|https?:|www\.|\]\(/i.test(t)) r.push("a search contains markup or a link"); // (strict only: off stays as J309)
     if (pre.length) r.push(`a search contains ${pre.join(", ")}`);
     const w = words(t);
     // a copied 4-word run counts unless it is only well-known names and filler ("intel ipu6 and ipu7" is fine)
@@ -239,10 +239,10 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   const plan = doormanCheck(cfg, { mode: "plan", looking_for: q, depth });
   if (!("refuse" in plan)) { logEvent({ ev: "error", stage: "doorman", ...base, reason: plan.reason }); return { status: "error", rid, reason: `Not sent: ${plan.reason}` }; }
   if (plan.refuse) { logEvent({ ev: "refused", stage: "doorman", ...base, reason: plan.reason }); return { status: "refused", rid, reason: `The Doorman refused it: ${plan.reason}` }; }
-  let pc = planCheck(q, plan);
+  let pc = planCheck(q, plan, { strict: cfg.strict });
   if (pc.length) { // one retry with the host's complaint (only the check's own words go back, never sandbox text)
     const p2 = doormanCheck(cfg, { mode: "plan", looking_for: q, depth, feedback: pc.join("; ") });
-    if ("refuse" in p2 && !p2.refuse) { const pc2 = planCheck(q, p2); if (!pc2.length) { Object.assign(plan, p2); pc = []; } else pc = pc2; }
+    if ("refuse" in p2 && !p2.refuse) { const pc2 = planCheck(q, p2, { strict: cfg.strict }); if (!pc2.length) { Object.assign(plan, p2); pc = []; } else pc = pc2; }
     else if (p2.refuse) { logEvent({ ev: "refused", stage: "doorman", ...base, reason: p2.reason }); return { status: "refused", rid, reason: `The Doorman refused it: ${p2.reason}` }; }
   }
   if (pc.length) { logEvent({ ev: "refused", stage: "paraphrase", ...base, reason: pc.join("; "), searches: plan.searches, brief: plan.brief }); return { status: "refused", rid, reason: `The Doorman's searches didn't pass the paraphrase check (${pc.join("; ")}); try asking in plainer words.` }; }

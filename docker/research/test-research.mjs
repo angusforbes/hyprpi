@@ -109,7 +109,8 @@ t("strict on: a denied plan sends nothing and can't be run later", () => {
   const p = R.ask({ sandbox: "world-x", lookingFor: "IPU6 strict deny" }), n = calls();
   assert.equal(p.status, "planned"); assert.equal(R.dropPlan(p.rid), true); assert.equal(R.runPlan(p.rid).status, "error"); assert.equal(calls(), n);
 });
-t("review #1: a search with a link or markup is refused (Angus must see exactly what goes out)", () => { for (const x of ["IPU6 camera compatibility [details](https://example.com/zebra-alpha)", "IPU6 *alpha* support", "IPU6 <zebra> drivers", "IPU6 see www.example.com"]) assert.match(R.planCheck("IPU6 cameras", { searches: [x], public_terms: ["IPU6"] }).join(), /markup or a link/, x); });
+t("review #1: a search with a link or markup is refused (Angus must see exactly what goes out)", () => { for (const x of ["IPU6 camera compatibility [details](https://example.com/zebra-alpha)", "IPU6 *alpha* support", "IPU6 <zebra> drivers", "IPU6 see www.example.com"]) assert.match(R.planCheck("IPU6 cameras", { searches: [x], public_terms: ["IPU6"] }, { strict: true }).join(), /markup or a link/, x); });
+t("strict off: searches with code-like text are unchanged from J309 (recheck)", () => assert.deepEqual(R.planCheck("C++ question", { searches: ["modern C++ std::vector<T> iterator validity"], public_terms: [] }), []));
 t("review #3: an old plan can't run", () => {
   const p = R.ask({ sandbox: "world-x", lookingFor: "IPU6 strict old" }), f = path.join(R.STATE, "plans", p.rid + ".json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
   j.created = Date.now() - 25 * 3600e3; fs.writeFileSync(f, JSON.stringify(j)); const n = calls(); assert.equal(R.runPlan(p.rid).status, "error"); assert.equal(calls(), n);

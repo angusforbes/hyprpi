@@ -73,6 +73,7 @@ const LIMITS = {
   researchKeepMs: 24 * 3600 * 1000, // delivered research-<id>.md files in the inbox
 };
 const RESEARCH = fileURLToPath(new URL("./research/research.mjs", import.meta.url));
+const PLANQ = path.join(STATE, "research-plan-queue.json"); // J314: approved plans waiting for a free slot
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.json$/;
 const RECIPIENT_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._@·-]{0,63}$/u;
 const THOUGHTS_RE = /^thoughts-[a-z0-9_-]{1,12}$/i;
@@ -632,11 +633,22 @@ class Relay {
   // is held for Angus as ONE message, everything else goes straight back to the sandbox's inbox.
   // J314: runRid = the id of a plan Angus approved in strict mode (research.mjs run), instead of a new ask.
   // J314 review #2: approved plans wait behind the same running limit as new requests.
+  // The queue is kept on disk (host-only) so a relay restart doesn't lose an approved plan (recheck #2).
   pumpPlans(sb) {
+    let changed = false;
     while ((sb.planQueue || []).length && (sb.research?.size || 0) < LIMITS.researchRunning) {
-      const q = sb.planQueue.shift(); (sb.research ||= new Map()).set(q.token, { at: Date.now() });
+      const q = sb.planQueue.shift(); changed = true; (sb.research ||= new Map()).set(q.token, { at: Date.now() });
       this.runResearch(sb, q.token, q.opts);
     }
+    if (changed) this.saveQueue();
+  }
+  saveQueue() {
+    const all = Object.fromEntries(this.sandboxes.filter((x) => (x.planQueue || []).length).map((x) => [x.name, x.planQueue]));
+    try { const t = PLANQ + ".tmp"; fs.writeFileSync(t, JSON.stringify(all), { mode: 0o600 }); fs.renameSync(t, PLANQ); } catch (e) { log({ error: `plan queue: ${e.message}` }); }
+  }
+  loadQueue() {
+    let all = {}; try { all = JSON.parse(fs.readFileSync(PLANQ, "utf8")); } catch { return; }
+    for (const sb of this.sandboxes) if (Array.isArray(all[sb.name])) { sb.planQueue = all[sb.name].filter((q) => /^r[0-9a-f]{8}$/.test(q?.token || "") && /^q[0-9a-f]{8}$/.test(q?.opts?.runRid || "")); if (sb.planQueue.length) log({ sb: sb.name, note: `${sb.planQueue.length} approved research plan(s) queued again after a restart` }); }
   }
   runResearch(sb, token, { want, depth, from, why, runRid = "", heldId = "", room = "" }) {
     const done = (o) => {
@@ -719,7 +731,7 @@ class Relay {
       heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Approved", busy ? "queued: the searches start when a running request finishes" : "the searches run now; the result comes back for review");
       try { inboxWrite(sb, { type: "research", token: rs.token, status: "running", id }); } catch { /* */ }
       (sb.planQueue ||= []).push({ token: rs.token, opts: { want: rs.want, depth: rs.depth, from: rs.from, runRid: rid, heldId: id, room: String((msg.rooms || [])[0] || "").toUpperCase() } });
-      this.pumpPlans(sb);
+      this.saveQueue(); this.pumpPlans(sb);
       return;
     }
     if (msg.research) { // J309: approved once (never a rule); deny drops it
@@ -810,6 +822,7 @@ class Relay {
         fs.watch(fdPath(dirs.outbox), () => sb.scan().catch(() => {}));
       } catch (e) { log({ sb: sb.name, error: `watch: ${e.message}` }); }
     }
+    this.loadQueue(); for (const sb of this.sandboxes) this.pumpPlans(sb); // J314: approved plans survive a restart
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
     watchActions();
     // J291: re-show every held message's toast now, and again when the shell (notification server) restarts
