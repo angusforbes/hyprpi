@@ -151,9 +151,11 @@ extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
 - `/twin-split` (pi-twin) opens the twin in a new window beside the original,
   same room, with the parent's icon and colour.
 - `bonk` toasts say "Agent <icon> <Name> needs you".
-- Voice: hyprpi agents (`hp:<id>`) and rooms (`room:hp-<room>`) appear in the
-  voice picker, the bar widget and `voice-agent set/add`; "room" / "me" inside
-  a hyprpi agent resolve to its own room / itself.
+- Voice: speaking to agents lives in [voice-routing/](voice-routing/README.md)
+  (push-to-talk, hands-free phrases, the bar widget, `/voice-switch`; install with
+  `voice-routing/install.sh`). With no target, dictation goes to the Thoughts of
+  the world you're on; hyprpi agents (`hp:<id>`) appear in the voice picker, the
+  bar widget and `voice-agent set/add`, and "me" inside a hyprpi agent is itself.
 
 ### Restore-all: everything that was open comes back (J8)
 
