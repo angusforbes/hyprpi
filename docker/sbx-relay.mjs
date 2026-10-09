@@ -590,7 +590,9 @@ function heldNote(sb, msg, via, what, outcome) {
   if (!rooms.length) return;
   const to = (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")).join(", ");
   const first = clean(String(msg.text || "")).split("\n").map((l) => l.trim()).find(Boolean) || "";
-  const plain = first.replace(/[a-z][a-z0-9+.-]*:\/\//gi, "").replace(/[[\]()<>`*_]/g, ""); // (NoteReview #5: no clickable links or markup from sandbox text)
+  // (NoteReview #5) no clickable links, paths or markup from sandbox text: schemes dropped, markup characters dropped,
+  // slashes shown as look-alikes (∕ ∖) so a path isn't auto-linked.
+  const plain = first.replace(/[a-z][a-z0-9+.-]*:\/\//gi, "").replace(/[[\]()<>`*_]/g, "").replace(/\//g, "∕").replace(/\\/g, "∖").replace(/~/g, "∼");
   const line = plain.length > 120 ? plain.slice(0, 119) + "…" : plain;
   const hm = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const route = via === "rule" ? "" : ` (${via || "terminal"}, ${hm})`;
