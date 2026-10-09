@@ -34,8 +34,10 @@ assert.ok(/clickAction\(review, clicked\)/.test(tui) && /act === "rearm"/.test(t
 for (const x of ["1", "2", "3", " 1 ", "1.", "2)"]) assert.ok(bareChoice(x), x);
 for (const x of ["12", "1 yes", "a", "", "4"]) assert.ok(!bareChoice(x), x);
 const card = { role: "held", kind: "request", id: "world-g--aaaaaa", ts: 1000 };
-assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 900 }]), card, "card newer than Thoughts' last reply: the number is for the card");
-assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100 }]), null, "Thoughts replied after the card (maybe a numbered question): the number is for Thoughts");
+assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 900, text: "1. a\n2. b" }]), card, "card newer than Thoughts' last numbered question: the number is for the card");
+assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: "Which one?\n1. Keep it\n2. Drop it" }]), null, "Thoughts asked a numbered question after the card: the number is for Thoughts");
+assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: "OK" }]), card, "a hidden OK acknowledgement after the card doesn't count");
+assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: "⚠ Alpha says you asked for this; only approve if you did." }]), card, "a one-line review flag doesn't count");
 assert.equal(cardForBareNumber([{ role: "held", ts: 1000, id: "x--bbbbbb" }], []), null, "a decision turn isn't a card");
 assert.match(statusText({ state: "approved", at: Date.parse("2026-10-09T22:57:00Z") }), /^✓ Approved at \d/);
 assert.match(statusText({ state: "denied", at: 1 }), /^✗ Denied at/);
