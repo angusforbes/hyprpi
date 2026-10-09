@@ -241,6 +241,33 @@ export function planCheck(request, plan, { strict = false, task = "" } = {}) {
   return [...new Set(r)];
 }
 
+// J360 (Angus "b": keep the links, cleaned): a source link may not carry arbitrary text into the sandbox. Host-side:
+//   https only (http is upgraded); the host a plain DNS name (letters, digits, dots, hyphens; a dot; at most 100
+//   characters; no IP address, port or user:password); no query string or fragment (?trk=…, #…); the path only the
+//   characters of ordinary paths [A-Za-z0-9._~/%:()+,;=@!-] and at most PATH_MAX characters, cut back to the last "/" that
+//   fits (an article's parent path still works, and 120 characters covers DOIs, PMC/arXiv ids and news slugs while
+//   bounding what a URL can say); duplicates removed AFTER normalising; at most LIMITS.sources.
+// → the cleaned URL, or "" (dropped).
+const PATH_MAX = 120;
+export function cleanSource(u) {
+  const raw = String(u ?? "").trim();
+  if (!raw || raw.length > 2000 || /[\s<>"'`\\\u0000-\u001f\u007f-\u009f]/.test(raw)) return ""; // (a link with spaces or quotes in it isn't a link)
+  let x; try { x = new URL(raw); } catch { return ""; }
+  if (x.protocol !== "https:" && x.protocol !== "http:") return "";
+  if (x.username || x.password || x.port) return "";
+  const host = x.hostname.toLowerCase();
+  if (host.length > 100 || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host) || /^[\d.]+$/.test(host) || !/[a-z]/.test(host.split(".").pop())) return "";
+  let p = x.pathname || "/";
+  if (!/^[A-Za-z0-9._~\/%:()+,;=@!-]*$/.test(p)) return ""; // (RFC 3986 path characters, minus quotes and *$&: DOIs use ( ) and repositories use :)
+  if (p.length > PATH_MAX) { p = p.slice(0, PATH_MAX); p = p.slice(0, p.lastIndexOf("/") + 1) || "/"; }
+  return `https://${host}${p}`;
+}
+export function cleanSources(list) {
+  const out = [];
+  for (const u of Array.isArray(list) ? list : []) { const c = cleanSource(typeof u === "object" && u ? u.url : u); if (c && !out.includes(c)) out.push(c); if (out.length >= LIMITS.sources) break; }
+  return out;
+}
+
 // Clean the deliverable again on the host (defence in depth): plain Markdown, no links, code, HTML or hidden text.
 export function cleanDeliverable(res) {
   let t = String(res?.deliverable ?? "");
@@ -249,7 +276,7 @@ export function cleanDeliverable(res) {
     .replace(/```[\s\S]*?```/g, "[code omitted]").replace(/`/g, "").replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/<[^>]{1,300}>/g, "").replace(/(?:https?|ftp|file|javascript|data):\S+/gi, "").replace(/\bwww\.\S+/g, "")
     .replace(/\[\d+(?:[,\s\u2013-]*\d+)*\]/g, "").replace(/[ \t]+([.,;:])/g, "$1").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, LIMITS.deliverableChars);
-  const sources = [...new Set((Array.isArray(res?.sources) ? res.sources : []).map(String).filter((u) => /^https?:\/\/[A-Za-z0-9.-]+(:\d+)?(\/[^\s<>"'`]*)?$/.test(u) && u.length <= 300))].slice(0, LIMITS.sources);
+  const sources = cleanSources(res?.sources); // J360
   return { deliverable: t, sources };
 }
 // Phrases that look like instructions to an agent: telemetry for the digest and the review, never a wall by themselves.
@@ -408,6 +435,8 @@ function research({ cfg, base, q, depth, plan, sent }) {
   const open = cfg.mode === "doorman-open";
   const md = `# Research for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${open ? " (no human review: external web data, vetted by the Doorman only)" : ""}\n\nTask: ${cfg.task || "(none set)"}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches sent (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\n## Deliverable\n\n${res.deliverable}\n\n## Sources\n\n${res.sources.map((u) => `- ${u}`).join("\n") || "(none listed)"}\n`;
   fs.writeFileSync(file, md, { mode: 0o600 });
+  // J360: the reader's sources as it returned them stay on the host only (Angus may want them); never delivered
+  try { fs.writeFileSync(path.join(DELIVERABLES(), `${rid}.sources-raw.json`), JSON.stringify((Array.isArray(raw?.sources) ? raw.sources : []).slice(0, 200).map((u) => String(typeof u === "object" && u ? u.url : u).slice(0, 2000))), { mode: 0o600 }); } catch { /* best effort */ }
   logEvent({ ev: "ready", ...base, mode: cfg.mode, words, sources: res.sources.length, flags, models: raw.models, sha: sha(md) });
   return { status: "ready", mode: cfg.mode, rid, file, words, sources: res.sources.length, flags, models: raw.models, searches: sent, depth, looking_for: q, from: base.from };
 }
