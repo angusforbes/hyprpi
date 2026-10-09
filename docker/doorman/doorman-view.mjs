@@ -79,6 +79,11 @@ export function lockReason({ write, unitActive, state, lastQuestion }) {
 export function headerText(label, write, lock) {
   return `🚪 ${label} · ${write ? "DEVELOPER MODE" : "OBSERVER (read-only)"}${lock ? `  🔒 typing off: ${lock}` : "  ✎ typing on"}`;
 }
+const SEG = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const gw = (g) => (/\p{Extended_Pictographic}|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe6f\uff00-\uff60]/u.test(g) ? 2 : 1);
+export const cells = (s) => [...SEG.segment(s)].reduce((n, x) => n + gw(x.segment), 0);
+export const clipCells = (s, max) => { let n = 0, o = ""; for (const x of SEG.segment(s)) { const w = gw(x.segment); if (n + w > max) break; n += w; o += x.segment; } return o; };
+const tailCells = (s, max) => { const g = [...SEG.segment(s)].map((x) => x.segment); let n = 0, o = ""; for (let i = g.length - 1; i >= 0; i--) { const w = gw(g[i]); if (n + w > max) break; n += w; o = g[i] + o; } return o; };
 const unitIsActive = (name) => { try { execFileSync("systemctl", ["--user", "is-active", "--quiet", `hyprpi-doorman-${name}`]); return true; } catch { return false; } };
 
 function view(name, write) {
@@ -87,17 +92,22 @@ function view(name, write) {
   const W = () => process.stdout.columns || 80, Hh = () => process.stdout.rows || 24;
   const P = (s) => process.stdout.write(s);
   const mode = write ? "DEVELOPER MODE" : "OBSERVER (read-only)";
-  let lock = "", buf = "", notice = "", unitOk = true, status = {};
-  const bar = (txt) => { const w = W(); let t = ` ${txt}`; const vis = [...t].length + [...t].filter((c) => /\p{Extended_Pictographic}/u.test(c)).length; t += " ".repeat(Math.max(0, w - vis)); return `\x1b[48;2;${bg}m\x1b[38;2;255;255;255m\x1b[1m${t}\x1b[0m`; };
+  let lock = "", buf = "", unitOk = true, status = {}, sentAt = 0, seenWorking = false, esc = 0;
+  const bar = (txt) => { const w = W(); let t = clipCells(` ${txt}`, w); t += " ".repeat(Math.max(0, w - cells(t))); return `\x1b[48;2;${bg}m\x1b[38;2;255;255;255m\x1b[1m${t}\x1b[0m`; };
   const paintHeader = () => P(`\x1b7\x1b[1;1H${bar(headerText(label, write, lock))}\x1b8\x1b]2;🚪 ${label} · ${mode}${lock ? " 🔒" : ""}\x07`);
   const prompt = () => lock ? `🔒 (${lock}) ` + (buf ? `held: ${buf}` : "") : `you> ${buf}`;
-  const paintInput = () => P(`\x1b[${Hh()};1H\x1b[2K${write ? prompt() : "🔒 read-only: ctrl-c to close this window"}${notice ? "" : ""}`);
+  const paintInput = () => P(`\x1b[${Hh()};1H\x1b[2K${tailCells(plain(write ? prompt() : "🔒 read-only: ctrl-c to close this window"), W() - 1)}`);
   const setup = () => { P(`\x1b[2J\x1b[2;${Hh() - 1}r`); paintHeader(); P(`\x1b[2;1H`); paintInput(); };
-  const out = (s) => { P(`\x1b7\x1b[${Hh() - 1};1H\r\n${s.replace(/\n/g, "\r\n")}\x1b8`); };
+  const out = (s) => { P(`\x1b7\x1b[${Hh() - 1};1H\r\n${plain(String(s)).replace(/\n/g, "\r\n")}\x1b8`); }; // everything shown passes plain(): no escape sequence from Doorman or sandbox text reaches the terminal
   const refresh = () => {
     unitOk = unitIsActive(name);
-    try { status = JSON.parse(fs.readFileSync(sf, "utf8")); } catch { status = {}; }
-    const l = lockReason({ write, unitActive: unitOk, state: status.state, lastQuestion: status.question });
+    let st = null; try { st = JSON.parse(fs.readFileSync(sf, "utf8")); } catch { /* */ }
+    status = st && typeof st === "object" && !Array.isArray(st) ? st : {};
+    if (sentAt) { // a line of mine was just sent: locked until the Doorman has gone busy and idle again (or 90 s)
+      if (status.state === "working") seenWorking = true;
+      if ((seenWorking && status.state === "idle") || Date.now() - sentAt > 90000) { sentAt = 0; seenWorking = false; }
+    }
+    let l = !write || !unitOk ? lockReason({ write, unitActive: unitOk }) : status.state !== "idle" && status.state !== "working" ? "status unknown" : sentAt ? "answering you; wait for it" : lockReason({ write, unitActive: unitOk, state: status.state, lastQuestion: status.question });
     if (l !== lock) { const was = lock; lock = l; paintHeader(); paintInput(); if (was && !l) out("🔓 typing is on again"); }
   };
   setup();
@@ -119,8 +129,8 @@ function view(name, write) {
     const pl = promptLine(buf);
     if (!pl) { buf = ""; return; }
     refresh();
-    if (lock) { out(`🔒 not sent (${lock}); your line is held, press Enter again when typing is on`); return; }
-    try { const fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); fs.writeSync(fd, pl); fs.closeSync(fd); out(`🧑 you: ${clip(plain(buf), 300)}`); buf = ""; }
+    if (lock) { out(`🔒 not sent (${lock}); your line is held, press Enter again when typing is on`); if (!buf.endsWith(" ")) buf += " "; return; }
+    try { const fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); fs.writeSync(fd, pl); fs.closeSync(fd); out(`🧑 you: ${clip(plain(buf), 300)}`); buf = ""; sentAt = Date.now(); seenWorking = false; refresh(); }
     catch (e) { out(`🔒 not sent: the Doorman's input isn't open (${e.code || e.message}); line held`); }
   };
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -130,9 +140,13 @@ function view(name, write) {
       const c = chunk[i];
       if (c === "\x03" || c === "\x04") { P("\x1b[r\x1b[2J\x1b[H"); process.exit(0); }
       if (!write) continue;
-      if (c === "\x1b") { while (i + 1 < chunk.length && !/[A-Za-z~]/.test(chunk[i + 1])) i++; i++; continue; } // arrow keys etc: ignored
+      if (esc) { // inside an escape sequence (arrow keys etc.), possibly split across chunks: swallowed
+        if (esc === 1) { esc = c === "[" || c === "O" ? 2 : 0; continue; }
+        if (/[@-~]/.test(c)) esc = 0; continue;
+      }
+      if (c === "\x1b") { esc = 1; continue; }
       if (c === "\r" || c === "\n") send();
-      else if (c === "\x7f" || c === "\b") buf = [...buf].slice(0, -1).join("");
+      else if (c === "\x7f" || c === "\b") buf = [...SEG.segment(buf)].slice(0, -1).map((x) => x.segment).join("");
       else if (c >= " ") buf += c;
     }
     paintInput();
