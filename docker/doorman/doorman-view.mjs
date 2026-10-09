@@ -33,7 +33,7 @@ export function render(ev) {
   if (ev.type === "agent_start") return "── turn ──";
   if (ev.type === "message_end" && ev.message) {
     const m = ev.message, t = plain(textOf(m)).trim();
-    if (m.role === "user") return t ? `❓ ${clip(t.replace(/\[your host card[\s\S]*?\[end of host card\]\s*/, "[card] "), 1200)}` : null;
+    if (m.role !== "assistant" && m.role !== "toolResult") return t ? `❓ ${clip(t.replace(/\[your host card[\s\S]*?\[end of host card\]\s*/, "[card] "), 1200)}` : null;
     if (m.role === "assistant") {
       const calls = (m.content || []).filter((c) => c?.type === "toolCall").map((c) => `🔧 ${c.name}(${clip(JSON.stringify(c.arguments ?? {}), 300)})`);
       return [t && `💬 ${t}`, ...calls, m.stopReason === "error" && `⚠ ${clip(m.errorMessage, 200)}`].filter(Boolean).join("\n") || null;
@@ -55,7 +55,7 @@ function log(name) {
     fs.writeSync(ev, line + "\n");
     if (j.type === "agent_start") { st.state = "working"; save(); }
     else if (j.type === "agent_end") { st.state = "idle"; save(); }
-    else if (j.type === "message_end" && j.message?.role === "user") { const t = plain(textOf(j.message)).replace(/\[your host card[\s\S]*?\[end of host card\]\s*/, "").replace(/\s+/g, " ").trim(); if (t) { st.question = clip(t, 300); st.answer = ""; save(); } }
+    else if (j.type === "message_end" && j.message?.role !== "assistant" && j.message?.role !== "toolResult") { const t = plain(textOf(j.message)).replace(/\[your host card[\s\S]*?\[end of host card\]\s*/, "").replace(/\s+/g, " ").trim(); if (t) { st.question = clip(t, 300); st.answer = ""; save(); } }
     else if (j.type === "message_end" && j.message?.role === "assistant") { const t = plain(textOf(j.message)).trim(); if (t) { st.answer = clip(t, 300); save(); } }
   });
 }

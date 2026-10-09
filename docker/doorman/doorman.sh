@@ -95,7 +95,7 @@ start)
       IN="exec 3<>$VSTATE/input.fifo; cat <&3" # read-write open: the fifo stays open between Angus's lines
     fi
   fi
-  RUN="set -o pipefail; { $IN; } | $PIRUN$OUT"
+  RUN="set -o pipefail; $PIRUN < <($IN)$OUT" # process substitution: when sbx or the logger ends, the unit ends (and restarts); a pipeline would wait on the idle tail forever
   systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M bash -c "$RUN"
   echo "started $UNIT (visibility $VIS)"
   [[ "$VIS" == developer || "$VIS" == observer ]] && [[ -z "${DOORMAN_NO_WINDOW:-}" ]] && "$0" window "$NAME" || true
@@ -103,6 +103,8 @@ start)
 window)
   [[ "$VIS" == developer || "$VIS" == observer ]] || { echo "doorman: $NAME's visibility is $VIS: no window"; exit 0; }
   CLS="hyprpi-doorman-$NAME"
+  # focus guard: if Angus is looking at that workspace right now a new window could take his focus, so don't (J327 review)
+  [[ -z "${DOORMAN_FORCE_WINDOW:-}" && "$(hyprctl -j activeworkspace | jq -r .id)" == "$WS" ]] && { echo "doorman: you are on workspace $WS; not opening a window under your hands (DOORMAN_FORCE_WINDOW=1 to override)"; exit 0; }
   hyprctl -j clients | jq -e --arg c "$CLS" '.[] | select(.class == $c)' >/dev/null && { echo "doorman: window already open"; exit 0; }
   ARG=""; [[ "$VIS" == developer ]] && ARG=" --write"
   # on its workspace, silently: Angus's focus never moves
