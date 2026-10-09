@@ -68,7 +68,7 @@ for W in "${worlds[@]}"; do
     done
   fi
   # 1. stale state from a crash: only when the sandbox's inner daemon is NOT running (else it's a live world)
-  if sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}' && sbx exec "$SB" sh -c 'pgrep -f "^node .*/bin/hyprpi daemon" >/dev/null' 2>/dev/null; then
+  if sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}' && sbx exec "$SB" sh -c 'pgrep -f "^(/usr/bin/)?node .*/bin/hyprpi daemon" >/dev/null' 2>/dev/null; then
     log "restore $W: already running; only reopening what's missing"
   else
     if sbx exec "$SB" sh -c 'r=$HOME/.hyprpi-g; rm -f $r/run/daemon.sock $r/run/daemon.lock; find $r/state -maxdepth 2 \( -name "*.tmp" -o -name "*.tmp.*" \) -mmin +1 -delete 2>/dev/null; true' >/dev/null 2>&1; then
