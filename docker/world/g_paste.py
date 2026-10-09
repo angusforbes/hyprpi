@@ -3,7 +3,9 @@
 
 Inside the sandbox wl-paste is a stand-in, so a clipboard image can't reach the agent. Here, on the host:
 if the Wayland clipboard offers an image, save it to ~/Screenshots (shared into the sandbox at the same
-path) as pi-clipboard-<uuid>.<ext>, mode 600, and type its path ("~/Screenshots/… ") into the window.
+path) as pi-clipboard-<uuid>.<ext>, mode 600, and type its ABSOLUTE path ("/home/<user>/Screenshots/… ")
+into the window. Not "~/…": inside the sandbox HOME is /home/agent, so a tilde path would point at a
+folder that doesn't exist there (J318).
 Anything else (or any error) is a plain text paste, like paste_from_clipboard. Never raises.
 """
 import os
@@ -20,13 +22,8 @@ def main(args):
     pass
 
 
-def _tilde(p):
-    home = os.path.expanduser('~')
-    return '~' + p[len(home):] if p.startswith(home + os.sep) else p
-
-
 def save_clipboard_image(run=subprocess.run):
-    """Return the path text to type ("~/…/pi-clipboard-….png "), or None if no image on the clipboard."""
+    """Return the path text to type ("/home/<user>/Screenshots/pi-clipboard-….png "), or None if no image."""
     r = run(['wl-paste', '--list-types'], capture_output=True, text=True, timeout=5)
     if r.returncode:
         return None
@@ -50,14 +47,20 @@ def save_clipboard_image(run=subprocess.run):
         except OSError:
             pass
         raise
-    return _tilde(f) + ' '
+    return f + ' '
 
 
 def text_paste(boss, w):
-    """What paste_from_clipboard does."""
+    """What kitty's paste_from_clipboard (boss.py) does. get_clipboard_string lives in kitty.clipboard; the
+    J307 version imported it from kitty.fast_data_types, which raised ImportError (swallowed), so Ctrl+V and
+    Shift+Insert pasted nothing (J318)."""
     if w.send_paste_event():
         return
-    from kitty.fast_data_types import get_clipboard_string
+    try:
+        from kitty.clipboard import get_clipboard_string
+    except ImportError:  # a kitty that moved it again: let kitty's own action paste into the active window
+        boss.paste_from_clipboard()
+        return
     text = get_clipboard_string()
     if text:
         w.paste_with_actions(text)
@@ -74,7 +77,10 @@ def paste(boss, w, run=subprocess.run):
     try:
         text_paste(boss, w)
     except BaseException:
-        pass
+        try:
+            boss.paste_from_clipboard()  # last resort: kitty's own text paste
+        except BaseException:
+            pass
 
 
 @result_handler(no_ui=True)
