@@ -20,3 +20,9 @@ Rules:
 - Read-only shares can't be written, even with sudo. Don't try workarounds; ask.
 - A domain blocked by the policy can't be unblocked from inside. Use an allowed source or ask the host owner.
 - On first contact with a host agent, ask: "would you build us a host card?", and offer this sandbox's card in return.
+
+## Card formats (for first contact)
+
+Host card (Markdown, written by the host side; ask for it): header lines `card: host-card/1`, `host:`, `written:`, `sandbox:`; then sections `## Shared folders` (a table: mode, path as seen in here, what), `## Tools on the host`, `## Network`, `## How to ask` (free text: how to reach the host), `## Withheld` (names at most, never contents).
+
+Sandbox card: `sandbox-guide card` prints it (`card: sandbox-card/1`, sandbox, system, user, model, purpose, owner; Shares, Network, Tools, Withheld). Purpose and owner are filled in by the sandbox's owner.
