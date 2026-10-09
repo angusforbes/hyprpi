@@ -393,8 +393,11 @@ function reviewKey(raw) {
     // it, so the turn waits for the relay's own result (its log) before saying ✓.
     const what = ch.verdict === "deny" ? "Denied" : ch.verdict === "approve" ? "Approved" : ch.dur === "once" ? "Approved (just this one, no rule)" : `Approved, and similar messages allowed for ${ch.dur === "1h" ? "1 hour" : ch.dur}${/capped/.test(ch.label) ? " (capped at 24 hours)" : ""}`;
     const msg = `${h.sandbox} → ${h.to.join(", ")}: "${h.text.replace(/\s+/g, " ").trim()}"`; // J285 (Angus: "don't cut anything out. show the full message!")
+    // J298 (Angus: "once i make my selection … just highlight what it is without repeating the request again"): a
+    // successful Review decision is just its highlighted header (the request turn above shows the message); the text
+    // and the relay line come only when it failed or wasn't decided.
     const finish = (ok, head, body) => {
-      logTurn({ room: at, id, ok, turn: `${head}\n${msg}\n${body}` });
+      logTurn({ room: at, id, ok, turn: ok ? head : `${head}\n${msg}\n${body}` });
       logHeld({ room: at, id, stage: "result", ok, result: body });
       if (room !== at) return; // switched worlds meanwhile: it shows when he comes back (recheck #3)
       turns = heldTurns(room); bumpThread(); follow();
