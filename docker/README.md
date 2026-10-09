@@ -118,6 +118,7 @@ The relay (`op: "research"`) then holds the finished deliverable as one message 
 
 - Setup: `node docker/research/research.mjs reader create --sandbox world-g` (once). The Doorman sandbox must exist (`docker/doorman/doorman.sh create doorman-g`).
 - Optional config: `~/.config/hyprpi/research.json` (doorman, reader, reports_to, key_file, shape_model per sandbox).
+- Strict mode (J314, off by default): in the sandbox's `~/.config/hyprpi/worlds/<name>.json` set `"research": { "strict": true }`. Then the Doorman's planned searches are held for Angus first, as "Searches planned for <sandbox>": a toast plus the same Thoughts review (1 approve and run, 2 deny). Nothing goes to Perplexity until he approves; a denial sends nothing. The deliverable is then reviewed as usual. It's read per request, so no restart is needed. It closes the meaning-level channel the J309 red team found (innocent public topics that spell out a secret), at the cost of one more review per request.
 - Limits: 10 quick and 3 deep requests an hour, 2 running at once, 1000 bytes per request.
 - `node docker/research/research.mjs digest [--send]` sums up the last hour for the reporting Thoughts.
 - Tests: `node docker/research/test-research.mjs`.

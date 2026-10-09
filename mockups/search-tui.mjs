@@ -373,7 +373,7 @@ function pollReview() {
       // J285 v2 (Angus: "the 'Request from Alpha (G1)' part should be highlighted … like your Approved"): the request
       // as its own highlighted turn, from the relay's data; Thoughts only adds a one-line flag.
       if (h.research) { // J309: the request, the searches that went out and the whole deliverable, drawn from its file; no Thoughts prompt (it would read external web text)
-        logTurn({ room, id, ok: true, kind: "research", file: h.research.file, turn: `Research for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`} · ${h.research.words} words` });
+        logTurn({ room, id, ok: true, kind: "research", file: h.research.file, turn: h.research.plan ? `Searches planned for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`}: nothing sent yet` : `Research for ${h.sandbox}${h.research.from ? ` (asked by ${h.research.from}, ${h.research.depth})` : ` (${h.research.depth})`} · ${h.research.words} words` });
         turns = heldTurns(room); bumpThread(); if (TH.pinned) TH.unseen++; else follow();
       } else {
       const rq = requestTurn(h);
@@ -731,9 +731,9 @@ function render() {
   if (review) { // J274: the held message under review, and how to answer
     const h = review.h;
     if (h.research) { // J309: the deliverable itself is drawn in the thread below, in full
-      rows.push(fg(c, bold(clip(`🔎 research for ${h.sandbox} to review${h.research.from ? ` (asked by ${h.research.from})` : ""}${review.waiting > 1 ? ` · 1 of ${review.waiting} waiting` : ""}`, W))));
+      rows.push(fg(c, bold(clip(`🔎 ${h.research.plan ? "searches planned" : "research"} for ${h.sandbox} to review${h.research.from ? ` (asked by ${h.research.from})` : ""}${review.waiting > 1 ? ` · 1 of ${review.waiting} waiting` : ""}`, W))));
       rows.push(clip("   " + h.research.want, W));
-      rows.push(dim(clip("   (1) Approve: deliver it to the sandbox (2) Deny · the full deliverable is in the thread and its file · anything else goes to Thoughts", W)));
+      rows.push(dim(clip(h.research.plan ? "   (1) Approve: run these searches (2) Deny: nothing is sent · the searches are in the thread · anything else goes to Thoughts" : "   (1) Approve: deliver it to the sandbox (2) Deny · the full deliverable is in the thread and its file · anything else goes to Thoughts", W)));
     } else {
     rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})${review.waiting > 1 ? ` · 1 of ${review.waiting} waiting` : ""}`, W))));
     rows.push(clip("   " + h.text.replace(/\s+/g, " "), W));
@@ -825,7 +825,7 @@ function render() {
         flat.push({ l: `  ${bar}${bold(` ${e.icon} ${String(e.text).split("\n")[0]} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         add(md(body, tw, "   "), 4);
         add(md(`File: <file://${encodeURI(e.file)}>`, tw, "   ", dim), 4);
-        flat.push({ l: `   ${bold("(1) Approve: deliver it to the sandbox  (2) Deny")}`, meta: { item: k, textX: 4 } });
+        flat.push({ l: `   ${bold(/\.plan\.md$/.test(e.file) ? "(1) Approve: run these searches  (2) Deny: nothing is sent" : "(1) Approve: deliver it to the sandbox  (2) Deny")}`, meta: { item: k, textX: 4 } });
         continue;
       }
       if (e.role === "held") { // J280: a decision on a held sandbox message, highlighted at full brightness

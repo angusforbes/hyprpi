@@ -19,6 +19,7 @@
 //
 // Usage:
 //   research.mjs ask --sandbox S [--from NAME] [--depth quick|deep] [--why TEXT] LOOKING_FOR   → one JSON line
+//   research.mjs run --rid R | drop --rid R                  strict mode (J314): run / drop a plan Angus decided
 //   research.mjs digest [--since 1h] [--send] [--json]       the hourly digest (--send: to the reporting Thoughts)
 //   research.mjs reader create|rm [--sandbox S]              the reader sandbox (reader-<world>)
 // Config (optional): ~/.config/hyprpi/research.json
@@ -39,6 +40,7 @@ const CONFIG = path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config
 export const STATE = process.env.HYPRPI_RESEARCH_STATE || path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "hyprpi", "research");
 const LOG = () => path.join(STATE, "log.jsonl");
 export const DELIVERABLES = () => path.join(STATE, "deliverables");
+const PLANS = () => path.join(STATE, "plans"); // J314: strict-mode plans waiting for Angus (host-only)
 const SBX = process.env.HYPRPI_SBX || "sbx";
 
 export const LIMITS = { requestChars: 1000, requestLines: 12, whyChars: 400, quickPerHour: 10, deepPerHour: 3, deliverableChars: 60000, sources: 40 };
@@ -47,7 +49,10 @@ const tilde = (p) => String(p || "").replace(/^~(?=\/|$)/, HOME);
 export function conf(sandbox) {
   let c = {}; try { c = JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sandbox] || {}; } catch { /* defaults */ }
   const world = String(sandbox).replace(/^world-/, "");
-  return {
+  // J314 (Angus "2a"): strict mode, off by default: ~/.config/hyprpi/worlds/<name>.json "research": { "strict": true }
+  let strict = false;
+  try { const wd = path.join(path.dirname(CONFIG), "worlds"); for (const f of fs.readdirSync(wd)) { if (!f.endsWith(".json")) continue; let w; try { w = JSON.parse(fs.readFileSync(path.join(wd, f), "utf8")); } catch { continue; } if ((w.sandbox || f.slice(0, -5)) === sandbox) { strict = w?.research?.strict === true; break; } } } catch { /* no worlds folder: off */ }
+  return { strict,
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
     key_file: c.key_file ? tilde(c.key_file) : "", shape_model: c.shape_model || "",
   };
@@ -240,6 +245,35 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   }
   if (pc.length) { logEvent({ ev: "refused", stage: "paraphrase", ...base, reason: pc.join("; "), searches: plan.searches, brief: plan.brief }); return { status: "refused", rid, reason: `The Doorman's searches didn't pass the paraphrase check (${pc.join("; ")}); try asking in plainer words.` }; }
   const sent = depth === "deep" ? [plan.brief] : plan.searches;
+  if (cfg.strict) { // J314: nothing goes out until Angus approves these exact searches (research.mjs run --rid)
+    mkState(); fs.mkdirSync(PLANS(), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(PLANS(), `${rid}.json`), JSON.stringify({ base, q, depth, plan: { searches: plan.searches || [], brief: plan.brief || "" } }), { mode: 0o600 });
+    const file = path.join(DELIVERABLES(), `${rid}.plan.md`);
+    fs.writeFileSync(file, `# Searches planned for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches to send (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\nNothing has been sent yet. Approve to run exactly these; deny and nothing goes out.\n`, { mode: 0o600 });
+    logEvent({ ev: "planned", ...base, searches: sent });
+    return { status: "planned", rid, file, searches: sent, depth, looking_for: q, from: base.from };
+  }
+  return research({ cfg, base, q, depth, plan, sent });
+}
+
+// J314: run a plan Angus approved. One-shot: the plan file is claimed (renamed) before anything is sent.
+export function runPlan(rid) {
+  if (!/^q[0-9a-f]{8}$/.test(String(rid))) return { status: "error", reason: "bad plan id" };
+  const f = path.join(PLANS(), `${rid}.json`), taken = `${f}.run${process.pid}`;
+  try { fs.renameSync(f, taken); } catch { return { status: "error", rid, reason: "no such plan waiting (already run, denied or expired)" }; }
+  let p; try { p = JSON.parse(fs.readFileSync(taken, "utf8")); } catch { return { status: "error", rid, reason: "the plan is unreadable" }; } finally { try { fs.unlinkSync(taken); } catch { /* */ } }
+  const sent = p.depth === "deep" ? [p.plan.brief] : p.plan.searches;
+  logEvent({ ev: "plan-approved", ...p.base, searches: sent });
+  return research({ cfg: conf(p.base.sandbox), base: p.base, q: p.q, depth: p.depth, plan: p.plan, sent });
+}
+// J314: a denied (or expired) plan: drop it; nothing was sent.
+export function dropPlan(rid, why = "denied") {
+  if (!/^q[0-9a-f]{8}$/.test(String(rid))) return false;
+  try { const p = JSON.parse(fs.readFileSync(path.join(PLANS(), `${rid}.json`), "utf8")); fs.unlinkSync(path.join(PLANS(), `${rid}.json`)); logEvent({ ev: why === "denied" ? "plan-denied" : "plan-dropped", ...p.base }); return true; } catch { return false; }
+}
+
+function research({ cfg, base, q, depth, plan, sent }) {
+  const { rid, sandbox } = base;
   logEvent({ ev: "started", ...base, searches: sent });
   const raw = readerRun(cfg, q, depth, plan);
   if (!raw?.ok) { logEvent({ ev: "error", stage: "reader", ...base, reason: raw?.error || "no answer" }); return { status: "error", rid, reason: `The research failed: ${raw?.error || "no answer"}` }; }
@@ -260,12 +294,14 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
 // ---------- digest ----------
 export function digest({ sinceMs = 3600e3, now = Date.now() } = {}) {
   let lines = []; try { lines = fs.readFileSync(LOG(), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none */ }
-  const ev = lines.filter((e) => Date.parse(e.ts) > now - sinceMs && /^(ready|refused|error|approved|denied)$/.test(e.ev));
+  const ev = lines.filter((e) => Date.parse(e.ts) > now - sinceMs && /^(ready|refused|error|approved|denied|planned|plan-denied)$/.test(e.ev));
   if (!ev.length) return { count: 0, text: "" };
   const by = (k) => ev.filter((e) => e.ev === k);
   const q = (e) => `"${String(e.looking_for || e.query || "").slice(0, 90)}"${e.from ? ` (${e.from}, ${e.depth || "quick"})` : ""}`;
   const out = [`🔎 Research digest, ${[...new Set(ev.map((e) => e.sandbox))].join(", ")}, last ${Math.round(sinceMs / 60e3)} min: ${by("ready").length} deliverables ready for review, ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
   for (const e of by("ready")) out.push(`✓ ${q(e)}: ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
+  for (const e of by("planned")) out.push(`⏸ ${q(e)}: searches held for Angus (strict mode): ${(e.searches || []).map((x) => `"${String(x).slice(0, 80)}"`).join(", ")}`);
+  for (const e of by("plan-denied")) out.push(`✗ ${q(e)}: Angus denied the searches; nothing was sent`);
   for (const e of [...by("approved"), ...by("denied")]) out.push(`${e.ev === "approved" ? "→" : "✗"} ${q(e)} ${e.ev} by Angus${e.via ? ` (${e.via})` : ""}`);
   for (const e of by("refused")) out.push(`✗ ${q(e)} refused (${e.stage}): ${String(e.reason).slice(0, 140)}`);
   for (const e of by("error")) out.push(`! ${q(e)} error (${e.stage}): ${String(e.reason).slice(0, 140)}`);
@@ -281,6 +317,8 @@ async function main(argv) {
     if (flags.plan) { const p = doormanCheck(conf(flags.sandbox), { mode: "plan", looking_for: rest.join(" "), depth: flags.depth }); console.log(JSON.stringify({ plan: p, check: planCheck(rest.join(" "), p) })); return; }
     const lookingFor = flags.stdin ? fs.readFileSync(0, "utf8") : rest.join(" ");
     console.log(JSON.stringify(ask({ sandbox: flags.sandbox, from: flags.from, why: flags.why, depth: flags.depth, lookingFor })));
+  } else if (cmd === "run") { console.log(JSON.stringify(runPlan(flags.rid))); // J314: only the relay calls this, after Angus approved the plan
+  } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, "denied") }));
   } else if (cmd === "digest") {
     const m = /^(\d+)(m|h)$/.exec(String(flags.since || "1h")); const d = digest({ sinceMs: m ? Number(m[1]) * (m[2] === "h" ? 3600e3 : 60e3) : 3600e3 });
     if (flags.json) { console.log(JSON.stringify(d)); return; }

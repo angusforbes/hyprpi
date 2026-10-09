@@ -461,7 +461,7 @@ function notifOwner() {
   catch { return ""; }
 }
 function notifyHeld(sb, msg, review) {
-  const summary = msg.research ? `Research for ${sb.name} ready to review` : `Sandbox ${sb.name} → ${msg.shown.join(", ")}`;
+  const summary = msg.research?.plan ? `Research searches for ${sb.name}: approve?` : msg.research ? `Research for ${sb.name} ready to review` : `Sandbox ${sb.name} → ${msg.shown.join(", ")}`;
   const body = `${preview(msg.text)}`;
   const nonce = crypto.randomBytes(8).toString("hex"), owner = notifOwner();
   if (!owner) return null;
@@ -625,15 +625,16 @@ class Relay {
     const review = [process.execPath, fileURLToPath(import.meta.url), "review", id];
     const notif = notifyHeld(sb, msg, review);
     if (notif) { try { const pf = path.join(PENDING, id + ".json"); const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* decided already */ } }
-    sb.conn?.call("room.post", { text: msg.research ? `🐳 [relay] research for ${sb.name} is ready; it waits for Angus's review (${id}).` : `🐳 [relay] sandbox ${sb.name} wants to message ${msg.shown.join(", ")}; it waits for Angus's OK (sbx-relay.mjs pending, then approve or deny ${id}).` }).catch(() => {});
+    sb.conn?.call("room.post", { text: msg.research?.plan ? `🐳 [relay] research searches for ${sb.name} wait for Angus's OK before anything is sent (${id}).` : msg.research ? `🐳 [relay] research for ${sb.name} is ready; it waits for Angus's review (${id}).` : `🐳 [relay] sandbox ${sb.name} wants to message ${msg.shown.join(", ")}; it waits for Angus's OK (sbx-relay.mjs pending, then approve or deny ${id}).` }).catch(() => {});
     return id;
   }
   // J309: run one research request (docker/research/research.mjs ask) without blocking the relay; a ready deliverable
   // is held for Angus as ONE message, everything else goes straight back to the sandbox's inbox.
-  runResearch(sb, token, { want, depth, from, why }) {
+  // J314: runRid = the id of a plan Angus approved in strict mode (research.mjs run), instead of a new ask.
+  runResearch(sb, token, { want, depth, from, why, runRid = "" }) {
     const done = (o) => { sb.research?.delete(token); try { inboxWrite(sb, { type: "research", token, ...o }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); } };
     let out = "", err = "";
-    const args = [RESEARCH, "ask", "--stdin", "--sandbox", sb.name, "--depth", depth, ...(from ? ["--from", from] : []), ...(why ? ["--why", why] : [])];
+    const args = runRid ? [RESEARCH, "run", "--rid", runRid] : [RESEARCH, "ask", "--stdin", "--sandbox", sb.name, "--depth", depth, ...(from ? ["--from", from] : []), ...(why ? ["--why", why] : [])];
     // Its own transient unit: the relay's own unit is capped (MemoryMax 256M, TasksMax 32), and a deep request runs for
     // minutes with sbx clients under it. stdin/stdout still come back here (--pipe).
     const unit = ["systemd-run", "--user", "--pipe", "--wait", "--collect", "--quiet", `--unit=hyprpi-research-${sb.name}-${token}`, "--property=MemoryMax=512M", `--setenv=PATH=${process.env.PATH || ""}`, process.execPath, ...args];
@@ -645,7 +646,18 @@ class Relay {
     k.on("close", () => {
       clearTimeout(kill);
       let r; try { r = JSON.parse(out.trim().split("\n").pop()); } catch { r = { status: "error", reason: (err.trim().split("\n").pop() || "no answer").slice(0, 200) }; }
-      log({ sb: sb.name, op: "research", token, status: r.status, rid: r.rid, reason: r.reason });
+      log({ sb: sb.name, op: "research", token, status: r.status, rid: r.rid, reason: r.reason, ...(r.status === "planned" ? { searches: r.searches } : {}) });
+      const rc0 = researchConf(sb.name), room0 = (/^Thoughts-([A-I])$/i.exec(rc0.reports_to) || [, "A"])[1].toUpperCase();
+      if (r.status === "planned") { // J314 strict mode: the Doorman's searches are held for Angus; nothing has gone out
+        try {
+          const text = `Searches planned for ${sb.name}${from ? `, asked by ${from}` : ""} (${depth}): ${want.replace(/\s+/g, " ")}\n\n${(r.searches || []).map((x) => `- ${x}`).join("\n")}`;
+          const id = this.hold(sb, { to: [sb.agentId], targets: [], shown: [`${sb.name} (research searches)`], rooms: [room0], mode: "talk", text, body: "",
+            research: { token, rid: r.rid, file: r.file, depth, from, want, plan: true, searches: r.searches } });
+          sb.research?.delete(token);
+          try { inboxWrite(sb, { type: "research", token, status: "planned", id }); } catch { /* the decision still comes */ }
+        } catch (e) { done({ status: "error", reason: `couldn't hold the searches: ${e.message}` }); }
+        return;
+      }
       if (r.status !== "ready") { done({ status: r.status === "refused" ? "refused" : "error", reason: clean(r.reason || "").slice(0, 600) }); return; }
       let md; try { md = fs.readFileSync(r.file, "utf8"); } catch (e) { done({ status: "error", reason: "the deliverable went missing" }); return; }
       const rc = researchConf(sb.name), room = (/^Thoughts-([A-I])$/i.exec(rc.reports_to) || [, "A"])[1].toUpperCase();
@@ -658,7 +670,7 @@ class Relay {
         try { inboxWrite(sb, { type: "research", token, status: "held", id, words: r.words }); } catch { /* the decision still comes */ }
       } catch (e) { done({ status: "error", reason: `couldn't hold it: ${e.message}` }); }
     });
-    k.stdin.end(want);
+    k.stdin.end(runRid ? "" : want);
   }
   // J309: deliver an approved deliverable: a read-only research-<id>.md in the sandbox's inbox plus an inbox item.
   deliverResearch(sb, msg) {
@@ -684,6 +696,22 @@ class Relay {
     if (!sb) return;
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, verdict === "deny");
+    if (msg.research?.plan) { // J314 strict mode: Angus decided the Doorman's searches; only an approval sends anything
+      const rs = msg.research, rid = String(rs.rid || "");
+      if (verdict === "deny") {
+        log({ sb: sb.name, op: "research-plan", decision: "denied", id, rid, sent: false });
+        spawn(process.execPath, [RESEARCH, "drop", "--rid", rid], { stdio: "ignore" }).on("error", () => {});
+        heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Denied", "nothing was sent");
+        try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id, reason: "Angus denied the planned searches; nothing was sent" }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
+        return;
+      }
+      log({ sb: sb.name, op: "research-plan", decision: "approved", id, rid, delivered: ["reader"], searches: rs.searches });
+      heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Approved", "the searches run now; the result comes back for review");
+      try { inboxWrite(sb, { type: "research", token: rs.token, status: "running", id }); } catch { /* */ }
+      sb.research ||= new Map(); sb.research.set(rs.token, { at: Date.now() });
+      this.runResearch(sb, rs.token, { want: rs.want, depth: rs.depth, from: rs.from, runRid: rid });
+      return;
+    }
     if (msg.research) { // J309: approved once (never a rule); deny drops it
       const rs = msg.research, ev = { rid: rs.rid, sandbox: sb.name, from: rs.from, depth: rs.depth, looking_for: String(rs.want || "").slice(0, 300), via: via || "terminal" };
       if (verdict === "deny") {
