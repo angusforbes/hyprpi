@@ -214,7 +214,7 @@ export function rareToken(w) {
 // number of 2 to 5 digits (ASTM: one letter first), optional parts (-1, .3, at most 2 of up to 3 digits) and an optional
 // :year. Anything else, a longer number ("ISO 4111111111111"), or an identifier neither the request nor the task
 // names, is checked as before.
-const STD_RE = /\b(IEC|ISO|IEEE|ASTM|RFC|EN|UL|ANSI|DIN|JIS|BS|NFPA|SAE|ETSI)[ \u00a0-]?([A-Z]?\d{2,5})((?:[-.]\d{1,3}){0,2})(?::(?:19|20)\d\d)?(?![\w.:-]*\d)/g;
+const STD_RE = /\b(IEC|ISO|IEEE|ASTM|RFC|EN|UL|ANSI|DIN|JIS|BS|NFPA|SAE|ETSI)[ \u00a0-]?([A-Z]?\d{2,5})((?:[-.]\d{1,3}){0,2})(:(?:19|20)\d\d)?(?![\w.:-]*\d)/g;
 export const STD_KNOWN = new Set([
   // photovoltaics and perovskite stability
   "IEC 61215", "IEC 61215-1", "IEC 61215-2", "IEC 61730", "IEC 61730-1", "IEC 61730-2", "IEC 60904", "IEC 60904-1", "IEC 60904-3", "IEC 60904-9", "IEC 61853", "IEC 61853-1", "IEC 62108", "IEC 62788", "IEC 62804", "IEC 62805", "IEC 63202", "IEC 60068", "IEC 60891", "IEC 61701", "IEC 61724", "IEC 62716", "IEC 62759", "IEC 62941",
@@ -239,15 +239,17 @@ export function standardIds(text) {
 // The searches with every allowed identifier replaced by its body name alone (for the number and copied-token checks).
 function maskStandards(texts, allowed) {
   if (!allowed.size) return texts;
-  return texts.map((t) => String(t).replace(STD_RE, (m0, body, num, parts) => {
+  // (review J361) only the EXACT allowed identifier (parts included) is masked; an edition year stays in the text, so
+  // the number checks see it like any other number
+  return texts.map((t) => String(t).replace(STD_RE, (m0, body, num, parts, year) => {
     if (body === "ASTM" ? !/^[A-Z]\d{2,5}$/.test(num) : !/^\d{2,5}$/.test(num)) return m0;
-    return allowed.has(`${body} ${num}${parts || ""}`) || allowed.has(`${body} ${num}`) ? body : m0;
+    return allowed.has(`${body} ${num}${parts || ""}`) ? `${body}${year ? " " + year.slice(1) : ""}` : m0;
   }));
 }
 export function planCheck(request, plan, { strict = false, task = "" } = {}) {
   const r = [], texts0 = [...(plan?.searches || []), ...(plan?.brief ? [plan.brief] : [])].map(String);
   const known = knownStandards(), inTask = standardIds(task);
-  const allowedStd = new Set([...inTask, ...[...standardIds(request)].filter((id) => known.has(id) || known.has(id.replace(/[-.]\d{1,3}$/, "")))]);
+  const allowedStd = new Set([...inTask, ...[...standardIds(request)].filter((id) => known.has(id))]); // (review J361: exact ids only, no parent fallback)
   const texts = maskStandards(texts0, allowedStd); // J361 (an identifier is plain letters and digits, so masking it hides no markup)
   if (!texts.length) return ["the Doorman wrote no searches"];
   const req = words(request), grams = new Set();

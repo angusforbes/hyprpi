@@ -259,6 +259,12 @@ t("J361: a spelled-out identifier in the request isn't an allowed identifier", (
 t("J361: other numbers next to an allowed identifier are still refused", () => assert.match(R.planCheck("IEC 61215 damp heat and 7731 hours", { searches: ["IEC 61215 damp heat perovskite 7731 hours"], public_terms: ["IEC 61215"] }, { task: PT }).join(), /number from the request \(7731\)/));
 t("J361: an identifier the request names but the host's list doesn't (RFC 7731) is checked as before", () => assert.match(R.planCheck("What is RFC 7731 about? for perovskites", { searches: ["RFC 7731 summary perovskite"], public_terms: ["RFC 7731"] }, { task: PT }).join(), /number from the request \(7731\)/));
 t("J361: Angus can add a standard in ~/.config/hyprpi/research-standards.txt", () => { fs.writeFileSync(path.join(T, "config", "hyprpi", "research-standards.txt"), "IEC 99999\n# a comment\n"); assert.deepEqual(R.planCheck("IEC 99999 for perovskite cells", { searches: ["perovskite cells and the IEC 99999 test"], public_terms: ["IEC 99999"] }, { task: PT }), []); fs.unlinkSync(path.join(T, "config", "hyprpi", "research-standards.txt")); });
+t("J361 review: unlisted parts and edition years can't carry digits", () => {
+  assert.match(R.planCheck("IEC 61215 under 773 hours and 331 cycles in 1957", { searches: ["IEC 61215-773-331:1957 test"], public_terms: ["IEC 61215"] }, { task: PT }).join(), /number from the request/);
+  assert.match(R.planCheck("IEC 61215-773 for perovskites", { searches: ["IEC 61215-773 perovskite"], public_terms: ["IEC 61215-773"] }, { task: PT }).join(), /number from the request \([^)]*773/);
+  assert.match(R.planCheck("What does ISO 9001:1957 specify? perovskite plants", { searches: ["ISO 9001:1957 summary perovskite"], public_terms: ["ISO 9001"] }, { task: PT }).join(), /number from the request \(1957\)/);
+  assert.deepEqual(R.planCheck("IEC 61215-2 test sequences for perovskite modules", { searches: ["IEC 61215-2 test sequence perovskite modules"], public_terms: ["IEC 61215-2"] }, { task: PT }).filter((x) => /number/.test(x)), []);
+});
 t("J361: standardIds reads the strict forms only", () => { assert.deepEqual([...R.standardIds("IEC 61215, ISO 9001:2015, RFC 9110, IEEE 802.11, ASTM E1171, EN 50583-1, UL 1703, ISO 4111111111111, FOO 1234, ASTM 1171, RFC 9110.1.2.3")], ["IEC 61215", "ISO 9001", "RFC 9110", "IEEE 802.11", "ASTM E1171", "EN 50583-1", "UL 1703"]); });
 t("log is host-only (600)", () => assert.equal(fs.statSync(path.join(R.STATE, "log.jsonl")).mode & 0o777, 0o600));
 fs.rmSync(T, { recursive: true, force: true });
