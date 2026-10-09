@@ -206,8 +206,49 @@ export function rareToken(w) {
   const stem = [w, w.replace(/(ies)$/, "y"), w.replace(/(es|s|ed|ing|ly|er)$/, "")];
   return !stem.some((x) => d.has(x));
 }
+// J361 (Angus "4 b"): a well-known public standard identifier may appear in a search when the host-set TASK names it,
+// or when the REQUEST names it AND it is on the host's list of well-known standards (STD_KNOWN below, plus one per line
+// in ~/.config/hyprpi/research-standards.txt). The list matters: without it a request could carry any 2-5 digit
+// number as "RFC NNNN" (J349's "What is RFC7731 about?"). The number checks and the copied-token checks don't count an
+// allowed identifier. The pattern is strict: one of a fixed list of standards bodies, then a
+// number of 2 to 5 digits (ASTM: one letter first), optional parts (-1, .3, at most 2 of up to 3 digits) and an optional
+// :year. Anything else, a longer number ("ISO 4111111111111"), or an identifier neither the request nor the task
+// names, is checked as before.
+const STD_RE = /\b(IEC|ISO|IEEE|ASTM|RFC|EN|UL|ANSI|DIN|JIS|BS|NFPA|SAE|ETSI)[ \u00a0-]?([A-Z]?\d{2,5})((?:[-.]\d{1,3}){0,2})(?::(?:19|20)\d\d)?(?![\w.:-]*\d)/g;
+export const STD_KNOWN = new Set([
+  // photovoltaics and perovskite stability
+  "IEC 61215", "IEC 61215-1", "IEC 61215-2", "IEC 61730", "IEC 61730-1", "IEC 61730-2", "IEC 60904", "IEC 60904-1", "IEC 60904-3", "IEC 60904-9", "IEC 61853", "IEC 61853-1", "IEC 62108", "IEC 62788", "IEC 62804", "IEC 62805", "IEC 63202", "IEC 60068", "IEC 60891", "IEC 61701", "IEC 61724", "IEC 62716", "IEC 62759", "IEC 62941",
+  "ASTM E1171", "ASTM E927", "ASTM E948", "ASTM E1036", "ASTM G173", "ASTM G154", "ASTM D4329", "UL 1703", "UL 61730", "EN 50583", "EN 50583-1", "EN 50583-2",
+  // general
+  "ISO 9001", "ISO 14001", "ISO 17025", "ISO 8601", "ISO 27001", "ISO 4892", "ISO 4892-2", "ISO 6270", "ISO 9227", "ISO 9060", "ISO 9847",
+  "IEEE 802.11", "IEEE 754", "IEEE 1547", "IEEE 1262", "RFC 9110", "RFC 9112", "RFC 3986", "RFC 8259", "RFC 2119", "RFC 5322",
+]);
+function knownStandards() {
+  const out = new Set(STD_KNOWN);
+  try { for (const l of fs.readFileSync(path.join(path.dirname(CONFIG), "research-standards.txt"), "utf8").split("\n")) for (const id of standardIds(l)) out.add(id); } catch { /* none */ }
+  return out;
+}
+export function standardIds(text) {
+  const out = new Set();
+  for (const m of String(text ?? "").matchAll(STD_RE)) {
+    if (m[1] === "ASTM" ? !/^[A-Z]\d{2,5}$/.test(m[2]) : !/^\d{2,5}$/.test(m[2])) continue;
+    out.add(`${m[1]} ${m[2]}${m[3] || ""}`);
+  }
+  return out;
+}
+// The searches with every allowed identifier replaced by its body name alone (for the number and copied-token checks).
+function maskStandards(texts, allowed) {
+  if (!allowed.size) return texts;
+  return texts.map((t) => String(t).replace(STD_RE, (m0, body, num, parts) => {
+    if (body === "ASTM" ? !/^[A-Z]\d{2,5}$/.test(num) : !/^\d{2,5}$/.test(num)) return m0;
+    return allowed.has(`${body} ${num}${parts || ""}`) || allowed.has(`${body} ${num}`) ? body : m0;
+  }));
+}
 export function planCheck(request, plan, { strict = false, task = "" } = {}) {
-  const r = [], texts = [...(plan?.searches || []), ...(plan?.brief ? [plan.brief] : [])].map(String);
+  const r = [], texts0 = [...(plan?.searches || []), ...(plan?.brief ? [plan.brief] : [])].map(String);
+  const known = knownStandards(), inTask = standardIds(task);
+  const allowedStd = new Set([...inTask, ...[...standardIds(request)].filter((id) => known.has(id) || known.has(id.replace(/[-.]\d{1,3}$/, "")))]);
+  const texts = maskStandards(texts0, allowedStd); // J361 (an identifier is plain letters and digits, so masking it hides no markup)
   if (!texts.length) return ["the Doorman wrote no searches"];
   const req = words(request), grams = new Set();
   for (let i = 0; i + 4 <= req.length; i++) grams.add(req.slice(i, i + 4).join(" "));
