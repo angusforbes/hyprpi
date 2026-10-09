@@ -353,6 +353,7 @@ class Sandbox {
           try { if (fs.statSync(AUTO).size > 1e6) fs.renameSync(AUTO, AUTO + ".1"); } catch { /* none yet */ } // review #8: bounded
           try { fs.appendFileSync(AUTO, JSON.stringify({ t: now(), sandbox: this.name, rooms, to: gated.map((x) => x.shown), rule: ns, preview: clean(t).replace(/\s+/g, " ").slice(0, 120) }) + "\n", { mode: 0o600 }); } catch { /* best effort */ }
           log({ sb: this.name, op: "talk", rule: ns, to: gated.map((x) => x.id), ...textMeta(t) });
+          heldNote(this, { sandbox: this.name, rooms, shown: gated.map((x) => x.shown), text: t }, "rule", `Sent under your rule ${ns}`, ""); // J284
           out.ruled = ns;
         } else if (gated.length) out.pending = [this.relay.hold(this, { to: gated.map((x) => x.id), targets: gated.map((x) => ({ kind: x.kind, id: x.id })), shown: gated.map((x) => x.shown), rooms: [...new Set(gated.map((x) => x.room).filter(Boolean))], mode, text: t, body })];
         out.log = { to: targets.map((x) => x.id), open: open.length, gated: gated.length, ...textMeta(t) };
@@ -460,7 +461,7 @@ function onActionLine(line) {
   log({ note: `toast ${key} for ${id}` });
   if (key === "review") { openReview(id); return; }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(DECISIONS, `${id}.${key}`), "", { mode: 0o600 });
+  fs.writeFileSync(path.join(DECISIONS, `${id}.${key}`), "toast", { mode: 0o600 }); // J284: the route, for the Thoughts note
 }
 
 // J274 (Angus: "have it go to the appropriate Thoughts where we can interact and get context"): Review asks the
@@ -512,6 +513,7 @@ class Relay {
   async decide(file) {
     const m = /^(.+)\.(approve|deny|allow-(?:\d{1,5}|today))$/.exec(file); if (!m) return;
     const [, id, verdict] = m;
+    let via = ""; try { via = fs.readFileSync(path.join(DECISIONS, file), "utf8").trim().slice(0, 20); } catch { /* raced */ } // J284
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
@@ -530,6 +532,7 @@ class Relay {
     }
     if (verdict === "deny") {
       log({ sb: sb.name, op: "talk", decision: "denied", id });
+      heldNote(sb, msg, via, `Denied`, "");
       if (!sb.conn) return;
       inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to });
       return;
@@ -546,8 +549,9 @@ class Relay {
         r.delivered.push(...(x.delivered || [])); r.skipped.push(...(x.skipped || [])); r.request_id ||= x.request_id;
       }
       log({ sb: sb.name, op: "talk", decision: "approved", id, delivered: r.delivered, request_id: r.request_id });
+      heldNote(sb, msg, via, verdict.startsWith("allow-") ? "Approved and allowed similar" : "Approved", r.delivered.length ? `delivered to ${r.delivered.join(", ")}` : `it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((s) => s.name || s).join(", ")})` : ""}`);
       inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: r.delivered, request_id: r.request_id, skipped: r.skipped });
-    } catch (e) { log({ sb: sb.name, op: "talk", decision: "approved", id, error: e.message }); }
+    } catch (e) { log({ sb: sb.name, op: "talk", decision: "approved", id, error: e.message }); heldNote(sb, msg, via, "Approved", `but the relay couldn't send it: ${e.message}`); }
   }
   sweepPending() {
     for (const n of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) {
@@ -575,6 +579,23 @@ class Relay {
   }
 }
 
+// J284 (Angus: "I'd like to see … a note in Thoughts-B"): every decision about a held message, and every message a
+// rule let through, leaves a short 🐳 note in the RECEIVING world's Thoughts thread (desktop and phone) and in its
+// context, whatever the route: the toast, the room panel's y/n, the terminal, a rule. Not for a decision taken in the
+// Thoughts panel's review: that panel already shows its own ✓ turn (J280). The sandbox text is only quoted (one line).
+function heldNote(sb, msg, via, what, outcome) {
+  if (via === "panel" || !sb?.conn) return;
+  const rooms = (Array.isArray(msg.rooms) ? msg.rooms : []).map((r) => String(r).toUpperCase()).filter((r) => /^[A-I]$/.test(r));
+  if (!rooms.length) return;
+  const to = (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")).join(", ");
+  const first = clean(String(msg.text || "")).split("\n").map((l) => l.trim()).find(Boolean) || "";
+  const line = first.length > 120 ? first.slice(0, 119) + "…" : first;
+  const hm = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const route = via === "rule" ? "" : ` (${via || "terminal"}, ${hm})`;
+  const text = `🐳 ${what}: ${msg.sandbox || sb.name} → ${to}${route}${outcome ? ` · ${outcome}` : ""}\n│ ${line}`;
+  sb.conn.call("held.note", { rooms, text }).catch((e) => log({ sb: sb.name, error: `held note: ${e.message}` }));
+}
+
 // --- Angus's decision -----------------------------------------------------------------------------------------
 // Approving is Angus's call (J262: an agent approved a held message addressed to itself). So approve only works
 // from a real terminal on the desktop, never from inside an agent: no hyprpi agent (HYPRPI_AGENT_ID) and no pi
@@ -589,7 +610,8 @@ function decideAsAngus(id, verdict) {
     if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
   }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "", { mode: 0o600 });
+  const via = /^(panel|room panel)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";
+  fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), via, { mode: 0o600 }); // J284: the route, for the Thoughts note
 }
 function agentAncestor() {
   if (process.env.HYPRPI_AGENT_ID || process.env.PI_CODING_AGENT || process.env.PI_SESSION_FILE || process.env.HYPRPI_THOUGHTS_ROOM) return "called from an agent"; // (J274: Thoughts too)
