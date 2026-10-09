@@ -9,7 +9,8 @@
 //   - only the job's files, COPIED in from a snapshot taken when the request was made (never G's shares, no bind mounts),
 //   - no network at all (the image is pulled beforehand, never during a job),
 //   - the GPU via CDI, all capabilities dropped, no-new-privileges, read-only root, a pids / memory / cpu cap,
-//   - a hard time limit (killed on overrun) and a VRAM budget watched with nvidia-smi (killed on overrun).
+//   - a hard time limit (killed at the limit, also by `timeout` inside the worker) and watchdogs for VRAM (nvidia-smi) and scratch
+//     disk (polled ~every 0.4 s, killed when seen over budget: NOT hard caps; a very short spike can slip through).
 // Outputs (/out) and the log are copied back; the container and its volumes are destroyed.
 // CUDA cannot hard-cap VRAM on this GPU, so the watcher is the enforcement and the framework memory fractions in the
 // job's environment are a courtesy. The display shares this GPU (it uses about 3.6 GiB of 8): a job is refused unless
