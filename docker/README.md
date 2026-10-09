@@ -118,7 +118,17 @@ The relay (`op: "research"`) then holds the finished deliverable as one message 
 
 - Setup: `node docker/research/research.mjs reader create --sandbox world-g` (once). The Doorman sandbox must exist (`docker/doorman/doorman.sh create doorman-g`).
 - Optional config: `~/.config/hyprpi/research.json` (doorman, reader, reports_to, key_file, shape_model per sandbox).
-- Strict mode (J314, off by default): in the sandbox's `~/.config/hyprpi/worlds/<name>.json` set `"research": { "strict": true }`. Then the Doorman's planned searches are held for Angus first, as "Searches planned for <sandbox>": a toast plus the same Thoughts review (1 approve and run, 2 deny). Nothing goes to Perplexity until he approves; a denial sends nothing. The deliverable is then reviewed as usual. It's read per request, so no restart is needed. It closes the meaning-level channel the J309 red team found (innocent public topics that spell out a secret), at the cost of one more review per request.
+- Doorman modes (J325), per sandbox in `~/.config/hyprpi/worlds/<name>.json` as `"doorman": { "mode": "…" }`, read per request (no restart). The active mode shows in the host card's "Web research" section, the inner guide, the review and deliverable headers and the digest. `node docker/research/research.mjs mode --sandbox world-g` prints it.
+
+  | mode           | searches        | result          |
+  |----------------|-----------------|-----------------|
+  | doorman-strict | Angus approves  | Angus reviews   |
+  | doorman-safe   | Doorman writes  | Angus reviews   |
+  | doorman-open   | Doorman writes  | Doorman only    |
+
+  - doorman-safe is the default (no setting, or any value other than the three exact names). Angus thinks it's the right level for NVIDIA.
+  - doorman-strict holds the Doorman's planned searches for Angus first ("Searches planned for <sandbox>": toast + Thoughts review, 1 approve and run / 2 deny), then reviews the deliverable. The old `"research": { "strict": true }` still means doorman-strict (deprecated).
+  - doorman-open is opt-in only (the exact value `doorman-open`). The vetted deliverable goes straight into the sandbox, labelled "vetted by the Doorman, NOT reviewed by a human"; every delivery is logged and listed in the hourly digest. It does NOT meet NVIDIA's ASR first principle #11 (external data is promoted to internal only after a human reviews it) or #4 (Rule of Three) for a sandbox that holds internal data. Strict and safe meet them.
 - Limits: 10 quick and 3 deep requests an hour, 2 running at once, 1000 bytes per request.
 - `node docker/research/research.mjs digest [--send]` sums up the last hour for the reporting Thoughts.
 - Tests: `node docker/research/test-research.mjs`.

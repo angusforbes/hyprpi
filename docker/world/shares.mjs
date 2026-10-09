@@ -17,6 +17,7 @@
 //   "projects": "all" | ["vibezAI", "kev"]       "all" = every projectFolder, writable, incl. later projects
 //   "shares": [ { "path": "~/Music", "mode": "ro", "at": "/data/music" } ]
 //   "gitignored": { "hide": true, "show": ["kids-mazes", "nim-demos/.env.example"] }   (default: hide)
+//   "doorman": { "mode": "doorman-safe" }        J325 research mode: doorman-strict, doorman-safe (default) or doorman-open (docker/research/mode.mjs)
 //
 // Rules: every share is mounted at its host path unless "at" says otherwise; protected projects (and every
 // relay inbox, and other sandboxes' workspaces) are mounted read-only on top of a writable parent; sbx enforces
@@ -31,6 +32,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { modeOf, MODE_TEXT } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
+
 
 const HOME = os.homedir();
 const CFG = path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi");
@@ -271,6 +274,8 @@ function writeCard(p = plan()) {
     "The host runs the desktop (windows, notifications, the clipboard) and hyprpi. You can't run host commands; ask the Doorman to have something done there.", "",
     "## Network", "",
     net ? `Your requests go through the sandbox policy proxy, profile ${net.profile} (NVIDIA's central allowlist; the host can't change it, new domains need a request by the owner). A blocked domain answers 403 "Blocked by org policy". The full list (${net.tcp.length} host rules, ${net.http.length} path-limited web rules) is in net-allowlist.md next to this card.` : "Your requests go through the sandbox policy proxy (NVIDIA's central allowlist). The list couldn't be read on the host just now.", "",
+    "## Web research", "",
+    ...(() => { const { mode, note } = modeOf(readJson(path.join(CFG, "worlds", `${WORLD}.json`), null)); return [`Doorman mode: ${mode}${note ? ` (${note})` : ""}`, "", `Ask Outside "Research: <what you're looking for>" (or "Research (deep): …"): ${MODE_TEXT[mode]}`, ""]; })(),
     "## How to ask", "",
     "- Talk to your Doorman (always allowed, no approval needed).",
     "- Messages to agents in other worlds wait for Angus's approval (a toast and the Thoughts panel); he can allow similar ones for a while.", "",
