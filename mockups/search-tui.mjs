@@ -369,6 +369,8 @@ function pollReview() {
   if (Object.keys(reviews).join(",") + "|" + note !== before) { bumpThread(); render(); } // (numbered lists are drawn differently while a review is open)
 }
 setInterval(pollReview, 2000);
+// Other panels of this world learn of a decision turn within 5 s even without a Thoughts event (recheck #3)
+setInterval(() => { if (restarting) return; const nt = heldTurns(room); if (nt.map((x) => x.ts).join() !== turns.map((x) => x.ts).join()) { turns = nt; bumpThread(); render(); } }, 5000);
 let reviewRoom = room;
 let lastRaw = "", turns = [];
 function reviewKey(raw) {
@@ -389,6 +391,7 @@ function reviewKey(raw) {
     const finish = (ok, head, body) => {
       logTurn({ room: at, id, ok, turn: `${head}\n${msg}\n${body}` });
       logHeld({ room: at, id, stage: "result", ok, result: body });
+      if (room !== at) return; // switched worlds meanwhile: it shows when he comes back (recheck #3)
       turns = heldTurns(room); bumpThread(); follow();
       note = ok ? `✓ ${head}` : `✗ ${head}`; render();
     };
@@ -402,8 +405,12 @@ function reviewKey(raw) {
       if (o || ++tries > 25) {
         clearInterval(poll);
         if (!o) finish(false, `${what}: no answer from the relay yet`, "It may still be waiting: check docker/sbx-relay.mjs status and pending.");
-        else finish(o.ok, o.ok ? what : `${what}, but it failed`, `Relay: ${o.text}${ch.verdict === "allow" && ch.dur !== "once" && o.ok ? "\nSame sandbox → same recipient, talk only, up to 30 an hour. See or end it: /rules in the room panel." : ""}`);
-        if (o && o.ok) sendThought(`[Angus decided held ${id}: ${ch.label}. Relay: ${o.text}]`);
+        else {
+          const head = !o.ok ? `${what}, but it failed` : ch.verdict === "deny" ? "Denied" : o.ruled ? what : ch.verdict === "allow" && ch.dur !== "once" ? "Approved (no rule: rules cover plain talks only)" : "Approved";
+          finish(o.ok, head, `Relay: ${o.text}${o.ok && o.ruled ? "\nSame sandbox → same recipient, talk only, up to 30 an hour. See or end it: /rules in the room panel." : ""}`);
+          // Thoughts of the world it was decided in (recheck #3), and only while connected
+          if (o.ok && api) api.call("thoughts.send", { room: at, text: `[Angus decided held ${id}: ${head}. Relay: ${o.text}]` }).catch(() => {});
+        }
       }
     }, 400);
     return true;
@@ -419,7 +426,10 @@ function reviewKey(raw) {
   logHeld({ room, id: review.id, raw, choice: ch || null, stage: "typed" });
   // J280: a line that isn't a choice goes to Thoughts as a question; say so where he is looking.
   // (review #2: sending clears the status line, so send first, then say so)
-  const asQuestion = (hint) => { setBox(""); sendThought(raw, imagePaths(raw)); if (!note.startsWith("✗")) { note = hint; render(); } return true; };
+  const asQuestion = (hint) => {
+    if (!api) { note = "✗ daemon offline: not sent to Thoughts · to decide, type just 1, 2 or 3"; render(); return true; } // (recheck #2)
+    setBox(""); sendThought(raw, imagePaths(raw)); if (!note.startsWith("✗")) { note = hint; render(); } return true;
+  };
   if (!ch) return asQuestion("🐳 that went to Thoughts as a question · to decide, type just 1, 2 or 3 (or \"3, but for 2 hours\")");
   if (ch.verdict === "unclear") return asQuestion("🐳 no usable duration (e.g. \"3 for 2 hours\", \"3 today\"): that went to Thoughts as a question");
   if (ch.confirm) { review.confirm = ch; setBox(""); note = `🐳 ${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
@@ -777,7 +787,7 @@ function render() {
         // indicator lines, and the summary right under it, no blank line between (Angus).
         let { lead, body } = splitLead(e);
         if (e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt) // J280 #6: only the panel's 1/2/3 count while a review is open
-          body = String(lead ? body : e.text).replace(/^(\s*)\d+[.)]\s+(?!(Approve|Deny|Allow similar for 1 hour)\s*$)/gm, "$1• ");
+          body = String(lead ? body : e.text).replace(/^(\s*)\d+[.)]\s+/gm, "$1• "); // recheck #6: only the panel's strip is numbered
         if (lead) add(md(lead, tw, "   ", dim), 4);
         add(md(e.role === "thoughts" && reviews[room] && Number(e.ts) >= reviews[room].shownAt ? body : lead ? body : e.text, tw, "   "), 4); // **bold**, *italic*, `code`, bullets, links
         const extra = (e.images || []).filter((f) => !String(e.text || "").includes(f) && !String(e.text || "").includes(f.replace(process.env.HOME || "\0", "~")));
@@ -974,7 +984,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
-        else if (ev === "thoughts" && data?.room === room) { const nt = heldTurns(room); if (nt.length !== turns.length) { turns = nt; bumpThread(); } if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) { if (shows(data.entry)) TH.unseen++; } else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
+        else if (ev === "thoughts" && data?.room === room) { const nt = heldTurns(room); if (nt.map((x) => x.ts).join() !== turns.map((x) => x.ts).join()) { turns = nt; bumpThread(); } if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) { if (shows(data.entry)) TH.unseen++; } else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
       },
       onClose: () => { online = false; api = null; lostAt ||= Date.now(); render(); setTimeout(start, 1500); },
     });
