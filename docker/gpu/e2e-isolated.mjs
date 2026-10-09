@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url)), ROOT = path.resolve(HERE, "../..");
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "gpu-e2e-"));
 const P = (...a) => path.join(T, ...a);
-const env0 = { ...process.env, XDG_CONFIG_HOME: P("config"), XDG_STATE_HOME: P("state"), HYPRPI_SOCKET: P("d.sock"), HYPRPI_STATE: P("dstate"), HYPRPI_NO_ADOPT: "1", DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent" };
+const env0 = { ...process.env, XDG_CONFIG_HOME: P("config"), XDG_STATE_HOME: P("state"), HYPRPI_SOCKET: P("d.sock"), HYPRPI_STATE: P("dstate"), HYPRPI_NO_ADOPT: "1", HYPRPI_TEST: "1", DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent" };
 const env = env0;
 delete env.HYPRPI_AGENT_ID;
 // The isolated daemon must NOT reach the live Hyprland session (it manages panels and would open/close real windows; a first
@@ -68,7 +68,7 @@ ok(!!(await waitInbox((j) => j.type === "gpu" && j.status === "denied", 5000)), 
 r = await ask(lease()); const h2 = JSON.parse(fs.readFileSync(path.join(STATE, "pending", pending()[0]), "utf8"));
 fs.writeFileSync(P("ws/cuda_hello.py"), "print('CHANGED AFTER REQUEST')\n"); // the sandbox edits its file after the request: what runs is the snapshot
 const smi0 = spawnSync("nvidia-smi", ["--query-gpu=memory.used", "--format=csv,noheader,nounits"], { encoding: "utf8" }).stdout.trim();
-decide(h2.id, "approve");
+await sleep(800); decide(h2.id, "approve");
 const done = await waitInbox((j) => j.type === "gpu" && ["ok", "failed", "timeout", "vram", "refused"].includes(j.status), 90000);
 ok(done?.status === "ok", `the job ran: ${JSON.stringify(done)}`);
 const smi1 = spawnSync("nvidia-smi", ["--query-gpu=memory.used", "--format=csv,noheader,nounits"], { encoding: "utf8" }).stdout.trim();
@@ -94,6 +94,16 @@ x = await runLease({ script: "slow.py", files: [], job: "time overrun test: slee
 ok(x.res?.status === "timeout" && x.res.ranSeconds < 8, `time overrun killed (status ${x.res?.status}, ran ${x.res?.ranSeconds} s of 3)`);
 ok(spawnSync("docker", ["ps", "-a", "--filter", "label=hyprpi.gpu=1", "-q"], { encoding: "utf8" }).stdout.trim() === "", "no worker containers left");
 console.log(`      GPU memory used at the end: ${spawnSync("nvidia-smi", ["--query-gpu=memory.used", "--format=csv,noheader,nounits"], { encoding: "utf8" }).stdout.trim()} MiB (display baseline ${smi0})`);
+addJob("odd_outputs.py", "odd_outputs.py"); addJob("fill_disk.py", "fill_disk.py");
+x = await runLease({ script: "odd_outputs.py", files: [], job: "odd outputs", vram_mib: 128, time_s: 20 });
+const inb = fs.readdirSync(P("inbox-w")).filter((f) => f.startsWith("gpu-"));
+ok(x.res?.status === "ok" && !/\u001b|\u0007/.test(x.md) && /fine\.txt/.test(x.md) && !/EVIL.*(\n|$)[\s\S]*not delivered.*link/.test("") && inb.filter((f) => /-sub__x$/.test(f)).length === 1 && !inb.some((f) => /big\.bin|link|EVIL/.test(f)), "odd outputs: escapes stripped from the summary, symlink/oversize/odd-name files and the colliding name not delivered, one sub__x only");
+x = await runLease({ script: "fill_disk.py", files: [], job: "disk cap test: writes 8 MiB files until killed", vram_mib: 128, time_s: 30 });
+ok(x.res?.status === "disk" && x.res.ranSeconds < 10, `disk overrun killed (status ${x.res?.status}, ran ${x.res?.ranSeconds} s)`);
+// two worlds files naming the same sandbox: ambiguous, fails closed
+fs.writeFileSync(P("config/hyprpi/worlds/G.json"), JSON.stringify({ sandbox: "world-t", gpu: "off" }));
+r = await ask(lease()); ok(r && !r.ok && /GPU leases are off/.test(r.error) && /ambiguous/.test(r.error), `two worlds files naming one sandbox fail closed: ${r?.error}`);
+fs.rmSync(P("config/hyprpi/worlds/G.json"));
 // 4. gpu: off refuses
 fs.writeFileSync(P("config/hyprpi/worlds/world-t.json"), JSON.stringify({ sandbox: "world-t", gpu: "off" }));
 r = await ask(lease()); ok(r && !r.ok && /GPU leases are off for world-t/.test(r.error), `gpu: off refuses with a clear message: ${r?.error}`);
