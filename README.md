@@ -513,8 +513,8 @@ failed turn.
     (`pi-clipboard-*.png`); `/tmp` when the folder doesn't exist.
   - `notesDir` (default `""`): where /tinker agents write proposals; `""` = `~/Obsidian/Tinker` if that
     folder exists, else `~/.local/share/hyprpi/notes`.
-  - `jotExtension` (default `~/Work/pi-jot/src/extension.ts`): the pi-jot extension Thoughts loads
-    (`jot_save`) when the file exists.
+  - `jotExtension` (default `""`): the pi-jot extension Thoughts loads (`jot_save`) when the file exists;
+    empty = `~/Harness/pi-jot`, else where `pi install` put it (the `pi-packages` integration piece).
   - `phone.folders` (default `["~/Obsidian", "~/Work", "~/Downloads", "~/Documents", "~/Screenshots",
     "~/Phone"]`): what the phone app may read; `phone.uploadDir` (default `~/Phone`): the only folder it
     writes (uploads); `phone.vault` (default `~/Obsidian`): where its `[[wiki links]]` resolve. Read

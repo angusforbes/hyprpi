@@ -41,14 +41,19 @@ On Arch / Omarchy, in one line:
   from your phone over your tailnet.
 - **MCP servers** behind the shared gateway ([mcp-gateway/](../mcp-gateway/README.md)).
 
+## Pi packages (separate repos, installed by `./install.sh`)
+
+pi-twin and pi-jot are their own repos; neither needs hyprpi (pi-twin only uses it when it runs inside a hyprpi agent, pi-jot works in any pi). `./install.sh` (the `pi-packages` piece, or `hyprpi integration install pi-packages`) runs `pi install git:github.com/angusforbes/<name>` for any that pi doesn't already list; a local checkout already listed in pi's packages is left as is. Undo: `hyprpi integration uninstall pi-packages`.
+
+- **[pi-twin](https://github.com/angusforbes/pi-twin)**: split / fork an agent's conversation into a
+  second live agent (`/twin-split`, `/twin-fork`).
+- **[pi-jot](https://github.com/angusforbes/pi-jot)**: `/jot-note`, `/jot-idea`, … into a notes folder;
+  Thoughts loads it for `jot_save` (see `jotExtension` in `config.json`).
+
 ## Optional companions (not in this repo)
 
 hyprpi works without these; they're what its author runs alongside it.
 
-- **[pi-twin](https://github.com/angusforbes/pi-twin)**: split / fork an agent's conversation into a
-  second live agent (`/twin-split`, `/twin-fork`).
-- **pi-jot** (not public yet): `/jot-note`, `/jot-idea`, … into a notes folder;
-  Thoughts loads it when `jotExtension` in `config.json` points at it.
 - **name-sync** (a pi extension): `/name` sets the pi session name and the hyprpi name together.
   Without it, use `hyprpi name NAME` (or the agent's `rename_self` tool).
 - **bonk / ding**: small scripts that play a sound and show a toast when an agent needs you.

@@ -28,8 +28,8 @@ pieces=("$@"); (( ${#pieces[@]} )) || pieces=(recommended)
 # Omarchy's bar plugins only where the Omarchy shell exists.
 if ! command -v omarchy-shell >/dev/null; then
   case " ${pieces[*]} " in
-    *" recommended "*) pieces=(hypr path kitty); echo "note: no Omarchy shell found, so the bar piece is skipped";;
-    *" all "*) pieces=(hypr path kitty gateway remote); echo "note: no Omarchy shell found, so bar, hyprwrlds and hyprwrlds-vimarchy are skipped";;
+    *" recommended "*) pieces=(hypr path kitty pi-packages); echo "note: no Omarchy shell found, so the bar piece is skipped";;
+    *" all "*) pieces=(hypr path kitty pi-packages gateway remote); echo "note: no Omarchy shell found, so bar, hyprwrlds and hyprwrlds-vimarchy are skipped";;
   esac
 fi
 node "$here/bin/hyprpi" integration install "${pieces[@]}"
