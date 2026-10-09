@@ -3,6 +3,8 @@
 # Same kitty setup as room-tui: Shift+mouse and Ctrl+click reach the TUI (kitty's own selection
 # is Ctrl+Shift), Shift+Enter / Ctrl+Enter / Ctrl+Tab are sent as distinct keys, SUPER+C / V copy
 # and paste. The loop: the panel exits with 75 to restart onto new code (its state in $f).
+# J295: a sandboxed world's panels run inside its sandbox (class hyprpi.g-*); the host never opens one for it.
+if [ -z "$HYPRPI_SANDBOX_WORLD" ] && node "$(dirname "$(readlink -f "$0")")/../lib/sandboxed-world.mjs" "${1:-}"; then echo "board-tui: world $1 is sandboxed: its panels run inside its sandbox" >&2; exit 0; fi
 exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=shift+left click grabbed" \
   -o "mouse_map=shift+left press grabbed" \
