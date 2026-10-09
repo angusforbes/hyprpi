@@ -24,8 +24,7 @@ if [[ "${1:-}" == "--install" ]]; then
   cat > "$U" <<EOF
 [Unit]
 Description=hyprpi: bring the sandboxed worlds back after login (J322)
-After=graphical-session.target network-online.target
-Wants=network-online.target
+After=graphical-session.target
 
 [Service]
 Type=oneshot
@@ -56,15 +55,25 @@ for i in $(seq 60); do "$H/bin/hyprpi" list >/dev/null 2>&1 && break; sleep 2; d
 
 rc=0
 for W in "${worlds[@]}"; do
-  [[ "$W" =~ ^[a-z0-9-]{1,32}$ ]] || { log "restore: bad world name $W"; rc=1; continue; }
+  [[ "$W" =~ ^[a-z0-9-]{1,32}$ && -f "$CFG/worlds/$W.json" ]] || { log "restore: no such world: $W (no $CFG/worlds/$W.json)"; rc=1; continue; }
   SB="$(jq -r '.sandbox // empty' "$CFG/worlds/$W.json" 2>/dev/null)"; SB="${SB:-$W}"
   log "restore $W: starting (sandbox $SB)"
+  # 0. (Lenswatch 1e) sbx won't start a sandbox whose saved mounts point at missing folders, so drop those BEFORE the
+  #    first sbx exec below; otherwise the stale-file cleanup would silently fail to start it. (world.sh start does
+  #    the same for its own callers.)
+  RT="$HOME/.local/state/sandboxes/sandboxes/sandboxd/runtimes/$SB.json"
+  if ! sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}' && [[ -f "$RT" ]]; then
+    jq -r '.State.runtime_mounts[]? | "\(.host_path)\t\(.container_target)"' "$RT" | while IFS=$'\t' read -r hp ct; do
+      [[ -e "$hp" ]] || { sbx umount "$SB" "$hp:$ct" >/dev/null 2>&1 && log "restore $W: dropped the saved mount of a missing folder: $hp"; }
+    done
+  fi
   # 1. stale state from a crash: only when the sandbox's inner daemon is NOT running (else it's a live world)
   if sbx ls 2>/dev/null | awk -v s="$SB" '$1==s && $4=="running" {f=1} END {exit !f}' && sbx exec "$SB" sh -c 'pgrep -f "^node .*/bin/hyprpi daemon" >/dev/null' 2>/dev/null; then
     log "restore $W: already running; only reopening what's missing"
   else
-    sbx exec "$SB" sh -c 'r=$HOME/.hyprpi-g; rm -f $r/run/daemon.sock $r/run/daemon.lock; find $r/state -maxdepth 2 \( -name "*.tmp" -o -name "*.tmp.*" \) -mmin +1 -delete 2>/dev/null; true' >/dev/null 2>&1 \
-      && log "restore $W: cleared stale daemon socket, lock and temp files"
+    if sbx exec "$SB" sh -c 'r=$HOME/.hyprpi-g; rm -f $r/run/daemon.sock $r/run/daemon.lock; find $r/state -maxdepth 2 \( -name "*.tmp" -o -name "*.tmp.*" \) -mmin +1 -delete 2>/dev/null; true' >/dev/null 2>&1; then
+      log "restore $W: cleared stale daemon socket, lock and temp files"
+    else log "restore $W: couldn't clear stale files (sandbox didn't start?); world.sh start will report why"; fi
   fi
   # 2. the world itself (idempotent)
   if ! "$H/docker/world/world.sh" start "$W" >>"$LOG" 2>&1; then log "restore $W: world.sh start failed"; rc=1; continue; fi
