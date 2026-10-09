@@ -142,7 +142,10 @@ def decided():
     os.unlink(os.path.join(relay, "pending", hid + ".json"))
     with open(os.path.join(relay, "log.jsonl"), "a") as f:
         f.write(json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()), "id": hid, "decision": "approved", "delivered": ["Thoughts-A"]}) + "\n")
-    pump(4.5)
+    flip = len(out); end = time.time() + 10   # wait (under load too) until the card shows the decision
+    while time.time() < end and "Approved at" not in out[flip:].decode("utf8", "replace"):
+        pump(0.2)
+    check("decided: the card now shows the decision", "Approved at" in out[flip:].decode("utf8", "replace"))
     mark = len(out)
     os.write(fd, b"1"); pump(0.3); os.write(fd, b"\r"); pump(2)
     scr = out[mark:].decode("utf8", "replace")
@@ -152,7 +155,6 @@ def decided():
         L = []
     check("decided: a bare 1 says 'already approved at HH:MM' and sends nothing", "already approved at" in scr and "nothing was sent" in scr)
     check("decided: logged stage decided-card", any(e.get("stage") == "decided-card" and e.get("id") == hid for e in L))
-    check("decided: the card now shows the decision", "Approved at" in out[mark - 20000 if mark > 20000 else 0:].decode("utf8", "replace"))
     os.kill(pid, 9)
     try:
         os.waitpid(pid, 0)
