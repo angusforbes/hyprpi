@@ -43,6 +43,7 @@ import { connect } from "../lib/client.mjs";
 import { logTurn } from "../lib/held.mjs"; // J289: decision notes as highlighted turns in the Thoughts panel
 import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
 import { logEvent as researchLog, conf as researchConf } from "./research/research.mjs"; // J309
+import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
@@ -502,13 +503,13 @@ class Sandbox {
   }
 }
 
-// --- the toast (J268): preview + Approve / Deny / Review buttons ------------------------------------------
+// --- the toast (J268): preview + Deny / Review buttons (J355: no Approve) ------------------------------------------
 // Sent straight to org.freedesktop.Notifications (as omarchy-notification-send does: busctl, every value one
-// typed parameter, never re-parsed), with three actions. Angus's notification plugin draws buttons for these
+// typed parameter, never re-parsed), with two actions (Deny, Review; J355). Angus's notification plugin draws buttons for these
 // keys only for app "hyprpi-relay", with fixed labels. The body is plain text inside StyledText, so <, > and &
 // are escaped (no links or markup from a sandbox); control characters are already gone (clean()).
 const NOTIF = ["org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications"];
-const ACTION_KEYS = { approve: "Approve", deny: "Deny", review: "Review" };
+// J355: only Deny and Review (see toast-actions.mjs); approving is typed in the Thoughts panel.
 function preview(text, n = 600) {
   const one = clean(text).replace(/\s+/g, " ");
   const cut = one.length > n ? one.slice(0, n - 1) + "…" : one;
@@ -611,9 +612,15 @@ function reshowAll(relay, why) {
 
 function onActionLine(line) {
   if (line.includes(".NotificationClosed (")) return onClosedLine(line);
-  const m = /^\/org\/freedesktop\/Notifications: org\.freedesktop\.Notifications\.ActionInvoked \(uint32 (\d+), '([a-z]+):([0-9a-f]{16})'\)\s*$/.exec(line);
-  if (!m || !Object.hasOwn(ACTION_KEYS, m[2])) return;
-  const n = Number(m[1]), key = m[2], nonce = m[3];
+  const m = parseActionLine(line);
+  if (!m) return;
+  const n = m.n, key = m.key, nonce = m.nonce;
+  if (!toastMayDo(key)) { // J355: a toast can't approve (a stale toast from before this change, a forged signal, a stray tap on an old button)
+    let which = "";
+    for (const f of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) { try { const r = JSON.parse(fs.readFileSync(path.join(PENDING, f), "utf8")); if (r.notif && r.notif.nonce === nonce) { which = ` for ${r.id}`; break; } } catch { /* */ } }
+    log({ note: `toast ${key}${which} refused (J355): approving is typed in the Thoughts panel after the full request` });
+    return;
+  }
   let id = null, rec = null;
   for (const f of fs.existsSync(PENDING) ? fs.readdirSync(PENDING) : []) {
     try { const r = JSON.parse(fs.readFileSync(path.join(PENDING, f), "utf8")); if (r.notif && r.notif.nonce === nonce) { id = r.id; rec = r; break; } } catch { /* */ }
@@ -681,7 +688,7 @@ class Relay {
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
     log({ sb: sb.name, dir: "out", op: "talk", held: id, to: msg.to, ...textMeta(msg.text) });
     // J268 (Angus: decide "within the toast itself" and in the receiving world's panel): the toast now
-    // shows a short preview of the text and three buttons, Approve / Deny / Review. The relay sends it
+    // shows a short preview of the text and two buttons, Deny / Review (J355). The relay sends it
     // itself over D-Bus with those actions and listens for the notification server's ActionInvoked
     // (watchActions below); clicking the card body still opens the review terminal (J262).
     const review = [process.execPath, fileURLToPath(import.meta.url), "review", id];
