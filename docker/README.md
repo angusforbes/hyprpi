@@ -72,6 +72,16 @@ World G is a whole hyprpi world inside ONE Docker Sandboxes sandbox (`world-g`):
 - Start (manual, after a reboot): `docker/world/world.sh start`, then `docker/world/world.sh new NAME` for each agent. Stop: `docker/world/world.sh stop`. Status: `docker/world/world.sh status`.
 - Approving a held message is Angus's: click the toast (a terminal asks y/n) or run `docker/sbx-relay.mjs approve ID` in his own terminal; an agent's approve is refused (accident prevention, not authentication).
 
+## The Doorman (J308): one talk-only agent per sandbox
+
+A sandbox's agents can ask their Doorman about the host: why a domain is blocked, whether a folder is shared, what to do instead. It answers only from that sandbox's host card, and it drafts requests for Angus when something needs the owner.
+
+- It runs in its own tiny Docker Sandboxes sandbox under the `external-plus-inference` policy profile (the model API only; everything else answers 403). Its only shares: the host card folder (read-only, at `/home/agent/.sandbox`, the same folder the served sandbox gets), its relay inbox (read-only) and an empty drop-box folder. Pi runs headless (RPC mode) with four tools: `read`, `hyprpi_reply`, `hyprpi_talk` and `hyprpi_draft_request`. Each question arrives with the card's current text (`docker/sbx-dropbox-ext.ts`, `HYPRPI_DOORMAN=1`); its prompt is `docker/doorman/doorman-prompt.md`.
+- The relay enforces the limits, not the prompt. Only its own sandbox reaches it, and it reaches only that sandbox (any other pair with a Doorman is refused, never held). It has no room tools. Messages from host agents or room posts are dropped; only its sandbox and the Thoughts it reports to get through. Its `draft` (with for, why, tried and action) is held for Angus as a talk to that Thoughts: a toast plus the review in that world's Thoughts panel. It's approved once and never as an allow-similar rule. After 3 denied drafts in a row its drafts are refused for an hour (a circuit breaker, in memory).
+- Config: an entry in `~/.config/hyprpi/sbx-relay.json` with `doorman_for` (the sandbox it serves), `reports_to` (default `Thoughts-A`), `display` (its name, e.g. `Doorman-G`), `workspace` (the empty drop-box folder), `inbox`, `card`, `model` (default `nv-claude/azure/anthropic/claude-opus-5-5`, an OpenAI-compatible model on NVIDIA's Inference Hub) and `key_file`.
+- Setup: add the entry, restart the relay with nothing held, then `docker/doorman/doorman.sh create NAME` and `docker/doorman/doorman.sh start NAME` (a systemd user unit, `hyprpi-doorman-NAME`). Also `stop`, `status` and `rm`. Pi is copied from the served sandbox, since the Doorman can't reach npm. The model key sits inside its sandbox, as for the served one (the same open gap).
+- Asking it from inside world G: talk to Outside with `Doorman-G: <question>`. The gate sends it on, it's never held, and the answer comes back as a reply.
+
 ## How hyprpi handles it (daemon and extension)
 
 - **Window**: Pi in a container reports pid 1 and hangs off containerd-shim, so the usual walk UP from its
