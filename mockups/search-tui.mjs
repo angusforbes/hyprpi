@@ -766,7 +766,8 @@ function render() {
     for (const [ei, e] of merged.entries()) {
       tag(); tagFrom = flat.length; tagKey = entryKey(e);
       const kind = threadKind(e);
-      if (kind === "hidden" || kind === "quiet") continue; // J147: quiet = hyprpi's automatic notes (in the Stream's all-activity view)
+      if (kind === "hidden" || kind === "quiet") continue;
+      if (e.role === "note" && /^🐳 (Approved|Denied|Sent under)/u.test(String(e.text || ""))) continue; // J289: drawn as a highlighted turn from panel-turns.jsonl instead // J147: quiet = hyprpi's automatic notes (in the Stream's all-activity view)
       if (kind === "answer") {
         const { to, raw, said, cutOld } = answerLine(e);
         const k2 = items.push({ copy: `to ${to}: ${raw}` }) - 1;

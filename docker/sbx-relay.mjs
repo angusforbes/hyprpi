@@ -36,6 +36,7 @@ import crypto from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { connect } from "../lib/client.mjs";
+import { logTurn } from "../lib/held.mjs"; // J289: decision notes as highlighted turns in the Thoughts panel
 import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
 
 const HOME = os.homedir();
@@ -598,6 +599,12 @@ function heldNote(sb, msg, via, what, outcome) {
   const route = via === "rule" ? "" : ` (${via || "terminal"}, ${hm})`;
   const text = `🐳 ${what}: ${msg.sandbox || sb.name} → ${to}${route}${outcome ? ` · ${outcome}` : ""}\n│ the sandbox wrote: ${line}`;
   sb.conn.call("held.note", { rooms, text }).catch((e) => log({ sb: sb.name, error: `held note: ${e.message}` }));
+  // J289 (Angus didn't see the dim note; "never cut, show the full message"): the same decision as a highlighted turn
+  // in the receiving world's Thoughts panel, with the WHOLE message (panel-turns.jsonl; the panel polls it).
+  const ok = !/^Denied/.test(what) && !/nobody|couldn't/.test(outcome);
+  const full = clean(String(msg.text || "")).replace(/\s+/g, " ").trim();
+  const id = /^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(String(msg.id || "")) ? msg.id : `${sb.name}--000000`;
+  for (const r of rooms) logTurn({ room: r, id, ok: what.startsWith("Denied") ? true : ok, turn: `${what}${route}\n${msg.sandbox || sb.name} → ${to}: "${full}"${outcome ? `\n${outcome}` : ""}` });
 }
 
 // --- Angus's decision -----------------------------------------------------------------------------------------
