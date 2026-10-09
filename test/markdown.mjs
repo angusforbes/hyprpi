@@ -29,6 +29,8 @@ const one = (t, w = 200) => mdRows(t, w, wrap)[0];
   check("stray < > and spaced url untouched", strip(r.line) === "a < b > c <https://x.org/a b>" && r.links.length === 0, r); }
 for (const u of ["https://x.net/wiki/Thing_(topic)", "https://x.net/urgent!", "https://x.net/?q=why?"]) { const r = one(`<${u}>`);
   check(`autolink keeps trailing punctuation: ${u}`, strip(r.line) === u && r.links.length === 1 && r.links[0].target === u, r); }
+{ const r = one(`<${uri}!>`);
+  check("file autolink to a missing path (existing file + '!') left as typed", strip(r.line) === `<${uri}!>` && r.links.length === 0, r); }
 // existing cases (7eb93ef)
 { const r = one("[label](https://example.com)");
   check("[label](url) still works", strip(r.line) === "label" && r.links[0].target === "https://example.com", r); }
