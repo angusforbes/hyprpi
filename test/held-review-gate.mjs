@@ -36,6 +36,7 @@ for (const x of ["12", "1 yes", "a", "", "4"]) assert.ok(!bareChoice(x), x);
 const card = { role: "held", kind: "request", id: "world-g--aaaaaa", ts: 1000 };
 assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 900, text: "1. a\n2. b" }]), card, "card newer than Thoughts' last numbered question: the number is for the card");
 assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: "Which one?\n1. Keep it\n2. Drop it" }]), null, "Thoughts asked a numbered question after the card: the number is for Thoughts");
+for (const q of ["**1.** Keep\n**2.** Drop", "## 1. First\n## 2. Second", "> 1. a\n> 2. b", "Pick:\n1) a\n2) b", "  1. indented"]) assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: q }]), null, `numbered question after the card (${JSON.stringify(q)}) → Thoughts (HeldRecheck)`);
 assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: "OK" }]), card, "a hidden OK acknowledgement after the card doesn't count");
 assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: "⚠ Alpha says you asked for this; only approve if you did." }]), card, "a one-line review flag doesn't count");
 assert.equal(cardForBareNumber([{ role: "held", ts: 1000, id: "x--bbbbbb" }], []), null, "a decision turn isn't a card");
