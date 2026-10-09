@@ -262,7 +262,7 @@ export function digest({ sinceMs = 3600e3, now = Date.now() } = {}) {
   const ev = lines.filter((e) => Date.parse(e.ts) > now - sinceMs && /^(ready|refused|error|approved|denied)$/.test(e.ev));
   if (!ev.length) return { count: 0, text: "" };
   const by = (k) => ev.filter((e) => e.ev === k);
-  const q = (e) => `"${String(e.looking_for || "").slice(0, 90)}"${e.from ? ` (${e.from}, ${e.depth || "quick"})` : ""}`;
+  const q = (e) => `"${String(e.looking_for || e.query || "").slice(0, 90)}"${e.from ? ` (${e.from}, ${e.depth || "quick"})` : ""}`;
   const out = [`🔎 Research digest, ${[...new Set(ev.map((e) => e.sandbox))].join(", ")}, last ${Math.round(sinceMs / 60e3)} min: ${by("ready").length} deliverables ready for review, ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
   for (const e of by("ready")) out.push(`✓ ${q(e)}: ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
   for (const e of [...by("approved"), ...by("denied")]) out.push(`${e.ev === "approved" ? "→" : "✗"} ${q(e)} ${e.ev} by Angus${e.via ? ` (${e.via})` : ""}`);
