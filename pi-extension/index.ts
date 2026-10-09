@@ -265,7 +265,7 @@ export default function hyprpi(pi: ExtensionAPI) {
         display: true,
         content: `[hyprpi ${d.mode} from ${d.from.name} · id ${d.request_id}]\n${d.text}\n\n${how}`,
         details: d,
-      }, !String(d.from?.id || "").startsWith("thoughts:") || !!d.urgent); // agents' talk (and urgent asks) steer; Thoughts' tasks wait for the turn to end
+      }, !/^(thoughts:|hyprpi:wake$)/.test(String(d.from?.id || "")) || !!d.urgent); // agents' talk (and urgent asks) steer; Thoughts' tasks and J288 wakes wait for the turn to end (a new turn)
     } else if (event === "talk.reply") {
       const w = demands.get(d.request_id);
       if (w) {
