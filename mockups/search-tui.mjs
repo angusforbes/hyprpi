@@ -779,11 +779,16 @@ function render() {
       const k = items.push({ copy: e.text }) - 1, red = (l) => `${ESC}31m${l}${ESC}39m`;
       const add = (rs, textX) => { for (const r of rs) flat.push({ ...r, meta: { item: k, textX } }); };
       if (e.role === "held") { // J280: a decision on a held sandbox message, highlighted at full brightness
-        const bar = e.ok ? `${ESC}${worldBg(room)}m${ESC}30m` : `${ESC}41m${ESC}97m`, off = `${ESC}49m${ESC}39m`;
-        const [head, ...rest] = String(e.text).split("\n");
+        let [head, ...rest] = String(e.text).split("\n");
+        // J293 (Angus): a decision taken outside the panel (toast, terminal, room panel, a dismiss, a rule) and a reply:
+        // just the icon and the word, white on the world colour, no route or time. The Review flow's turns are unchanged.
+        const route = /^(.*?) \((?:toast|terminal|room panel|dismissed), [^)]*\)$/.exec(head);
+        const plain = e.kind === "reply" || !!route || /^Sent under your rule/.test(head);
+        if (plain) head = e.kind === "reply" ? head.replace(/ to \S+ \([^)]*\)$/, "") : route ? (/^Denied/.test(route[1]) ? "Denied" : "Approved") : head.replace(/^Sent under your rule/, "Sent under rule");
+        const bar = plain ? `${ESC}${worldBg(room)}m${ESC}97m` : e.ok ? `${ESC}${worldBg(room)}m${ESC}30m` : `${ESC}41m${ESC}97m`, off = `${ESC}49m${ESC}39m`;
         flat.push({ l: "" });
-        flat.push({ l: `  ${bar}${bold(` ${e.kind === "request" || e.kind === "reply" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
-        for (const [li, line] of rest.entries()) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(e.ok ? c : "31", "│")} ${e.kind === "request" && li === rest.length - 1 ? bold(w) : w}` })), 6);
+        flat.push({ l: `  ${bar}${bold(` ${plain || e.kind === "request" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${plain ? "" : dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        for (const [li, line] of rest.entries()) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(plain || e.ok ? c : "31", "│")} ${e.kind === "request" && li === rest.length - 1 ? bold(w) : w}` })), 6);
         continue;
       }
       if (kind === "full") {
