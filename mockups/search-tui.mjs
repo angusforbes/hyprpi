@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { REVIEW_TAG, claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { REVIEW_TAG, heldFor, firstShow, claimReview, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -357,20 +357,29 @@ function pollReview() {
   const before = Object.keys(reviews).join(",") + "|" + note;
   for (const [r, rv] of Object.entries(reviews)) if (!heldById(rv.id)) { delete reviews[r]; if (r === room) { note = `held message ${rv.id} was decided (or expired)`; if (rv.draft && !query) setBox(rv.draft); } }
   review = reviews[room] || null;
+  // A Review click on the toast (reviews/<W>.json) takes this world's open review over; with none, J301: the oldest
+  // message held for this world opens by itself (Angus: "approve/deny/review directly in the Thoughts").
+  const clicked = room ? claimReview(room) : null;
+  if (clicked && review && review.id !== clicked) { delete reviews[room]; review = null; }
   if (!review && room) {
-    const id = claimReview(room), h = id && heldById(id);
+    const auto = !clicked, id = clicked || (heldFor(room)[0] || {}).id, h = id && heldById(id);
     if (h) {
-      // Whatever was already in the box can't answer it (review #1): it is set aside and comes back afterwards.
-      review = reviews[room] = { id, room, h, confirm: null, shownAt: Date.now(), draft: query };
-      setBox("");
+      // Whatever was already in the box can't answer it (review #1). After a click it is set aside and comes back
+      // afterwards; when it opens by itself the box is left alone, and that same text can't answer it (J301).
+      review = reviews[room] = { id, room, h, confirm: null, shownAt: Date.now(), draft: auto ? "" : query, typed: auto ? query.trim() : "" };
+      if (!auto) setBox("");
+    }
+    if (h && firstShow(id)) {
       // J285 v2 (Angus: "the 'Request from Alpha (G1)' part should be highlighted … like your Approved"): the request
       // as its own highlighted turn, from the relay's data; Thoughts only adds a one-line flag.
       const rq = requestTurn(h);
       logTurn({ room, id, ok: true, kind: "request", turn: `${rq.head}\n${rq.body}\n(1) Approve (2) Deny (3) Allow similar for 1 hour` });
-      turns = heldTurns(room); bumpThread(); follow();
-      sendThought(reviewPrompt(h));
+      turns = heldTurns(room); bumpThread();
+      if (auto) { if (TH.pinned) TH.unseen++; else follow(); if (api) { TH.busy = true; api.call("thoughts.send", { room, text: reviewPrompt(h) }).catch(() => {}); } } // (no jump while he reads back)
+      else { follow(); sendThought(reviewPrompt(h)); }
     }
   }
+  if (review) { const n = heldFor(room).length; if (n !== review.waiting) { review.waiting = n; render(); } }
   if (Object.keys(reviews).join(",") + "|" + note !== before) { bumpThread(); render(); } // (numbered lists are drawn differently while a review is open)
 }
 setInterval(pollReview, 2000);
@@ -385,6 +394,7 @@ function reviewKey(raw) {
   if (!review) return false;
   if (!heldById(review.id)) { delete reviews[room]; review = null; return false; }
   if (Date.now() - review.shownAt < 1500) return false; // typed before the review appeared: not an answer
+  if (review.typed && raw === review.typed) return false; // (J301: already in the box when it opened by itself)
   const decide = (ch) => {
     const r = actOnHeld(review.id, ch), h = review.h, id = review.id, at = room;
     logHeld({ room, id, raw: lastRaw, choice: ch, ok: r.ok, cli: r.text, stage: "cli" });
@@ -714,7 +724,7 @@ function render() {
   review = reviews[room] || null;
   if (review) { // J274: the held message under review, and how to answer
     const h = review.h;
-    rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})`, W))));
+    rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})${review.waiting > 1 ? ` · 1 of ${review.waiting} waiting` : ""}`, W))));
     rows.push(clip("   " + h.text.replace(/\s+/g, " "), W));
     rows.push(dim(clip(review.confirm ? `   ${review.confirm.label}? y + ⏎ confirms · anything else cancels` : "   (1) Approve (2) Deny (3) Allow similar for 1 hour · or e.g. \"3 for 2 hours\" · anything else goes to Thoughts", W)));
   }
