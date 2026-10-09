@@ -51,7 +51,7 @@ const readJson = (f, d = {}) => { try { return JSON.parse(fs.readFileSync(f, "ut
 function die(m) { console.error(`shares: ${m}`); process.exit(2); }
 const log = (m) => console.log(`shares ${WORLD}: ${m}`);
 
-// ASR (docker-sandbox.html): home subfolders are allowed; home itself, /tmp, system and root folders are not.
+// The sandbox policy: home subfolders are allowed; home itself, /tmp, system and root folders are not.
 function allowedPath(p) {
   return p.startsWith(HOME + "/") && !p.startsWith(HOME + "/.ssh") && !p.startsWith(HOME + "/.gnupg");
 }

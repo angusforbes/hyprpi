@@ -7,7 +7,7 @@ import path from "node:path";
 //   doorman-safe    (default) the Doorman writes the searches and vets the result; Angus reviews only the deliverable.
 //   doorman-open    no human review: the Doorman writes and checks the searches and vets the deliverable, which goes
 //                   straight into the sandbox labelled "external, not human-reviewed". Opt-in only. It does NOT meet
-//                   NVIDIA ASR first principle #11 (human-gated trust promotion) or #4 (Rule of Three) for a sandbox
+//                   the principles of human-gated trust promotion and the Rule of Three for a sandbox
 //                   that holds internal data.
 // The old J314 setting "research": { "strict": true } still means doorman-strict (deprecated).
 // Anything else, or a missing setting, is doorman-safe: doorman-open is never reached without the exact setting.
