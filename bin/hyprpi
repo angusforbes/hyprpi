@@ -42,6 +42,8 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
   hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
+  hyprpi status [FOCUS] [--world X] [--self] [--json]   the /status facts: running jobs, recently done, waiting on
+                              Angus, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
   hyprpi daemon restart [--reason R] [--ttl MIN]   restart the daemon once everyone is idle (returns at once; never poll for idle) · --status · --cancel
@@ -604,7 +606,14 @@ const commands = {
     const decision = opt("--decision", "");
     const id = agentId();
     const status = args[0];
-    if (!["idle", "working", "blocked", "done"].includes(status)) die("usage: hyprpi status idle|working|blocked|done [--quiet] [--decision TEXT]");
+    // J337: no state given → the /status facts (what's running, recently done, waiting on Angus), from the daemon.
+    if (!["idle", "working", "blocked", "done"].includes(status)) {
+      const json = flag("--json"), self = flag("--self"), world = opt("--world", "");
+      if (args.some((a) => a.startsWith("--"))) die("usage: hyprpi status idle|working|blocked|done [--quiet] [--decision TEXT] · or hyprpi status [FOCUS] [--world X] [--self] [--json]");
+      const r = await request("status.facts", { focus: args.join(" "), ...(world ? { room: world.toUpperCase() } : {}), ...(self ? { self: true, agent_id: agentId() } : {}) });
+      console.log(json ? JSON.stringify(r.data, null, 1) : r.text);
+      return;
+    }
     const r = await request("agent.update", { agent_id: id, status, quiet, ...(decision && status === "blocked" ? { decision } : {}) });
     console.log(r.status);
   },

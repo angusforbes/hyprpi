@@ -254,6 +254,15 @@ function thoughtsCommands() {
   };
   return [
     ...jotCommands(),
+    // J337: "OK, where are we now with our projects and activities?" Thoughts answers from live facts the daemon
+    // gathers (agents, jobs, the board, what waits on Angus, restarts, unpushed commits: lib/status.mjs).
+    { name: "/status", usage: "/status [PROJECT|AGENT]", help: `${T()} sums up what's running, recently done and waiting on you, from live facts (a project or agent narrows it)`,
+      run: (a, text) => {
+        if (!api) { setBox(text); note = "✗ daemon offline"; return render(); }
+        note = `📋 /status: ${T()} is summing up…`; render();
+        api.call("thoughts.status", { room, focus: a }).then(() => { note = ""; follow(); TH.busy = true; render(); })
+          .catch((e) => { setBox(text); note = `✗ /status: ${/unknown method/.test(e.message) ? "the daemon hasn't picked this up yet (restart pending)" : e.message}`; render(); });
+      } },
     { name: "/compact", usage: "/compact [FOCUS]", help: `compact ${T()}'s conversation now (FOCUS: what the summary should keep)`,
       run: (a, text) => ctl(`compacting ${T()}`, { type: "compact", ...(a ? { customInstructions: a } : {}) }, (d) => `✓ ${T()} compacted${d.tokensBefore ? ` (${kTok(d.tokensBefore)} → ~${kTok(d.estimatedTokensAfter || 0)} tokens)` : ""}`, { text }) },
     { name: "/model", usage: "/model [provider/id]", help: `${T()}'s model until it restarts (config.json thoughtsModel is the lasting one); alone: the models`,

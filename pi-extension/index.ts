@@ -20,6 +20,7 @@ import { codeVersion } from "../lib/codever.mjs";
 import { loadPolicy } from "../lib/policy.mjs";
 import { orchAgent } from "./orch.ts";
 import { draftStore } from "../lib/tui/input-box.mjs";
+import { statusPrompt } from "../lib/status.mjs";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
@@ -678,6 +679,29 @@ export default function hyprpi(pi: ExtensionAPI) {
         const r = await call("agent.restart", { ...(who ? { agent: who } : {}), compact, by: "Angus" });
         if (who) ctx.ui.notify(`🔄 ${r.agent}: ${r.already ? "already restarting" : r.queued ? "restarts when its turn ends" : "restarting"}${compact ? " (compacting first)" : ""}`, "info");
       } catch (e: any) { ctx.ui.notify(`/restart: ${e?.message || e}`, "error"); }
+    },
+  });
+
+  // J337 /status (Angus: "summarizes everything that you'er working on now or recently finsihed"): this agent
+  // summarises its own job, recent work and what it waits on, from its conversation plus live facts from the
+  // daemon (status.facts with self: its jobs, projects, helpers, decisions it asked, restarts). The facts go in a
+  // collapsed "📋 /status" message (expand to read them); the answer is an ordinary reply.
+  pi.registerMessageRenderer("hyprpi-status", (message: any, { expanded, outputPad }: any, theme: any) => {
+    const d = message.details || {};
+    const box = new Box(outputPad, 1, (t: string) => theme.bg("customMessageBg", t));
+    box.addChild(new Text(theme.fg("accent", `📋 /status${d.focus ? " " + d.focus : ""}`) + theme.fg("dim", expanded ? "  live facts from the hyprpi daemon:" : "  (live facts from the hyprpi daemon; expand to read them)") + (expanded ? "\n" + String(d.facts || "") : ""), 0, 0));
+    return box;
+  });
+  pi.registerCommand("status", {
+    description: "Where are we now? This agent summarises its current job, recent work and what it's waiting on (live facts from hyprpi). /status TOPIC narrows it",
+    handler: async (args: any, ctx: any) => {
+      ctxRef = ctx;
+      const focus = String(args ?? "").trim();
+      let facts = "";
+      try { facts = (await call("status.facts", { self: true, focus })).text; }
+      catch (e: any) { ctx.ui.notify(`/status: ${/unknown method/.test(e?.message || "") ? "the daemon hasn't picked this up yet (it needs a daemon restart)" : e?.message || e}`, "error"); return; }
+      pi.sendMessage({ customType: "hyprpi-status", content: statusPrompt({ who: "agent", focus, facts }), display: true, details: { focus, facts } } as any,
+        { triggerTurn: true, ...(idle() ? {} : { deliverAs: "followUp" }) } as any);
     },
   });
 
