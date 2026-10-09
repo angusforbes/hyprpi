@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // gpu.mjs (J328): the GPU lease worker for a sandboxed world (docs: agent-config docs/sandbox/doorman-design.md, "GPU lease").
 //
-// DEVELOPER MODE: NOT AN NVIDIA-APPROVED ROUTE. NVIDIA's approved local sandbox is sbx (Docker Sandboxes), which has no GPU
+// DEVELOPER MODE: NOT AN APPROVED ROUTE FOR WORK DATA. The approved local sandbox is sbx (Docker Sandboxes), which has no GPU
 // (sbx v0.47, microVMs). This worker is a plain Docker container with the GPU through the NVIDIA Container Toolkit (CDI),
 // which shares the host kernel and driver. That is why the setting is called "developer" everywhere (config, review, README).
 //
@@ -34,7 +34,7 @@ const exec = promisify(execFile);
 
 export const GLOBAL_DEFAULT = "developer"; // Angus 2026-10-09: "developer mode (default for now)"; make it "off" before a public release
 export const MODES = ["developer", "off"];
-export const LABEL = "developer mode: not an approved NVIDIA route (plain Docker + NVIDIA Container Toolkit; sbx has no GPU)";
+export const LABEL = "developer mode: not an approved route for work data (plain Docker + NVIDIA Container Toolkit; sbx has no GPU)";
 export const HARD = {
   maxSeconds: 300, defaultSeconds: 60,
   maxVramMib: 3072, defaultVramMib: 1024, // "well under 4 GiB"; the display already holds ~3.6 GiB of 8

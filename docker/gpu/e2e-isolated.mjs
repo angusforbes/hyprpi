@@ -61,7 +61,7 @@ ok(pending().length === 0, "nothing was held by the refusals");
 // 2. deny
 r = await ask(lease()); ok(r?.ok && r.pending?.length === 1, `lease held for Angus: ${JSON.stringify(r?.pending)}`);
 const held = JSON.parse(fs.readFileSync(path.join(STATE, "pending", pending()[0]), "utf8"));
-ok(/DEVELOPER MODE/.test(held.text) && /not an approved NVIDIA route/.test(held.text) && /no network/.test(held.text) && /cuda_hello.py/.test(held.text) && held.shown[0] === "Thoughts-A", "the held text is labelled developer mode, names limits and the files, goes to Thoughts-A");
+ok(/DEVELOPER MODE/.test(held.text) && /not an approved route for work data/.test(held.text) && /no network/.test(held.text) && /cuda_hello.py/.test(held.text) && held.shown[0] === "Thoughts-A", "the held text is labelled developer mode, names limits and the files, goes to Thoughts-A");
 decide(held.id, "deny"); await sleep(1500);
 ok(pending().length === 0 && !fs.existsSync(held.gpu.dir), "denied: nothing pending and the snapshot is gone");
 ok(!!(await waitInbox((j) => j.type === "gpu" && j.status === "denied", 5000)), "the sandbox's inbox says denied");

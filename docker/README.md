@@ -107,9 +107,9 @@ Not available inside: host-integrated extensions (hyprcu, WhatsApp, mail, voice,
 name-sync), `ding`/`bonk`, subagents, MCP, SSH/`gh` credentials, GPU (needs the NVIDIA Container Toolkit and
 `--gpus all`; not installed).
 
-## GPU lease (J328): DEVELOPER MODE, not an NVIDIA-approved route
+## GPU lease (J328): DEVELOPER MODE, not an approved route for work data
 
-A sandboxed world can ask for a GPU job; the host runs it in a throwaway worker after Angus approves it. NVIDIA's approved sandbox (sbx) has no GPU (v0.47), so the worker is a plain Docker container with the GPU through the NVIDIA Container Toolkit (CDI). That shares the host's kernel and driver and is outside the approved route, which is why the setting is called developer. Design, limits and later levels: agent-config `docs/sandbox/doorman-design.md`, section 13.
+A sandboxed world can ask for a GPU job; the host runs it in a throwaway worker after Angus approves it. The approved sandbox (sbx) has no GPU (v0.47), so the worker is a plain Docker container with the GPU through the NVIDIA Container Toolkit (CDI). That shares the host's kernel and driver and is outside the approved route, which is why the setting is called developer. Design, limits and later levels: agent-config `docs/sandbox/doorman-design.md`, section 13.
 
 - Setting, per sandbox, in `~/.config/hyprpi/worlds/<name>.json`: `"gpu": "developer"` or `"gpu": "off"` (or `{"mode": "developer", "max_seconds": 120, "max_vram_mib": 2048, "image": "python:3.12-slim"}`). Missing means developer for now; it should become off for new users before any public release. Off (or anything unreadable) refuses with a clear message and asks nothing of the owner.
 - Flow: the world's agent asks its Doorman, the Doorman drafts the lease (`hyprpi_gpu_lease`, relay op `gpu_lease`), the relay snapshots the job's files and holds it for Angus ("GPU lease for world-g", marked developer mode), and on approval `docker/gpu/gpu.mjs` runs it: no network, no shared folders (files are copied in), the GPU through CDI, a time limit (also enforced by a timer inside the worker), and a VRAM budget and scratch-disk cap that are watchdogs (polled about every half second, killed when seen over; not hard caps). Outputs and the log come back to the sandbox's read-only inbox; the worker is destroyed.
