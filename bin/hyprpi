@@ -289,6 +289,7 @@ function pgrepUi() {
 }
 
 async function uiRequest(method, params) {
+  { const why = hypr.hyprBlocked(); if (why) die(`hypr actions disabled (isolated daemon: ${why}): no UI opened; HYPRPI_ALLOW_HYPR=1 allows it`); } // J333
   await ensureDaemon();
   let r = await request(method, params);
   // A running UI may just be reconnecting (it retries every 1.5 s after a

@@ -7,6 +7,7 @@
 # selection (else the key reaches the panel: the box's selection), paste the CLIPBOARD (kitty's
 # default Shift+Insert pastes the primary selection), as in the other panels (@hyprpi N49).
 # J295: a sandboxed world's panels run inside its sandbox (class hyprpi.g-*); the host never opens one for it.
+. "$(dirname "$(readlink -f "$0")")/../lib/isolated-guard.sh" # J333: no windows from an isolated hyprpi
 if [ -z "$HYPRPI_SANDBOX_WORLD" ] && node "$(dirname "$(readlink -f "$0")")/../lib/sandboxed-world.mjs" "${1:-}"; then echo "agents-tui: world $1 is sandboxed: its panels run inside its sandbox" >&2; exit 0; fi
 exec kitty --class hyprpi.agents -o confirm_os_window_close=0 -o copy_on_select=clipboard \
   -o 'map ctrl+insert copy_or_noop' \

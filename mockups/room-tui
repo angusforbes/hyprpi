@@ -10,6 +10,7 @@
 # likewise. SUPER+C (Ctrl+Insert) copies kitty's selection, else reaches the TUI (copies the
 # message box's selection); SUPER+V (Shift+Insert) pastes (bracketed, line breaks kept).
 # J295: a sandboxed world's panels run inside its sandbox (class hyprpi.g-*); the host never opens one for it.
+. "$(dirname "$(readlink -f "$0")")/../lib/isolated-guard.sh" # J333: no windows from an isolated hyprpi
 if [ -z "$HYPRPI_SANDBOX_WORLD" ] && node "$(dirname "$(readlink -f "$0")")/../lib/sandboxed-world.mjs" "${1:-}"; then echo "room-tui: world $1 is sandboxed: its panels run inside its sandbox" >&2; exit 0; fi
 exec kitty --class hyprpi.mockup -o copy_on_select=clipboard \
   -o "mouse_map=shift+left click grabbed" \
