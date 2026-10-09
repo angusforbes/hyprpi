@@ -297,6 +297,7 @@ function draw() {
   // J268: a message from a sandboxed world held for Angus's OK, addressed to someone in this world.
   // y + Enter sends it, n + Enter denies it (the relay's CLI decides; agents can't approve).
   // J274: messages an "allow similar" rule let through to this world in the last 15 min (one line each, newest)
+  if (reconn && Date.now() - reconn.at < 5 * 60 * 1000) rows.push(`${ESC}${worldBg(room)}m${ESC}30m${bold(cut(" " + reconn.text + " ", W))}${ESC}49m${ESC}39m`); // J283
   for (const a of autoNow.slice(-2)) rows.push(dim(cut(a.line, W)));
   if (heldNow.length) {
     const h = heldNow[0], more = heldNow.length > 1 ? `  (+${heldNow.length - 1} more)` : "";
@@ -596,6 +597,18 @@ const hereProjects = () => (board.room === room ? board.projects : []).filter((p
 // Agents and projects, for @completion (projects marked 📋 in the list shown).
 const atPool = () => [...hereAgents(), ...hereProjects().map((p) => ({ id: p.id, name: p.name, display: p.name, project: true }))];
 
+// J283: a reconnect to the daemon shows as a highlighted line at the top for 5 minutes (restart vs a dropped
+// connection, and for how long), so a 2-second daemon restart never looks like the room went away.
+let daemonInfo = null, lostAt = 0, reconn = null;
+async function noteReconnect() {
+  let info = null; try { info = await api.call("ping"); } catch { return; }
+  const before = daemonInfo; daemonInfo = { pid: info?.pid, started: info?.started };
+  if (!before || (!lostAt && before.pid === daemonInfo.pid)) return;
+  const secs = lostAt ? Math.max(1, Math.round((Date.now() - lostAt) / 1000)) : 0, hhmm = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  reconn = { at: Date.now(), text: `🔌 reconnected: ${before.pid !== daemonInfo.pid ? `the hyprpi daemon restarted at ${hhmm(daemonInfo.started || Date.now())}` : "the connection to hyprpi dropped"}${secs ? ` (offline ${secs} s)` : ""} · nothing is lost` };
+  lostAt = 0; render();
+  setTimeout(render, 5 * 60 * 1000 + 100);
+}
 async function start() {
   if (restarting) return;
   try {
@@ -606,9 +619,10 @@ async function start() {
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
         else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 50000) t.splice(0, t.length - 40000); if (data.room === room) render(); }
       },
-      onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
+      onClose: () => { online = false; api = null; lostAt ||= Date.now(); render(); setTimeout(start, 1500); },
     });
     online = true;
+    noteReconnect();
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadRoom(room);
     loadBoard();

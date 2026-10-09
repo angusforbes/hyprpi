@@ -711,7 +711,7 @@ function render() {
   const inTop = L.rows.length > MAXI ? Math.max(0, Math.min(L.cRow - MAXI + 1, L.rows.length - MAXI)) : 0;
   const inRows = L.rows.slice(inTop, inTop + MAXI);
   const status = note || S.status;
-  const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : status.startsWith("🐳") || status.startsWith("✓") ? fg(c, bold(status)) : dim(status); // J280: review hints and results readable
+  const statusStyled = status.startsWith("✗") ? `${ESC}31m${status}${ESC}39m` : status.startsWith("🐳") || status.startsWith("🔌") || status.startsWith("✓") ? fg(c, bold(status)) : dim(status); // J280: review hints and results readable
   const bottom = [];
   // One animation only (Angus): "thinking…" / "searching…" in the thread; this line stays still.
   // (J247: "↓ N new" is the pill at the bottom right of the thread now, not this line.)
@@ -746,7 +746,8 @@ function render() {
     const tag = () => { for (let i = tagFrom; i < flat.length; i++) flat[i].ek = tagKey; }; // J247: each row knows its entry
     // J280: the held-message decision turns (lib/held.mjs heldTurns) merged in by time
     let lastTs = 0; const dated = TH.entries.map((e) => ({ e, ts: (lastTs = Number(e.ts) || lastTs) })); // undated: keep their place (#7)
-    const merged = turns.length ? [...dated, ...turns.map((e) => ({ e, ts: e.ts }))].sort((a, b) => a.ts - b.ts).map((x) => x.e) : TH.entries;
+    const extra = [...turns, ...sysTurns]; // J280 decision turns, J283 reconnect turns
+    const merged = extra.length ? [...dated, ...extra.map((e) => ({ e, ts: e.ts }))].sort((a, b) => a.ts - b.ts).map((x) => x.e) : TH.entries;
     for (const [ei, e] of merged.entries()) {
       tag(); tagFrom = flat.length; tagKey = entryKey(e);
       const kind = threadKind(e);
@@ -765,7 +766,7 @@ function render() {
         const bar = e.ok ? `${ESC}${worldBg(room)}m${ESC}30m` : `${ESC}41m${ESC}97m`, off = `${ESC}49m${ESC}39m`;
         const [head, ...rest] = String(e.text).split("\n");
         flat.push({ l: "" });
-        flat.push({ l: `  ${bar}${bold(` ${e.ok ? "✓" : "✗"} 🐳 ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
+        flat.push({ l: `  ${bar}${bold(` ${e.ok ? "✓" : "✗"} ${e.icon || "🐳"} ${head} `)}${off}${dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         for (const line of rest) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(e.ok ? c : "31", "│")} ${w}` })), 6);
         continue;
       }
@@ -953,6 +954,20 @@ function jump() {
   api.call("agent.focus", { agent: r.source }).then(() => { note = "→ " + r.name; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 
+// J283 (Angus: "what happened, you went away"): a reconnect to the daemon is its own highlighted turn, saying
+// whether the daemon restarted (another pid) or the connection only dropped, and for how long.
+let daemonInfo = null, lostAt = 0, sysTurns = [];
+async function noteReconnect() {
+  let info = null; try { info = await api.call("ping"); } catch { return; }
+  const before = daemonInfo; daemonInfo = { pid: info?.pid, started: info?.started };
+  if (!before) return; // the first connection: nothing to say
+  if (!lostAt && before.pid === daemonInfo.pid) return;
+  const secs = lostAt ? Math.max(1, Math.round((Date.now() - lostAt) / 1000)) : 0, hhmm = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const what = before.pid !== daemonInfo.pid ? `the hyprpi daemon restarted at ${hhmm(daemonInfo.started || Date.now())}` : "the connection to hyprpi dropped";
+  sysTurns.push({ role: "held", icon: "🔌", ok: true, ts: Date.now(), text: `Reconnected: ${what}${secs ? ` (offline ${secs} s)` : ""}\nNothing is lost: the thread is reloaded from hyprpi.` });
+  if (sysTurns.length > 20) sysTurns.shift();
+  lostAt = 0; note = `🔌 reconnected: ${what}`; bumpThread(); follow(); render();
+}
 async function start() {
   try {
     api = await connect({
@@ -961,9 +976,10 @@ async function start() {
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
         else if (ev === "thoughts" && data?.room === room) { const nt = heldTurns(room); if (nt.length !== turns.length) { turns = nt; bumpThread(); } if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) { if (shows(data.entry)) TH.unseen++; } else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
       },
-      onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
+      onClose: () => { online = false; api = null; lostAt ||= Date.now(); render(); setTimeout(start, 1500); },
     });
     online = true;
+    noteReconnect();
     if (thoughtsOn) loadThoughts();
     applyRooms(await api.call("ui.subscribe", { windows: false }));
     if (!startRan) { startRan = true; runFrom(startArgs.mode, startArgs.query); } // opened by /search or /ai elsewhere
