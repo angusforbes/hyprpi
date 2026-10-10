@@ -169,7 +169,7 @@ class Helper {
     const t = Date.now(); if (t - (this.lastStatus || 0) < 2000) return { ok: false, error: "too soon" }; this.lastStatus = t;
     const v = validateStatus(raw), wins = await this.windows();
     const room = String.fromCharCode(65 + Math.floor((this.cfg.lo - 1) / 10));
-    const agents = v.agents.map((a) => { const w = wins.find(({ o }) => o.kind === "agent" && o.agent === a.id); return { name: a.name, status: a.status, model: a.model, ws: w ? w.c.workspace.id : 0 }; });
+    const agents = v.agents.map((a) => { const w = wins.find(({ o }) => o.kind === "agent" && o.agent === a.id); return { name: a.name, status: a.status, model: a.model, ws: w ? w.c.workspace.id : 0, ...(a.icon ? { icon: a.icon } : {}), ...(w ? { address: w.c.address } : {}) }; }); // J423: its icon (validated) and OUR window address, so the host can draw "<icon> Name 🐳"
     try { const f = path.join(STATE, "agents.json"); fs.writeFileSync(f + ".tmp", JSON.stringify({ world: WORLD, room, at: t, agents, thoughts: v.thoughts, dropped: v.dropped }), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); } catch { /* */ }
     return { ok: true, shown: agents.length, dropped: v.dropped };
   }

@@ -23,6 +23,7 @@ import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib
 import { worldHex, unnamed } from "../lib/tui/term.mjs";
 import { isAppWindow, appLabel, stateNote } from "../lib/apps.mjs";
 import { heldForSandboxes } from "../lib/held.mjs";
+import { sbxIcon } from "../lib/sandbox-icon.mjs"; // J423
 
 // Which pop-up (Angus, @hyprpi D8): "plugin" (default) is our own copy of the Omarchy menu, the
 // omarchy-shell plugin agf.hyprpi-finder (shell-plugin/; the same look, plus colour: names in the
@@ -294,7 +295,7 @@ async function rows() {
       rich: esc(icon) + " " + font(worldColor(m[2][0]), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""), sub: "",
       worlds: [...new Set([wsWorld, m[2][0]])].join(""), ws, subtitle: [SUMMON && ws === S.workspace ? "already here" : "", info.sub].filter(Boolean).join(" · ") });
   }
-  // J404: a sandboxed world's own agents and panels, 🐳 before the name (Linkpath's rows). Summon: that world's, after
+  // J404: a sandboxed world's own agents and panels, marked 🐳 (J423: after the name, like the panels). Summon: that world's, after
   // the host agents (⏎ brings the window in); the finder (J404 v2, Angus: "alpha and beta are not appearing … either"):
   // every world's, its agents with the agents and its panels with the panels (⏎ jumps to the window).
   {
@@ -310,8 +311,11 @@ async function rows() {
       const loc = wsLabel(ws, WORLD_SIZE), agent = w.kind === "agent", here = SUMMON && ws === S.workspace ? "already here" : "";
       if (agent) {
         const nm = w.name || safeText(String(c.title || "").replace(/^(🐳 [A-Z]: )?π - /u, "").split(" - ")[0]) || "agent";
+        // J423 (Angus: "the agents can still get their own icons, they'll just have the what at the end"): "🦊 Alpha 🐳 · G1",
+        // its icon as reported from inside for this very window (validated again), else a steady default from its name
+        const ic = sbxIcon((sandboxReport(wsWorld)?.agents || []).find((a) => a?.address === c.address)?.icon, nm);
         out.push({ kind: SUMMON ? "panel" : "sbxagent", id: c.address, room: wsWorld, sort: SUMMON ? "0" + nm : nm, recent: 0, mark: SUMMON ? "▫" : "○", glyph: "○", sandboxed: true, // (summon: one category, agents first by their sort key)
-          label: `🐳 ${nm} · ${loc}`, rich: "🐳 " + font(worldColor(wsWorld), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
+          label: `${ic} ${nm} 🐳 · ${loc}`, rich: esc(ic) + " " + font(worldColor(wsWorld), nm) + " 🐳" + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
           worlds: wsWorld, ws, subtitle: ["sandboxed agent", here].filter(Boolean).join(" · ") });
         continue;
       }

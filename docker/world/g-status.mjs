@@ -5,6 +5,7 @@
 // demand, focus or close anything (the workspace comes from world-helper's own window map, not from the sandbox).
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { iconOk } from "../../lib/sandbox-icon.mjs"; // J423: an agent's own icon, one emoji or nothing
 export const LIMITS = { agents: 12, bytes: 8192 };
 export const STATUSES = ["working", "background", "blocked", "done", "idle"];
 export const THOUGHTS = ["running", "idle", "off"];
@@ -12,7 +13,7 @@ const NAME_RE = /^[A-Za-z][A-Za-z0-9 _-]{0,30}$/, ID_RE = /^[A-Za-z0-9_.-]{3,64}
 // a model as shown: its last part ("gpt-6-astra"), when it looks like a model id; anything else is "other"
 export const modelShown = (m) => (typeof m === "string" && m.length <= 120 && MODEL_RE.test(m) ? m.split("/").pop().replace(/^claude-/, "").slice(0, 40) : "other");
 
-// raw: what the sandbox sent (any JSON). -> { agents: [{ id, name, status, model }], thoughts, dropped } (never throws)
+// raw: what the sandbox sent (any JSON). -> { agents: [{ id, name, status, model, icon? }], thoughts, dropped } (never throws)
 export function validateStatus(raw) {
   const out = { agents: [], thoughts: "", dropped: 0 };
   let size = 0; try { size = Buffer.byteLength(JSON.stringify(raw ?? null)); } catch { return { ...out, dropped: 1 }; }
@@ -25,7 +26,7 @@ export function validateStatus(raw) {
       && typeof a.status === "string" && STATUSES.includes(a.status) && !seen.has(a.id);
     if (!ok) { out.dropped++; continue; }
     seen.add(a.id);
-    out.agents.push({ id: a.id, name: a.name.replace(/\s+/g, " ").trim(), status: a.status, model: modelShown(a.model) });
+    out.agents.push({ id: a.id, name: a.name.replace(/\s+/g, " ").trim(), status: a.status, model: modelShown(a.model), ...(iconOk(a.icon) ? { icon: a.icon } : {}) }); // J423: an invalid icon is dropped, not the agent
   }
   if (typeof raw.thoughts === "string" && THOUGHTS.includes(raw.thoughts)) out.thoughts = raw.thoughts;
   return out;
@@ -42,7 +43,7 @@ if (MAIN && process.argv[2] === "run") {
       const api = await connect({ name: "g-status" });
       const r = await api.call("ui.subscribe", { windows: false }); try { api.close?.(); } catch { /* */ }
       const me = process.env.HYPRPI_SANDBOX_WORLD || "", th = (Array.isArray(r.thoughts) ? r.thoughts : []).find((t) => t && t.room === me);
-      const body = { agents: (r.agents || []).slice(0, 20).map((a) => ({ id: a.id, name: a.display || a.name, status: a.status, model: a.model })),
+      const body = { agents: (r.agents || []).slice(0, 20).map((a) => ({ id: a.id, name: a.display || a.name, status: a.status, model: a.model, ...(a.icon ? { icon: a.icon } : {}) })),
         thoughts: th ? (th.running ? "running" : "idle") : "off" };
       const s = JSON.stringify(body);
       if (s !== last || Date.now() - lastAt > 30000) { await gCall({ op: "status", status: body }).catch(() => {}); last = s; lastAt = Date.now(); }

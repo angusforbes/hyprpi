@@ -24,6 +24,7 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { connect } from "../lib/client.mjs";
+import { sbxIcon } from "../lib/sandbox-icon.mjs"; // J423
 import { loadConfig, wsLabel } from "../lib/paths.mjs";
 const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C2" labels)
 import * as hypr from "../lib/hypr.mjs";
@@ -215,8 +216,8 @@ function reportedRows(r, W) {
   if (!(age < 90000)) return [dim(clip(`  ◇ world ${SAFE(j.room, 1)}'s own agents: not reporting (last ${Math.round(age / 60000)} min ago)`, W))];
   const marks = { working: "●", background: "◐", blocked: "×", done: "✓", idle: "○" };
   const out = [dim(clip(`  reported by ${SAFE(j.room, 1)} (inside its sandbox, display only):`, W))];
-  for (const a of j.agents.slice(0, 12)) out.push(dim(clip(`   ${marks[a.status] || "○"} 🐳 ${SAFE(a.name, 31)} · ${SAFE(a.status, 12)}${a.ws ? " · " + wsLabel(Number(a.ws), WORLD_SIZE) : ""}${a.model ? " · " + SAFE(a.model, 40) : ""} · reported by ${SAFE(j.room, 1)}`, W)));
-  if (j.thoughts) out.push(dim(clip(`   💭 🐳 Thoughts-${SAFE(j.room, 1)} · ${SAFE(j.thoughts, 10)} · reported by ${SAFE(j.room, 1)}`, W)));
+  for (const a of j.agents.slice(0, 12)) out.push(dim(clip(`   ${marks[a.status] || "○"} ${sbxIcon(a.icon, SAFE(a.name, 31))} ${SAFE(a.name, 31)} 🐳 · ${SAFE(a.status, 12)}${a.ws ? " · " + wsLabel(Number(a.ws), WORLD_SIZE) : ""}${a.model ? " · " + SAFE(a.model, 40) : ""} · reported by ${SAFE(j.room, 1)}`, W)));
+  if (j.thoughts) out.push(dim(clip(`   💭 Thoughts-${SAFE(j.room, 1)} 🐳 · ${SAFE(j.thoughts, 10)} · reported by ${SAFE(j.room, 1)}`, W)));
   return out;
 }
 function render() { if (restarting) return; if (batching) { dirty = true; return; } draw(); }

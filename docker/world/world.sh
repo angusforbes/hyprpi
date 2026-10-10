@@ -61,7 +61,9 @@ case "$CMD" in
     [[ "$NAME" =~ ^[A-Za-z][A-Za-z0-9_-]{0,30}$ ]] || { echo "world.sh: bad agent name" >&2; exit 2; }
     # the first of the world's workspaces (except the last, the panels') with none of its windows, as the helper sees them
     WS="$(in_sb 'hyprctl -j clients' | jq --argjson lo "$LO" --argjson hi "$HI" '[.[].workspace.id] as $u | [range($lo; $hi)] | map(select(. as $w | $u | index($w) | not)) | first // $lo')"
-    in_sb "cd \"\$G_WORLD_DIR\" && hyprpi new --workspace $WS --no-focus --cwd \"\$G_WORLD_DIR\" --name $NAME" ;;
+    # J423: its own icon (a steady animal for its name, lib/sandbox-icon.mjs); the 🐳 goes after its name on the host
+    ICON="$(node -e 'import(process.argv[1]).then((m) => process.stdout.write(m.defaultIcon(process.argv[2])))' "$H/lib/sandbox-icon.mjs" "$NAME" 2>/dev/null)"
+    in_sb "cd \"\$G_WORLD_DIR\" && hyprpi new --workspace $WS --no-focus --cwd \"\$G_WORLD_DIR\" --name $NAME${ICON:+ --icon $ICON}" ;;
   stop)
     node "$H/docker/sbx-relay.mjs" clear "$SB" >/dev/null 2>&1 || true   # J274: this world's "allow similar" rules end with it
     for a in $(node "$H/docker/world/world-helper.mjs" windows "$WORLD"); do   # only windows this world owns (review #7)
