@@ -250,6 +250,9 @@ WF("world-o", { task: TASK, gateway: { mode: "yolo" } });
 t("task: off-task in yolo is sent but flagged (J412), never held", () => { const r = R.ask({ sandbox: "world-o", lookingFor: "offtask open mode" }); assert.equal(r.status, "ready"); assert.match(fs.readFileSync(path.join(T, "state", "log.jsonl"), "utf8") || "", /"ev":"flagged"/); });
 WF("world-p", { task: TASK, gateway: { mode: "open" } });
 t("task: off-task in open is sent but flagged, and the deliverable is still a ready item for review", () => { const r = R.ask({ sandbox: "world-p", lookingFor: "offtask open mode two" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "open"); });
+t("J412 red team #4: past the cap in open, the refusal says the others went out flagged, not that they wait for Angus", () => {
+  for (const k of ["b", "c"]) assert.equal(R.ask({ sandbox: "world-p", lookingFor: `offtask open ${k}` }).status, "ready");
+  const r = R.ask({ sandbox: "world-p", lookingFor: "offtask open the fourth" }); assert.equal(r.status, "refused"); assert.match(r.reason, /3 such requests already went out flagged this hour/); assert.doesNotMatch(r.reason, /wait for Angus/); });
 WF("world-s", { task: TASK, gateway: { mode: "safe" } });
 t("task: off-task in safe is still HELD as an exception", () => { const r = R.ask({ sandbox: "world-s", lookingFor: "offtask safe mode" }); assert.equal(r.status, "planned"); });
 t("task: two worlds files naming one sandbox → no task, held, with the ambiguity named", () => { WF("zz-copy", { sandbox: "world-t", task: "anything at all" }); const c = R.conf("world-t"); assert.equal(c.task, ""); assert.match(c.taskNote, /ambiguous/); fs.unlinkSync(path.join(T, "config", "hyprpi", "worlds", "zz-copy.json")); });

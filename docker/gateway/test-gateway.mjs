@@ -22,6 +22,9 @@ fs.symlinkSync(path.join(T, "outside.md"), path.join(WORK, "cube-art", "link.md"
 fs.writeFileSync(path.join(ROLE, "paper.pdf"), "%PDF-1.4 tiny");
 
 const G = await import("./types.mjs");
+// J412 red team #2/#3: offline, deterministic DNS: a fake getent (names not listed fail to resolve, which now refuses)
+const DNS = new Map([["unpkg.com", "104.16.0.1"], ["localhost.localdomain", "127.0.0.1"], ["example.org", "93.184.215.14"], ["flip.example.com", "93.184.215.15"]]);
+G.resolver.ahosts = (h) => DNS.has(h) ? { ok: true, out: `${DNS.get(h)}  STREAM ${h}\n` } : { ok: false, out: "" };
 import { execFileSync } from "node:child_process";
 const require_mkfifo = (p) => execFileSync("mkfifo", [p]);
 let n = 0; const t = async (name, fn) => { await fn(); n++; console.log("ok", n, name); };
@@ -68,6 +71,19 @@ await t("red team J379: hard links, key-like content, private DNS answers refuse
   const v = ok("share_project", { project: "secretproj", mode: "rw", why: "x" }); assert.equal(v.params.mode, "ro"); assert.match(v.show, /read-only is all/);
 });
 await t("red team J379 #2: a share runs only for the exact folder Angus saw", async () => { const v = ok("share_project", { project: "cube-art", mode: "ro", why: "x" }); fs.renameSync(path.join(WORK, "cube-art"), path.join(WORK, "cube-art-old")); fs.mkdirSync(path.join(WORK, "cube-art")); const r = await G.run("share_project", v.params, rctx); assert.equal(r.ok, false); assert.match(r.outcome, /no longer exactly/); fs.rmSync(path.join(WORK, "cube-art"), { recursive: true }); fs.renameSync(path.join(WORK, "cube-art-old"), path.join(WORK, "cube-art")); });
+await t("J412 red team #3: a lookup failure or no address refuses (fail closed)", () => {
+  bad("allow_host", { host: "nothing-here.example.net", why: "x" }, /couldn't be looked up/);
+  const keep = G.resolver.ahosts; G.resolver.ahosts = () => ({ ok: true, out: "" }); try { bad("allow_host", { host: "unpkg.com", why: "x" }, /no address/); } finally { G.resolver.ahosts = keep; }
+  G.resolver.ahosts = () => { throw new Error("getent missing"); }; try { bad("allow_host", { host: "unpkg.com", why: "x" }, /couldn't be looked up/); } finally { G.resolver.ahosts = keep; }
+});
+await t("J412 red team #2: the name is resolved again right before the rule; public at admission, loopback at decide: no rule", async () => {
+  const v = ok("allow_host", { host: "flip.example.com", why: "x" }); let called = 0;
+  DNS.set("flip.example.com", "127.0.0.1");
+  const r = await G.run("allow_host", v.params, { ...rctx, policyAllow: async () => { called++; return { ok: true }; } });
+  assert.equal(r.ok, false); assert.match(r.outcome, /private or local address.*checked again/); assert.equal(called, 0, "policyAllow never called");
+  DNS.delete("flip.example.com"); const r2 = await G.run("allow_host", v.params, { ...rctx, policyAllow: async () => { called++; return { ok: true }; } });
+  assert.equal(r2.ok, false); assert.match(r2.outcome, /couldn't be looked up/); assert.equal(called, 0);
+});
 await t("review #8: why is capped in bytes", () => bad("share_project", { project: "cube-art", why: "é".repeat(1000) }, /bytes/));
 await t("run: allow and share call their host functions; note runs nothing", async () => { assert.ok((await G.run("allow_host", { host: "unpkg.com" }, rctx)).ok); assert.ok((await G.run("share_project", ok("share_project", { project: "cube-art", mode: "ro", why: "x" }).params, rctx)).ok); const before = calls.length; assert.match((await G.run("note_to_owner", { text: "x" }, rctx)).outcome, /read the note/); assert.equal(calls.length, before); });
 await t("run: a handler error is a failed outcome, never a throw", async () => { const r = await G.run("share_project", ok("share_project", { project: "cube-art", mode: "ro", why: "x" }).params, { ...rctx, addProject: async () => { throw new Error("boom"); } }); assert.equal(r.ok, false); assert.match(r.outcome, /boom/); });

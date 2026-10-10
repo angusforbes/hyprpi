@@ -529,7 +529,7 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
     : plan.drift !== false ? `topic drift across this sandbox's recent requests: ${plan.drift === true ? clean1(plan.drift_reason || "(no reason given)", 200).replace(/[.\s]+$/, "") : "the Doorman gave no drift verdict"}` : "";
   if (exception && !takeException(sandbox)) {
     logEvent({ ev: "refused", stage: "task", ...base, reason: `${exception}; over ${LIMITS.exceptionsPerHour} held exceptions this hour`, searches: sent });
-    return { status: "refused", rid, reason: `Not sent: ${exception}. ${LIMITS.exceptionsPerHour} such requests already wait for Angus this hour; ask again later, or stay on the task.` };
+    return { status: "refused", rid, reason: `Not sent: ${exception}. ${LIMITS.exceptionsPerHour} such requests ${POLICY[cfg.mode]?.exceptionHeld ? "already wait for Angus" : "already went out flagged"} this hour; ask again later, or stay on the task.` }; // (J412 red team #4: in open / yolo they went out, they don't wait)
   }
   if (exception && !POLICY[cfg.mode]?.exceptionHeld) { base.flag = exception; logEvent({ ev: "flagged", ...base, reason: exception }); } // J412: open / yolo send it, flagged
   if (cfg.strict || (exception && POLICY[cfg.mode]?.exceptionHeld)) { // J314: nothing goes out until Angus approves these exact searches (research.mjs run --rid)

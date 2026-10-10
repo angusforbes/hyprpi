@@ -437,7 +437,7 @@ class Sandbox {
         // Thoughts it reports to), never under an allow-similar rule, one action per draft.
         if (!this.doormanFor) throw new Error("only a Doorman drafts requests");
         if (this.relay.agentFree(this)) throw new Error(`a free-form request needs a host agent, and this host has none. ${UNSUPPORTED}`); // J368
-        if (this.relay.policy(this, "draft") === "refused") throw new Error(this.relay.refusalFor(this, "draft")); // J412: strict refuses free-form requests
+        if (this.relay.policy(this, "draft") === "refused") throw new Error(`${this.relay.refusalFor(this, "draft")}. ${UNSUPPORTED}`); // (J412 red team #5: the shared guidance too) // J412: strict refuses free-form requests
         // J407/J412: whether a host agent is THERE decides: none registered and no per-job runner = agent-free right now, refused at once, never held
         const hm = this.relay.bridge?.mode(this.doormanFor) || { mode: "agent-free", agents: [] };
         if (hm.mode === "agent-free") throw new Error(`no host agent is registered: nobody on the host can do a free-form request right now, so it isn't held for Angus. ${UNSUPPORTED}`);

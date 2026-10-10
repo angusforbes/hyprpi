@@ -104,5 +104,8 @@ MODE.now = "open"; shown.length = 0;
   assert.deepEqual(rec.rooms, ["H"]); assert.equal(rec.reviewIn, "doorman-t"); assert.equal(rec.auto, undefined); assert.equal(shown.length, 1); assert.equal(shown[0].reviewIn, "doorman-t", "the toast is routed too"); }
 door.cfg = {};
 console.log("PASS  decision-time re-check: a stale auto is held, a now-refused kind is denied with the dial's reason, a forged auto is ignored");
+// J412 red team #5 (LOW): the strict refusal of a draft at the op carries the shared UNSUPPORTED guidance (source check: the op needs a live bridge)
+{ const line = src.split("\n").find((l) => l.includes('this.relay.policy(this, "draft") === "refused"')); assert.ok(line && line.includes("${UNSUPPORTED}"), "strict draft refusal includes UNSUPPORTED"); }
+console.log("PASS  a strict draft refusal carries the shared UNSUPPORTED guidance");
 fs.rmSync(T, { recursive: true, force: true });
 console.log("j412-policy: all pass");

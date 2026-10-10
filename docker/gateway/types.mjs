@@ -133,15 +133,24 @@ const V = {
     const host = String(p.host ?? "").trim().toLowerCase().replace(/\.$/, "");
     if (host.length > 100 || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host) || /^[\d.]+$/.test(host) || !/[a-z]/.test(host.split(".").pop())) return { error: "host: a plain public domain name (no IP, port, path or wildcard)" };
     if (/(^|\.)(nvidia\.com|nvidia\.net|nvidiangn\.net|nvda\.ai|local|internal|lan|corp|localhost|home\.arpa)$/.test(host)) return { error: "host: internal hosts are never allowed this way" };
-    // (red team J379 #4) a public name that resolves to a private, loopback or link-local address (127.0.0.1.sslip.io) is refused
-    const ga = spawnSync("getent", ["ahosts", host], { encoding: "utf8", timeout: 5000 });
-    const addrs = [...new Set(String(ga.stdout || "").split("\n").map((l) => l.split(/\s+/)[0]).filter(Boolean))];
-    const v4bad = (a) => /^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(1[6-9]|2\d|3[01])\.|22[4-9]\.|2[3-5]\d\.)/.test(a);
-    const v6bad = (a) => { const x = a.toLowerCase(); if (x.startsWith("::ffff:")) return v4bad(x.slice(7)); return x === "::" || x === "::1" || /^fe[89ab][0-9a-f]:/.test(x) || /^f[cd][0-9a-f]{2}:/.test(x) || /^ff[0-9a-f]{2}:/.test(x); }; // (recheck: fe80::/10, fc00::/7, multicast, mapped IPv4)
-    if (addrs.some((a) => (a.includes(":") ? v6bad(a) : v4bad(a)))) return { error: `host: ${host} resolves to a private or local address (${addrs.slice(0, 2).join(", ")})` };
+    const bad = hostResolvesBad(host); if (bad) return { error: bad };
     return { params: { host }, show: `Allow ${"the sandbox"} to reach https://${host} (an sbx network rule for this sandbox only)` };
   },
 };
+
+// (red team J379 #4) a public name that resolves to a private, loopback or link-local address (127.0.0.1.sslip.io) is refused.
+// J412 red team #2/#3: checked at validation AND again right before the rule is made (a name can change between them), and fail closed: a
+// lookup that fails, times out or gives no address refuses too. → "" when the host is fine, else the refusal.
+export const resolver = { ahosts: (host) => { const r = spawnSync("getent", ["ahosts", host], { encoding: "utf8", timeout: 5000 }); return { ok: r.status === 0 && !r.error, out: String(r.stdout || "") }; } }; // (tests swap ahosts)
+export function hostResolvesBad(host) {
+  let r; try { r = resolver.ahosts(host); } catch (e) { return `host: ${host} couldn't be looked up (${String(e.message).slice(0, 80)}); refused`; }
+  const addrs = [...new Set(String(r?.out || "").split("\n").map((l) => l.split(/\s+/)[0]).filter(Boolean))];
+  if (!r?.ok || !addrs.length) return `host: ${host} couldn't be looked up (no address); refused`;
+  const v4bad = (a) => /^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(1[6-9]|2\d|3[01])\.|22[4-9]\.|2[3-5]\d\.)/.test(a);
+  const v6bad = (a) => { const x = a.toLowerCase(); if (x.startsWith("::ffff:")) return v4bad(x.slice(7)); return x === "::" || x === "::1" || /^fe[89ab][0-9a-f]:/.test(x) || /^f[cd][0-9a-f]{2}:/.test(x) || /^ff[0-9a-f]{2}:/.test(x); };
+  if (addrs.some((a) => (a.includes(":") ? v6bad(a) : (/^\d+\.\d+\.\d+\.\d+$/.test(a) ? v4bad(a) : true)))) return `host: ${host} resolves to a private or local address (${addrs.slice(0, 2).join(", ")})`;
+  return "";
+}
 
 export function validate(type, params, ctx) {
   if (type === "open_for_owner") return { ok: false, error: PRINT_LINK }; // J402
@@ -173,7 +182,7 @@ export async function run(type, p, ctx) {
         const where = ctx.putInbox(name, buf);
         return { ok: true, outcome: `a read-only copy of ${p.path} is in the inbox: ${where}` };
       }
-      case "allow_host": { const r = await ctx.policyAllow(p.host); return { ok: !!r.ok, outcome: r.ok ? `a local sbx rule allows ${p.host} for ${ctx.served.name}${r.check ? `; sbx policy check says: ${one(r.check, 160)}` : ""}` : `not allowed: ${one(r.text, 300)}` }; } // (review J368 #5)
+      case "allow_host": { const bad = hostResolvesBad(p.host); if (bad) return { ok: false, outcome: `not allowed: ${bad.replace(/^host: /, "")} (checked again just before the rule was made)` }; const r = await ctx.policyAllow(p.host); return { ok: !!r.ok, outcome: r.ok ? `a local sbx rule allows ${p.host} for ${ctx.served.name}${r.check ? `; sbx policy check says: ${one(r.check, 160)}` : ""}` : `not allowed: ${one(r.text, 300)}` }; } // (review J368 #5)
       default: return { ok: false, outcome: "unknown type" };
     }
   } catch (e) { return { ok: false, outcome: `failed: ${one(e.message, 300)}` }; }
