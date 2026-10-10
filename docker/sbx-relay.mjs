@@ -44,6 +44,7 @@ import { logTurn } from "../lib/held.mjs"; // J289: decision notes as highlighte
 import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
 import { logEvent as researchLog, conf as researchConf } from "./research/research.mjs"; // J309
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
+import { applyHeldEdit } from "./held-edit.mjs"; // J365
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
@@ -848,6 +849,11 @@ class Relay {
     if (!sb) return;
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, verdict === "deny");
+    if (msg.edit && typeof msg.edit.text === "string" && verdict !== "deny" && !msg.research && !msg.draft && !msg.gpu && !msg.taskChange) { // J365: Angus approved an edited message: it is the edited text that is sent
+      const head = String(msg.body || "").split("\n")[0];
+      msg = { ...msg, text: msg.edit.text, body: `${head}\n🐳│ ${msg.edit.text.split("\n").join("\n🐳│ ")}\n🐳│ (edited by Angus before it was sent)` };
+      log({ sb: sb.name, op: "talk", id, edited: true, original: String(msg.edit.original || "").slice(0, 4000), sent: msg.edit.text });
+    }
     if (msg.taskChange) { // J352: Angus decided a Doorman-drafted task change: approval writes it, once
       const tc = msg.taskChange, what = { ...msg, text: `task change for ${tc.sandbox}: ${tc.task}` };
       let outcome = "nothing changed";
@@ -1071,12 +1077,18 @@ function heldNote(sb, msg, via, what, outcome) {
 // passes it too, and the same user can write decisions/, rules.json and reviews/ directly): a hostile process running under the user's
 // account could still write a decision file directly. It stops well-behaved agents approving by accident or
 // because a message told them to; the sandbox itself can't reach the decisions folder at all.
-function decideAsAngus(id, verdict) {
+// J365 ("approve with modifications"): apply Angus's edit BEFORE the approval is written (docker/held-edit.mjs). Runs only in the guarded CLI.
+function applyEdit(id, editFile) {
+  const r = applyHeldEdit(id, editFile, { PENDING, RESEARCH, clean, bytes, maxBytes: LIMITS.textBytes, log });
+  if (!r.ok) { console.error(r.code === 1 ? `no pending message ${id}` : `sbx-relay: edit refused: ${r.reason}`); process.exit(r.code || 4); }
+}
+function decideAsAngus(id, verdict, editFile = "") {
   if (verdict !== "deny") { // approve and allow (J274) are Angus's only
     const why = agentAncestor();
     if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
     if (!process.env.HYPRPI_HELD_VIA) console.error("sbx-relay: note: the normal route is the review in the Doorman window or the Thoughts panel (Review on the toast, then type 1 after the full request); this terminal command is the admin tool."); // J355
   }
+  if (editFile) { if (verdict !== "approve") { console.error("sbx-relay: an edit only goes with approve"); process.exit(4); } applyEdit(id, editFile); }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   const via = /^(panel|room panel|doorman window)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";
   writeDecision(id, verdict, via); // J284: the route, for the Thoughts note
@@ -1153,8 +1165,9 @@ if (cmd === "run") {
   console.log(`revoked ${revokeRules(STATE, arg, { sandbox: true })} rule(s)`);
 } else if ((cmd === "approve" || cmd === "deny") && arg) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
-  decideAsAngus(arg, cmd);
-  console.log(`${cmd === "deny" ? "denied" : "approved"} ${arg}`);
+  const ef = process.argv.indexOf("--edit-file"), editFile = ef > 0 ? String(process.argv[ef + 1] || "") : "";
+  decideAsAngus(arg, cmd, editFile);
+  console.log(`${cmd === "deny" ? "denied" : "approved"}${editFile ? " (edited)" : ""} ${arg}`);
 } else {
   console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|clear SANDBOX");
   process.exit(cmd ? 1 : 0);

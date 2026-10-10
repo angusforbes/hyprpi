@@ -13,7 +13,8 @@
 #   strict     headless, nothing recorded outside the journal (the DEFAULT)
 #   safe       headless, plus state/status.json (state, last question and answer) for a status row
 #   observer   safe + a read-only live window (kitty on "visibility_workspace", default 68)
-#   developer  observer's window, where Angus can also type to the Doorman (marked as his; it reaches only the Doorman)
+#   developer  observer's window, where Angus can also DECIDE what is held (1 / 2 / e, J363 / J365). Nothing else can be typed there: since J365
+#              there is no input path from the window to the Doorman at all (its stdin is never fed by a window)
 # Files for all but strict: ~/.local/state/hyprpi/doormen/NAME/{events.jsonl,status.json,input.fifo (developer)}.
 #
 # NAME is its entry in ~/.config/hyprpi/sbx-relay.json, e.g.
@@ -91,10 +92,7 @@ start)
   if [[ "$VIS" != strict ]]; then
     mkdir -p "$VSTATE"; chmod 700 "$VSTATE"
     OUT=" | $(command -v node) $VIEW log $NAME"
-    if [[ "$VIS" == developer ]]; then
-      [[ -p "$VSTATE/input.fifo" ]] || { rm -f "$VSTATE/input.fifo"; mkfifo -m 600 "$VSTATE/input.fifo"; }
-      IN="exec 3<>$VSTATE/input.fifo; cat <&3" # read-write open: the fifo stays open between Angus's lines
-    fi
+    rm -f "$VSTATE/input.fifo" # J365: no input path from the window to the Doorman (a fifo left from before is removed)
   fi
   RUN="set -o pipefail; $PIRUN < <($IN)$OUT" # process substitution: when sbx or the logger ends, the unit ends (and restarts); a pipeline would wait on the idle tail forever
   systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M bash -c "$RUN"
@@ -107,7 +105,7 @@ window)
   # focus guard: if Angus is looking at that workspace right now a new window could take his focus, so don't (J327 review)
   [[ -z "${DOORMAN_FORCE_WINDOW:-}" && "$(hyprctl -j activeworkspace | jq -r .id)" == "$WS" ]] && { echo "doorman: you are on workspace $WS; not opening a window under your hands (DOORMAN_FORCE_WINDOW=1 to override)"; exit 0; }
   hyprctl -j clients | jq -e --arg c "$CLS" '.[] | select(.class == $c)' >/dev/null && { echo "doorman: window already open"; exit 0; }
-  ARG=""; MODETXT="OBSERVER (read-only)"; [[ "$VIS" == developer ]] && { ARG=" --write"; MODETXT="DEVELOPER MODE"; }
+  ARG=""; MODETXT="ARCHIVE (read-only)"; [[ "$VIS" == developer ]] && { ARG=" --write"; MODETXT="ARCHIVE + DECISIONS"; }
   LABEL="$(get display)"; LABEL="${LABEL:-$NAME}"
   # on its workspace, silently: Angus's focus never moves
   hyprctl dispatch "hl.dsp.exec_cmd(\"env DOORMAN_LABEL='$LABEL' kitty --class $CLS --title '$LABEL · $MODETXT' $(command -v node) $VIEW view $NAME$ARG\", { workspace = \"$WS silent\" })" >/dev/null
