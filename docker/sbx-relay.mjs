@@ -704,7 +704,7 @@ class Relay {
     const id = `${sb.name}--${crypto.randomBytes(3).toString("hex")}`;
     if (!msg.revises && returnable(msg) && !msg.research) { // J370: the same agent's next message to the same recipients within an hour of a send-back is its revision
       const k = returnKey(sb.name, msg), r = this.returnedFor(k);
-      if (r) { msg = { ...msg, revises: r.id, revisesNote: r.note }; this.setReturned(k, null); }
+      if (r && !r.broken) { msg = { ...msg, revises: r.id, revisesNote: r.note }; this.setReturned(k, null); }
     }
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
     if (msg.revises) log({ sb: sb.name, op: "revision", id, revises: msg.revises });
@@ -977,12 +977,24 @@ class Relay {
   // held as a NEW item linked to this one), the asking agent in the sandbox for a message (its revision re-enters the normal path and, when held,
   // is linked to this one). The note is Angus's own text, cleaned again and labelled "note from Angus" wherever it goes.
   // Sent-back messages waiting for their revision (1 h), kept on disk (host-only) so a relay restart neither loses the link nor lets a rule send the revision.
-  returnedAll() { try { const a = JSON.parse(fs.readFileSync(path.join(STATE, "returned.json"), "utf8")); return a && typeof a === "object" && !Array.isArray(a) ? a : {}; } catch { return {}; } }
-  returnedFor(k) { const r = this.returnedAll()[k]; return r && Date.now() - Number(r.at) < 3600e3 ? r : null; }
+  // Fail closed (ReturnReview): an in-memory copy is kept as well, and while the file can't be read or written ("broken"), no rule auto-sends anything
+  // (returnedFor answers a stand-in record for every key), so a lost safety record never turns into "no restrictions".
+  returnedAll() {
+    let a; try { a = JSON.parse(fs.readFileSync(path.join(STATE, "returned.json"), "utf8")); } catch (e) { if (e.code === "ENOENT") a = {}; else { this.returnedBroken = true; return { ...(this.returnedMem || {}) }; } }
+    if (!a || typeof a !== "object" || Array.isArray(a)) { this.returnedBroken = true; return { ...(this.returnedMem || {}) }; }
+    return { ...a, ...(this.returnedMem || {}) };
+  }
+  returnedFor(k) {
+    const r = this.returnedAll()[k];
+    if (r && Date.now() - Number(r.at) < 3600e3) return r;
+    return this.returnedBroken ? { id: "", note: "", at: Date.now(), broken: true } : null; // can't tell: treat every message as a possible revision (held, never ruled)
+  }
   setReturned(k, v) {
     const a = this.returnedAll(), t = Date.now(); for (const x of Object.keys(a)) if (!(t - Number(a[x]?.at) < 3600e3)) delete a[x];
     if (v) a[k] = v; else delete a[k];
-    try { const f = path.join(STATE, "returned.json"), tmp = f + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(a), { mode: 0o600 }); fs.renameSync(tmp, f); } catch (e) { log({ error: `returned.json: ${e.message}` }); }
+    this.returnedMem = a; // the in-memory copy (used if the file breaks later)
+    try { const f = path.join(STATE, "returned.json"), tmp = f + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(a), { mode: 0o600 }); fs.renameSync(tmp, f); this.returnedBroken = false; }
+    catch (e) { this.returnedBroken = true; log({ error: `returned.json: ${e.message}; allow-similar rules are paused until it can be written` }); }
   }
   // J370 (ReturnReview): a send-back's re-plan in flight, kept on disk; a relay restart can't resume it, so at start each leftover ends as an error
   // the window and the asker see ("the rewrite was interrupted; nothing was sent"), never a silent "still rewriting".

@@ -55,6 +55,13 @@ assert.equal(relay.returnedFor(N.returnKey("world-t", talk)), null, "the link is
 relay.setReturned("k", { id: "x", note: "n", at: Date.now() }); assert.ok(JSON.parse(fs.readFileSync(path.join(T, "returned.json"), "utf8")).k, "kept on disk across a restart");
 const relay2 = { returnedAll: RR.prototype.returnedAll, returnedFor: RR.prototype.returnedFor }; assert.equal(relay2.returnedFor("k").id, "x");
 relay.setReturned("k", null);
+// fail closed: an unreadable / corrupt returned.json pauses rules (every key answers), and the in-memory copy still links
+fs.writeFileSync(path.join(T, "returned.json"), "{corrupt"); const fresh = { returnedAll: RR.prototype.returnedAll, returnedFor: RR.prototype.returnedFor };
+assert.ok(fresh.returnedFor("any|key|x"), "corrupt state: no rule may auto-send"); assert.equal(fresh.returnedFor("any|key|x").broken, true);
+fs.rmSync(path.join(T, "returned.json")); fs.mkdirSync(path.join(T, "returned.json")); // now unwritable and unreadable as a file
+relay.returnedBroken = false; relay.setReturned("k2", { id: "y", note: "n", at: Date.now() });
+assert.equal(relay.returnedBroken, true); assert.equal(relay.returnedFor("k2").id, "y", "the in-memory copy keeps the link"); assert.ok(relay.returnedFor("other"), "rules paused while the file is broken");
+fs.rmSync(path.join(T, "returned.json"), { recursive: true }); relay.returnedMem = {}; relay.setReturned("k2", null); assert.equal(relay.returnedBroken, false); assert.equal(relay.returnedFor("other"), null, "a healthy file: rules work again");
 assert.ok(/const revising = gated\.length && this\.relay\.returnedFor\(/.test(src) && /!revising \? useRules/.test(src), "a revision is never sent under an allow-similar rule");
 const other = relay.hold(sb, { ...talk, id: undefined, text: "[Alpha, in world G] Lenswatch: another one" }); assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, other + ".json"), "utf8")).revises, undefined, "only the first next message is the revision");
 
