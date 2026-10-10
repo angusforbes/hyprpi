@@ -201,21 +201,15 @@ await t("the relay CLI propose-gateway creates the held item (no terminal needed
   const bad = spawnSync(process.execPath, [path.join(HERE, "..", "sbx-relay.mjs"), "propose-gateway", "world-t", "--changes", JSON.stringify({ "search.key_file": "/etc/passwd" })], { encoding: "utf8" }); assert.notEqual(bad.status, 0);
   const relay = fs.readFileSync(path.join(HERE, "..", "sbx-relay.mjs"), "utf8");
   assert.ok(/digestOf\(gc\.sandbox, v\.changes\) !== gc\.digest/.test(relay) && /expectBefore: gc\.before/.test(relay) && /validateChanges\(gc\.changes, \{ admin: false \}\)/.test(relay), "decide(): re-validates (as a proposal, so key_file is refused), checks the digest and the before values");
-  const gk = fs.readFileSync(path.join(HERE, "..", "..", "lib", "held.mjs"), "utf8"); assert.ok(/gatewayChange \? "gateway settings"/.test(gk) && /!m\.gatewayChange\) \|\| kind === "research plan"/.test(gk), "shown as 'gateway settings', not editable");
+  const gk = fs.readFileSync(path.join(HERE, "..", "..", "lib", "held.mjs"), "utf8"); assert.ok(/gatewayChange \? "gateway settings"/.test(gk), "shown as gateway settings (J412: nothing is editable any more)");
 });
 await t("the window shows what is in effect (provider, models, mode, level)", async () => {
   writeW({ sandbox: "world-t", gateway: { report_model: "azure/new/report", search: { provider: "brave", key_file: path.join(T, "bkey") }, mode: "strict", level: "safe" } });
   const e = R.conf("world-t").gateway; const line = G.summaryLine(e); assert.match(line, /search brave · report report · Doorman claude-opus-5-5 · mode strict · level strict/);
   const prov = await import("../doorman/review-provider.mjs"); assert.equal(typeof prov.default("door-t").info, "function"); assert.match(prov.default("door-t").info(), /world-t: search brave/);
 });
-await t("red team fixes: an over-long plan edit is refused (not cut); ambiguity shows strict everywhere; the legacy shape_model counts as 'before'", () => {
-  // (1) an edit over 4000 characters is refused, with the prohibited URL past the cut no longer silently dropped
-  const rid = "q0000aaaa", plans = path.join(T, "rstate", "plans"); fs.mkdirSync(plans, { recursive: true });
-  fs.writeFileSync(path.join(plans, rid + ".json"), JSON.stringify({ created: Date.now(), base: { rid, sandbox: "world-t", mode: "safe" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: ["moisture degradation of lead halide perovskite"], brief: "" } }));
-  writeW({ sandbox: "world-t", task: "Research on perovskite solar cells" });
-  const long = "water ingress and encapsulation of perovskite modules\n" + " ".repeat(4100) + "https://evil.example/x?k=1\n";
-  const r = R.checkPlanEdit(rid, long); assert.equal(r.ok, false); assert.match(r.reason, /over 4000 characters/);
-  assert.equal(R.checkPlanEdit(rid, "water ingress and encapsulation of perovskite modules\n").ok, true);
+await t("red team fixes: ambiguity shows strict everywhere; the legacy shape_model counts as 'before'", () => {
+  // (1) removed in J412: plan edits no longer exist
   // (3) two worlds files naming the sandbox: display = enforcement = strict
   writeW({ sandbox: "world-t", gateway: { mode: "yolo" } }); fs.writeFileSync(path.join(WORLDS, "dup.json"), JSON.stringify({ sandbox: "world-t", gateway: { mode: "yolo" } }));
   const c = R.conf("world-t"); assert.equal(c.mode, "strict"); assert.equal(c.gateway.mode, "strict", "the header and config --json agree with the runner"); assert.ok(c.gateway.notes.some((x) => /several worlds files/.test(x)));
