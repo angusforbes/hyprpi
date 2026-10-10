@@ -198,7 +198,13 @@ def clean_md(s):
     s = re.sub(r"[ \t]+([.,;:])", r"\1", s)
     s = re.sub(r"[ \t]{2,}", " ", s)
     s = re.sub(r"\n{3,}", "\n\n", s).strip()
-    return s[:MAX_DELIVERABLE]
+    return render_safe(s[:MAX_DELIVERABLE])  # last of all (CleanerCheck): nothing left can render as code or HTML
+
+
+def render_safe(t):
+    # same as research.mjs renderSafe: no HTML can open, no backticks, no ~~~ runs, no indented lines
+    t = re.sub(r"~{3,}", "", t.replace("<", "\u2039").replace("`", ""))
+    return "\n".join(re.sub(r"^((?:[ \t]*>)*)[ \t]+", lambda m: (re.sub(r"[ \t]", "", m.group(1)) + " ") if m.group(1) else "", l) for l in t.split("\n"))
 
 
 def clean_sources(lst):

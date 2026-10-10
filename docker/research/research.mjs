@@ -397,6 +397,10 @@ export function inlineCode(t) {
   }
   return res + t.slice(cur);
 }
+// The final guarantee for a deliverable (J378, CleanerCheck): no HTML can open ("<" becomes "‹"), no backticks, no ~~~ runs, no indented lines.
+export function renderSafe(t) {
+  return String(t).replace(/</g, "‹").replace(/`/g, "").replace(/~{3,}/g, "").split("\n").map((l) => l.replace(/^((?:[ \t]*>)*)[ \t]+/, (m0, q) => (q ? q.replace(/[ \t]/g, "") + " " : ""))).join("\n");
+}
 export function cleanDeliverable(res) {
   let t = String(res?.deliverable ?? "");
   t = t.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
@@ -404,6 +408,7 @@ export function cleanDeliverable(res) {
     .replace(/^[\s\S]*$/, (x) => stripCode(x)).replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/<[^>]{1,300}>/g, "").replace(/(?:https?|ftp|file|javascript|data):\S+/gi, "").replace(/\bwww\.\S+/g, "")
     .replace(/\[\d+(?:[,\s\u2013-]*\d+)*\]/g, "").replace(/[ \t]+([.,;:])/g, "$1").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, LIMITS.deliverableChars);
+  t = renderSafe(t); // last of all (CleanerCheck): whatever the steps above left or rebuilt, nothing in the result can render as code or HTML;
   const sources = cleanSources(res?.sources); // J360
   return { deliverable: t, sources };
 }
