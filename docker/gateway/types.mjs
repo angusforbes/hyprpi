@@ -68,6 +68,7 @@ export function pinnedRead(abs, max) {
     ffd = fs.openSync(`/proc/self/fd/${fd}/${parts.at(-1)}`, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
     const st = fs.fstatSync(ffd);
     if (!st.isFile()) return { error: "not a regular file" };
+    if (st.nlink > 1) return { error: "a hard-linked file isn't sent (it may be another file under a harmless name)" }; // (recheck: on the pinned descriptor)
     if (st.size > max) return { error: `over ${Math.round(max / (1 << 20))} MB` };
     const buf = Buffer.alloc(st.size); let off = 0;
     while (off < st.size) { const n = fs.readSync(ffd, buf, off, st.size - off, off); if (!n) break; off += n; }
@@ -137,7 +138,7 @@ const V = {
     if (pp.stat.nlink > 1) return { error: "path: a hard-linked file isn't sent (it may be another file under a harmless name)" }; // (red team J379 #3)
     const rd = pinnedRead(pp.path, LIMITS.sendFileBytes);
     if (rd.error) return { error: `path: ${rd.error}` };
-    const head = rd.buf.subarray(0, 1 << 20).toString("latin1");
+    const head = rd.buf.toString("latin1"); // (recheck: the whole file, at most 10 MB)
     if (/-----BEGIN [A-Z ]*(PRIVATE KEY|OPENSSH|PGP PRIVATE)|\b(sk-[A-Za-z0-9_-]{16,}|nvapi-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_|gho_[A-Za-z0-9]{20,}|xox[abprs]-|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.)/.test(head)) return { error: "path: the file's content looks like a key or token" }; // (red team J379 #3: content, not just the name)
     const buf = rd.buf, sha = crypto.createHash("sha256").update(buf).digest("hex");
     // the bytes Angus is shown the hash of are the bytes delivered: a host-only snapshot (never re-read from the folder)
@@ -158,7 +159,9 @@ const V = {
     // (red team J379 #4) a public name that resolves to a private, loopback or link-local address (127.0.0.1.sslip.io) is refused
     const ga = spawnSync("getent", ["ahosts", host], { encoding: "utf8", timeout: 5000 });
     const addrs = [...new Set(String(ga.stdout || "").split("\n").map((l) => l.split(/\s+/)[0]).filter(Boolean))];
-    if (addrs.some((a) => /^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(1[6-9]|2\d|3[01])\.)|^(::1|fe80:|fc|fd|::ffff:(127|10|192\.168)\.)/i.test(a))) return { error: `host: ${host} resolves to a private or local address (${addrs.slice(0, 2).join(", ")})` };
+    const v4bad = (a) => /^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(1[6-9]|2\d|3[01])\.|22[4-9]\.|2[3-5]\d\.)/.test(a);
+    const v6bad = (a) => { const x = a.toLowerCase(); if (x.startsWith("::ffff:")) return v4bad(x.slice(7)); return x === "::" || x === "::1" || /^fe[89ab][0-9a-f]:/.test(x) || /^f[cd][0-9a-f]{2}:/.test(x) || /^ff[0-9a-f]{2}:/.test(x); }; // (recheck: fe80::/10, fc00::/7, multicast, mapped IPv4)
+    if (addrs.some((a) => (a.includes(":") ? v6bad(a) : v4bad(a)))) return { error: `host: ${host} resolves to a private or local address (${addrs.slice(0, 2).join(", ")})` };
     return { params: { host }, show: `Allow ${"the sandbox"} to reach https://${host} (an sbx network rule for this sandbox only)` };
   },
 };
