@@ -51,6 +51,15 @@ r = world({ projects: "all" }); assert.equal(r.level, "safe", "no Doorman settin
 r = world({ access: "wide-open", projects: "all" }); assert.equal(r.level, "strict"); assert.match(r.out, /isn't open, safe or strict, so strict/);
 r = world({ access: "safe", projects: ["../x", "a/b", ".."] }); assert.match(r.out, /bad project entry/); assert.match(r.out, /projects \(0\)/);
 ok("level defaults (developer → open, Doorman modes, unknown → strict) and bad entries refused");
+// (LevelReview) no way around the list: a general share of the project folder, or a symlinked project
+fs.symlinkSync(path.join(base, "cfg"), path.join(work, "linky"));
+r = world({ access: "safe", projects: ["linky", "alpha"], shares: [{ path: work, mode: "rw" }, { path: path.join(work, "gamma"), mode: "ro" }] });
+assert.equal(r.mounts[work], undefined); assert.equal(r.p("gamma"), undefined); assert.equal(r.p("linky"), undefined);
+assert.match(r.out, /isn't allowed at the safe level/); assert.match(r.out, /linky \(no such project\)/); assert.match(r.out, /projects \(1\): alpha ro/);
+const other = path.join(base, "notes"); fs.mkdirSync(other);
+r = world({ access: "strict", projects: [], shares: [{ path: other, mode: "rw" }] }); assert.equal(r.mounts[other], "ro", "strict: general shares ro");
+r = world({ access: "open", projects: [], shares: [{ path: work, mode: "rw" }] }); assert.equal(r.mounts[work], "rw", "open: as before");
+ok("safe/strict: no general share around a project folder, no symlinked project; strict shares ro");
 // the card lists every shared project by name and mode
 world({ access: "safe", projects: ["alpha", "beta:rw"] });
 execFileSync(process.execPath, [SH, "card", "world-t"], { env, encoding: "utf8" });

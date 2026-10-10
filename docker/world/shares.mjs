@@ -160,12 +160,22 @@ function plan() {
     for (const e of Array.isArray(w.projects) ? w.projects : []) {
       const pe = projectEntry(e, access.level);
       if (!pe) { skipped.push(`${JSON.stringify(e)} (bad project entry)`); continue; }
-      const hit = pf.map((f) => path.join(f, pe.name)).find((d) => fs.existsSync(d) && fs.statSync(d).isDirectory());
+      // (LevelReview) a real directory directly inside its project folder: no symlink out of it
+      const hit = pf.map((f) => path.join(f, pe.name)).find((d) => { try { return fs.lstatSync(d).isDirectory() && path.dirname(fs.realpathSync(d)) === fs.realpathSync(path.dirname(d)); } catch { return false; } });
       if (hit) { add(hit, { ro: !pe.rw, why: `project (${access.level})` }); shared.push(hit); } else skipped.push(`${pe.name} (no such project)`);
     }
   }
   // 3. general shares
-  for (const s of w.shares || []) add(s.path, { ro: s.mode !== "rw", at: s.at, why: "share" });
+  for (const s of w.shares || []) {
+    // (LevelReview) at safe and strict, projects come only from the list: a general share that is, holds or sits
+    // inside a project folder would get around it. At strict every general share is read-only ("nothing else").
+    if (access.level !== "open") {
+      let h = exp(s.path); try { h = fs.realpathSync(h); } catch { /* missing: add() skips it */ }
+      const pfr = pf.map((f) => { try { return fs.realpathSync(f); } catch { return f; } });
+      if (pfr.some((f) => under(h, f) || under(f, h))) { skipped.push(`${s.path} (a share in or around a project folder isn't allowed at the ${access.level} level: list projects under "projects")`); continue; }
+    }
+    add(s.path, { ro: s.mode !== "rw" || access.level === "strict", at: s.at, why: "share" });
+  }
   // 4. read-only on top, wherever a writable share would cover them: protected projects, every relay inbox,
   // the other sandboxes' workspaces (this one's own workspace is sbx's own rw mount).
   const own = exp(w.workspace || "~/Work/" + WORLD);
