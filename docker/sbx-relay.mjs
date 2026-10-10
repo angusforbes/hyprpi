@@ -110,6 +110,8 @@ function clean(s) {
 }
 function bytes(s) { return Buffer.byteLength(s); }
 
+const OPEN_SETTLE_MS = Number(process.env.HYPRPI_OPEN_SETTLE_MS) || 5000; // J368: how long a world's Brave must stay up to count as opened
+
 // --- the drop-box folders ------------------------------------------------------------------------------------
 // Review J244 #1: checking a path and then using it again is a race (the sandbox can swap a folder for a
 // symlink in between). So each folder is opened ONCE, one component at a time with O_NOFOLLOW|O_DIRECTORY,
@@ -883,7 +885,14 @@ class Relay {
         const gate = ["python3", path.join(H, "world", "g_open_url.py"), "--agent", url, served.name];
         let r = spawnSync("systemd-run", ["--user", "--scope", "--collect", "--quiet", `--unit=hyprpi-open-${served.name}-${crypto.randomBytes(4).toString("hex")}`, ...gate], { encoding: "utf8", timeout: 30000 });
         if (r.error || /Failed to (connect|start|create)/i.test(String(r.stderr || ""))) r = spawnSync(gate[0], gate.slice(1), { encoding: "utf8", timeout: 30000 });
-        return { ok: r.status === 0, text: (r.stderr || r.stdout || "").trim().slice(-300) || (r.status === 0 ? "" : "refused by the link gate") };
+        if (r.status !== 0) return { ok: false, text: (r.stderr || r.stdout || "").trim().slice(-300) || "refused by the link gate" };
+        if (process.env.HYPRPI_G_AGENT_OPENER) return { ok: true, text: "" }; // (tests: a stub opener, no browser to watch)
+        // (Thoughts-B: never report "opened" for a browser that crashed) the world's Brave must still be running a few seconds later
+        return new Promise((res) => setTimeout(() => {
+          const prof = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "worlds", served.name, "brave");
+          const alive = spawnSync("pgrep", ["-f", `--user-data-dir=${prof}`], { encoding: "utf8" }).stdout.split("\n").filter(Boolean).some((pid) => { try { return fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim() === "brave"; } catch { return false; } });
+          res(alive ? { ok: true, text: "" } : { ok: false, text: `the browser started but wasn't running ${OPEN_SETTLE_MS / 1000} s later (it may have crashed)` });
+        }, OPEN_SETTLE_MS));
       },
       putInbox: (name, buf) => { const dirs = pinDirs(served); createFile(dirs.inbox, name, buf); return path.join(String(served.cfg.inbox || "").replace(/^~(?=\/)/, os.homedir()), name); },
       policyAllow: (host) => { const r = spawnSync(process.env.HYPRPI_SBX || "sbx", ["policy", "allow", "network", host, "--sandbox", served.name], { encoding: "utf8", timeout: 30000 }); return { ok: r.status === 0, text: (r.stdout + r.stderr).trim().slice(-300) }; },
