@@ -37,10 +37,10 @@ const cleanList = (a) => {
 };
 
 // A new job, made by the relay when the owner approves a free-form draft on a host in bridge mode.
-export function newJob({ id, auto = "", sandbox, asker, action, actionLine = "", tools = [], toolsNamed = false, folders = [], readOnly = [], hidden = [], beyond = [], needs = "", timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
+export function newJob({ id, auto = "", sandbox, asker, action, actionLine = "", tools = [], toolsNamed = false, folders = [], readOnly = [], hidden = [], beyond = [], folderIds = {}, needs = "", timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
   return {
     id, type: "host_job", sandbox: String(sandbox), for: String(asker || ""), created_at: iso(nowMs), state: String(cleanText(needs, 1e6) || "").slice(0, 600) ? "scoping" : "waiting", widenings: 0, proposal: null,
-    approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), read_only: [...readOnly].map(String).filter((f) => folders.map(String).includes(f)), hidden: [...hidden].map(String), beyond: [...beyond].map(String), tools_named: !!toolsNamed, ...(String(cleanText(needs, 1e6) || "").slice(0, 600) ? { needs: String(cleanText(needs, 1e6)).slice(0, 600) } : {}), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
+    approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), read_only: [...readOnly].map(String).filter((f) => folders.map(String).includes(f)), hidden: [...hidden].map(String), beyond: [...beyond].map(String), tools_named: !!toolsNamed, ...(Object.keys(folderIds).length ? { folder_ids: Object.fromEntries(Object.entries(folderIds).map(([k, v]) => [String(k), String(v)])) } : {}), ...(String(cleanText(needs, 1e6) || "").slice(0, 600) ? { needs: String(cleanText(needs, 1e6)).slice(0, 600) } : {}), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
     claim: null, claimed_at: null, questions: [], outcome: null,
     ...(auto ? { auto: String(auto) } : {}), // J412 red team #7: approved by the mode dial, not reviewed by the owner
     history: [auto ? { at: iso(nowMs), ev: `approved automatically (mode ${auto}), not reviewed by the owner; waiting for a host agent`, by: "relay" } : { at: iso(nowMs), ev: "approved by the owner; waiting for a host agent", by: "owner" }],

@@ -22,6 +22,13 @@ r=$(res $R/x/dinbox r3); case "$r" in *"read-only (protected)"*) ok "a read-only
 D r4 '{"op":"draft","for":"Alpha","why":"x","action":"x","tools":["default"]}'
 r=$(res $R/x/dinbox r4); case "$r" in *"isn't allowed"*) ok "an unknown tool refused";; *) fail "r4: $r";; esac
 [ -z "$(held)" ] && ok "nothing held for the refused drafts" || fail "held: $(held)"
+echo "== 1b a folder named in the draft and recreated before the 1: not approved (J428Check)"
+mkdir -p $X/named
+D n1 '{"op":"draft","for":"Alpha","why":"x","action":"read named","folders":[{"path":"'$X'/named","access":"read"}]}'
+hn=$(held); case "$hn" in *"BEYOND T's SHARES: $X/named (read only)"*) ok "a named folder beyond the shares is shown prominently";; *) fail "held: $hn";; esac
+N1=$(echo "$hn" | awk '{print $1}' | head -1); mv $X/named /tmp/j428-named-$$ && mkdir $X/named; decide $N1 approve
+[ ! -f $P/requests/$N1.json ] && ok "recreated before the 1: no job made (denied)" || fail "job made: $(job $N1)"
+rm -rf /tmp/j428-named-$$; for f in $P/pending/*.json; do :; done
 echo "== 2 a draft naming no folders: exactly the sandbox's shares and rights (W5)"
 D g1 '{"op":"draft","for":"Alpha","why":"summary","action":"write SUMMARY.md in '$X'/rw from '$X'/ro"}'
 h=$(held); echo "  held: ${h:0:420}"
