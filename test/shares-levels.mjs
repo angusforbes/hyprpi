@@ -60,6 +60,23 @@ const other = path.join(base, "notes"); fs.mkdirSync(other);
 r = world({ access: "strict", projects: [], shares: [{ path: other, mode: "rw" }] }); assert.equal(r.mounts[other], "ro", "strict: general shares ro");
 r = world({ access: "open", projects: [], shares: [{ path: work, mode: "rw" }] }); assert.equal(r.mounts[work], "rw", "open: as before");
 ok("safe/strict: no general share around a project folder, no symlinked project; strict shares ro");
+// (LevelReview) role folders can't get around it either; strict roles are ro
+const gcfg = (extra) => fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ projectFolders: [work], protected: [path.join(work, "prot-x")], ...extra }));
+gcfg({ roleFolders: { downloads: work, screenshots: other } });
+r = world({ access: "strict", projects: [], roles: { downloads: true, screenshots: true } });
+assert.equal(r.mounts[work], undefined, "a role folder at the project folder is refused"); assert.match(r.out, /role downloads: in or around a project folder/);
+assert.equal(r.mounts[other], "ro", "strict roles are ro");
+r = world({ access: "open", projects: [], roles: { downloads: true } }); assert.equal(r.mounts[work], "rw", "open: roles as before");
+gcfg({});
+ok("safe/strict: no role folder around a project folder; strict roles ro");
+// (LevelReview) a listed subfolder of a protected project folder stays ro; the card lists what's really mounted
+const mono = path.join(base, "mono"); fs.mkdirSync(path.join(mono, ".git"), { recursive: true }); fs.mkdirSync(path.join(mono, "src")); fs.mkdirSync(path.join(mono, "docs"));
+gcfg({ projectFolders: [mono], protected: [mono] });
+r = world({ access: "safe", projects: ["src:rw"] }); assert.equal(r.mounts[path.join(mono, "src")], "ro"); assert.match(r.out, /projects \(1\): src ro/);
+gcfg({ projectFolders: [mono], protected: [] });
+r = world({ access: "open", projects: "all" }); assert.match(r.out, /projects \(2\): docs rw, src rw/, "a repo project folder: its children, each with its real mode");
+gcfg({});
+ok("a listed child of a protected folder is ro; the card's list follows the real mounts");
 // the card lists every shared project by name and mode
 world({ access: "safe", projects: ["alpha", "beta:rw"] });
 execFileSync(process.execPath, [SH, "card", "world-t"], { env, encoding: "utf8" });

@@ -146,14 +146,19 @@ function plan() {
     if (old) { old.ro = old.ro || !!opts.ro; return; }
     mounts.push({ host: h, at, ro: !!opts.ro, why: opts.why });
   };
-  // 1. role folders (default off)
+  const pf = (g.projectFolders || []).map(exp), access = accessLevel(w, relay, sandbox);
+  // (LevelReview) at safe and strict, projects come ONLY from the list: no role folder or general share may be,
+  // hold or sit inside a project folder (that would get around it)
+  const pfr = pf.map((f) => { try { return fs.realpathSync(f); } catch { return f; } });
+  const nearProjects = (p) => { let h = exp(p); try { h = fs.realpathSync(h); } catch { /* */ } return access.level !== "open" && pfr.some((f) => under(h, f) || under(f, h)); };
+  // 1. role folders (default off); at strict they're read-only
   for (const [role, on] of Object.entries(w.roles || {})) {
     if (!on || !roleDirs[role]) continue;
-    add(roleDirs[role], { at: on.at, why: role });
+    if (nearProjects(roleDirs[role])) { skipped.push(`${roleDirs[role]} (role ${role}: in or around a project folder, not allowed at the ${access.level} level)`); continue; }
+    add(roleDirs[role], { at: on.at, why: role, ro: access.level === "strict" });
   }
   // 2. projects
-  const pf = (g.projectFolders || []).map(exp);
-  const shared = [], access = accessLevel(w, relay, sandbox);
+  const shared = [];
   if (w.projects === "all" && access.level === "open") for (const f of pf) { add(f, { why: "projects (all)" }); shared.push(f); }
   else {
     if (w.projects === "all") skipped.push(`"projects": "all" isn't honoured at the ${access.level} level: list the projects in worlds/${WORLD}.json`);
@@ -169,11 +174,7 @@ function plan() {
   for (const s of w.shares || []) {
     // (LevelReview) at safe and strict, projects come only from the list: a general share that is, holds or sits
     // inside a project folder would get around it. At strict every general share is read-only ("nothing else").
-    if (access.level !== "open") {
-      let h = exp(s.path); try { h = fs.realpathSync(h); } catch { /* missing: add() skips it */ }
-      const pfr = pf.map((f) => { try { return fs.realpathSync(f); } catch { return f; } });
-      if (pfr.some((f) => under(h, f) || under(f, h))) { skipped.push(`${s.path} (a share in or around a project folder isn't allowed at the ${access.level} level: list projects under "projects")`); continue; }
-    }
+    if (nearProjects(s.path)) { skipped.push(`${s.path} (a share in or around a project folder isn't allowed at the ${access.level} level: list projects under "projects")`); continue; }
     add(s.path, { ro: s.mode !== "rw" || access.level === "strict", at: s.at, why: "share" });
   }
   // 4. read-only on top, wherever a writable share would cover them: protected projects, every relay inbox,
@@ -188,7 +189,7 @@ function plan() {
     const base = /\//.test(e) ? [exp(path.dirname(e))] : pf, re = globRe(path.basename(e));
     for (const f of base) for (const d of subdirs(f)) if (re.test(path.basename(d))) prot.add(d);
   }
-  const worktrees = (repo) => { try { return execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8", timeout: 10000 }).split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)); } catch { return []; } };
+  const worktrees = (repo) => { try { return execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)); } catch { return []; } };
   const auto = hostRun(pf); // J316
   for (const [proj, how] of auto) if (!prot.has(proj)) { prot.add(proj); skipped.push(`auto-protected ${proj} (the host runs it: ${how}); add it to "protected" to make that explicit`); }
   for (const p of [...prot]) if (isGit(p)) for (const w of worktrees(p)) if (pf.some((f) => under(w, f)) && w !== p) prot.add(w);
@@ -197,6 +198,8 @@ function plan() {
     const o = readJson(path.join(CFG, "worlds", f)); if (o.inbox) prot.add(exp(o.inbox)); if (o.workspace && exp(o.workspace) !== own) prot.add(exp(o.workspace));
   }
   for (const p of prot) if (mounts.some((m) => !m.ro && under(p, m.host)) || [ROOT].includes(p)) add(p, { ro: true, why: "protected" });
+  // (LevelReview) a writable mount INSIDE a protected path (e.g. a listed subfolder of a protected repo) is read-only too
+  for (const m of mounts) if (!m.ro && [...prot].some((p) => under(m.host, p) && m.host !== p)) { m.ro = true; m.why += ", in a protected project"; }
   // 5. hide gitignored files in shared git projects (not build output), except where "show" says so
   const gi = w.gitignored || {};
   if (gi.hide !== false) {
@@ -230,9 +233,14 @@ function plan() {
   }
   // J366: every shared project by name and mode, for the card ("all" = each folder in the project folders)
   const roAt = (d) => { const cov = mounts.filter((m) => under(d, m.host)).sort((a, b) => b.host.length - a.host.length)[0]; return !cov || cov.ro; }; // the most specific mount decides
-  const projects = [];
-  for (const m of mounts.filter((x) => x.why === "projects (all)")) for (const d of subdirs(m.host)) if (d !== own) projects.push({ name: path.basename(d), path: d, mode: roAt(d) ? "ro" : "rw" });
-  for (const m of mounts.filter((x) => x.why.startsWith("project ("))) projects.push({ name: path.basename(m.host), path: m.host, mode: roAt(m.host) ? "ro" : "rw" });
+  // what is really mounted under the project folders (not the mounts' labels): each project folder child a mount
+  // covers, plus mounts deeper than a child
+  const projects = [], seen = new Set();
+  const put = (d, f) => { if (seen.has(d) || d === own) return; seen.add(d); projects.push({ name: d === f ? path.basename(f) : path.relative(f, d), path: d, mode: roAt(d) ? "ro" : "rw" }); };
+  const covered = (d) => mounts.some((m) => under(d, m.host));
+  for (const f of pf) {
+    for (const d of subdirs(f)) if (covered(d)) put(d, f); else for (const m of mounts) if (under(m.host, d) && m.why !== "hidden") put(m.host, f);
+  }
   projects.sort((a, b) => a.name.localeCompare(b.name));
   return { sandbox, mounts, hidden, skipped, own, access, projects };
 }
