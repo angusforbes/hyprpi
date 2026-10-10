@@ -1,0 +1,55 @@
+#!/usr/bin/env node
+// doorman-bridge: work jobs the owner approved for a host agent (J371). Any harness or model can use it: Claude Code,
+// Codex, pi, a script; `doorman-bridge mcp` serves the same operations as MCP tools (stdio).
+//
+//   doorman-bridge list [--all]                       jobs waiting for a host agent (--all: every state)
+//   doorman-bridge show ID                            the owner's approved text and limits, questions and answers
+//   doorman-bridge claim ID [--by NAME] [--lease S]   take it (one claimer; the lease runs out unless renewed)
+//   doorman-bridge renew ID [--lease S]               keep it
+//   doorman-bridge ask ID TEXT                        a question for the owner; the job waits for the answer (see show)
+//   doorman-bridge report ID done|failed|partial --summary TEXT [--ran LINE]... [--changed LINE]...
+//   doorman-bridge release ID                         give it back unfinished
+//   doorman-bridge settings SANDBOX                   the settings in effect (read-only)
+//   doorman-bridge propose SANDBOX key=value...       propose a settings change; it waits for the owner's approval
+//   doorman-bridge mcp                                the MCP server (stdio)
+// Options: --json (machine output), --token T (else the claim's token from ~/.cache/doorman-bridge).
+// The bridge can't approve, deny or edit anything, create jobs or change settings: the owner decides in the Doorman
+// window; the relay applies. Exit 0 = ok, 1 = refused, 2 = usage.
+import { list, show, claim, renew, release, ask, report } from "./client.mjs";
+import { settings, propose } from "./settings.mjs";
+
+const argv = process.argv.slice(2), opts = { ran: [], changed: [] }, pos = [];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === "--json" || a === "--all") opts[a.slice(2)] = true;
+  else if (["--by", "--lease", "--token", "--summary"].includes(a)) opts[a.slice(2)] = argv[++i];
+  else if (a === "--ran" || a === "--changed") opts[a.slice(2)].push(argv[++i]);
+  else pos.push(a);
+}
+const [cmd, id, ...rest] = pos, by = opts.by || process.env.DOORMAN_BRIDGE_AGENT || "host agent", lease = opts.lease ? Number(opts.lease) : undefined;
+const out = (r) => { if (opts.json) console.log(JSON.stringify(r, null, 1)); else console.log(typeof r === "string" ? r : r?.text ?? JSON.stringify(r, null, 1)); process.exit(r && r.ok === false ? 1 : 0); };
+const usage = () => { console.error("usage: doorman-bridge list|show|claim|renew|ask|report|release|settings|propose|mcp … (see the top of this file)"); process.exit(2); };
+
+if (cmd === "mcp") { await import("./mcp.mjs"); }
+else if (cmd === "list") {
+  const jobs = list({ all: !!opts.all });
+  if (opts.json) out(jobs);
+  else { for (const j of jobs) console.log(`${j.id}  ${j.state}  for ${j.for || "?"} in ${j.sandbox}  ${String(j.approved.action).split("\n").find((l) => /^Action asked for:/.test(l))?.slice(18, 120) || String(j.approved.action).slice(0, 100).replace(/\s+/g, " ")}`); if (!jobs.length) console.log("(no jobs waiting)"); }
+} else if (cmd === "show") { if (!id) usage(); const j = show(id); out(j ? (opts.json ? j : formatJob(j)) : { ok: false, text: "no such host job" }); }
+else if (cmd === "claim") { if (!id) usage(); out(await claim(id, by, lease)); }
+else if (cmd === "renew") { if (!id) usage(); out(await renew(id, by, lease, opts.token)); }
+else if (cmd === "release") { if (!id) usage(); out(await release(id, by, opts.token)); }
+else if (cmd === "ask") { if (!id || !rest.length) usage(); out(await ask(id, by, rest.join(" "), opts.token)); }
+else if (cmd === "report") { if (!id || !rest[0]) usage(); out(await report(id, by, { state: rest[0], summary: opts.summary, ran: opts.ran, changed: opts.changed }, opts.token)); }
+else if (cmd === "settings") { if (!id) usage(); out(settings(id)); }
+else if (cmd === "propose") { if (!id || !rest.length) usage(); out(propose(id, Object.fromEntries(rest.map((kv) => { const k = kv.indexOf("="); return k > 0 ? [kv.slice(0, k), kv.slice(k + 1)] : [kv, ""]; })), by)); }
+else usage();
+
+function formatJob(j) {
+  const L = [`${j.id} (${j.state}) for ${j.for || "?"} in ${j.sandbox}`, "", "The owner's approved text:", j.approved.action, "",
+    `Tools: ${j.approved.tools.join(", ") || "(none named: use only what the job needs)"}`, `Folders: ${j.approved.folders.join(", ") || "(none named)"}`, `Time limit: ${j.approved.time_limit_s} s`];
+  if (j.claimed_by) L.push(`Claimed by ${j.claimed_by} until ${j.lease_until}`);
+  for (const q of j.questions) L.push("", `Question ${q.n}: ${q.text}`, `Answer: ${q.answer ?? "(waiting for the owner)"}`);
+  if (j.outcome) L.push("", `Outcome: ${j.outcome.state}: ${j.outcome.summary}`);
+  return L.join("\n");
+}

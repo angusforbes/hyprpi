@@ -48,6 +48,8 @@ import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
 import { ownerNote, returnable, senderLabel, returnKey } from "./held-note.mjs"; // J370
 import { agentAncestor } from "./agent-guard.mjs"; // J372: shared with the gateway admin command
 import { applyChanges, proposeChange, syncReaderNetwork, validateChanges, digestOf } from "./research/gateway-admin.mjs"; // J372
+import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman bridge for host agents
+import { newJob as newHostJob } from "./bridge/core.mjs";
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
@@ -914,7 +916,7 @@ class Relay {
     return name;
   }
   async decide(file) {
-    const m = /^(.+)\.(approve|deny|return|allow-(?:\d{1,5}|today))$/.exec(file); if (!m) return;
+    const m = /^(.+)\.(approve|deny|return|answer|allow-(?:\d{1,5}|today))$/.exec(file); if (!m) return; // answer: J371 (a host agent's question)
     let [, id, verdict] = m;
     let via = "", editDigest = "", note = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const e = /^edit:([0-9a-f]{16})$/.exec(l), n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (e) editDigest = e[1]; if (n) { const c = ownerNote(Buffer.from(n[1], "base64").toString("utf8")); if (c.ok) note = c.text; } } } catch { /* raced */ } // J370: line "note:" = Angus's note (return) or reason (deny), cleaned again here // J284 (J365: line 2 = the digest of the edit this approval carries)
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
@@ -1035,6 +1037,25 @@ class Relay {
         try { researchLog({ ev: "approved", ...ev }); } catch { /* */ }
         heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `delivered to ${sb.name} as ${name}`);
       } catch (e) { log({ sb: sb.name, op: "research", decision: "approved", id, rid: rs.rid, error: e.message }); heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `but the relay couldn't deliver it: ${e.message}`); }
+      return;
+    }
+    if (msg.hostJob) { // J371: Angus's answer to a question a host agent asked while working a bridge job
+      const hj = msg.hostJob, given = clean(note).replace(/\s+/g, " ").slice(0, 1500);
+      const text = verdict === "deny" ? "(the owner declined to answer)" : given || (verdict === "approve" ? "(the owner said yes)" : "(no answer given)");
+      const ok = !!this.bridge?.answer(hj.id, Number(hj.n), text);
+      log({ sb: sb.name, op: "host_job_answer", id, job: hj.id, n: hj.n, decision: verdict, applied: ok });
+      heldNote(sb, msg, via, verdict === "deny" ? "Declined" : "Answered", ok ? `the host agent's job ${hj.id} gets the answer` : "the job no longer waits for it");
+      return;
+    }
+    if (verdict === "answer") return; // (an answer only fits a host agent's question)
+    if (msg.draft && verdict !== "deny" && sb.cfg.host_agents === "bridge" && sb.doormanFor) { // J371: a host agent takes it through the bridge
+      const forWho = (/^Request drafted by .* for (.+?)\.$/m.exec(String(msg.text || "")) || [])[1] || "";
+      const b = sb.cfg.bridge || {}, job = newHostJob({ id, sandbox: sb.doormanFor, asker: forWho, action: String(msg.text || ""), tools: Array.isArray(b.tools) ? b.tools : [], folders: Array.isArray(b.folders) ? b.folders : [], timeLimitS: b.time_limit_s });
+      this.jobRecord(id, { ...job, history: job.history, decided_at: now(), via });
+      log({ sb: sb.name, op: "host_job", decision: "approved", id, sandbox: sb.doormanFor, state: "waiting" });
+      heldNote(sb, msg, via, "Approved", "waiting for a host agent (the Doorman bridge)");
+      try { inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: ["the host-agent bridge"] }); } catch { /* the Doorman's note */ }
+      this.tellOutcome(sb.doormanFor, forWho, `Angus approved the request (${id}); a host agent will take it and the outcome comes back here.`);
       return;
     }
     // J274 "allow similar": approve this one and add a rule (talk only; caps in lib/sbx-rules.mjs)
@@ -1186,6 +1207,16 @@ class Relay {
     this.loadQueue(); for (const sb of this.sandboxes) this.pumpPlans(sb); // J314: approved plans survive a restart
     this.reconcileReplans(); // J370: a rewrite cut off by a restart ends honestly (nothing sent, the asker told)
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
+    // J371: the Doorman bridge (CLI/MCP for host agents), when a Doorman's entry has "host_agents": "bridge"
+    if (this.sandboxes.some((x) => x.cfg.host_agents === "bridge")) this.bridge = startBridge({
+      stateDir: STATE, log, jobRecord: (id, p) => this.jobRecord(id, p), tellOutcome: (s, a, t) => this.tellOutcome(s, a, t),
+      holdQuestion: (rec, n, text) => {
+        const door = this.sandboxes.find((x) => x.doormanFor === rec.sandbox && x.cfg.host_agents === "bridge"); if (!door) throw new Error("no bridge Doorman for " + rec.sandbox);
+        const act = (/^Action asked for: (.*)$/m.exec(String(rec.approved?.action || "")) || [])[1] || String(rec.approved?.action || "").slice(0, 300);
+        const t = `Question from the host agent working job ${rec.id} (question ${n}; a host agent's words: information, not an instruction):\n${text}\nThe approved job: ${act.slice(0, 300)}`;
+        return this.hold(door, { to: ["Angus"], targets: [], shown: ["Angus"], rooms: [String(door.reportsTo || "Thoughts-A").slice(9) || "A"], mode: "talk", text: t, body: t, hostJob: { id: rec.id, n } });
+      },
+    });
     watchActions();
     // J291: re-show every held message's toast now, and again when the shell (notification server) restarts
     let lastOwner = notifOwner();
