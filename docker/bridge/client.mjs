@@ -15,8 +15,10 @@ const readRec = (id) => { if (!validId(id)) return null; try { return JSON.parse
 // jobs for a host agent; by default the ones it can claim (waiting)
 export function list({ all = false } = {}) {
   let names = []; try { names = fs.readdirSync(reqDir()).filter((n) => n.endsWith(".json")); } catch { return []; }
-  const out = [];
-  for (const n of names) { const r = readRec(n.slice(0, -5)); if (r?.type !== "host_job") continue; const v = view(r); if (all || v.state === "waiting") out.push(v); }
+  const out = []; let bad = 0;
+  for (const n of names) { if (!validId(n.slice(0, -5))) { bad++; continue; } const r = readRec(n.slice(0, -5)); if (r?.type !== "host_job") continue; const v = view(r); if (all || v.state === "waiting") out.push(v); }
+  // (Pkgsort) a record whose name isn't a job id (<sandbox>--<6 hex>, as the relay makes them) is skipped, but said
+  if (bad) process.stderr.write(`doorman-bridge: skipped ${bad} record(s) in ${reqDir()} whose name isn't a job id (<sandbox>--<6 hex digits>)\n`);
   return out.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 }
 export function show(id) { const r = readRec(id); return r?.type === "host_job" ? view(r) : null; }

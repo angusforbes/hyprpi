@@ -64,6 +64,7 @@ Any harness that runs shell commands can use the CLI: `doorman-bridge list --jso
 - The relay is the only writer of job records (`STATE/requests/<id>.json`). The bridge drops a request into `STATE/bridge/in` (host-only, 700), and the relay applies requests one at a time and writes the reply. That's why a claim is atomic.
 - Everything runs as the owner's user on the host, and nothing in a sandbox can reach `STATE`. The protection is the user boundary: a hostile process running as the owner could write decision files directly, just as it could before the bridge.
 - `DOORMAN_STATE` points the CLI and MCP server at another state folder.
+- Job ids are `<sandbox>--<6 hex digits>` (the relay's held-item ids, e.g. `doorman-g--3b0f5e`). The relay makes them. A hand-made test record with another name is skipped by `list`, with a note on stderr.
 
 ## In pi-doorman (standalone)
 
