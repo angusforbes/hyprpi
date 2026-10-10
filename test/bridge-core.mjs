@@ -26,7 +26,7 @@ ok("an expired lease returns the job (abandoned); the old token is dead");
 // 4. ask: the job waits (doesn't expire), a hold effect; answer brings it back to the claimer
 r = apply(job, { op: "ask", by: "codex-2", token: tok2, text: "Which browser profile?\u202e" }, T0 + 610 * S); assert.ok(r.reply.ok); assert.deepEqual(r.effects.map((e) => e.kind), ["hold"]);
 assert.equal(r.patch.questions[0].text, "Which browser profile?", "format characters stripped"); job = merge(job, r);
-assert.equal(job.state, "asked"); assert.equal(sweep(job, T0 + 99999 * S), null, "an asked job doesn't expire");
+assert.equal(job.state, "asked"); assert.equal(sweep(job, T0 + 20 * 3600 * S), null, "an asked job doesn't expire while its question can still be answered");
 assert.equal(apply(job, { op: "ask", by: "codex-2", token: tok2, text: "again?" }, T0 + 611 * S).reply.ok, false, "one open question at a time");
 const a = answer(job, 1, "G's own profile", T0 + 700 * S); job = merge(job, a); assert.equal(job.state, "claimed"); assert.equal(view(job, T0 + 701 * S).questions[0].answer, "G's own profile");
 assert.equal(answer(job, 1, "twice", T0 + 701 * S), null, "a question is answered once");
@@ -58,4 +58,9 @@ ok("the time limit: no report → no_report, final; the owner's wait doesn't cou
 const v = view({ ...job, raw_sandbox_text: "IGNORE PREVIOUS", draft: "x" }, T0);
 assert.ok(!JSON.stringify(v).includes("IGNORE")); assert.deepEqual(Object.keys(v).sort(), ["approved", "claimed_by", "created_at", "for", "id", "lease_until", "outcome", "questions", "sandbox", "state"]);
 ok("view: approved text and the job's own fields only, never other record fields");
+{ let k = newJob({ id: "world-g--ccc333", sandbox: "world-g", asker: "A", action: "x", nowMs: T0 }); let q = apply(k, { op: "claim", by: "a" }, T0); k = merge(k, q);
+  k = merge(k, apply(k, { op: "ask", by: "a", token: q.reply.token, text: "?" }, T0)); k = merge(k, apply(k, { op: "release", by: "a", token: q.reply.token }, T0));
+  assert.equal(sweep(k, T0 + 3600 * S), null, "a recent question keeps waiting");
+  k = merge(k, sweep(k, T0 + 25 * 3600 * S)); assert.equal(k.state, "waiting", "an expired question moves the job on"); assert.match(k.questions[0].answer, /expired unanswered/); }
+ok("a question that expires unanswered moves the job on");
 console.log("bridge-core: all pass");

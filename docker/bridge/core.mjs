@@ -16,7 +16,7 @@ import crypto from "node:crypto";
 
 export const FINAL = new Set(["done", "failed", "partial", "no_report"]);
 export const OPS = new Set(["claim", "renew", "release", "ask", "report"]);
-export const LIMITS = { leaseS: 1800, minLeaseS: 60, timeLimitS: 4 * 3600, askBytes: 1500, summaryBytes: 3000, items: 50, itemBytes: 500, by: 60, questions: 10 };
+export const LIMITS = { questionTtlS: 24 * 3600 + 600, leaseS: 1800, minLeaseS: 60, timeLimitS: 4 * 3600, askBytes: 1500, summaryBytes: 3000, items: 50, itemBytes: 500, by: 60, questions: 10 };
 const ID_RE = /^[A-Za-z0-9._-]{1,80}--[0-9a-f]{6}$/;
 export const validId = (id) => ID_RE.test(String(id || ""));
 const iso = (ms) => new Date(ms).toISOString();
@@ -57,6 +57,13 @@ const sweepView = (rec, nowMs) => { const s = sweep(rec, nowMs); return s ? { ..
 // A lease that ran out: the job goes back to waiting ("abandoned"), or ends as no_report once its time limit (counted
 // from the first claim) is used up. A job waiting for the owner's answer (asked) doesn't expire. → { patch, history, effects } | null
 export function sweep(rec, nowMs = Date.now()) {
+  // (BridgeReview) a question the owner never answered expires with its held item (the relay drops held items after 24 h):
+  // the job moves on with "no answer" instead of waiting forever
+  if (rec?.type === "host_job" && rec.state === "asked") {
+    const open = (rec.questions || []).find((q) => q.answer == null);
+    if (open && nowMs - Date.parse(open.at) > LIMITS.questionTtlS * 1000) { const a = answer(rec, open.n, "(no answer: the question expired unanswered)", nowMs); if (a) return { patch: a.patch, history: [{ at: iso(nowMs), ev: `question ${open.n} expired unanswered (no answer from the owner)`, by: "relay" }], effects: [] }; }
+    return null;
+  }
   if (rec?.type !== "host_job" || rec.state !== "claimed" || !rec.claim) return null;
   if (Date.parse(rec.claim.until) > nowMs) return null;
   const limitEnd = Date.parse(rec.claimed_at || rec.claim.since) + rec.approved.time_limit_s * 1000;

@@ -36,18 +36,22 @@ export async function request(op, { timeoutMs = 15000 } = {}) {
   return { ok: false, text: "the relay didn't answer in time (is it running?)" };
 }
 
-// claim tokens kept for the user only (~/.cache/doorman-bridge/tokens.json, 600) so ask/report don't need --token
-const tokFile = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "doorman-bridge", "tokens.json");
-export function tokens() { try { return JSON.parse(fs.readFileSync(tokFile(), "utf8")); } catch { return {}; } }
+// claim tokens kept for the user only: one file per job (~/.cache/doorman-bridge/tokens/<id>, 600), so parallel
+// commands never race on a shared file (BridgeReview)
+const tokDir = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "doorman-bridge", "tokens");
+export function tokens() { const out = {}; try { for (const n of fs.readdirSync(tokDir())) if (validId(n)) out[n] = fs.readFileSync(path.join(tokDir(), n), "utf8").trim(); } catch { /* */ } return out; }
 export function saveToken(id, token) {
-  const t = tokens(); if (token) t[id] = token; else delete t[id];
-  fs.mkdirSync(path.dirname(tokFile()), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(tokFile() + ".tmp", JSON.stringify(t), { mode: 0o600 }); fs.renameSync(tokFile() + ".tmp", tokFile());
+  if (!validId(id)) return;
+  const f = path.join(tokDir(), id);
+  if (!token) { try { fs.unlinkSync(f); } catch { /* */ } return; }
+  fs.mkdirSync(tokDir(), { recursive: true, mode: 0o700 });
+  const tmp = `${f}.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
+  fs.writeFileSync(tmp, token, { mode: 0o600 }); fs.renameSync(tmp, f);
 }
 
 // the five operations, as the CLI and MCP tools call them
 export async function claim(id, by, leaseS) { const r = await request({ op: "claim", id, by, lease_s: leaseS }); if (r.ok && r.token) saveToken(id, r.token); return r; }
-const tok = (id, token) => token || tokens()[id] || "";
+const tok = (id, token) => { if (token) return token; try { return fs.readFileSync(path.join(tokDir(), id), "utf8").trim(); } catch { return ""; } };
 export async function renew(id, by, leaseS, token) { return request({ op: "renew", id, by, lease_s: leaseS, token: tok(id, token) }); }
 export async function release(id, by, token) { const r = await request({ op: "release", id, by, token: tok(id, token) }); if (r.ok) saveToken(id, ""); return r; }
 export async function ask(id, by, text, token) { return request({ op: "ask", id, by, text, token: tok(id, token) }); }

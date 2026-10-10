@@ -101,6 +101,12 @@ assert.equal(res(0).jobs.length, 1); assert.equal(res(2).ok, true); assert.equal
 assert.equal(res(7).ok, true); assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00004.json"), "utf8")).state, "asked", "released with an open question: stays asked, unclaimed");
 assert.equal(res(8).ok, false, "no report without a claim");
 ok("MCP: initialize, 9 tools (none decides or writes), every tool callable");
+// 7b. (BridgeReview) parallel token saves don't race: 24 processes, 24 tokens kept
+{ const { saveToken, tokens } = await import("../docker/bridge/client.mjs");
+  await Promise.all(Array.from({ length: 24 }, (_, i) => new Promise((res) => execFile(process.execPath, ["--input-type=module", "-e", `import { saveToken } from ${JSON.stringify(new URL("../docker/bridge/client.mjs", import.meta.url).href)}; saveToken("doorman-t--b${String(i).padStart(5, "0")}", "t${i}")`], { env }, res))));
+  const t = tokens(); assert.equal(Object.keys(t).filter((k) => k.startsWith("doorman-t--b")).length, 24); assert.equal(t["doorman-t--b00007"], "t7");
+  const st2 = fs.statSync(path.join(cache, "doorman-bridge", "tokens", "doorman-t--b00007")); assert.equal(st2.mode & 0o777, 0o600); void saveToken;
+  ok("24 parallel token saves: all kept, files 600"); }
 // 8. nothing the bridge did wrote config, a decision or a held item
 assert.equal(snap(), before, "config, decisions/ and pending/ are byte-identical");
 ok("no bridge command or MCP tool wrote config, decisions or held items");
