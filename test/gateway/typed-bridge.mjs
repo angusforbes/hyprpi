@@ -467,8 +467,10 @@ async function followup(ctx, id, ask, show, { choice = '2', note = '', guards = 
     assert.equal(answered.state, 'claimed'); assert.ok(answered.questions[0].answered_at);
     const answer = answered.questions[0].answer;
     if (choice === '1') assert.equal(answer, note, '"1 text": the answer is exactly what Angus typed');
-    else if (note) assert.ok(answer.includes(note), '"2 text": the job is told the reason: ' + answer);
-    else assert.equal(answer, '(the owner declined to answer)');
+    else {
+      const decline = "(the owner declined to answer. Why it was held (the relay's words): a host agent's question waits for Angus's answer";
+      assert.equal(answer, decline + (note ? '. Note from Angus: ' + note : '') + ')', 'the declined question carries its concrete hold reason and the exact owner note');
+    }
     assert.equal(record(ctx, id).questions[0].held_id, heldId, 'answer remains bound to the exact held question');
     assert.ok(ctx.logs().some(x => x.op === 'host_job_answer' && x.job === id && x.id === heldId && x.applied === true));
   } finally { await cleanHeld(ctx, heldId); }
