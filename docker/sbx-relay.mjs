@@ -45,6 +45,7 @@ import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule
 import { logEvent as researchLog, conf as researchConf } from "./research/research.mjs"; // J309
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
+import { ownerNote, returnable, senderLabel, returnKey } from "./held-note.mjs"; // J370
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
@@ -699,7 +700,12 @@ class Relay {
     const mine = fs.readdirSync(PENDING).filter((n) => n.startsWith(sb.name + "--"));
     if (mine.length >= LIMITS.pendingPerSandbox) throw new Error(`too many messages waiting for approval (${LIMITS.pendingPerSandbox})`);
     const id = `${sb.name}--${crypto.randomBytes(3).toString("hex")}`;
+    if (!msg.revises && returnable(msg) && !msg.research) { // J370: the same agent's next message to the same recipients within an hour of a send-back is its revision
+      const k = returnKey(sb.name, msg), r = this.returned?.get(k);
+      if (r && Date.now() - r.at < 3600e3) { msg = { ...msg, revises: r.id, revisesNote: r.note }; this.returned.delete(k); }
+    }
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
+    if (msg.revises) log({ sb: sb.name, op: "revision", id, revises: msg.revises });
     log({ sb: sb.name, dir: "out", op: "talk", held: id, to: msg.to, ...textMeta(msg.text) });
     // J268 (Angus: decide "within the toast itself" and in the receiving world's panel): the toast now
     // shows a short preview of the text and two buttons, Deny / Review (J355). The relay sends it
@@ -732,14 +738,14 @@ class Relay {
     let all = {}; try { all = JSON.parse(fs.readFileSync(PLANQ, "utf8")); } catch { return; }
     for (const sb of this.sandboxes) if (Array.isArray(all[sb.name])) { sb.planQueue = all[sb.name].filter((q) => /^r[0-9a-f]{8}$/.test(q?.token || "") && /^q[0-9a-f]{8}$/.test(q?.opts?.runRid || "")); if (sb.planQueue.length) log({ sb: sb.name, note: `${sb.planQueue.length} approved research plan(s) queued again after a restart` }); }
   }
-  runResearch(sb, token, { want, depth, from, why, runRid = "", heldId = "", room = "" }) {
+  runResearch(sb, token, { want, depth, from, why, runRid = "", heldId = "", room = "", replanRid = "", note = "", revisesId = "" }) {
     const done = (o) => {
       // every way this request ends without a deliverable is in the log too, with the plan's rid (the Doorman window follows a plan to its end)
       if (o.status !== "held" && o.status !== "ready" && o.status !== "planned") log({ sb: sb.name, op: "research", token, status: o.status, rid: runRid || o.rid || undefined, reason: o.reason, end: true });
       // J314 review #4: an approved plan that then fails shows up where Angus approved it
       if (runRid && heldId && /^[A-I]$/.test(room) && o.status !== "held") logTurn({ room, id: heldId, ok: false, turn: `Research searches were approved, but the research ${o.status === "refused" ? "was refused" : "failed"}: ${String(o.reason || "").slice(0, 300)}` }); sb.research?.delete(token); this.pumpPlans(sb); try { inboxWrite(sb, { type: "research", token, ...o }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); } };
     let out = "", err = "";
-    const args = runRid ? [RESEARCH, "run", "--rid", runRid] : [RESEARCH, "ask", "--stdin", "--sandbox", sb.name, "--depth", depth, ...(from ? ["--from", from] : []), ...(why ? ["--why", why] : [])];
+    const args = runRid ? [RESEARCH, "run", "--rid", runRid] : replanRid ? [RESEARCH, "replan", "--rid", replanRid] : [RESEARCH, "ask", "--stdin", "--sandbox", sb.name, "--depth", depth, ...(from ? ["--from", from] : []), ...(why ? ["--why", why] : [])];
     // Its own transient unit: the relay's own unit is capped (MemoryMax 256M, TasksMax 32), and a deep request runs for
     // minutes with sbx clients under it. stdin/stdout still come back here (--pipe).
     const unit = ["systemd-run", "--user", "--pipe", "--wait", "--collect", "--quiet", `--unit=hyprpi-research-${sb.name}-${token}`, "--property=MemoryMax=512M", `--setenv=PATH=${process.env.PATH || ""}`, process.execPath, ...args];
@@ -757,9 +763,10 @@ class Relay {
         try {
           // J352: an off-task / drifting / no-task request is held in every mode, with the task beside it
           const exc = r.exception ? `⚠ Held as an exception: ${clean(r.exception).replace(/\s+/g, " ").slice(0, 300)}\nTask: ${clean(r.task || "") || "(none set)"}\n\n` : "";
-          const text = `${exc}Searches planned for ${sb.name}${from ? `, asked by ${from}` : ""} (${depth}): ${want.replace(/\s+/g, " ")}\n\n${(r.searches || []).map((x) => `- ${x}`).join("\n")}`;
+          const rev = revisesId ? `↩ Revision of ${revisesId}: the Doorman rewrote the searches after you sent them back with your note: "${note}"\n\n` : "";
+          const text = `${rev}${exc}Searches planned for ${sb.name}${from ? `, asked by ${from}` : ""} (${depth}): ${want.replace(/\s+/g, " ")}\n\n${(r.searches || []).map((x) => `- ${x}`).join("\n")}`;
           const id = this.hold(sb, { to: [sb.agentId], targets: [], shown: [`${sb.name} (research searches)`], rooms: [room0], mode: "talk", text, body: "",
-            research: { token, mode: r.mode || researchConf(sb.name).mode, rid: r.rid, file: r.file, depth, from, want, plan: true, searches: r.searches, ...(r.exception ? { exception: clean(r.exception).slice(0, 300) } : {}) } });
+            research: { token, mode: r.mode || researchConf(sb.name).mode, rid: r.rid, file: r.file, depth, from, want, plan: true, searches: r.searches, ...(r.exception ? { exception: clean(r.exception).slice(0, 300) } : {}) }, ...(revisesId ? { revises: revisesId, revisesNote: note } : {}) });
           sb.research?.delete(token); this.pumpPlans(sb);
           // J354: the sandbox hears WHY it waits: a strict-mode plan, or an exception (only its kind and the host-set task, never
           // the Doorman's own words)
@@ -792,7 +799,7 @@ class Relay {
         try { inboxWrite(sb, { type: "research", token, status: "held", id, words: r.words }); } catch { /* the decision still comes */ }
       } catch (e) { done({ status: "error", reason: `couldn't hold it: ${e.message}` }); }
     });
-    k.stdin.end(runRid ? "" : want);
+    k.stdin.end(runRid ? "" : replanRid ? note : want); // (J370: a re-plan reads Angus's note on stdin)
   }
   // J309: deliver an approved deliverable: a read-only research-<id>.md in the sandbox's inbox plus an inbox item.
   deliverResearch(sb, msg, { open = false } = {}) {
@@ -837,9 +844,9 @@ class Relay {
     return name;
   }
   async decide(file) {
-    const m = /^(.+)\.(approve|deny|allow-(?:\d{1,5}|today))$/.exec(file); if (!m) return;
-    const [, id, verdict] = m;
-    let via = "", editDigest = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); editDigest = (/^edit:([0-9a-f]{16})$/.exec((raw[1] || "").trim()) || [])[1] || ""; } catch { /* raced */ } // J284 (J365: line 2 = the digest of the edit this approval carries)
+    const m = /^(.+)\.(approve|deny|return|allow-(?:\d{1,5}|today))$/.exec(file); if (!m) return;
+    let [, id, verdict] = m;
+    let via = "", editDigest = "", note = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const e = /^edit:([0-9a-f]{16})$/.exec(l), n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (e) editDigest = e[1]; if (n) { const c = ownerNote(Buffer.from(n[1], "base64").toString("utf8")); if (c.ok) note = c.text; } } } catch { /* raced */ } // J370: line "note:" = Angus's note (return) or reason (deny), cleaned again here // J284 (J365: line 2 = the digest of the edit this approval carries)
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
@@ -847,6 +854,10 @@ class Relay {
     closeNotif(msg.notif); // decided anywhere (toast, panel, terminal): the toast goes too (J268)
     const sb = this.sandboxes.find((s) => s.name === msg.sandbox);
     if (!sb) return;
+    // J370: a send-back is only for a sandbox agent's message or a research plan; anything else that somehow carries one is denied (nothing goes out)
+    if (verdict === "return" && (!returnable(msg) || !note)) verdict = "deny";
+    if (verdict === "return") return this.sendBack(sb, msg, id, via, note);
+    const reason = verdict === "deny" ? note : "", why = reason ? ` (Angus's reason: ${reason})` : "";
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, verdict === "deny");
     { const te = takeEdit(id, verdict === "deny" ? "" : editDigest, msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) });
@@ -868,18 +879,18 @@ class Relay {
           else { setTask(path.dirname(CONFIG), tc.sandbox, tc.task); outcome = `the task of ${tc.sandbox} is now: ${tc.task}`; }
         } catch (e) { outcome = `not applied: ${e.message}`; }
       }
-      log({ sb: sb.name, op: "task_change", decision: verdict === "deny" ? "denied" : "approved", id, sandbox: tc.sandbox, applied: /^the task/.test(outcome), outcome });
-      heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", outcome);
-      try { inboxWrite(sb, { type: "task_change", status: verdict === "deny" ? "denied" : /^the task/.test(outcome) ? "applied" : "not-applied", id, outcome }); } catch { /* */ }
+      log({ sb: sb.name, op: "task_change", decision: verdict === "deny" ? "denied" : "approved", id, sandbox: tc.sandbox, applied: /^the task/.test(outcome), outcome, ...(reason ? { reason } : {}) });
+      heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", outcome + why);
+      try { inboxWrite(sb, { type: "task_change", status: verdict === "deny" ? "denied" : /^the task/.test(outcome) ? "applied" : "not-applied", id, outcome: outcome + why }); } catch { /* */ }
       return;
     }
     if (msg.gpu) { // J328: Angus decided a GPU lease (DEVELOPER MODE, not an approved route for work data): approval runs it, once
       const g = msg.gpu, served = this.sandboxes.find((x) => x.name === sb.doormanFor), what = { ...msg, text: `GPU lease: ${g.job} (${(g.files || []).map((x) => x.path).join(", ")})` };
       if (verdict === "deny" || !served) {
-        log({ sb: sb.name, op: "gpu_lease", decision: verdict === "deny" ? "denied" : "approved-but-no-sandbox", id, lease: g.lease, ran: false });
+        log({ sb: sb.name, op: "gpu_lease", decision: verdict === "deny" ? "denied" : "approved-but-no-sandbox", id, lease: g.lease, ran: false, ...(reason ? { reason } : {}) });
         fs.rmSync(g.dir, { recursive: true, force: true });
-        heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", verdict === "deny" ? "nothing ran" : "but the sandbox it serves isn't configured");
-        if (served) { try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "denied", id }); } catch { /* */ } this.gpuTell(served, sb, g, `Angus denied your GPU lease ${g.lease} (${g.job.slice(0, 80)}); nothing ran.`); }
+        heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", verdict === "deny" ? `nothing ran${why}` : "but the sandbox it serves isn't configured");
+        if (served) { try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "denied", id }); } catch { /* */ } this.gpuTell(served, sb, g, `Angus denied your GPU lease ${g.lease} (${g.job.slice(0, 80)}); nothing ran.${reason ? ` His reason (note from Angus): ${reason}` : ""}`); }
         return;
       }
       log({ sb: sb.name, op: "gpu_lease", decision: "approved", id, lease: g.lease, files: (g.files || []).map((x) => `${x.path}:${x.sha256.slice(0, 12)}`), seconds: g.seconds, vramMib: g.vramMib, via: via || "terminal" });
@@ -893,10 +904,10 @@ class Relay {
     if (msg.research?.plan) { // J314 strict mode: Angus decided the Doorman's searches; only an approval sends anything
       const rs = msg.research, rid = String(rs.rid || "");
       if (verdict === "deny") {
-        log({ sb: sb.name, op: "research-plan", decision: "denied", id, rid, sent: false });
+        log({ sb: sb.name, op: "research-plan", decision: "denied", id, rid, sent: false, ...(reason ? { reason } : {}) });
         spawn(process.execPath, [RESEARCH, "drop", "--rid", rid], { stdio: "ignore" }).on("error", () => {});
-        heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Denied", "nothing was sent");
-        try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id, reason: "Angus denied the planned searches; nothing was sent" }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
+        heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Denied", `nothing was sent${why}`);
+        try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id, reason: `Angus denied the planned searches; nothing was sent${why}`, ...(reason ? { note: reason } : {}) }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
         return;
       }
       const busy = (sb.research?.size || 0) >= LIMITS.researchRunning;
@@ -910,10 +921,10 @@ class Relay {
     if (msg.research) { // J309: approved once (never a rule); deny drops it
       const rs = msg.research, ev = { rid: rs.rid, sandbox: sb.name, from: rs.from, depth: rs.depth, looking_for: String(rs.want || "").slice(0, 300), via: via || "terminal" };
       if (verdict === "deny") {
-        log({ sb: sb.name, op: "research", decision: "denied", id, rid: rs.rid }); // rid: the Doorman window follows a plan to its deliverable
-        try { researchLog({ ev: "denied", ...ev }); } catch { /* */ }
-        heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Denied", "");
-        try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
+        log({ sb: sb.name, op: "research", decision: "denied", id, rid: rs.rid, ...(reason ? { reason } : {}) }); // rid: the Doorman window follows a plan to its deliverable
+        try { researchLog({ ev: "denied", ...ev, ...(reason ? { reason } : {}) }); } catch { /* */ }
+        heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Denied", reason ? `Angus's reason: ${reason}` : "");
+        try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id, ...(reason ? { note: reason } : {}) }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
         return;
       }
       try {
@@ -934,10 +945,10 @@ class Relay {
       } else log({ sb: sb.name, op: "rule", id, note: "not a talk: approved once, no rule" });
     }
     if (verdict === "deny") {
-      log({ sb: sb.name, op: "talk", decision: "denied", id });
-      heldNote(sb, msg, via, `Denied`, "");
+      log({ sb: sb.name, op: "talk", decision: "denied", id, ...(reason ? { reason } : {}) });
+      heldNote(sb, msg, via, `Denied`, reason ? `Angus's reason: ${reason}` : "");
       if (!sb.conn) return;
-      inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to });
+      inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to, ...(reason ? { note: reason } : {}) });
       return;
     }
     try {
@@ -957,6 +968,27 @@ class Relay {
       // (NoteReview #3: the sandbox's receipt failing is not the delivery failing: its own try, no second note)
       try { inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: r.delivered, request_id: r.request_id, skipped: r.skipped }); } catch (e) { log({ sb: sb.name, error: `inbox (decision receipt): ${e.message}` }); }
     } catch (e) { log({ sb: sb.name, op: "talk", decision: "approved", id, error: e.message }); heldNote(sb, msg, via, "Approved", `but the relay couldn't send it: ${e.message}`); }
+  }
+  // J370 (Angus: "shouldn't another option be to let the agent edit it?"): Angus sent a held item back with a note. It is withdrawn (nothing
+  // goes out, never approved); the note goes to whoever wrote the item: the Doorman for a research plan (it rewrites the searches, which come back
+  // held as a NEW item linked to this one), the asking agent in the sandbox for a message (its revision re-enters the normal path and, when held,
+  // is linked to this one). The note is Angus's own text, cleaned again and labelled "note from Angus" wherever it goes.
+  sendBack(sb, msg, id, via, note) {
+    try { takeEdit(id, "", msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) }); } catch { /* a stale edit is just dropped */ }
+    if (msg.research?.plan) {
+      const rs = msg.research, rid = String(rs.rid || "");
+      log({ sb: sb.name, op: "research-plan", decision: "returned", id, rid, token: rs.token, sent: false, note });
+      heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Sent back to the Doorman with your note", `nothing was sent; the revised searches come back for your review. Your note: ${note}`);
+      try { inboxWrite(sb, { type: "research", token: rs.token, status: "returned", id, note }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
+      (sb.research ||= new Map()).set(rs.token, { at: Date.now() });
+      this.runResearch(sb, rs.token, { want: rs.want, depth: rs.depth, from: rs.from, replanRid: rid, note, revisesId: id });
+      return;
+    }
+    const s = senderLabel(msg.text);
+    log({ sb: sb.name, op: "talk", decision: "returned", id, note });
+    heldNote(sb, msg, via, "Sent back with your note", `nothing was sent; ${s || "the asker"} can revise it. Your note: ${note}`);
+    (this.returned ||= new Map()).set(returnKey(sb.name, msg), { id, note, at: Date.now() });
+    try { inboxWrite(sb, { type: "decision", id, decision: "returned", to: msg.to, note }); } catch (e) { log({ sb: sb.name, error: `inbox (decision): ${e.message}` }); }
   }
   // J308 (design §9, from Codex / Claude Code): after 3 denied drafts in a row, a Doorman's drafts are refused for an
   // hour, so it stops trying variations; it is told to wait for Angus. An approval resets the count.
@@ -1088,8 +1120,8 @@ function prepareHeldEdit(id, editFile) {
   if (!r.ok) { console.error(r.code === 1 ? `no pending message ${id}` : `sbx-relay: edit refused: ${r.reason}`); process.exit(r.code || 4); }
   return r.digest;
 }
-function decideAsAngus(id, verdict, editFile = "") {
-  if (verdict !== "deny") { // approve and allow (J274) are Angus's only
+function decideAsAngus(id, verdict, editFile = "", note = "") {
+  if (verdict !== "deny" || note) { // approve and allow (J274) are Angus's only; so are a send-back and a deny WITH a reason (J370: they carry text labelled as Angus's into the sandbox)
     const why = agentAncestor();
     if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
     if (!process.env.HYPRPI_HELD_VIA) console.error("sbx-relay: note: the normal route is the review in the Doorman window or the Thoughts panel (Review on the toast, then type 1 after the full request); this terminal command is the admin tool."); // J355
@@ -1098,14 +1130,14 @@ function decideAsAngus(id, verdict, editFile = "") {
   if (editFile) { if (verdict !== "approve") { console.error("sbx-relay: an edit only goes with approve"); process.exit(4); } editDigest = prepareHeldEdit(id, editFile); }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   const via = /^(panel|room panel|doorman window)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";
-  writeDecision(id, verdict, via, editDigest); // J284: the route, for the Thoughts note (J365: and the digest of the edit this approval carries)
+  writeDecision(id, verdict, via, editDigest, note); // J284: the route, for the Thoughts note (J365: and the digest of the edit this approval carries)
 }
 // J284 (NoteReview #2): written under a temporary name and renamed into place, so the relay never reads a decision
 // before its route is in it (the temp name doesn't match the decision pattern, so the watcher ignores it).
-function writeDecision(id, verdict, via, editDigest = "") {
+function writeDecision(id, verdict, via, editDigest = "", note = "") {
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   const tmp = path.join(DECISIONS, `.${id}.${verdict}.${process.pid}.tmp`);
-  fs.writeFileSync(tmp, via + (editDigest ? `\nedit:${editDigest}` : ""), { mode: 0o600 });
+  fs.writeFileSync(tmp, via + (editDigest ? `\nedit:${editDigest}` : "") + (note ? `\nnote:${Buffer.from(note, "utf8").toString("base64")}` : ""), { mode: 0o600 }); // J370: Angus's note / reason, base64 on one line
   fs.renameSync(tmp, path.join(DECISIONS, `${id}.${verdict}`));
 }
 function agentAncestor() {
@@ -1170,11 +1202,21 @@ if (cmd === "run") {
 } else if (cmd === "clear" && arg) {
   // clear SANDBOX: every rule of one sandbox (world.sh stop calls it)
   console.log(`revoked ${revokeRules(STATE, arg, { sandbox: true })} rule(s)`);
-} else if ((cmd === "approve" || cmd === "deny") && arg) {
+} else if ((cmd === "approve" || cmd === "deny" || cmd === "return") && arg) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
   const ef = process.argv.indexOf("--edit-file"), editFile = ef > 0 ? String(process.argv[ef + 1] || "") : "";
-  decideAsAngus(arg, cmd, editFile);
-  console.log(`${cmd === "deny" ? "denied" : "approved"}${editFile ? " (edited)" : ""} ${arg}`);
+  // J370: "return ID --note TEXT" sends the item back to its author with Angus's note; "deny ID --reason TEXT" tells the asker why
+  const flag = cmd === "return" ? "--note" : "--reason", fi = process.argv.indexOf(flag), raw = fi > 0 ? String(process.argv[fi + 1] ?? "") : "";
+  const note = fi > 0 ? ownerNote(raw) : { ok: true, text: "" };
+  if (!note.ok) { console.error(`sbx-relay: ${cmd === "return" ? "note" : "reason"} refused: ${note.reason}`); process.exit(4); }
+  if (cmd === "return") {
+    if (!note.text) { console.error("sbx-relay: return needs --note TEXT (what the author should change)"); process.exit(4); }
+    let rec = null; try { rec = JSON.parse(fs.readFileSync(path.join(PENDING, arg + ".json"), "utf8")); } catch { /* */ }
+    if (!returnable(rec)) { console.error("sbx-relay: only a sandbox agent's message or a research plan can be sent back; approve or deny this one"); process.exit(4); }
+  }
+  if (editFile && cmd !== "approve") { console.error("sbx-relay: an edit only goes with approve"); process.exit(4); }
+  decideAsAngus(arg, cmd, editFile, note.text);
+  console.log(`${cmd === "deny" ? "denied" : cmd === "return" ? "sent back with your note" : "approved"}${editFile ? " (edited)" : ""}${note.text && cmd === "deny" ? " (with your reason)" : ""} ${arg}`);
 } else {
   console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|clear SANDBOX");
   process.exit(cmd ? 1 : 0);

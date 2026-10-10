@@ -47,5 +47,19 @@ log({ sb: "w", op: "research-plan", decision: "approved", id: "w--bbbbbc", rid: 
 log({ sb: "w", op: "research", token: "r6", status: "ready", rid: "q6" });
 log({ sb: "w", op: "research", mode: "doorman-open", delivered: ["w"], rid: "q6", file: "research-q6.md", reviewed: false });
 t = trackHeld("w--bbbbbc"); assert.ok(t.done); assert.match(t.text, /straight into w \(doorman-open/);
+// J370: sent back with a note, followed to its revision; a deny with a reason says so
+log({ sb: "w", op: "talk", decision: "returned", id: "w--c1c1c1", note: "shorter" });
+t = trackHeld("w--c1c1c1"); assert.equal(t.state, "returned"); assert.equal(t.done, false); assert.match(t.text, /sent back to w's asking agent with your note/);
+log({ sb: "w", op: "revision", id: "w--c2c2c2", revises: "w--c1c1c1" });
+t = trackHeld("w--c1c1c1"); assert.ok(t.done); assert.match(t.text, /revised message is held for you as w--c2c2c2/);
+log({ sb: "w", op: "research-plan", decision: "returned", id: "w--d1d1d1", rid: "q7", token: "r7", note: "plainer" });
+t = trackHeld("w--d1d1d1"); assert.equal(t.done, false); assert.match(t.text, /rewriting the searches/);
+log({ sb: "w", op: "research", token: "r7", status: "refused", rid: "q8", reason: "nope", end: true });
+t = trackHeld("w--d1d1d1"); assert.ok(t.done); assert.match(t.text, /rewrite was refused: nope/);
+log({ sb: "w", op: "research-plan", decision: "returned", id: "w--d3d3d3", rid: "q9", token: "r9", note: "plainer" });
+log({ sb: "w", op: "revision", id: "w--d4d4d4", revises: "w--d3d3d3" });
+assert.match(trackHeld("w--d3d3d3").text, /revised searches are held for you as w--d4d4d4/);
+log({ sb: "w", op: "talk", decision: "denied", id: "w--e1e1e1", reason: "not on task" });
+assert.match(trackHeld("w--e1e1e1").text, /told your reason: not on task/);
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log("held-track: all pass");

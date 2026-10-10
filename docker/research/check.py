@@ -131,12 +131,16 @@ def main():
     elif req.get("mode") == "plan":
         depth = "deep" if req.get("depth") == "deep" else "quick"
         fb = str(req.get("feedback") or "")[:400]
+        on = str(req.get("owner_note") or "")[:500]  # J370: the owner sent the previous searches back with this note
+        prev = "\n".join("- " + str(x)[:200] for x in (req.get("previous") or [])[:3])
         task = str(req.get("task") or "")[:300]
         recent = "\n".join("- " + str(x)[:200] for x in (req.get("recent") or [])[:8])
         ctx = ("TASK (set by the owner): " + task + "\n\n" + fence("RECENT", recent or "(none)") + "\n\n") if task else ""
         v = ask(base, model, key, PLAN_RULES + (TASK_RULES if task else ""), ctx + "DEPTH: " + depth + "\n\n" + fence("REQUEST", want)
                 + ("\n\nYour previous searches were rejected by the host's paraphrase check: " + fb
-                   + ". Rewrite them in different words, or list a kept word under public_terms only if it is a well-known public name or term." if fb else ""))
+                   + ". Rewrite them in different words, or list a kept word under public_terms only if it is a well-known public name or term." if fb else "")
+                + ("\n\nThe owner (Angus) sent your previous searches back to you with a note. Rewrite the searches so they follow his note; your rules still apply (if the note asks for something your rules forbid, refuse and say why).\n\n"
+                   + fence("PREVIOUS SEARCHES", prev or "(none)") + "\n\n" + fence("NOTE FROM ANGUS", on) if on else ""))
         refuse = v.get("refuse") is not False
         searches = [str(x)[:200] for x in (v.get("searches") or []) if str(x).strip()][:3]
         brief = str(v.get("brief") or "")[:700]

@@ -18,7 +18,7 @@ put("other--000003", { sandbox: "other", at: "2026-10-09T09:00:00Z", shown: ["y"
 put("world-t--000004", { sandbox: "world-t", at: "2026-10-09T10:00:03Z", shown: ["world-t (research searches)"], mode: "talk", text: "Searches planned", research: { plan: true, want: "w", searches: ["s one", "s two"] } });
 let c = r.current();
 assert.equal(c.id, "door-t--000002", "oldest of THIS Doorman's sandboxes first (the other sandbox's item is not shown)");
-assert.deepEqual(c.choices, ["1", "2"], "a draft has no allow-similar and can't be edited");
+assert.deepEqual(c.choices, ["1", "2"], "a draft has no allow-similar, can't be edited or sent back");
 assert.match(c.text, /drafted request\nfrom door-t/); assert.match(c.text, /Request drafted by Door/);
 assert.equal(r.decide("world-t--000001", "1").ok, false, "only the item on screen (the oldest) can be decided");
 assert.equal(r.decide("door-t--000002", "3").ok, false, "3 isn't offered for a draft");
@@ -27,9 +27,13 @@ assert.equal(ap.ok, false); assert.match(ap.text, /only Angus can approve|termin
 const dn = r.decide("door-t--000002", "2"); // deny is open to anyone and only writes a decision file in the throwaway state
 assert.equal(dn.ok, true, dn.text); assert.ok(fs.readdirSync(path.join(T, "state", "hyprpi", "sbx-relay", "decisions")).some((f) => /000002\.deny$/.test(f)), "the host decision file was written");
 fs.rmSync(path.join(P, "door-t--000002.json"));
-c = r.current(); assert.equal(c.id, "world-t--000001"); assert.deepEqual(c.choices, ["1", "2", "3", "e"], "a plain talk offers allow-similar and edit");
+c = r.current(); assert.equal(c.id, "world-t--000001"); assert.deepEqual(c.choices, ["1", "2", "3", "e", "r"], "a plain talk offers allow-similar, edit and send-back (J370)"); assert.equal(c.reason, true, "a deny can carry a reason");
 fs.rmSync(path.join(P, "world-t--000001.json"));
-c = r.current(); assert.equal(c.id, "world-t--000004"); assert.match(c.text, /research plan/); assert.match(c.text, /- s one\n- s two/); assert.deepEqual(c.choices, ["1", "2", "e"]);
+c = r.current(); assert.equal(c.id, "world-t--000004"); assert.match(c.text, /research plan/); assert.match(c.text, /- s one\n- s two/); assert.deepEqual(c.choices, ["1", "2", "e", "r"]);
+// J370: r needs a note; r and a deny WITH a reason go through the guarded host path (refused under an agent); a note only rides with r or 2
+assert.equal(r.decide("world-t--000004", "r").ok, false, "r without a note"); assert.equal(r.decide("world-t--000004", "1", undefined, "note").ok, false, "approve carries no note");
+const rb = r.decide("world-t--000004", "r", undefined, "use plainer words"); assert.equal(rb.ok, false); assert.match(rb.text, /only Angus/, rb.text);
+const dr = r.decide("world-t--000004", "2", undefined, "not on task"); assert.equal(dr.ok, false); assert.match(dr.text, /only Angus/, dr.text);
 // J365: nothing typed in the window starts anything: no suggest hook, no research drop-box writer
 assert.equal(r.suggest, undefined, "the provider has no suggest()");
 assert.ok(!/outbox|RESEARCH_RE|writeInto/.test(fs.readFileSync(new URL("./review-provider.mjs", import.meta.url), "utf8")), "no code path writes a request into the sandbox's drop-box");
