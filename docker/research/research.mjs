@@ -334,11 +334,26 @@ export function cleanSources(list) {
 }
 
 // Clean the deliverable again on the host (defence in depth): plain Markdown, no links, code, HTML or hidden text.
+// J378 (FlowRecheck #4): code never reaches the sandbox, however it is written: fenced blocks with ``` or ~~~ (any length, info string, indented up
+// to 3 spaces, an unclosed fence runs to the end), indented code blocks (4+ spaces or a tab after a blank line, not a list item) and inline code
+// spans. Each becomes a marker; the same rules are in reader.py strip_code (the reader cleans first, the host again).
+export function stripCode(text) {
+  const out = []; let fence = null, prevBlank = true, inInd = false;
+  for (const line of String(text ?? "").split("\n")) {
+    if (fence) { const m = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line); if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null; continue; }
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (f) { fence = { ch: f[1][0], n: f[1].length }; out.push("[code omitted]"); prevBlank = false; inInd = false; continue; }
+    if (!line.trim()) { prevBlank = true; out.push(""); continue; }
+    if (/^( {4,}|\t)/.test(line) && (inInd || prevBlank) && !/^\s*([-*+]|\d{1,9}[.)])\s/.test(line)) { if (!inInd) out.push("[code omitted]"); inInd = true; prevBlank = false; continue; }
+    inInd = false; prevBlank = false; out.push(line);
+  }
+  return out.join("\n").replace(/(?<!`)(`+)(?!`)[^\n]+?(?<!`)\1(?!`)/g, "[code]").replace(/`/g, "");
+}
 export function cleanDeliverable(res) {
   let t = String(res?.deliverable ?? "");
   t = t.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|[\u{e0000}-\u{e0fff}]/gu, "")
-    .replace(/```[\s\S]*?```/g, "[code omitted]").replace(/`/g, "").replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^[\s\S]*$/, (x) => stripCode(x)).replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/<[^>]{1,300}>/g, "").replace(/(?:https?|ftp|file|javascript|data):\S+/gi, "").replace(/\bwww\.\S+/g, "")
     .replace(/\[\d+(?:[,\s\u2013-]*\d+)*\]/g, "").replace(/[ \t]+([.,;:])/g, "$1").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, LIMITS.deliverableChars);
   const sources = cleanSources(res?.sources); // J360

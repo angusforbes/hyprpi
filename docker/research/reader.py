@@ -65,13 +65,35 @@ def call(key, model, system, user, max_tokens, timeout):
         out({"ok": False, "error": f"{model}: no answer"})
 
 
+def strip_code(s):
+    # J378: same rules as research.mjs stripCode: ``` and ~~~ fences (unclosed runs to the end), indented code blocks, inline code spans
+    out, fence, prev_blank, in_ind = [], None, True, False
+    for line in s.split("\n"):
+        if fence:
+            m = re.match(r"^ {0,3}(`{3,}|~{3,})\s*$", line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
+                fence = None
+            continue
+        f = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if f:
+            fence = (f.group(1)[0], len(f.group(1))); out.append("[code omitted]"); prev_blank = False; in_ind = False; continue
+        if not line.strip():
+            prev_blank = True; out.append(""); continue
+        if re.match(r"^( {4,}|\t)", line) and (in_ind or prev_blank) and not re.match(r"^\s*([-*+]|\d{1,9}[.)])\s", line):
+            if not in_ind:
+                out.append("[code omitted]")
+            in_ind = True; prev_blank = False; continue
+        in_ind = False; prev_blank = False; out.append(line)
+    t = re.sub(r"(?<!`)(`+)(?!`)[^\n]+?(?<!`)\1(?!`)", "[code]", "\n".join(out))
+    return t.replace("`", "")
+
+
 def clean_md(s):
     s = re.sub(r"<think>.*?</think>", "", s, flags=re.S)       # deep-research reasoning
     s = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", s)
     s = re.sub(r"[\x00-\x08\x0b-\x1f\x7f\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", s)
     s = re.sub(r"[\U000e0000-\U000e0fff]", "", s)
-    s = re.sub(r"```.*?```", "[code omitted]", s, flags=re.S)
-    s = s.replace("`", "")
+    s = strip_code(s)
     s = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", s)
     s = re.sub(r"\[([^\]]+)\]\((?:[^)]*)\)", r"\1", s)
     s = re.sub(r"<[^>]{1,300}>", "", s)
