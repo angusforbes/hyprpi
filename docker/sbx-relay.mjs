@@ -877,7 +877,14 @@ class Relay {
     const H = path.dirname(fileURLToPath(import.meta.url));
     return {
       served: { name: served.name, cfg: served.cfg }, cfgDir: path.dirname(CONFIG), now: Date.now(),
-      openUrl: (url) => { const r = spawnSync("python3", [path.join(H, "world", "g_open_url.py"), "--agent", url, served.name], { encoding: "utf8", timeout: 30000 }); return { ok: r.status === 0, text: (r.stderr || r.stdout || "").trim().slice(-300) || (r.status === 0 ? "" : "refused by the link gate") }; },
+      // (J368 live run: Brave started inside the relay's own unit crashed at once, TasksMax=32 / MemoryMax=256M) the link gate runs in
+      // its own transient scope, so the browser it starts isn't bound by the relay's limits; without a user bus (tests) it runs directly
+      openUrl: (url) => {
+        const gate = ["python3", path.join(H, "world", "g_open_url.py"), "--agent", url, served.name];
+        let r = spawnSync("systemd-run", ["--user", "--scope", "--collect", "--quiet", `--unit=hyprpi-open-${served.name}-${crypto.randomBytes(4).toString("hex")}`, ...gate], { encoding: "utf8", timeout: 30000 });
+        if (r.error || /Failed to (connect|start|create)/i.test(String(r.stderr || ""))) r = spawnSync(gate[0], gate.slice(1), { encoding: "utf8", timeout: 30000 });
+        return { ok: r.status === 0, text: (r.stderr || r.stdout || "").trim().slice(-300) || (r.status === 0 ? "" : "refused by the link gate") };
+      },
       putInbox: (name, buf) => { const dirs = pinDirs(served); createFile(dirs.inbox, name, buf); return path.join(String(served.cfg.inbox || "").replace(/^~(?=\/)/, os.homedir()), name); },
       policyAllow: (host) => { const r = spawnSync(process.env.HYPRPI_SBX || "sbx", ["policy", "allow", "network", host, "--sandbox", served.name], { encoding: "utf8", timeout: 30000 }); return { ok: r.status === 0, text: (r.stdout + r.stderr).trim().slice(-300) }; },
       addProject: async (project, mode) => {
