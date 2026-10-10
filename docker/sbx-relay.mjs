@@ -740,15 +740,15 @@ class Relay {
     // Its own transient unit: the relay's own unit is capped (MemoryMax 256M, TasksMax 32), and a deep request runs for
     // minutes with sbx clients under it. stdin/stdout still come back here (--pipe).
     const unit = ["systemd-run", "--user", "--pipe", "--wait", "--collect", "--quiet", `--unit=hyprpi-research-${sb.name}-${token}`, "--property=MemoryMax=512M", `--setenv=PATH=${process.env.PATH || ""}`, process.execPath, ...args];
-    let k; try { k = spawn(process.env.HYPRPI_RESEARCH_DIRECT ? process.execPath : unit[0], process.env.HYPRPI_RESEARCH_DIRECT ? args : unit.slice(1), { stdio: ["pipe", "pipe", "pipe"] }); } catch (e) { done({ status: "error", reason: `couldn't start: ${e.message}` }); return; }
+    let k; try { k = spawn(process.env.HYPRPI_RESEARCH_DIRECT ? process.execPath : unit[0], process.env.HYPRPI_RESEARCH_DIRECT ? args : unit.slice(1), { stdio: ["pipe", "pipe", "pipe"] }); } catch (e) { log({ sb: sb.name, op: "research", token, status: "error", rid: runRid || undefined, reason: `couldn't start: ${e.message}` }); done({ status: "error", reason: `couldn't start: ${e.message}` }); return; }
     const kill = setTimeout(() => { try { k.kill("SIGTERM"); } catch { /* */ } }, (depth === "deep" ? 50 : 20) * 60e3);
     k.stdout.on("data", (d) => { if (out.length < 65536) out += d; });
     k.stderr.on("data", (d) => { if (err.length < 4096) err += d; });
-    k.on("error", (e) => { clearTimeout(kill); done({ status: "error", reason: e.message.slice(0, 200) }); });
+    k.on("error", (e) => { clearTimeout(kill); log({ sb: sb.name, op: "research", token, status: "error", rid: runRid || undefined, reason: e.message.slice(0, 200) }); done({ status: "error", reason: e.message.slice(0, 200) }); });
     k.on("close", () => {
       clearTimeout(kill);
       let r; try { r = JSON.parse(out.trim().split("\n").pop()); } catch { r = { status: "error", reason: (err.trim().split("\n").pop() || "no answer").slice(0, 200) }; }
-      log({ sb: sb.name, op: "research", token, status: r.status, rid: r.rid, reason: r.reason, ...(r.status === "planned" ? { searches: r.searches } : {}) });
+      log({ sb: sb.name, op: "research", token, status: r.status, rid: r.rid || runRid || undefined, reason: r.reason, ...(r.status === "planned" ? { searches: r.searches } : {}) });
       const rc0 = researchConf(sb.name), room0 = (/^Thoughts-([A-I])$/i.exec(rc0.reports_to) || [, "A"])[1].toUpperCase();
       if (r.status === "planned") { // J314 strict mode: the Doorman's searches are held for Angus; nothing has gone out
         try {
@@ -909,7 +909,7 @@ class Relay {
         log({ sb: sb.name, op: "research", decision: "approved", id, delivered: [sb.name], file: name });
         try { researchLog({ ev: "approved", ...ev }); } catch { /* */ }
         heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `delivered to ${sb.name} as ${name}`);
-      } catch (e) { log({ sb: sb.name, op: "research", decision: "approved", id, error: e.message }); heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `but the relay couldn't deliver it: ${e.message}`); }
+      } catch (e) { log({ sb: sb.name, op: "research", decision: "approved", id, rid: rs.rid, error: e.message }); heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `but the relay couldn't deliver it: ${e.message}`); }
       return;
     }
     // J274 "allow similar": approve this one and add a rule (talk only; caps in lib/sbx-rules.mjs)

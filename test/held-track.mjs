@@ -33,5 +33,15 @@ log({ sb: "w", op: "talk", decision: "approved", id: "w--222222", delivered: ["L
 t = trackHeld("w--222222"); assert.ok(t.done); assert.match(t.text, /delivered to Lenswatch/);
 log({ sb: "w", op: "talk", decision: "approved", id: "w--333333", error: "inbox full" });
 assert.match(trackHeld("w--333333").text, /couldn't carry it out: inbox full/);
+log({ sb: "d", op: "task_change", decision: "approved", id: "d--666666", sandbox: "w", applied: true, outcome: "the task is now X" });
+assert.match(trackHeld("d--666666").text, /^applied: the task is now X/);
+log({ sb: "d", op: "gpu_lease", decision: "approved-but-no-sandbox", id: "d--777777", lease: "g2", ran: false });
+t = trackHeld("d--777777"); assert.ok(t.done); assert.match(t.text, /nothing ran: no sandbox/);
+log({ sb: "w", op: "research-plan", decision: "approved", id: "w--888888", rid: "q4", delivered: ["x"], searches: [] });
+log({ sb: "w", op: "research", token: "r9", status: "error", rid: "q4", reason: "boom" });
+t = trackHeld("w--888888"); assert.ok(t.done); assert.match(t.text, /ended without a deliverable: error \(boom\)/);
+log({ sb: "w", op: "research-plan", decision: "approved", id: "w--999999", rid: "q5", delivered: ["x"], searches: [] });
+log({ sb: "w", op: "research", decision: "approved", id: "w--aaaaab", rid: "q5", error: "disk full" });
+assert.match(trackHeld("w--999999").text, /couldn't deliver it: disk full/);
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log("held-track: all pass");
