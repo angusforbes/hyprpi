@@ -427,7 +427,7 @@ function hostAgentsSection(sandbox) {
   if (!dm || (dm.host_agents !== "bridge" && dm.host_agents !== false)) return [];
   if (dm.host_agents === false) return ["## Host agents", "", cardLine({ mode: "agent-free", agents: [] }), ""];
   const m = readJson(path.join(RELAY_STATE, "bridge", "mode.json"), {})?.sandboxes?.[sandbox] || { mode: "agent-free", agents: [] };
-  return ["## Host agents", "", cardLine({ mode: m.mode === "host agent available" ? m.mode : "agent-free", agents: Array.isArray(m.agents) ? m.agents.map((x) => String(x).replace(/[\u0000-\u001f]/g, " ").slice(0, 120)) : [] }), ""];
+  return ["## Host agents", "", cardLine({ mode: m.mode === "host agent available" ? m.mode : "agent-free", agents: Array.isArray(m.agents) ? m.agents.map((x) => String(x).replace(/[^\p{L}\p{N} ._:@(),-]/gu, " ").slice(0, 120)) : [] }), ""]; // (RegReview: plain words on the card)
 }
 
 // --- watch: re-apply when the config or a project folder's contents change ---------------------------

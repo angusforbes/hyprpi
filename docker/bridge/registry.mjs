@@ -14,10 +14,12 @@ const SB_RE = /^[A-Za-z0-9._-]{1,60}$/;
 const hash = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
 const iso = (ms) => new Date(ms).toISOString();
 const one = (s, max) => { const c = cleanText(s, max); return c == null ? null : c.replace(/\s+/g, " "); };
+// a name or harness shown to the owner and on the sandbox's card: letters, digits and a few separators only (no Markdown, links or brackets)
+const WORD_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._:@-]{0,59}$/u;
 
 export const empty = () => ({ agents: {} });
 // a registration that is still alive (heartbeat within TTL_S)
-export const isLive = (a, nowMs = Date.now()) => !!a && nowMs - Date.parse(a.last) < TTL_S * 1000;
+export const isLive = (a, nowMs = Date.now()) => !!a && typeof a === "object" && typeof a.name === "string" && nowMs - Date.parse(a.last) < TTL_S * 1000; // (a malformed entry is never live)
 export function lookup(reg, token, nowMs = Date.now()) { const a = token ? reg?.agents?.[hash(token)] : null; return a && isLive(a, nowMs) ? a : null; }
 
 // The live agents that serve a sandbox (no scope = all), oldest first: what the relay shows on a held item and the card.
@@ -43,6 +45,7 @@ export function applyReg(reg, op, nowMs = Date.now()) {
   if (op.op === "register") {
     const name = one(op.name, 60), harness = one(op.harness || "unknown", 40), caps = one(op.caps || "", 300);
     if (!name || !harness || caps == null) return no("register needs a name (60 bytes), a harness (40) and an optional capability summary (300)");
+    if (!WORD_RE.test(name) || !WORD_RE.test(harness)) return no("name and harness: letters, digits, spaces and . _ : @ - only");
     const scope = op.scope == null ? [] : Array.isArray(op.scope) && op.scope.length <= 10 && op.scope.every((s) => SB_RE.test(String(s))) ? op.scope.map(String) : null;
     if (!scope) return no("scope: a list of sandbox names (at most 10)");
     if (Object.keys(cur.agents).length >= MAX_AGENTS) return no(`at most ${MAX_AGENTS} host agents can be registered at once`);

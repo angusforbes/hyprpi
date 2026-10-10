@@ -15,14 +15,15 @@ const RID_RE = /^[0-9a-f]{24}\.json$/, MAX_REQ = 16384;
 export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestion, archive = () => {}, sandboxes = () => [], runnerOn = () => false, onMode = () => {} }) {
   const IN = path.join(stateDir, "bridge", "in"), OUT = path.join(stateDir, "bridge", "out"), REQ = path.join(stateDir, "requests");
   const AGENTS = path.join(stateDir, "bridge", "agents.json"), MODE = path.join(stateDir, "bridge", "mode.json");
-  const readReg = () => { try { const r = JSON.parse(fs.readFileSync(AGENTS, "utf8")); return r && typeof r.agents === "object" && !Array.isArray(r.agents) ? r : emptyReg(); } catch { return emptyReg(); } };
+  // (RegReview) a missing, corrupt or malformed registry reads as nobody registered (agent-free: the fail-closed direction); bad entries are dropped
+  const readReg = () => { try { const r = JSON.parse(fs.readFileSync(AGENTS, "utf8")); if (!r || typeof r.agents !== "object" || r.agents === null || Array.isArray(r.agents)) return emptyReg(); return { agents: Object.fromEntries(Object.entries(r.agents).filter(([, a]) => a && typeof a === "object" && typeof a.name === "string")) }; } catch { return emptyReg(); } };
   const writeAtomic = (f, v) => { fs.writeFileSync(f + ".tmp", JSON.stringify(v, null, 1), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); };
   let lastMode = ""; try { lastMode = JSON.stringify(JSON.parse(fs.readFileSync(MODE, "utf8")).sandboxes || {}); } catch { /* none yet */ }
   const refreshMode = () => { // the mode per sandbox, written for the card (mode.json, readable by the card writer) and told on change
     const reg = readReg(), all = {}; for (const sb of sandboxes()) all[sb] = modeFor(reg, sb, { runnerOn: !!runnerOn() });
     const j = JSON.stringify(all); if (j === lastMode) return all;
     let prev = {}; try { prev = JSON.parse(lastMode || "{}"); } catch { /* */ }
-    lastMode = j; try { writeAtomic(MODE, { at: new Date().toISOString(), sandboxes: all }); } catch (e) { log({ error: `bridge mode: ${e.message}` }); }
+    try { writeAtomic(MODE, { at: new Date().toISOString(), sandboxes: all }); lastMode = j; } catch (e) { log({ error: `bridge mode: ${e.message}` }); return all; } // (RegReview) retried next time if the write failed
     for (const [sb, m] of Object.entries(all)) if (JSON.stringify(prev[sb]) !== JSON.stringify(m)) { log({ op: "host_agents", sandbox: sb, mode: m.mode, agents: m.agents }); try { onMode(sb, m); } catch (e) { log({ error: `bridge onMode: ${e.message}` }); } }
     return all;
   };

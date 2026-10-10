@@ -135,7 +135,9 @@ function redispatchLater(id) {
 // the systemd path unit that runs dispatch when a job record changes (installed only by the owner)
 // J407: the runner is installed for THIS state (its path unit watches this state's job records): it counts as an on-demand host agent
 export function runnerInstalled() {
-  try { const u = fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user", "doorman-bridge-runner.path"), "utf8"); return u.includes(path.join(stateDir(), "requests")); } catch { return false; }
+  // (RegReview) the path unit's own PathChanged= line must name this state's requests folder, and its service must exist
+  try { const d = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user"), u = fs.readFileSync(path.join(d, "doorman-bridge-runner.path"), "utf8");
+    return u.split("\n").some((l) => l.trim() === `PathChanged=${path.join(stateDir(), "requests").replace(/%/g, "%%")}`) && fs.existsSync(path.join(d, "doorman-bridge-runner.service")); } catch { return false; }
 }
 export function runnerUnits(action) {
   const dir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user"), name = "doorman-bridge-runner";
