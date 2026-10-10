@@ -10,6 +10,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { garbled } from "../lib/garble.mjs";
 
 type Deps = { call: (m: string, p?: any, o?: any) => Promise<any>; inject: (m: any, steer?: boolean) => void; idle: () => boolean; ctx: () => any; flushHeld?: () => number };
 
@@ -70,6 +71,19 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   pi.on("agent_end", async () => { setTimeout(tryClose, 200); });
   // J272 fix 4: a spawned agent whose turn ended on an error (rate limit, overload, …) tells its parent.
   pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "assistant") lastErr = m.stopReason === "error" ? String(m.errorMessage || "error") : ""; });
+  // J392: the first reply of a spawned agent is checked for garbage (leaked template tokens, a script the task doesn't use,
+  // empty with no usage: a model that passes a short probe but breaks under the full agent prompt); lib/garble.mjs.
+  let firstSeen = false, firstPrompt = "", garble = "";
+  const textOf = (c: any) => (Array.isArray(c) ? c.filter((x: any) => x?.type === "text").map((x: any) => String(x.text || "")).join("") : String(c ?? ""));
+  pi.on("message_end", async (e: any) => {
+    const m = e?.message; if (firstSeen || !m) return;
+    if (m.role === "user") { if (!firstPrompt) firstPrompt = textOf(m.content); return; }
+    if (m.role !== "assistant") return;
+    firstSeen = true;
+    const why = garbled({ text: textOf(m.content), hasToolCall: Array.isArray(m.content) && m.content.some((x: any) => x?.type === "toolCall"), usage: m.usage, stopReason: m.stopReason }, firstPrompt);
+    if (why) garble = why;
+  });
+  pi.on("agent_end", async () => { if (garble) { const why = `model output garbled: ${garble}`; garble = ""; if (!me) await loadMe(); if (me) call("orch.stalled", { why }).catch(() => {}); } });
   pi.on("agent_end", async () => { if (me && lastErr) { const why = `its turn ended on an error: ${lastErr.replace(/\s+/g, " ").slice(0, 200)}`; lastErr = ""; call("orch.stalled", { why }).catch(() => {}); } });
 
   const onEvent = (event: string, d: any) => {

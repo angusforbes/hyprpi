@@ -1,0 +1,36 @@
+// node test/garble.mjs  (J392: the first-reply garble guard)
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { garbled } from "../lib/garble.mjs";
+const fx = JSON.parse(fs.readFileSync(new URL("./fixtures/garbled-kimi-k3.json", import.meta.url), "utf8"));
+const EN = "Please review the repository and report what you find about the build.";
+const ok = (m) => console.log("ok " + m);
+const U = { output: 120, input: 900 };
+// flagged
+for (const [i, t] of fx.replies.entries()) assert.ok(garbled({ text: t, usage: fx.usage }, EN), `RTConfig3 reply ${i + 1} is flagged`);
+ok("RTConfig3's real first reply (and its second) are flagged: " + garbled({ text: fx.replies[0], usage: fx.usage }, EN));
+assert.match(garbled({ text: "", usage: {} }, EN), /empty reply with no usage/); assert.match(garbled({ text: "  \n", usage: { output: 0 } }, EN), /empty/);
+ok("an empty reply with no usage is flagged");
+assert.ok(garbled({ text: fx.replies[0].replaceAll("<|close|>", ""), usage: fx.usage }, EN), "salad is caught even without the token");
+ok("the same salad without its token is still flagged: " + garbled({ text: fx.replies[0].replaceAll("<|close|>", ""), usage: fx.usage }, EN));
+assert.match(garbled({ text: "<|close|>The build is fine and all of the tests pass today.", usage: U }, EN), /template token/);
+assert.match(garbled({ text: "Привет мир это абсолютно нормальный ответ без смысла вообще совсем даже", usage: U }, EN), /script/);
+assert.match(garbled({ text: "Done. [INST] then more text about the build and its results.", usage: U }, EN), /template token/);
+ok("a leaked token anywhere, and a reply in an unrelated script, are flagged");
+// not flagged
+const fine = (m, p = EN, why) => assert.equal(garbled(m, p), "", why);
+fine({ text: "I read the files. The build passes and the tests are green, with two lint warnings in the output.", usage: U }, EN, "English");
+fine({ text: "Here is the fix:\n```js\nconst tok = \"<|im_end|>\"; // chat template end\nfor (const x of xs) { console.log(x); }\n```\nThat is all that changed in the file.", usage: U }, EN, "code with a token in a fence");
+fine({ text: "The model leaked `<|close|>` in its output, which is the symptom to look for.", usage: U }, EN, "a token inside inline code");
+fine({ text: "The tokenizer printed \"<|endoftext|>\" at the end, that is expected here.", usage: U }, EN, "a quoted token");
+fine({ text: "这是一个测试回复，我已经检查了仓库的构建状态并且一切正常，没有发现任何问题，请放心。", usage: U }, "请检查这个仓库的构建状态并报告结果，谢谢你的帮助和支持。", "Chinese to a Chinese prompt");
+fine({ text: "リポジトリを確認しました。ビルドは成功していて、テストもすべて通っています。警告は二つだけです。", usage: U }, "リポジトリのビルド状態を確認して、結果を報告してください。ありがとうございます。", "Japanese to a Japanese prompt");
+fine({ text: "漢字だけでなく、ひらがなも使った日本語の返事です。ビルドの結果は問題ありませんでした。以上です。", usage: U }, "ビルドを確認してください。", "Japanese (kanji + kana) to a short Japanese prompt");
+fine({ text: "好的。", usage: U }, EN, "a short reply is never judged on script");
+fine({ text: "", hasToolCall: true, usage: {} }, EN, "a tool call with no text is a normal turn");
+fine({ text: "", usage: { output: 40 } }, EN, "empty but usage reported: not this guard's call");
+fine({ text: "", usage: {}, stopReason: "error" }, EN, "an error has its own stall path");
+fine({ text: "Summary table:\n| name | 名前 |\n| build | ビルド |\nAll good, nothing else to report on the repository.", usage: U }, EN, "English with a few foreign words");
+fine({ text: "See also > 这是一个很长的引用文字，不算作回复的一部分，用来测试引用块是否被忽略。\n> 这是第二行引用文字，同样不计入。\nThe build is fine and nothing else needs doing here.", usage: U }, EN, "a long quoted Chinese block");
+ok("normal English, code-heavy, quoted, short, tool-only, and legitimate Chinese/Japanese replies are not flagged");
+console.log("garble: all pass");
