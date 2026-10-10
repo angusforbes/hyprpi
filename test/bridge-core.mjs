@@ -68,6 +68,8 @@ ok("a question that expires unanswered moves the job on");
   assert.equal(k.approved.action_line, "open the page");
   let m = merge(k, apply(k, { op: "claim", by: "a", lease_s: 60 }, T0)); const t = m.claim.token;
   m = merge(m, apply(m, { op: "release", by: "a", token: t }, T0 + 10 * S));
-  const late = apply(m, { op: "claim", by: "b" }, T0 + (k.approved.time_limit_s + 5) * S); assert.equal(late.reply.ok, false); assert.match(late.reply.text, /time limit is used up/); }
+  const late = apply(m, { op: "claim", by: "b" }, T0 + (k.approved.time_limit_s + 5) * S); assert.equal(late.reply.ok, false); assert.match(late.reply.text, /no_report|no report|time limit/);
+  const sw = sweep(m, T0 + (k.approved.time_limit_s + 5) * S); assert.equal(sw.patch.state, "no_report", "an expired waiting job ends no_report"); assert.deepEqual(sw.effects.map((e) => e.kind), ["outcome"]);
+  assert.equal(view(m, T0 + (k.approved.time_limit_s + 5) * S).state, "no_report", "and is no longer listed as waiting"); }
 ok("the action is a structured field; no claim with a past lease");
 console.log("bridge-core: all pass");

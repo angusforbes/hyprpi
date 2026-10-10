@@ -64,6 +64,12 @@ export function sweep(rec, nowMs = Date.now()) {
     if (open && nowMs - Date.parse(open.at) > LIMITS.questionTtlS * 1000) { const a = answer(rec, open.n, "(no answer: the question expired unanswered)", nowMs); if (a) return { patch: a.patch, history: [{ at: iso(nowMs), ev: `question ${open.n} expired unanswered (no answer from the owner)`, by: "relay" }], effects: [] }; }
     return null;
   }
+  // (FixReview) a waiting job whose time limit (from its first claim) is used up can't be claimed again: it ends as no_report
+  if (rec?.type === "host_job" && rec.state === "waiting" && rec.claimed_at && nowMs >= Date.parse(rec.claimed_at) + rec.approved.time_limit_s * 1000) {
+    const summary = `no report: the job's time limit (${rec.approved.time_limit_s} s) ran out without a report`;
+    return { patch: { state: "no_report", claim: null, outcome: { state: "no_report", summary, ran: [], changed: [], at: iso(nowMs), by: "relay" } },
+      history: [{ at: iso(nowMs), ev: "time limit used up while waiting", by: "relay" }], effects: [{ kind: "outcome", state: "no_report", summary }] };
+  }
   if (rec?.type !== "host_job" || rec.state !== "claimed" || !rec.claim) return null;
   if (Date.parse(rec.claim.until) > nowMs) return null;
   const limitEnd = Date.parse(rec.claimed_at || rec.claim.since) + rec.approved.time_limit_s * 1000;
