@@ -338,7 +338,8 @@ async function handleItem(j) {
   if (type === "research") { // J309
     const tok = field(j.token, 20), h = research.get(tok);
     if (!h) { log(`research item ${tok} matches nothing`); return; }
-    const st = String(j.status || ""), what = `your research request ("${h.want}")`;
+    // (KeysReview) the asker's own words, as data: its double quotes become single ones and the relay's label phrases are marked, so they can't pose as Angus's
+    const st = String(j.status || ""), what = `your research request (your words: "${String(h.want).replace(/"/g, "'").replace(/note from angus|why it was held|reason \(the mode dial|a suggested plan from the doorman/gi, (m) => `«${m.toLowerCase()}»`)}")`;
     let msg;
     if (st === "planned") { // J354 (Angus's test 2): an exception hold isn't strict mode; say which it is
       const ex = String(j.exception || ""), task = field(j.task, 300);
