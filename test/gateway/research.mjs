@@ -1,4 +1,4 @@
-// J412 (simplification spec v3, ~/Obsidian/Papers/Doorman/simplification-spec.md, sections 1.4, 1.8, 2.3, 2.2, 3):
+// J412 (simplification spec v3, sections 1.4, 1.8, 2.3, 2.2, 3):
 // the research pipeline under the ONE dial (strict / safe / open / yolo) in the real private relay + research runner (synthetic doorman and reader).
 // Parts: dial + host are present on this branch; every case that needs the new decision keys (1, "1 text", 1+, 2 with the send-back receipt) goes
 // through ctx.whenPart('keys', ...): PENDING until they land, never silently skipped, and the old e / r positives are gone.

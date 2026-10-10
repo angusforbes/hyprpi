@@ -130,7 +130,7 @@ The relay (`op: "research"`) then holds the finished deliverable as one message 
 
 - Setup: `node docker/research/research.mjs reader create --sandbox world-g` (once). The Doorman sandbox must exist (`docker/doorman/doorman.sh create doorman-g`).
 - Optional config: `~/.config/hyprpi/research.json` (doorman, reader, reports_to, key_file, shape_model per sandbox).
-- The one dial (J412, replaces J325 modes, J327 visibility and J366 level), per sandbox in `~/.config/hyprpi/worlds/<name>.json` as `"gateway": { "mode": "strict" | "safe" | "open" | "yolo" }`, read per request (no restart). Default `safe`; anything unknown, or two worlds files naming one sandbox, is `strict`. The active mode shows in the host card's "Web research" section, the inner guide, the review and deliverable headers and the digest. `node docker/research/research.mjs mode --sandbox NAME` prints it. Design and the full table: `~/Obsidian/Papers/Doorman/simplification-spec.md`.
+- The one dial (J412, replaces J325 modes, J327 visibility and J366 level), per sandbox in `~/.config/hyprpi/worlds/<name>.json` as `"gateway": { "mode": "strict" | "safe" | "open" | "yolo" }`, read per request (no restart). Default `safe`; anything unknown, or two worlds files naming one sandbox, is `strict`. The active mode shows in the host card's "Web research" section, the inner guide, the review and deliverable headers and the digest. `node docker/research/research.mjs mode --sandbox NAME` prints it. The design and its full table are in the J412 simplification spec (pi-doorman design notes).
 
   | mode   | plans          | results         | shares                     | window  |
   |--------|----------------|-----------------|----------------------------|---------|

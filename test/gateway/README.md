@@ -16,7 +16,7 @@ Once all incoming implementations have landed, make missing coverage fail too:
 
 During a separate pi-doorman branch review, explicitly select its source checkout (the report records that viewer's own commit, source hash and dirty status):
 
-`node test/gateway-e2e.mjs --viewer-repo /home/agf/Harness/pi-doorman-keys --report /tmp/gateway-e2e-report.json`
+`node test/gateway-e2e.mjs --viewer-repo ~/Harness/pi-doorman-keys --report /tmp/gateway-e2e-report.json`
 
 ## Prerequisites
 
