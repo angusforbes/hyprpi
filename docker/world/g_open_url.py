@@ -268,8 +268,8 @@ def bring_brave_home(world):
             lo, hi = json.load(open(os.path.join(cfg_dir, f"{world}.json"))).get("workspaces", [None, None])[:2]
         except Exception:
             lo = hi = None
-        if not home or not isinstance(lo, int) or not isinstance(hi, int):
-            return
+        if not home or not isinstance(lo, int) or not isinstance(hi, int) or not (lo <= home <= hi):
+            return  # (Linkpath: an edited rule can't send the window into another world)
         out = subprocess.run([HYPRCTL, "clients", "-j"], capture_output=True, text=True, timeout=5).stdout
         for c in json.loads(out or "[]"):
             if c.get("class") != f"hyprpi.{letter}-brave":
