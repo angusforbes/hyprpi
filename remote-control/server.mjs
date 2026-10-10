@@ -672,4 +672,5 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: "not found" });
   } catch (e) { json(res, 500, { error: e.message }); }
 });
+server.requestTimeout = 30 * 60 * 1000; // J415: a big video shared from the phone can take more than Node's 5 minutes to arrive
 server.listen(PORT, "127.0.0.1", () => log(`hyprpi remote control on http://127.0.0.1:${PORT}/`));

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>π · screenshot Shortcut</title>
-<!-- J250: how to set up the iOS Shortcut that sends a screenshot from the share sheet to Thoughts -->
+<title>π · Send to π Shortcut</title>
+<!-- J250: how to set up the iOS Shortcut that sends a screenshot from the share sheet to Thoughts; J415: anything else too -->
 <style>
   body { font: 16px/1.45 -apple-system, system-ui, sans-serif; margin: 0; padding: 16px calc(env(safe-area-inset-right) + 16px) 40px calc(env(safe-area-inset-left) + 16px); color: #1f1f28; background: #faf4ed; }
   h1 { font-size: 20px; margin: 4px 0 10px; } h2 { font-size: 16px; margin: 18px 0 6px; }
@@ -16,8 +16,14 @@
 </style>
 </head>
 <body>
-<h1>📸 Send a screenshot to Thoughts</h1>
-<p>Once it's set up: take a screenshot → tap its thumbnail → Share (↑) → <b>Send to π</b>. It goes to Thoughts of the world you last wrote to from the phone (else the desktop's), the same as 📎.</p>
+<h1>📸 Send anything to Thoughts</h1>
+<p>Once it's set up: Share (↑) → <b>Send to π</b>, from a screenshot, Photos, Files, Safari or Notes. It goes to Thoughts of the world you last wrote to from the phone (else the desktop's), the same as 📎.</p>
+<ul>
+  <li><b>Images</b> (screenshots, photos): Thoughts sees them, as with 📎.</li>
+  <li><b>PDFs, videos, audio, other files:</b> saved in ~/Phone; Thoughts gets the path (it can't watch videos itself, and is told so).</li>
+  <li><b>Links and text:</b> become the message itself; nothing is saved.</li>
+  <li>Up to <b>500 MB</b> each. Anything bigger is refused and the notification says "too big: 500 MB at most".</li>
+</ul>
 <h2>What you'll paste into the Shortcut</h2>
 <p class="small">Open this page on the iPhone (in Safari, over Tailscale), so the URL below is the one the phone can reach.</p>
 <div class="small">URL</div><div class="box"><code id="url">…</code><button data-c="url">Copy</button></div>
@@ -26,18 +32,21 @@
 <h2>Set it up (once, in the Shortcuts app)</h2>
 <ol>
   <li>Shortcuts → <b>+</b> → name it <b>Send to π</b>.</li>
-  <li>Tap <b>ⓘ</b> (Details) → turn on <b>Show in Share Sheet</b>. Back in the editor, tap <b>Images and 18 more</b> at the top and leave only <b>Images</b> on.</li>
+  <li>Tap <b>ⓘ</b> (Details) → turn on <b>Show in Share Sheet</b>. Back in the editor, tap the types at the top (<b>Images and 18 more</b>) and turn on <b>Images, Media, PDFs, Files, URLs, Safari web pages, Text</b> and <b>Rich text</b>; or simply leave all of them on.</li>
   <li>Add the action <b>Get Contents of URL</b>. Tap its URL and paste the URL above.</li>
   <li>Tap <b>›</b> on that action (Show More): Method <b>POST</b>; Headers → <b>Add new header</b>: Key = the header name, Text = the header value; Request Body <b>File</b> → tap File and pick <b>Shortcut Input</b>.</li>
   <li>Optional: add <b>Show Notification</b> after it, so you see "Sent to Thoughts-D".</li>
 </ol>
+<h2>Already set it up for images only?</h2>
+<p>It keeps working as it is. To send everything else too, one change: open the Shortcut, tap the types at the top (<b>Images</b>) and turn on <b>Media, PDFs, Files, URLs, Safari web pages, Text</b> and <b>Rich text</b> as well. Nothing else changes: the Request Body stays <b>File → Shortcut Input</b>.</p>
 <h2>Options</h2>
 <ul>
   <li><b>A caption:</b> before Get Contents of URL add <b>Ask for Input</b> (Text, "Say something?"), then <b>URL Encode</b> (Provided Input), then add <code>?caption=</code> to the end of the URL followed by <b>URL Encoded Text</b>.</li>
+  <li><b>Keep the file's name</b> (e.g. "Q3 report.pdf" instead of pdf-20261010-…): in Get Contents of URL's Headers add a second header, Key <code>X-File-Name</code>, Text = <b>Shortcut Input</b> → tap it → <b>Name</b>.</li>
   <li><b>Pick the world:</b> add <code>?world=D</code> (or any letter) to the URL; or a <b>Choose from Menu</b> with A–E, each with its own Get Contents of URL.</li>
   <li><b>From inside π:</b> copy a screenshot, then long-press the message box → Paste: it's attached like 📎.</li>
 </ul>
-<p class="small">The phone must be on Tailscale, as for π itself. Photos (HEIC) work too: they're turned into a JPEG on the laptop and saved in ~/Phone.</p>
+<p class="small">The phone must be on Tailscale, as for π itself. Photos (HEIC) work too: they're turned into a JPEG on the laptop and saved in ~/Phone. One item per share: for several at once, wrap Get Contents of URL in <b>Repeat with Each</b> (Shortcut Input) and send <b>Repeat Item</b>.</p>
 <script>
 fetch("/api/shot/setup", { cache: "no-store" }).then((r) => r.json()).then((s) => {
   document.getElementById("url").textContent = s.url; document.getElementById("hdr").textContent = s.header; document.getElementById("tok").textContent = s.token;
