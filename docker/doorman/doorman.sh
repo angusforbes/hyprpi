@@ -6,15 +6,14 @@
 #   docker/doorman/doorman.sh create NAME     make the Doorman's sandbox and install Pi + its config in it
 #   docker/doorman/doorman.sh start NAME      run it (systemd user unit hyprpi-doorman-NAME, headless Pi in RPC mode)
 #   docker/doorman/doorman.sh stop NAME | status NAME | rm NAME
-#   docker/doorman/doorman.sh window NAME     (J327) open its live window now (developer / observer visibility only)
+#   docker/doorman/doorman.sh window NAME     (J327) open its live window now (mode open only)
 #   docker/doorman/doorman.sh raise NAME      (J363) bring its window to Angus's workspace and focus it (a toast's Review for a held item)
 #
-# "visibility" in its relay entry (J327; distinct from OpenRoute's "doorman": {"mode": ...} research key):
-#   strict     headless, nothing recorded outside the journal (the DEFAULT)
-#   safe       headless, plus state/status.json (state, last question and answer) for a status row
-#   observer   safe + a read-only live window (kitty on "visibility_workspace", default 68)
-#   developer  observer's window, where Angus can also DECIDE what is held (1 / 2 / e, J363 / J365). Nothing else can be typed there: since J365
-#              there is no input path from the window to the Doorman at all (its stdin is never fed by a window)
+# What it shows follows the served sandbox's mode (J412, one dial: worlds/<w>.json "gateway": {"mode"}; the old "visibility" key is ignored):
+#   strict     headless, nothing recorded outside the journal
+#   safe, yolo headless, plus state/status.json (state, last question and answer) for a status row (yolo: testing, no decisions)
+#   open       a live window (kitty on "visibility_workspace", default 68) where Angus DECIDES what is held (1, 1 text, 1+, 2). Nothing else can
+#              be typed there: there is no input path from the window to the Doorman at all (its stdin is never fed by a window)
 # Files for all but strict: ~/.local/state/hyprpi/doormen/NAME/{events.jsonl,status.json,input.fifo (developer)}.
 #
 # NAME is its entry in ~/.config/hyprpi/sbx-relay.json, e.g.
@@ -36,8 +35,12 @@ ENTRY="$(jq -c --arg n "$NAME" '.sandboxes[] | select(.name == $n)' "$CONF")"
 get() { jq -r --arg k "$1" '.[$k] // empty' <<<"$ENTRY" | sed "s#^~#$HOME#"; }
 FOR="$(get doorman_for)"; [[ -n "$FOR" ]] || { echo "doorman: '$NAME' has no doorman_for in $CONF" >&2; exit 2; }
 BOX="$(get workspace)"; INBOX="$(get inbox)"; CARD="$(get card)"; MODEL="$(get model)"; KEYF="$(get key_file)"
-VIS="$(get visibility)"; VIS="${VIS:-strict}"
-case "$VIS" in strict|safe|observer|developer) ;; *) echo "doorman: visibility '$VIS' must be strict, safe, observer or developer" >&2; exit 2 ;; esac
+# J412 (the one dial): the window is derived from the served sandbox's mode (worlds/<w>.json "gateway": {"mode"}, resolved by docker/research/mode.mjs),
+# no longer from a "visibility" key: strict headless; safe and yolo headless with a status row; open the window that decides. The old
+# "visibility" key in the entry is ignored (a warning if it differs); the internal names stay: strict / safe / developer.
+MODE="$(HYPRPI_RELAY_CONF="$CONF" node "$H/docker/research/research.mjs" mode --sandbox "$FOR" 2>/dev/null | jq -r '.mode // empty' 2>/dev/null || true)"
+case "$MODE" in strict) VIS=strict ;; safe|yolo) VIS=safe ;; open) VIS=developer ;; *) VIS="$(get visibility)"; VIS="${VIS:-strict}"; case "$VIS" in strict|safe|developer) ;; observer) VIS=safe ;; *) echo "doorman: cannot read the mode of $FOR and visibility '$VIS' is not strict, safe or developer" >&2; exit 2 ;; esac ;; esac
+OLDVIS="$(get visibility)"; [[ -z "$OLDVIS" || -z "$MODE" || "$OLDVIS" == "$VIS" ]] || echo "doorman: note: 'visibility' ($OLDVIS) in $NAME's entry is ignored; the mode of $FOR ($MODE) decides (J412)" >&2
 WS="$(get visibility_workspace)"; WS="${WS:-68}"; [[ "$WS" =~ ^[0-9]{1,3}$ ]] || { echo "doorman: bad visibility_workspace" >&2; exit 2; }
 VSTATE="${HYPRPI_DOORMEN_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/hyprpi/doormen}/$NAME"
 VIEW="$H/docker/doorman/doorman-view.mjs"
