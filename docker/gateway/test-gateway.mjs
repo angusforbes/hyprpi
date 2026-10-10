@@ -30,6 +30,7 @@ const ok = (type, p, c = ctx()) => { const v = G.validate(type, p, c); assert.ok
 const bad = (type, p, re, c = ctx()) => { const v = G.validate(type, p, c); assert.ok(!v.ok, `${type} should be refused: ${JSON.stringify(p)}`); if (re) assert.match(v.error, re); };
 
 // --- open_for_owner is retired (J402): a request for it gets "print the link instead"
+await t("J402: an old held open_for_owner, approved, opens nothing and says print the link", async () => { const r = await G.run("open_for_owner", { what: "https://example.org/", kind: "link" }, { served: { name: "w" } }); assert.equal(r.ok, false); assert.match(r.outcome, /nothing was opened.*print the full link/); });
 await t("J402: open_for_owner is refused with 'print the full link instead'", () => { bad("open_for_owner", { what: "https://example.org/", why: "x" }, /print the full link/); assert.ok(!("open_for_owner" in G.TYPES)); assert.match(G.UNSUPPORTED, /print its full link/); });
 // --- note_to_owner
 await t("note: passes, control characters stripped; oversized refused", () => { const v = ok("note_to_owner", { text: "hello\u202e there" }); assert.equal(v.params.text, "hello there"); bad("note_to_owner", { text: "x".repeat(1501) }, /1500/); bad("note_to_owner", { text: "" }); });
@@ -45,7 +46,7 @@ await t("rate: per sandbox and type, per hour", () => { const c = { served: { na
 
 // --- run (handlers, with host actions stubbed)
 const calls = [];
-const rctx = { ...ctx(), openUrl: (u) => { calls.push(["open", u]); return { ok: true, text: "" } }, putInbox: (name, buf) => { calls.push(["inbox", name, buf.length]); return `/inbox/${name}`; }, policyAllow: (h) => { calls.push(["allow", h]); return { ok: true, text: "rule added" }; }, addProject: async (p, m) => { calls.push(["share", p, m]); return { ok: true, text: "listed ro" }; } };
+const rctx = { ...ctx(), putInbox: (name, buf) => { calls.push(["inbox", name, buf.length]); return `/inbox/${name}`; }, policyAllow: (h) => { calls.push(["allow", h]); return { ok: true, text: "rule added" }; }, addProject: async (p, m) => { calls.push(["share", p, m]); return { ok: true, text: "listed ro" }; } };
 await t("run: send delivers the snapshot Angus saw, never re-reading the folder (review #1)", async () => {
   const v = ok("send_file", { path: `${WORK}/cube-art/notes.md`, why: "x" }); const before = fs.readFileSync(v.params.snapshot);
   fs.appendFileSync(`${WORK}/cube-art/notes.md`, "changed after approval was shown");

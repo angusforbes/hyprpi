@@ -158,6 +158,7 @@ export function validate(type, params, ctx) {
 export async function run(type, p, ctx) {
   try {
     switch (type) {
+      case "open_for_owner": return { ok: false, outcome: `nothing was opened. ${PRINT_LINK}` }; // J402: an old hold of the retired type
       case "note_to_owner": return { ok: true, outcome: "Angus has read the note" };
       case "share_project": {
         // (re-review J368 #4, red team J379 #2) the approved folder or nothing: the same single path and the same inode as reviewed
