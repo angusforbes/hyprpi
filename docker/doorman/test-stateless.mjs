@@ -20,12 +20,14 @@ for (const d of [HOMEDIR, OUTBOX, INBOX, path.join(HOMEDIR, ".pi", "agent")]) fs
 let fails = 0; const ok = (c, what) => { console.log(`${c ? "PASS" : "FAIL"}  ${what}`); if (!c) fails++; };
 
 // --- the fake model: OpenAI chat completions, streamed. It answers a question with one hyprpi_reply tool call, then "ok".
-const requests = [];
+const requests = [], flaked = new Set();
 const server = http.createServer((req, res) => {
   let body = ""; req.on("data", (d) => (body += d)); req.on("end", () => {
     const j = JSON.parse(body || "{}"); requests.push(j); if (process.env.DUMP) fs.appendFileSync(process.env.DUMP, JSON.stringify(j) + "\n");
     const msgs = j.messages || [], last = msgs[msgs.length - 1];
     const text = (m) => typeof m?.content === "string" ? m.content : Array.isArray(m?.content) ? m.content.map((x) => x.text || "").join("") : "";
+    const fq = text(msgs.find((m) => m.role === "user"));
+    if (/FLAKY-[0-9]/.test(fq) && !flaked.has(fq)) { flaked.add(fq); res.writeHead(429, { "content-type": "application/json", "retry-after": "1" }); res.end(JSON.stringify({ error: { message: "rate limit exceeded, please retry", type: "rate_limit_error" } })); return; } // a transient error: pi retries the same turn
     res.writeHead(200, { "content-type": "text/event-stream" });
     const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
     const first = msgs.find((m) => m.role === "user"), rid = (/· id ([^,\s]+),/.exec(text(first)) || [])[1], tools = msgs.filter((m) => m.role === "tool").length;
@@ -119,6 +121,11 @@ try {
     await waitFor(() => replies.some((r) => r.request_id === `rid-t${i}`), 30000, `answer t${i}`);
     ok(ops.some((o) => o.op === op && o.about === `rid-t${i}`) && replies.some((r) => r.request_id === `rid-t${i}`), `${tool} works in a fresh session and its ${op} request names the message it answers (about=rid-t${i}), then the reply goes out`);
   }
+  // a transient model error: pi retries the SAME turn; what the retry drafts is still tied to the asker, the asker gets one real answer (no early "couldn't answer"), and pi isn't ended mid-retry
+  ask("world-g", "Alpha", "rid-flaky", "please TOOL:hyprpi_draft_request FLAKY-1");
+  await waitFor(() => replies.some((r) => r.request_id === "rid-flaky"), 60000, "answer after a retry");
+  await sleep(1500);
+  ok(ops.some((o) => o.op === "draft" && o.about === "rid-flaky") && replies.filter((r) => r.request_id === "rid-flaky").length === 1 && !/couldn't answer/.test(replies.find((r) => r.request_id === "rid-flaky")?.text || "") && flaked.size === 1 && ctl.exitCode === null, "after a transient error and pi's retry, the draft still names its message (about), the asker gets one real answer (no early 'couldn't answer'), and pi keeps running");
   // W3: a receipt for a task change drafted while answering Alpha comes back with Alpha's next message, not Beta's
   store.asked("doorman-t", "rid-tc", "world-g", wrap("[Alpha, in world G] please change the task")); store.link("doorman-t", "doorman-t--tc1", "rid-tc");
   inboxWrite({ type: "task_change", status: "applied", id: "doorman-t--tc1", outcome: "the task of world-t is now: SECRET-TASK" });

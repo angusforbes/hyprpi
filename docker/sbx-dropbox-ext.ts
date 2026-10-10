@@ -311,7 +311,8 @@ export default function (pi: ExtensionAPI) {
     let lastErr = "";
     pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "assistant") lastErr = m.stopReason === "error" ? String(m.errorMessage || "error") : ""; });
     pi.on("tool_call", async (e: any) => { if ((e?.toolName || e?.name) === "hyprpi_reply") asked.delete(String(e?.input?.request_id ?? e?.args?.request_id ?? "")); });
-    pi.on("agent_end", async () => {
+    // (J373: at agent_settled, not agent_end: after a transient error pi retries the same turn, and only a final failure is one)
+    pi.on("agent_settled", async () => {
       if (!lastErr) { asked.clear(); return; }
       const why = /content.?filter/i.test(lastErr) ? "its model's content filter refused it" : "its model failed";
       for (const id of [...asked]) request({ op: "reply", request_id: id, text: `(The Doorman couldn't answer this: ${why}. Ask again in plain words, or ask Angus.)` }).catch(() => {});
@@ -320,16 +321,24 @@ export default function (pi: ExtensionAPI) {
   }
   pi.on("agent_end", async () => {
     busy = false;
-    if (DOORMAN) { // J373: this session's message is answered; the next one waits for a fresh session
-      spent = true; currentRid = ""; status("idle");
-      // Fail closed (review: StatelessReview): no new session within 30 s (no doorman-rpc.mjs, or it failed) ends this pi; the unit
-      // restarts it, and a restart is a fresh session. A message is never answered in a session that already held another.
-      setTimeout(() => { if (!dead && spent) { try { console.error("hyprpi drop-box: no fresh Doorman session after the turn; exiting so the unit restarts it"); } catch { /* */ } process.exit(75); } }, 30000);
+    if (DOORMAN) { // J373: this session's message is done; the next one waits for a fresh session (spent until this copy ends)
+      spent = true; status("idle"); // currentRid stays: an automatic retry of this same turn still ties its drafts to the asker
       return;
     }
     if (held.length) setTimeout(release, 0); else status("idle");
   });
-  pi.on("session_shutdown", async () => { dead = true; if (timer) clearInterval(timer); timer = null; });
+  // J373 fail closed (review: StatelessReview): once pi has settled (no automatic retry or recovery follows), a fresh session must come
+  // within 30 s (doorman-rpc.mjs sends it at agent_settled). If none does (no controller, or it failed), this pi exits and its unit
+  // restarts it, which is a fresh session too: a message is never answered in a session that already held another.
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  if (DOORMAN) {
+    pi.on("agent_settled", async () => {
+      if (!spent || dead) return; if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => { if (!dead) { try { console.error("hyprpi drop-box: no fresh Doorman session after the turn; exiting so the unit restarts it"); } catch { /* */ } process.exit(75); } }, 30000);
+    });
+    pi.on("agent_start", async () => { if (watchdog) { clearTimeout(watchdog); watchdog = null; } }); // pi went on after all: not settled
+  }
+  pi.on("session_shutdown", async () => { dead = true; if (watchdog) clearTimeout(watchdog); if (timer) clearInterval(timer); timer = null; });
 
   // Review #4: only known result fields reach the model, every string cleaned and bounded.
   function shape(r: any) {
