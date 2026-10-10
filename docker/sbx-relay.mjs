@@ -43,6 +43,7 @@ import { connect } from "../lib/client.mjs";
 import { logTurn } from "../lib/held.mjs"; // J289: decision notes as highlighted turns in the Thoughts panel
 import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
 import { logEvent as researchLog, conf as researchConf, dropPlan as researchDropPlan } from "./research/research.mjs"; // J309
+import { kindAction } from "./research/mode.mjs"; // J412: the dial decides per request kind: held, auto or refused
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
 import { ownerNote, returnable, senderLabel, returnKey, holdReason, openPeer } from "./held-note.mjs"; // J370 (J386: holdReason; J378: openPeer)
@@ -268,15 +269,7 @@ class Sandbox {
         inboxWrite(this, { type: "message", mode: d.mode, from: d.from?.name, request_id: d.request_id, text: d.text });
         log({ sb: this.name, dir: "in", type: d.mode, from: d.from?.name, request_id: d.request_id, ...textMeta(d.text) });
       } else if (ev === "talk.reply") {
-        // J395: the answer to a request a Doorman drafted goes straight to the agent it was drafted for (the Doorman remembers nothing,
-        // so it couldn't route it); kept in memory for 24 h after the approval (a relay restart forgets it: the answer then reaches the Doorman)
-        const da = this.doormanFor ? this.relay.draftAnswers?.get(d.request_id) : null;
-        if (da && Date.now() - da.at < 24 * 3600e3) {
-          this.relay.tellOutcome(da.served, da.asker, `${clean(d.from?.name || "a host agent")} answered the request drafted for you (${da.id}): ${d.text}`);
-          replyNote(this, d);
-          log({ sb: this.name, dir: "in", type: "reply", from: d.from?.name, request_id: d.request_id, to_asker: da.asker || "(Thoughts)", ...textMeta(d.text) });
-          return;
-        }
+        // (J412: drafts no longer go to Thoughts-A as messages, so no reply routing for them here; a bridge job reports through the bridge)
         inboxWrite(this, { type: "reply", from: d.from?.name, request_id: d.request_id, text: d.text });
         replyNote(this, d); // J290: the answer to a message Angus let through, shown in the receiving world's Thoughts
         log({ sb: this.name, dir: "in", type: "reply", from: d.from?.name, request_id: d.request_id, ...textMeta(d.text) });
@@ -443,25 +436,28 @@ class Sandbox {
         // Thoughts it reports to), never under an allow-similar rule, one action per draft.
         if (!this.doormanFor) throw new Error("only a Doorman drafts requests");
         if (this.relay.agentFree(this)) throw new Error(`a free-form request needs a host agent, and this host has none. ${UNSUPPORTED}`); // J368
-        // J407: with the bridge, whether a host agent is THERE decides: none registered (and no per-job runner) = agent-free right now, refused at once
-        const hm = this.cfg.host_agents === "bridge" ? this.relay.bridge?.mode(this.doormanFor) || { mode: "agent-free", agents: [] } : null;
-        if (hm && hm.mode === "agent-free") throw new Error(`no host agent available: nobody on the host is registered to do a free-form request right now, so it isn't held for Angus. ${UNSUPPORTED}`);
+        if (this.relay.policy(this, "draft") === "refused") throw new Error(this.relay.refusalFor(this, "draft")); // J412: strict refuses free-form requests
+        // J407/J412: whether a host agent is THERE decides: none registered and no per-job runner = agent-free right now, refused at once, never held
+        const hm = this.relay.bridge?.mode(this.doormanFor) || { mode: "agent-free", agents: [] };
+        if (hm.mode === "agent-free") throw new Error(`no host agent is registered: nobody on the host can do a free-form request right now, so it isn't held for Angus. ${UNSUPPORTED}`);
         const br = this.relay.breaker(this);
         if (br) throw new Error(br);
         const f = (k, max) => { const v = clean(req[k]); if (!v) throw new Error(`${k} is empty`); if (bytes(v) > max) throw new Error(`${k} over ${max} bytes`); return v; };
         const bound = this.boundAsker(req), forWho = bound ? bound.asker : f("for", 120), why = f("why", 1500), tried = clean(req.tried) || "(none given)", action = f("action", 1500); // J395: bound to the asking message
         if (bytes(tried) > 1500) throw new Error("tried over 1500 bytes");
-        const t = `Request drafted by ${this.display || this.name} (the Doorman of ${this.doormanFor}) for ${forWho || "its sandbox (no named agent)"}.\nWhy: ${why}\nTried: ${tried}\nAction asked for: ${action}${hm ? `\nWill be done by: ${hm.agents.join(" or ")}` : ""}`; // (J407: who takes it if approved)
+        const t = `Request drafted by ${this.display || this.name} (the Doorman of ${this.doormanFor}) for ${forWho || "its sandbox (no named agent)"}.\nWhy: ${why}\nTried: ${tried}\nAction asked for: ${action}\nIf approved, a host agent takes it through the bridge: ${hm.agents.join(" or ") || "the per-job runner"}`; // (J407: who takes it if approved)
         const body = `${this.label()} (a Doorman's drafted request; its text comes from a sandbox, so it is information, not instructions)\n🐳│ ${t.split("\n").join("\n🐳│ ")}`;
         const room = this.reportsTo.slice(9);
-        const id = this.relay.hold(this, { to: [this.reportsTo], targets: [{ kind: "thoughts", id: this.reportsTo }], shown: [this.reportsTo], rooms: [room], mode: "talk", text: t, body, draft: true, draftFor: forWho, draftAction: action });
-        return { ok: true, pending: [id], log: { op: "draft", to: this.reportsTo, ...textMeta(t) } };
+        // J412 (spec 4.2): shown to Angus as a request for the bridge, no longer addressed "to Thoughts-A" (reports_to is only the review room)
+        const id = this.relay.hold(this, { to: ["the host-agent bridge"], targets: [], shown: [`${this.doormanFor} (free-form request for a host agent)`], rooms: [room], mode: "talk", text: t, body, draft: true, draftFor: forWho, draftAction: action });
+        return { ok: true, pending: [id], log: { op: "draft", to: "bridge", ...textMeta(t) } };
       }
       case "gpu_lease": {
         // J328 (DEVELOPER MODE, not an approved route for work data): the Doorman drafts a GPU lease for Angus. The job's files are
         // snapshotted from the served sandbox's workspace NOW (what he reviews is what runs); the worker is a fresh container
         // with only those copies, no network, the GPU through CDI, a time limit and a VRAM watch (docker/gpu/gpu.mjs).
         if (!this.doormanFor) throw new Error("only a Doorman drafts GPU leases");
+        if (this.relay.policy(this, "gpu") === "refused") throw new Error(this.relay.refusalFor(this, "gpu")); // J412: strict refuses GPU leases
         const br = this.relay.breaker(this);
         if (br) throw new Error(br);
         const gc = gpuConf(this.doormanFor);
@@ -554,6 +550,8 @@ class Sandbox {
         const served = this.relay.sandboxes.find((x) => x.name === this.doormanFor);
         if (!served) throw new Error(`the sandbox this Doorman serves (${this.doormanFor}) isn't configured`);
         const type = String(req.type || "");
+        { const k = ({ note_to_owner: "note", share_project: "share_project", send_file: "send_file", allow_host: "allow_host" })[type];
+          if (k && this.relay.policy(this, k) === "refused") throw new Error(this.relay.refusalFor(this, k)); } // J412: e.g. strict refuses allow_host before any check runs
         const v = reqValidate(type, req.params, { served: { name: served.name, cfg: served.cfg }, cfgDir: path.dirname(CONFIG), now: Date.now(), snapshotDir: path.join(STATE, "requests", "snapshots") });
         if (!v.ok) throw new Error(`${REQ_TYPES[type] || "request"}: ${v.error}`);
         const forWho = this.boundAsker(req)?.asker ?? clean(req.for).replace(/[:\n]/g, " ").trim().slice(0, 60); // J395: bound to the asking message when known
@@ -742,10 +740,11 @@ async function takeToThoughts(world) {
 }
 
 // --- the relay: all sandboxes, the approval queue, the watchers -----------------------------------------
+// J412: a Doorman entry runs the host-agent bridge unless "host_agents": false (spec 4.1: "bridge" is the default when unset)
+const bridgeOn = (x) => !!x.doormanFor && x.cfg?.host_agents !== false && !x.relay?.agentFree?.(x);
 class Relay {
   constructor(cfg) {
     LOG_TEXT = cfg.log_text === true;
-    this.draftAnswers = new Map(); // J395: request_id of an approved Doorman draft's delivery -> who it was drafted for (24 h, in memory)
     const ids = new Set();
     this.sandboxes = (cfg.sandboxes || []).map((c) => new Sandbox(c, this));
     for (const s of this.sandboxes) {
@@ -753,7 +752,28 @@ class Relay {
       ids.add(s.agentId);
     }
   }
+  // J412 (spec 1.5): which request kind a held message is (null: research or a host agent's question, which have their own rules)
+  kindOfMsg(msg) {
+    if (msg.typed) return ({ note_to_owner: "note", share_project: "share_project", send_file: "send_file", allow_host: "allow_host" })[msg.typed.type] || null;
+    if (msg.taskChange) return "task_change"; if (msg.gpu) return "gpu"; if (msg.gatewayChange) return "gateway"; if (msg.draft) return "draft";
+    if (msg.hostJob || msg.research) return null;
+    return msg.mode === "talk" || msg.mode === "demand" ? "message" : null;
+  }
+  // The mode that governs a relay entry: a Doorman's is the sandbox it serves; unreadable = strict (fail closed).
+  modeOfSb(sb) { try { return researchConf(sb.doormanFor || sb.name).mode || "strict"; } catch { return "strict"; } }
+  // held | auto | refused for this kind now. A gateway change that touches the sandbox's own mode key is always held, even in yolo.
+  policy(sb, kind, msg = {}) {
+    const modeChange = kind === "gateway" && Object.keys(msg.gatewayChange?.changes || {}).some((k) => k === "mode" || /(^|[._])mode$/.test(k));
+    return kindAction(this.modeOfSb(sb), kind, { modeChange });
+  }
+  // A refused kind answers the asker at once with one line (strict: allow_host, GPU leases, free-form drafts).
+  refusalFor(sb, kind) { const m = this.modeOfSb(sb); return `mode ${m} doesn't allow ${({ allow_host: "allowing web hosts", gpu: "GPU leases", draft: "free-form requests" })[kind] || kind}: it's refused at once and not held for Angus`; }
   hold(sb, msg) {
+    // J412: what the dial says for this kind. refused → the op fails with one line; auto → written like a held item (so every kind keeps its own checks,
+    // record and execution path in decide()) and approved at once as "auto (<mode>)", with no toast and no review; re-checked at decision time.
+    const kind = this.kindOfMsg(msg), pol = kind ? this.policy(sb, kind, msg) : "held";
+    if (pol === "refused") throw new Error(this.refusalFor(sb, kind));
+    if (pol === "auto") return this.holdAuto(sb, msg, kind);
     // J363 (Angus: approvals happen in the Doorman window): a sandbox configured with "review_in": "<doorman entry>" has its held items
     // reviewed in THAT Doorman's host window; its rooms become the sandbox's own world letter ("review_room", default G) so no other world's
     // Thoughts panel claims them, and the toast's Review raises the window (openReview).
@@ -781,6 +801,17 @@ class Relay {
     const notif = notifyHeld(sb, msg, review);
     if (notif) { try { const pf = path.join(PENDING, id + ".json"); const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* decided already */ } }
     sb.conn?.call("room.post", { text: msg.research?.plan ? `🐳 [relay] research searches for ${sb.name} wait for Angus's OK before anything is sent (${id}).` : msg.research ? `🐳 [relay] research for ${sb.name} is ready; it waits for Angus's review (${id}).` : `🐳 [relay] sandbox ${sb.name} wants to message ${msg.shown.join(", ")}; it waits for Angus's OK (sbx-relay.mjs pending, then approve or deny ${id}).` }).catch(() => {});
+    return id;
+  }
+  // J412: an "auto" item: the pending record as for a held one (no toast, no review, no room note), then the relay's own approval decision
+  // "auto (<mode>)"; decide() re-checks the mode, runs the kind's normal execution path and logs it reviewed:false.
+  holdAuto(sb, msg, kind) {
+    fs.mkdirSync(PENDING, { recursive: true, mode: 0o700 }); fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
+    const mine = fs.readdirSync(PENDING).filter((n) => n.startsWith(sb.name + "--"));
+    if (mine.length >= LIMITS.pendingPerSandbox) throw new Error(`too many requests waiting (${LIMITS.pendingPerSandbox})`);
+    const id = `${sb.name}--${crypto.randomBytes(3).toString("hex")}`, mode = this.modeOfSb(sb);
+    fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg, auto: { mode, kind } }, null, 2), { mode: 0o600 });
+    const f = path.join(DECISIONS, `${id}.approve`); fs.writeFileSync(f + ".tmp", `auto (${mode})\n`, { mode: 0o600 }); fs.renameSync(f + ".tmp", f);
     return id;
   }
   // J309: run one research request (docker/research/research.mjs ask) without blocking the relay; a ready deliverable
@@ -972,6 +1003,22 @@ class Relay {
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
     // J371 (BridgeReview HIGH): an "answer" fits only a host agent's question; on anything else it decides nothing (the item stays held)
     if (verdict === "answer" && !msg.hostJob) { log({ op: "decision", id, error: "an answer only fits a host agent's question; the item stays held" }); return; }
+    // J412: the dial at decision time. An auto approval goes ahead only if the mode still says auto for this kind (else the item stays held and Angus is
+    // shown it now); an approval of a kind the mode now refuses becomes a denial with that reason.
+    { const sb0 = this.sandboxes.find((s) => s.name === msg.sandbox), kind = this.kindOfMsg(msg);
+      const isAuto = /^auto \(/.test(via);
+      if (isAuto && !msg.auto) { log({ op: "decision", id, error: "an auto decision for an item that wasn't auto; ignored, the item stays held" }); return; }
+      if (sb0 && kind) {
+        const pol = this.policy(sb0, kind, msg);
+        if (isAuto && pol !== "auto") {
+          try { const rec = JSON.parse(fs.readFileSync(pf, "utf8")); delete rec.auto; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* */ }
+          log({ sb: sb0.name, op: "decision", id, kind, note: `the mode changed before it ran; held for Angus instead (${pol})` });
+          if (pol === "refused") { verdict = "deny"; note = this.refusalFor(sb0, kind); }
+          else { const notif = notifyHeld(sb0, msg, [process.execPath, fileURLToPath(import.meta.url), "review", id]); if (notif) { try { const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* */ } } return; }
+        } else if (/^(approve|allow-)/.test(verdict) && pol === "refused") { verdict = "deny"; note = this.refusalFor(sb0, kind); }
+        if (isAuto && verdict !== "deny") log({ sb: sb0.name, op: "auto", kind, reviewed: false, auto: msg.auto.mode, via, id }); // (Doorview's digest reads this one line)
+      }
+    }
     // (re-review J368 #7) a typed request is marked durably BEFORE its hold is consumed; if that can't be written, nothing runs
     if (msg.typed && /^(approve|allow-)/.test(verdict) && !this.jobRecord(id, { state: "executing", history: [{ at: now(), ev: "approved; executing", by: "relay" }] })) { log({ sb: msg.sandbox, op: "typed", id, error: "couldn't record the decision; nothing was done (the request stays held)" }); return; }
     fs.unlinkSync(pf);
@@ -1042,7 +1089,8 @@ class Relay {
       let res = { ok: false, outcome: "denied: nothing was done" };
       if (verdict !== "deny") {
         if (!served) res = { ok: false, outcome: "approved, but the sandbox it serves isn't configured" };
-        else res = await reqRun(tq.type, tq.params, this.typedCtx(served)); // (marked "executing" before the hold was consumed: review J368 #7)
+        else res = await reqRun(tq.type, tq.params, this.typedCtx(served));
+        if (msg.auto && tq.type === "note_to_owner" && res.ok) res = { ok: true, outcome: `the note is in Angus's log and panel (mode ${msg.auto.mode}: notes don't wait for him)` }; // J412: not "read" // (marked "executing" before the hold was consumed: review J368 #7)
       }
       const decision = verdict === "deny" ? "denied" : "approved";
       log({ sb: sb.name, op: "typed", type: tq.type, decision, id, ok: res.ok, outcome: res.outcome, sandbox: tq.sandbox, ...(reason ? { reason } : {}) });
@@ -1104,7 +1152,16 @@ class Relay {
       } catch (e) { log({ sb: sb.name, op: "research", decision: "approved", id, rid: rs.rid, error: e.message }); heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `but the relay couldn't deliver it: ${e.message}`); }
       return;
     }
-    if (msg.draft && verdict !== "deny" && sb.cfg.host_agents === "bridge" && sb.doormanFor) { // J371: a host agent takes it through the bridge
+    if (msg.draft && verdict !== "deny") { // J371/J412: an approved free-form request is ALWAYS a bridge job (never a message to Thoughts-A)
+      const live = sb.doormanFor && this.bridge ? this.bridge.mode(sb.doormanFor) : { mode: "agent-free" };
+      if (!sb.doormanFor || !this.bridge || live.mode === "agent-free") { // the agent-free check at approval: nobody can take it now
+        const why2 = "no host agent is registered now (nor an installed runner), so nothing was done";
+        log({ sb: sb.name, op: "host_job", decision: "denied", id, reason: why2 });
+        heldNote(sb, msg, via, "Not done", why2);
+        try { inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to, note: why2 }); } catch { /* */ }
+        if (sb.doormanFor) this.tellOutcome(sb.doormanFor, typeof msg.draftFor === "string" ? msg.draftFor : "", `the request drafted for you (${id}) wasn't done: ${why2}.`);
+        return;
+      }
       // (J379 red team) the asker and the action come from the draft's own fields, never parsed out of its free text
       const forWho = typeof msg.draftFor === "string" ? msg.draftFor : "", actionLine = typeof msg.draftAction === "string" ? msg.draftAction : "";
       const b = sb.cfg.bridge || {}, job = newHostJob({ id, sandbox: sb.doormanFor, asker: forWho, action: String(msg.text || ""), actionLine, tools: Array.isArray(b.tools) ? b.tools : [], folders: Array.isArray(b.folders) ? b.folders : [], timeLimitS: b.time_limit_s });
@@ -1147,16 +1204,11 @@ class Relay {
       log({ sb: sb.name, op: "talk", decision: "approved", id, delivered: r.delivered, request_id: r.request_id });
       watchReply(r.request_id, { sandbox: sb.name, id, rooms: msg.rooms, to: (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")) }); // J290
       heldNote(sb, msg, via, verdict.startsWith("allow-") ? "Approved and allowed similar" : "Approved", r.delivered.length ? `delivered to ${r.delivered.join(", ")}` : `it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((s) => s.name || s).join(", ")})` : ""}`);
-      if (msg.draft && sb.doormanFor) { // J395: the asker hears what actually happened; an answer to it comes straight back to the asker (not the Doorman, which remembers nothing)
-        const asker = typeof msg.draftFor === "string" ? msg.draftFor : "";
-        this.tellOutcome(sb.doormanFor, asker, r.delivered.length ? `Angus approved the request drafted for you (${id}); it went to ${r.delivered.join(", ")}. An answer, if any, comes to you here.` : `Angus approved the request drafted for you (${id}), but it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((x) => x.name || x).join(", ")})` : ""}; nothing was sent.`);
-        if (r.delivered.length && r.request_id) { const t = Date.now(); for (const [k, v] of this.draftAnswers) if (t - v.at > 24 * 3600e3) this.draftAnswers.delete(k); if (this.draftAnswers.size < 500) this.draftAnswers.set(r.request_id, { served: sb.doormanFor, asker, id, at: t }); }
-      }
       // (NoteReview #3: the sandbox's receipt failing is not the delivery failing: its own try, no second note)
       try { inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: r.delivered, request_id: r.request_id, skipped: r.skipped }); } catch (e) { log({ sb: sb.name, error: `inbox (decision receipt): ${e.message}` }); }
     } catch (e) {
       log({ sb: sb.name, op: "talk", decision: "approved", id, error: e.message }); heldNote(sb, msg, via, "Approved", `but the relay couldn't send it: ${e.message}`);
-      if (msg.draft && sb.doormanFor) this.tellOutcome(sb.doormanFor, typeof msg.draftFor === "string" ? msg.draftFor : "", `Angus approved the request drafted for you (${id}), but the relay couldn't send it, so nothing was sent; ask again later.`); // J395
+// J395
     }
   }
   // J370 (Angus: "shouldn't another option be to let the agent edit it?"): Angus sent a held item back with a note. It is withdrawn (nothing
@@ -1318,15 +1370,16 @@ class Relay {
     this.loadQueue(); for (const sb of this.sandboxes) this.pumpPlans(sb); // J314: approved plans survive a restart
     this.reconcileReplans(); // J370: a rewrite cut off by a restart ends honestly (nothing sent, the asker told)
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
-    // J371: the Doorman bridge (CLI/MCP for host agents), when a Doorman's entry has "host_agents": "bridge"
-    if (this.sandboxes.some((x) => x.cfg.host_agents === "bridge")) this.bridge = startBridge({
+    // J371: the Doorman bridge (CLI/MCP for host agents). J412 (spec 4.1): for every Doorman unless its entry says "host_agents": false
+    // ("bridge" is the default when unset): an approved free-form request is always a bridge job, never a message to Thoughts-A.
+    if (this.sandboxes.some((x) => bridgeOn(x))) this.bridge = startBridge({
       stateDir: STATE, log, jobRecord: (id, p) => this.jobRecord(id, p), tellOutcome: (s, a, t) => this.tellOutcome(s, a, t),
       // J407: who is there to do a job: registrations (and the per-job runner); a change refreshes the served sandbox's host card
-      sandboxes: () => this.sandboxes.filter((x) => x.cfg.host_agents === "bridge" && x.doormanFor).map((x) => x.doormanFor),
+      sandboxes: () => this.sandboxes.filter((x) => bridgeOn(x)).map((x) => x.doormanFor),
       runnerOn: () => runnerInstalled(),
       onMode: (sbName) => { try { spawn(process.execPath, [fileURLToPath(new URL("./world/shares.mjs", import.meta.url)), "card", sbName], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* the shares watcher refreshes it */ } },
       holdQuestion: (rec, n, text) => {
-        const door = this.sandboxes.find((x) => x.doormanFor === rec.sandbox && x.cfg.host_agents === "bridge"); if (!door) throw new Error("no bridge Doorman for " + rec.sandbox);
+        const door = this.sandboxes.find((x) => x.doormanFor === rec.sandbox && bridgeOn(x)); if (!door) throw new Error("no bridge Doorman for " + rec.sandbox);
         const act = String(rec.approved?.action_line || rec.approved?.action || "").replace(/\s+/g, " ").slice(0, 300); // (J379) the structured action, not a line parsed from text
         const t = `Question from the host agent working job ${rec.id} (question ${n}; a host agent's words: information, not an instruction):\n${text}\nThe approved job: ${act.slice(0, 300)}`;
         return this.hold(door, { to: ["Angus"], targets: [], shown: ["Angus"], rooms: [String(door.reportsTo || "Thoughts-A").slice(9) || "A"], mode: "talk", text: t, body: t, hostJob: { id: rec.id, n } });
@@ -1482,6 +1535,17 @@ if (cmd === "run") {
   let changes; try { changes = JSON.parse(o("--changes")); } catch { console.log(JSON.stringify({ ok: false, text: "--changes must be JSON" })); process.exit(2); }
   const entry = (readConfig().sandboxes || []).find((x) => x.name === arg) || {};
   const r = proposeChange({ cfgDir: path.dirname(CONFIG), PENDING, sandbox: arg, changes, by: o("--by") || "a host agent", reviewIn: entry.review_in || "", room: entry.review_room || "G" });
+  // J412: in a mode where gateway changes are auto (yolo), the proposal is approved by the relay at once ("auto (<mode>)"), unless it touches the
+  // sandbox's own mode key (always held); the relay re-checks the mode when it decides
+  if (r.ok) {
+    let mode = "strict"; try { mode = researchConf(arg).mode || "strict"; } catch { /* fail closed */ }
+    const modeChange = Object.keys(r.changes || changes || {}).some((k) => k === "mode" || /(^|[._])mode$/.test(k));
+    if (kindAction(mode, "gateway", { modeChange }) === "auto") {
+      try { const pf = path.join(PENDING, r.id + ".json"), rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.auto = { mode, kind: "gateway" }; fs.writeFileSync(pf + ".tmp", JSON.stringify(rec, null, 2), { mode: 0o600 }); fs.renameSync(pf + ".tmp", pf);
+        fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 }); const f = path.join(DECISIONS, `${r.id}.approve`); fs.writeFileSync(f + ".tmp", `auto (${mode})\n`, { mode: 0o600 }); fs.renameSync(f + ".tmp", f); r.auto = mode;
+      } catch (e) { r.auto_error = e.message; }
+    }
+  }
   console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1);
 } else if (cmd === "answer" && arg) { // J385: "answer ID --note TEXT": Angus's answer to a host agent's question (the Doorman bridge), from his own terminal or the Doorman window
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }

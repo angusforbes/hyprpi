@@ -413,12 +413,14 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
   return changed;
 }
 
-// J407: the host-agent mode for this sandbox, only when its Doorman uses the bridge ("host_agents": "bridge") or is agent-free (false).
+// J407/J412: the host-agent section for this sandbox (every sandbox with a Doorman; "host_agents" is "bridge" by default, or false).
 // The relay writes STATE/sbx-relay/bridge/mode.json when a host agent registers or expires; the card says who would do a free-form job.
 const RELAY_STATE = path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "hyprpi", "sbx-relay");
 function hostAgentsSection(sandbox) {
   const dm = (readJson(path.join(CFG, "sbx-relay.json"), { sandboxes: [] }).sandboxes || []).find((x) => x?.doorman_for === sandbox);
-  if (!dm || (dm.host_agents !== "bridge" && dm.host_agents !== false)) return [];
+  if (!dm) return []; // J412 (spec 4.2): the section is shown for every sandbox with a Doorman, in every mode ("bridge" is the default)
+  let mode = "strict"; try { mode = modeForSandbox(CFG, sandbox).mode || "strict"; } catch { /* fail closed */ }
+  if (mode === "strict") return ["## Host agents", "", "Free-form requests for a host agent: refused in mode strict (only the fixed request types).", ""];
   if (dm.host_agents === false) return ["## Host agents", "", cardLine({ mode: "agent-free", agents: [] }), ""];
   const m = readJson(path.join(RELAY_STATE, "bridge", "mode.json"), {})?.sandboxes?.[sandbox] || { mode: "agent-free", agents: [] };
   return ["## Host agents", "", cardLine({ mode: m.mode === "host agent available" ? m.mode : "agent-free", agents: Array.isArray(m.agents) ? m.agents.map((x) => String(x).replace(/[^\p{L}\p{N} ._:@(),-]/gu, " ").slice(0, 120)) : [] }), ""]; // (RegReview: plain words on the card)

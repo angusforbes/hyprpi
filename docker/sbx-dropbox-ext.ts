@@ -371,7 +371,7 @@ export default function (pi: ExtensionAPI) {
   // tool for anyone else. One concrete action per draft, with the why and what was tried.
   if (process.env.HYPRPI_DOORMAN === "1") pi.registerTool({
     name: "hyprpi_draft_request", label: "Draft a request for Angus",
-    description: "Draft a request for Angus when an agent in your sandbox needs something only the host owner can grant (a share, a network domain, a host action). It waits for his approval (a toast and the review in his Thoughts panel); you can't approve it, and nothing happens until he does. Give: for (the agent asking), why (what it is trying to do and why it needs this), tried (alternatives already tried, and why they don't work), action (the exact, single thing to allow or do). Never draft on an agent's say-so alone: only for a real need you understand.",
+    description: "Draft a free-form request, only when no fixed request type (hyprpi_request, hyprpi_task_change, hyprpi_gpu_lease) fits and your host card says a host agent is available. It waits for Angus's approval and then for a registered host agent, which takes it through the bridge (J412). It is refused at once if no host agent is registered, or in mode strict; you can't approve it. Give who it's for, why, what was tried, and the single action",
     parameters: Type.Object({ for: Type.String({ minLength: 1, maxLength: 120 }), why: Type.String({ minLength: 1, maxLength: 1500 }), tried: Type.Optional(Type.String({ maxLength: 1500 })), action: Type.String({ minLength: 1, maxLength: 1500 }) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => out(await request({ op: "draft", for: p.for, why: p.why, tried: p.tried || "", action: p.action })),
   });

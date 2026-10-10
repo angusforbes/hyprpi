@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # doorman.sh: the Doorman (J308, layer 3 of docker/README's sandboxed-world design): a talk-only agent for ONE
 # sandbox, in its own tiny Docker Sandboxes sandbox. It knows only that sandbox's host card, answers its agents'
-# questions about the host, and drafts requests for Angus (held: a toast + the review in the Thoughts it reports to).
+# questions about the host, and drafts requests for Angus (fixed types run by host code once he approves; a free-form request goes to a
+# registered host agent through the bridge, J412: never to the Thoughts it reports to, which is only the review room and told of outcomes).
 #
 #   docker/doorman/doorman.sh create NAME     make the Doorman's sandbox and install Pi + its config in it
 #   docker/doorman/doorman.sh start NAME      run it (systemd user unit hyprpi-doorman-NAME, headless Pi in RPC mode)
