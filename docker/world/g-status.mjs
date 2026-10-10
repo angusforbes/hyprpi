@@ -3,6 +3,8 @@
 // host, world-helper checks it with validateStatus() below and keeps only what passes; the agents panel draws those as dim,
 // display-only rows "reported by G". Nothing the sandbox sends is trusted beyond this schema; the rows can't be used to talk,
 // demand, focus or close anything (the workspace comes from world-helper's own window map, not from the sandbox).
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 export const LIMITS = { agents: 12, bytes: 8192 };
 export const STATUSES = ["working", "background", "blocked", "done", "idle"];
 export const THOUGHTS = ["running", "idle", "off"];
@@ -30,7 +32,9 @@ export function validateStatus(raw) {
 }
 
 // --- inside the sandbox: the sidecar -------------------------------------------------------------------------------------
-if (process.argv[2] === "run") {
+// only as the main program (world-helper imports this module and itself runs as "world-helper.mjs run …")
+const MAIN = (() => { try { return realpathSync(process.argv[1] || "") === fileURLToPath(import.meta.url); } catch { return false; } })();
+if (MAIN && process.argv[2] === "run") {
   const { connect } = await import("../../lib/client.mjs"), { gCall } = await import("./g-call.mjs");
   let last = "", lastAt = 0;
   for (;;) {
