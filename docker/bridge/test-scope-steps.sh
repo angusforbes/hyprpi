@@ -10,7 +10,7 @@ cat > $XDG_CONFIG_HOME/hyprpi/worlds/world-t.json <<J
 J
 T=$($BR --json register E2E-Host --harness test | python3 -c "import json,sys;print(json.load(sys.stdin)['agent_token'])"); sleep 2
 held() { for f in $P/pending/*.json; do [ -f $f ] && python3 -c "import json;d=json.load(open('$f'));print(d['id'],'|',d['text'].replace(chr(10),' / ')) if d.get('draft') or d.get('hostJobScope') else None"; done; }
-job() { python3 -c "import json;d=json.load(open('$P/requests/$1.json'));a=d['approved'];print(d['state'],'|',a['folders'],'| ro',a.get('read_only'),'| hidden',a.get('hidden'),'|',a['tools'])"; }
+job() { python3 -c "import json;d=json.load(open('$P/requests/$1.json'));a=d['approved'];f=lambda l:[x for x in (l or []) if x.startswith('$X/')];print(d['state'],'|',f(a['folders']),'| ro',f(a.get('read_only')),'| hidden',f(a.get('hidden')),'|',a['tools'])"; } # (only the test's own folders: the plan also mounts hyprpi's checkout read-only)
 argv() { node -e "import('$H/docker/bridge/runner.mjs').then(({plan})=>{const j=JSON.parse(require('fs').readFileSync('$P/requests/$1.json','utf8'));console.log(plan(j,{mcpConfig:'/tmp/m.json'}).argv.join(' '))})"; }
 echo "== 1 refused at draft time (W1)"
 D r1 '{"op":"draft","for":"Alpha","why":"x","action":"x","folders":[{"path":"'$HOME'","access":"read"}]}'
@@ -32,7 +32,7 @@ rm -rf /tmp/j428-named-$$; for f in $P/pending/*.json; do :; done
 echo "== 2 a draft naming no folders: exactly the sandbox's shares and rights (W5)"
 D g1 '{"op":"draft","for":"Alpha","why":"summary","action":"write SUMMARY.md in '$X'/rw from '$X'/ro"}'
 h=$(held); echo "  held: ${h:0:420}"
-case "$h" in *"Folders: T's shares (2 folders, 1 writable"*"Tools: Read, Glob, Grep, Write, Edit"*) ok "held item: the shares, briefly";; *) fail "held: $h";; esac
+case "$h" in *"Folders: T's shares ("*" folders, 1 writable"*"Tools: Read, Glob, Grep, Write, Edit"*) ok "held item: the shares, briefly";; *) fail "held: $h";; esac
 case "$h" in *BEYOND*) fail "BEYOND shown for a shares-only job";; *) ok "nothing beyond";; esac
 J1=$(echo "$h" | awk '{print $1}' | head -1); decide $J1 approve
 j=$(job $J1); echo "  job: $j"; case "$j" in "waiting | ['$X/rw', '$X/ro'] | ro ['$X/ro'] | hidden ['$X/rw/secret']"*) ok "the job: the shares, the read-only one marked, the hidden path kept hidden";; *) fail "job: $j";; esac
