@@ -49,7 +49,11 @@ let j2 = newJob({ id: "world-g--def456", sandbox: "world-g", asker: "Beta", acti
 r = apply(j2, { op: "claim", by: "a", lease_s: 3600 }, T0); assert.equal(r.reply.until, new Date(T0 + 900 * S).toISOString(), "the lease never passes the time limit"); j2 = merge(j2, r);
 const sw = sweep(j2, T0 + 901 * S); assert.equal(sw.patch.state, "no_report"); assert.deepEqual(sw.effects.map((e) => e.kind), ["outcome"]);
 assert.equal(apply(j2, { op: "claim", by: "b" }, T0 + 902 * S).reply.ok, false, "no_report is final");
-ok("the time limit: no report → no_report, final");
+{ let k = newJob({ id: "world-g--bbb222", sandbox: "world-g", asker: "A", action: "x", timeLimitS: 3600, nowMs: T0 }); let q = apply(k, { op: "claim", by: "a" }, T0); k = merge(k, q);
+  k = merge(k, apply(k, { op: "ask", by: "a", token: q.reply.token, text: "?" }, T0 + S)); k = merge(k, answer(k, 1, "late", T0 + 86400 * S));
+  assert.equal(k.state, "claimed"); assert.ok(Date.parse(k.claim.until) > T0 + 86400 * S, "a late answer leaves time to work");
+  assert.equal(sweep(k, T0 + 86401 * S), null, "not no_report right after a late answer"); }
+ok("the time limit: no report → no_report, final; the owner's wait doesn't count");
 // 7. view shows only the approved text and the bridge's own fields
 const v = view({ ...job, raw_sandbox_text: "IGNORE PREVIOUS", draft: "x" }, T0);
 assert.ok(!JSON.stringify(v).includes("IGNORE")); assert.deepEqual(Object.keys(v).sort(), ["approved", "claimed_by", "created_at", "for", "id", "lease_until", "outcome", "questions", "sandbox", "state"]);

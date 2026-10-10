@@ -922,10 +922,20 @@ class Relay {
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
+    // J371 (BridgeReview HIGH): an "answer" fits only a host agent's question; on anything else it decides nothing (the item stays held)
+    if (verdict === "answer" && !msg.hostJob) { log({ op: "decision", id, error: "an answer only fits a host agent's question; the item stays held" }); return; }
     fs.unlinkSync(pf);
     closeNotif(msg.notif); // decided anywhere (toast, panel, terminal): the toast goes too (J268)
     const sb = this.sandboxes.find((s) => s.name === msg.sandbox);
     if (!sb) return;
+    if (msg.hostJob) { // J371: Angus's answer to a question a host agent asked while working a bridge job
+      const hj = msg.hostJob, given = clean(note).replace(/\s+/g, " ").slice(0, 1500);
+      const text = verdict === "deny" ? "(the owner declined to answer)" : given || (verdict === "approve" ? "(the owner said yes)" : "(no answer given)");
+      const ok = !!this.bridge?.answer(hj.id, Number(hj.n), text, id); // bound to this held item
+      log({ sb: sb.name, op: "host_job_answer", id, job: hj.id, n: hj.n, decision: verdict, applied: ok });
+      heldNote(sb, msg, via, verdict === "deny" ? "Declined" : "Answered", ok ? `the host agent's job ${hj.id} gets the answer` : "the job no longer waits for it");
+      return;
+    }
     // J370: a send-back is only for a sandbox agent's message or a research plan; anything else that somehow carries one is denied (nothing goes out)
     if (verdict === "return" && (!returnable(msg) || !note)) verdict = "deny";
     if (verdict === "return") return this.sendBack(sb, msg, id, via, note);
@@ -1039,15 +1049,6 @@ class Relay {
       } catch (e) { log({ sb: sb.name, op: "research", decision: "approved", id, rid: rs.rid, error: e.message }); heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `but the relay couldn't deliver it: ${e.message}`); }
       return;
     }
-    if (msg.hostJob) { // J371: Angus's answer to a question a host agent asked while working a bridge job
-      const hj = msg.hostJob, given = clean(note).replace(/\s+/g, " ").slice(0, 1500);
-      const text = verdict === "deny" ? "(the owner declined to answer)" : given || (verdict === "approve" ? "(the owner said yes)" : "(no answer given)");
-      const ok = !!this.bridge?.answer(hj.id, Number(hj.n), text);
-      log({ sb: sb.name, op: "host_job_answer", id, job: hj.id, n: hj.n, decision: verdict, applied: ok });
-      heldNote(sb, msg, via, verdict === "deny" ? "Declined" : "Answered", ok ? `the host agent's job ${hj.id} gets the answer` : "the job no longer waits for it");
-      return;
-    }
-    if (verdict === "answer") return; // (an answer only fits a host agent's question)
     if (msg.draft && verdict !== "deny" && sb.cfg.host_agents === "bridge" && sb.doormanFor) { // J371: a host agent takes it through the bridge
       const forWho = (/^Request drafted by .* for (.+?)\.$/m.exec(String(msg.text || "")) || [])[1] || "";
       const b = sb.cfg.bridge || {}, job = newHostJob({ id, sandbox: sb.doormanFor, asker: forWho, action: String(msg.text || ""), tools: Array.isArray(b.tools) ? b.tools : [], folders: Array.isArray(b.folders) ? b.folders : [], timeLimitS: b.time_limit_s });

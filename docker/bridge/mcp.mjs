@@ -41,6 +41,7 @@ process.stdin.on("data", async (d) => {
   while ((i = buf.indexOf("\n")) >= 0) {
     const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
     let m; try { m = JSON.parse(line); } catch { send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } }); continue; }
+    if (!m || typeof m !== "object" || Array.isArray(m) || typeof m.method !== "string") { send({ jsonrpc: "2.0", id: m && typeof m === "object" && !Array.isArray(m) ? m.id ?? null : null, error: { code: -32600, message: "invalid request" } }); continue; } // (BridgeReview)
     const reply = (result) => m.id !== undefined && send({ jsonrpc: "2.0", id: m.id, result });
     try {
       if (m.method === "initialize") reply({ protocolVersion: m.params?.protocolVersion || "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "doorman-bridge", version: "1.0.0" } });

@@ -21,8 +21,8 @@ const jobRecord = (id, patch) => { // the relay's own write (J368 jobRecord: his
   const history = [...(cur.history || []), ...(patch.history || [])].slice(-50);
   fs.writeFileSync(f + ".tmp", JSON.stringify({ ...cur, ...patch, history }), { mode: 0o600 }); fs.renameSync(f + ".tmp", f);
 };
-const told = [], held = [], logs = [];
-const bridge = startBridge({ stateDir: st, log: (o) => logs.push(o), jobRecord, tellOutcome: (s, a, t) => told.push({ s, a, t }), holdQuestion: (rec, n, text) => { const hid = `doorman-t--${crypto.randomBytes(3).toString("hex")}`; held.push({ hid, rec: rec.id, n, text }); return hid; } });
+const told = [], held = [], logs = []; let failHold = false;
+const bridge = startBridge({ stateDir: st, log: (o) => logs.push(o), jobRecord, tellOutcome: (s, a, t) => told.push({ s, a, t }), holdQuestion: (rec, n, text) => { if (failHold) throw new Error("too many held"); const hid = `doorman-t--${crypto.randomBytes(3).toString("hex")}`; held.push({ hid, rec: rec.id, n, text }); return hid; } });
 const env = { ...process.env, DOORMAN_STATE: st, XDG_CACHE_HOME: cache, XDG_CONFIG_HOME: cfg,
   DOORMAN_SETTINGS_CMD: JSON.stringify(["sh", "-c", 'echo "{\\"sandbox\\":\\"$0\\",\\"gateway\\":{\\"level\\":\\"safe\\"}}"']),
   DOORMAN_PROPOSE_CMD: JSON.stringify(["sh", "-c", 'echo "{\\"ok\\":true,\\"id\\":\\"doorman-t--feed01\\",\\"text\\":\\"held for the owner\\"}"']) };
@@ -49,9 +49,15 @@ r = await cli("ask", "doorman-t--a00001", "--by", who, "Which profile should ope
 assert.equal(r.code, 0, r.out + r.err); assert.equal(held.length, 1); assert.equal(held[0].n, 1); assert.match(held[0].text, /Which profile/);
 assert.equal((await cli("show", "doorman-t--a00001")).j.state, "asked");
 assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00001.json"), "utf8")).questions[0].held_id, held[0].hid, "the job links the held item");
-assert.equal(bridge.answer("doorman-t--a00001", 1, "G's own profile"), true);
+assert.equal(bridge.answer("doorman-t--a00001", 1, "forged", "doorman-t--000000"), false, "another held item can't answer it");
+assert.equal(bridge.answer("doorman-t--a00001", 1, "G's own profile", held[0].hid), true);
 r = await cli("show", "doorman-t--a00001"); assert.equal(r.j.state, "claimed"); assert.equal(r.j.questions[0].answer, "G's own profile");
 ok("ask: a held item, the job waits; the owner's answer comes back in show");
+// 3b. a question that can't be held is undone (the job doesn't hang in "asked")
+{ mk("doorman-t--a00009"); const c = await cli("claim", "doorman-t--a00009", "--by", "x"); assert.equal(c.code, 0); failHold = true;
+  const q = await cli("ask", "doorman-t--a00009", "--by", "x", "q?"); failHold = false; assert.equal(q.code, 1); assert.match(q.j.text, /couldn't be put to the owner/);
+  const rr = JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00009.json"), "utf8")); assert.equal(rr.state, "claimed"); assert.equal(rr.questions.length, 0);
+  ok("a question that can't be held is undone and refused"); }
 // 4. report: through the outcome routing (asker + coordinator) and the log; final
 r = await cli("report", "doorman-t--a00001", "done", "--by", who, "--summary", "Opened it in G's profile.", "--ran", "g_open_url.py --agent file:///x");
 assert.equal(r.code, 0, r.out + r.err); assert.equal(told.length, 1); assert.equal(told[0].a, "Alpha"); assert.match(told[0].t, /ended done: Opened it/);
@@ -79,6 +85,7 @@ r = await cli("propose", "world-t", "level=open"); assert.equal(r.code, 0); asse
 // 7. the MCP server: initialize, tools/list, and every tool called once
 const mcp = spawn(CLI, ["mcp"], { env: { ...env, DOORMAN_BRIDGE_AGENT: "mcp-test" } }); let mout = ""; mcp.stdout.on("data", (d) => (mout += d));
 const rpc = (m) => mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+mcp.stdin.write("null\n[]\n42\n{\"jsonrpc\":\"2.0\",\"id\":7}\n"); // (BridgeReview: odd valid JSON must not crash it)
 rpc({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } }); rpc({ method: "notifications/initialized" }); rpc({ id: 2, method: "tools/list" });
 mk("doorman-t--a00004");
 const calls = [["list_jobs", {}], ["show_job", { id: "doorman-t--a00004" }], ["claim_job", { id: "doorman-t--a00004" }], ["renew_job", { id: "doorman-t--a00004" }], ["ask_owner", { id: "doorman-t--a00004", question: "ok?" }],
@@ -87,7 +94,7 @@ calls.forEach(([name, args], i) => rpc({ id: 10 + i, method: "tools/call", param
 for (let t = 0; t < 200 && (mout.match(/"id":1\d/g) || []).length < calls.length; t++) await new Promise((res) => setTimeout(res, 100));
 mcp.stdin.end();
 const msgs = mout.trim().split("\n").map((l) => JSON.parse(l)), byId = Object.fromEntries(msgs.map((m) => [m.id, m]));
-assert.equal(byId[1].result.serverInfo.name, "doorman-bridge"); assert.equal(byId[2].result.tools.length, 9);
+assert.equal(byId[1].result.serverInfo.name, "doorman-bridge"); assert.equal(byId[7].error.code, -32600, "an invalid request gets an error, the server stays up"); assert.equal(byId[2].result.tools.length, 9);
 assert.ok(!byId[2].result.tools.some((x) => /approve|deny|edit|create|set_|write/.test(x.name)), "no tool can decide or write");
 const res = (i) => JSON.parse(byId[10 + i].result.content[0].text);
 assert.equal(res(0).jobs.length, 1); assert.equal(res(2).ok, true); assert.equal(res(3).ok, true); assert.equal(res(4).ok, true); assert.equal(res(5).ok, true); assert.equal(res(6).ok, true);

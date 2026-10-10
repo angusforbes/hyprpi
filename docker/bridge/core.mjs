@@ -114,12 +114,17 @@ export function apply(rec, op, nowMs = Date.now()) {
 }
 
 // The owner's answer to question n (from the relay's decision on the held question). → { patch, history } | null
-export function answer(rec, n, text, nowMs = Date.now()) {
+export function answer(rec, n, text, nowMs = Date.now(), heldId) {
   if (rec?.type !== "host_job") return null;
+  // (BridgeReview) bound to the held item the question became: another held item can't answer it
+  if (heldId !== undefined && !(rec.questions || []).some((q) => q.n === n && q.held_id && q.held_id === heldId)) return null;
   const qs = (rec.questions || []).map((q) => (q.n === n && q.answer == null ? { ...q, answer: String(text), answered_at: iso(nowMs) } : q));
   if (!qs.some((q, i) => q !== (rec.questions || [])[i])) return null;
-  const back = rec.state === "asked" ? (rec.claim && Date.parse(rec.claim.until) > nowMs ? "claimed" : rec.claim ? "claimed" : "waiting") : rec.state;
+  const back = rec.state === "asked" ? (rec.claim ? "claimed" : "waiting") : rec.state;
+  // (BridgeReview) waiting for the owner doesn't use up the job's time limit: the clock moves on by the wait
+  const q = (rec.questions || []).find((x) => x.n === n), waited = Math.max(0, nowMs - Date.parse(q?.at || iso(nowMs)));
+  const claimedAt = rec.claimed_at ? iso(Date.parse(rec.claimed_at) + waited) : rec.claimed_at;
   // the agent that asked keeps its claim; its lease restarts so it has time to pick the answer up
-  const claim = rec.claim && back === "claimed" ? { ...rec.claim, until: iso(Math.min(nowMs + LIMITS.leaseS * 1000, Date.parse(rec.claimed_at) + rec.approved.time_limit_s * 1000 + LIMITS.leaseS * 1000)) } : rec.claim;
-  return { patch: { state: back, questions: qs, claim }, history: [{ at: iso(nowMs), ev: `the owner answered question ${n}`, by: "owner" }] };
+  const claim = rec.claim && back === "claimed" ? { ...rec.claim, until: iso(Math.min(nowMs + LIMITS.leaseS * 1000, Date.parse(claimedAt) + rec.approved.time_limit_s * 1000)) } : rec.claim;
+  return { patch: { state: back, questions: qs, claim, claimed_at: claimedAt }, history: [{ at: iso(nowMs), ev: `the owner answered question ${n}`, by: "owner" }] };
 }

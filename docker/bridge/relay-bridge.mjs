@@ -13,7 +13,8 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
   const IN = path.join(stateDir, "bridge", "in"), OUT = path.join(stateDir, "bridge", "out"), REQ = path.join(stateDir, "requests");
   for (const d of [path.dirname(IN), IN, OUT]) { fs.mkdirSync(d, { recursive: true, mode: 0o700 }); try { fs.chmodSync(d, 0o700); } catch { /* */ } }
   const readJob = (id) => { if (!validId(id)) return null; try { return JSON.parse(fs.readFileSync(path.join(REQ, `${id}.json`), "utf8")); } catch { return null; } };
-  const effects = (rec, list) => {
+  const effects = (rec, list) => { // → an error text when a question couldn't be held (the ask is then undone)
+    let failed = "";
     for (const e of list || []) {
       if (e.kind === "outcome") {
         const act = (/^Action asked for: (.*)$/m.exec(String(rec.approved?.action || "")) || [])[1] || String(rec.approved?.action || "");
@@ -22,13 +23,19 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
         log({ op: "host_job", id: rec.id, sandbox: rec.sandbox, state: e.state, outcome: e.summary, ran: e.ran || [], changed: e.changed || [] });
         archive(rec, e);
       } else if (e.kind === "hold") {
-        let held = null; try { held = holdQuestion(rec, e.n, e.text); } catch (err) { log({ error: `bridge question ${rec.id}: ${err.message}` }); }
-        if (held) { const cur = readJob(rec.id); if (cur) jobRecord(rec.id, { questions: (cur.questions || []).map((q) => (q.n === e.n ? { ...q, held_id: held } : q)) }); }
+        let held = null, why = ""; try { held = holdQuestion(rec, e.n, e.text); } catch (err) { why = err.message; log({ error: `bridge question ${rec.id}: ${err.message}` }); }
+        const cur = readJob(rec.id);
+        if (held && cur) jobRecord(rec.id, { questions: (cur.questions || []).map((q) => (q.n === e.n ? { ...q, held_id: held } : q)) });
+        else if (cur) { // (BridgeReview) no held item: undo the question, so the job isn't left waiting for an answer that can't come
+          jobRecord(rec.id, { state: "claimed", questions: (cur.questions || []).filter((q) => q.n !== e.n), history: [{ at: new Date().toISOString(), ev: `question ${e.n} couldn't be held: ${why || "no held item"}`, by: "relay" }] });
+          failed = `the question couldn't be put to the owner (${why || "no held item"}); nothing changed, try again later`;
+        }
         log({ op: "host_job_ask", id: rec.id, n: e.n, held: held || null });
       }
     }
+    return failed;
   };
-  const commit = (rec, r) => { if (r?.patch) { jobRecord(rec.id, { ...r.patch, history: r.history || [] }); effects({ ...rec, ...r.patch }, r.effects); } };
+  const commit = (rec, r) => { if (r?.patch) { jobRecord(rec.id, { ...r.patch, history: r.history || [] }); return effects({ ...rec, ...r.patch }, r.effects); } return ""; };
   let busy = Promise.resolve();
   const one = (name) => {
     if (!RID_RE.test(name)) return;
@@ -41,8 +48,8 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
     try { fs.unlinkSync(f); } catch { return; } // taken by this pass (once)
     const rec = readJob(req?.id);
     const r = rec ? apply(rec, req, Date.now()) : { reply: { ok: false, text: "no such job" } };
-    if (rec) commit(rec, r);
-    const reply = r.reply || { ok: false, text: "no reply" };
+    const failed = rec ? commit(rec, r) : "";
+    const reply = failed ? { ok: false, text: failed } : r.reply || { ok: false, text: "no reply" };
     if (rec && req?.op) log({ op: "bridge", req: req.op, id: rec.id, by: String(req.by || "").slice(0, 60), ok: reply.ok, text: String(reply.text || "").slice(0, 200) });
     try { const o = path.join(OUT, name); fs.writeFileSync(o + ".tmp", JSON.stringify(reply), { mode: 0o600 }); fs.renameSync(o + ".tmp", o); } catch { /* the caller times out */ }
   };
@@ -52,13 +59,13 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
     for (const n of names) { const rec = readJob(n.slice(0, -5)); const s = rec && sweep(rec, Date.now()); if (s) commit(rec, s); }
     try { for (const n of fs.readdirSync(OUT)) { const p = path.join(OUT, n); if (Date.now() - fs.statSync(p).mtimeMs > 600000) fs.unlinkSync(p); } } catch { /* */ }
   };
-  try { fs.watch(IN, () => scan()); } catch { /* the interval still runs */ }
+  let watcher = null; try { watcher = fs.watch(IN, () => scan()); } catch { /* the interval still runs */ }
   const t1 = setInterval(scan, 1000), t2 = setInterval(() => { busy = busy.then(sweepAll).catch(() => {}); }, 30000);
   t1.unref?.(); t2.unref?.(); scan();
   return {
     scan, sweepAll,
     // the owner's typed answer to a held question (the relay's decide() calls this) → true when applied
-    answer(id, n, text) { const rec = readJob(id); const a = rec && answerRule(rec, n, text, Date.now()); if (a) { jobRecord(id, { ...a.patch, history: a.history }); log({ op: "host_job_answer", id, n }); } return !!a; },
-    stop() { clearInterval(t1); clearInterval(t2); },
+    answer(id, n, text, heldId) { const rec = readJob(id); const a = rec && answerRule(rec, n, text, Date.now(), heldId); if (a) { jobRecord(id, { ...a.patch, history: a.history }); log({ op: "host_job_answer", id, n }); } return !!a; },
+    stop() { clearInterval(t1); clearInterval(t2); try { watcher?.close(); } catch { /* */ } },
   };
 }
