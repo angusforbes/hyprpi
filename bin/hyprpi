@@ -219,7 +219,8 @@ async function cmdNew() {
   const piCmd = cfg.pi;
   const piArgv = ["-e", ext, ...(cfg.piArgs || []), ...piArgs];
   { // J397: the host's scoped model list is the only list: a --model that isn't on it is refused here too
-    const mi = piArgv.indexOf("--model"), wanted = mi >= 0 ? String(piArgv[mi + 1] || "") : "";
+    const last = (flagName) => { let v = ""; piArgv.forEach((a, i) => { if (a === flagName) v = String(piArgv[i + 1] || ""); else if (a.startsWith(flagName + "=")) v = a.slice(flagName.length + 1); }); return v; }; // pi uses the LAST one
+    let wanted = last("--model"); const prov = last("--provider"); if (wanted && prov && !wanted.startsWith(prov + "/")) wanted = `${prov}/${wanted}`;
     if (wanted) { const { allowedBy } = await import("../lib/modellist.mjs"); let ok; try { ok = allowedBy(wanted); } catch (e) { die(`the model ${wanted} wasn't used: ${e.message}`); } if (!ok) die(`the model ${wanted} is not on the host's scoped model list (enabledModels in ~/.pi/agent/settings.json), so no agent was opened`); }
   }
   if (directTerminal) {

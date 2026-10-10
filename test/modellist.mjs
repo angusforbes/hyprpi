@@ -27,6 +27,11 @@ const g = path.join(tmp, "g.json"); fs.writeFileSync(g, JSON.stringify({ enabled
 process.env.HYPRPI_PI = "/bin/false"; setKnownModels(null); assert.throws(() => removeModel("p/bad", { file: g }), /failed or listed nothing/); assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).enabledModels, ["p/*", "q/keep"], "a failed listing changes nothing");
 setKnownModels(["p/bad", "p/good"]); assert.throws(() => removeModel("q/keep", { file: g, protect: ["keep"] }), /protected/);
 removeModel("p/bad", { file: g }); assert.equal(fs.statSync(g).mode & 0o777, 0o600, "file mode kept"); assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).enabledModels, ["p/good", "q/keep"]);
+setKnownModels(["testprov/a", "testprov/claude-test", "testprov/anthropic/evil", "anthropic/real"]);
+assert.equal(allowedBy("testprov/claude-test", ["a"]), "", "no substring matching of a bare pattern"); assert.equal(allowedBy("testprov/a", ["a"]), "a");
+assert.equal(allowedBy("anthropic/evil", ["anthropic/*"]), "", "a qualified-looking id that pi resolves to another provider is refused"); assert.equal(allowedBy("anthropic/real", ["anthropic/*"]), "anthropic/*");
+fs.writeFileSync(g, JSON.stringify({ enabledModels: ["p/bad"] })); assert.throws(() => removeModel("p/bad", { file: g }), /leave the list empty/); assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).enabledModels, ["p/bad"]);
+setKnownModels(["p/bad", "p/good"]);
 ok("bare ids resolve (fail closed), pi's bare/fuzzy/class patterns, an unreadable settings file throws, a failed pi listing and a protected model change nothing, the file mode is kept");
 // Kimi is refused by the list alone, with the real host list
 setKnownModels(null); delete process.env.HYPRPI_PI; delete process.env.PI_CODING_AGENT_DIR;
