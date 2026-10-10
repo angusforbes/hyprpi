@@ -75,7 +75,7 @@ ok("a draft held before the mode became strict is denied on approval, with the m
 const autoDecide = (id, mode) => { fs.writeFileSync(path.join(DECISIONS, `${id}.approve`), `auto (${mode})\n`); return relay.decide(`${id}.approve`); };
 MODE.now = "yolo"; put({ ...draft("doorman-t--a00006"), auto: { mode: "yolo", kind: "draft" } }); await autoDecide("doorman-t--a00006", "yolo");
 assert.match(toAsker("Alpha").at(-1), /Approved automatically \(mode yolo\): the request \(doorman-t--a00006\); a host agent will take it/);
-assert.doesNotMatch(toAsker("Alpha").at(-1), /Angus approved/);
+assert.doesNotMatch(toAsker("Alpha").at(-1), /Angus approved/); assert.equal(relay.jobs["doorman-t--a00006"].auto, "yolo", "the bridge job knows it was automatic (J412 red team #7)");
 MODE.now = "safe"; const long = "Synthetic note. " + "word ".repeat(260);
 put({ id: "doorman-t--a00007", sandbox: "doorman-t", draft: true, mode: "talk", rooms: ["I"], text: "note to the owner\n" + long.slice(0, 100), shown: ["x"], to: ["x"], typed: { type: "note_to_owner", for: "Zeta", sandbox: "world-t", params: { text: long } }, auto: { mode: "safe", kind: "note" } });
 await autoDecide("doorman-t--a00007", "safe");
