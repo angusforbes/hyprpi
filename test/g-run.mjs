@@ -71,15 +71,31 @@ function run(t, argv, env = {}) {
   assert.equal(dup, 0, `exactly one of two simultaneous launches starts (${dup}/12 wrong)`);
   console.log("ok 4 simultaneous launches for one agent: exactly one starts (12/12)");
 }
-// 5. a lock left by a killed g-run is taken over
+// 5. the lock is the kernel's: a lock file left behind (any content) doesn't block, and a g-run killed with SIGKILL
+//    (no exit handler runs) releases it at once
 {
   const lock = path.join(home, ".hyprpi-g", "run", "agent-hp-stale.lock");
   fs.mkdirSync(path.dirname(lock), { recursive: true }); fs.writeFileSync(lock, "999999");
   const p = run(tok(200), ["bash", "-c", "echo STARTED; sleep 60"], { HYPRPI_AGENT_ID: "hp-stale" });
-  await sleep(900); assert.match(p.out, /STARTED/, "a stale lock doesn't block");
-  p.kill("SIGTERM"); await Promise.race([p.done, sleep(3000)]); await sleep(200);
-  assert.ok(!fs.existsSync(lock), "the lock is released on exit");
-  console.log("ok 5 a stale lock is taken over, and released on exit");
+  await sleep(900); assert.match(p.out, /STARTED/, "a leftover lock file doesn't block");
+  const kid = Number(fs.readFileSync(`/proc/${p.pid}/task/${p.pid}/children`, "utf8").trim().split(/\s+/).find((x) => /STARTED|sleep/.test(fs.readFileSync(`/proc/${x}/cmdline`, "utf8"))) || 0);
+  p.kill("SIGKILL"); await Promise.race([p.done, sleep(3000)]);
+  try { if (kid) process.kill(kid, "SIGKILL"); } catch { /* */ }
+  await sleep(300);
+  const q = run(tok(201), ["bash", "-c", "echo STARTED; sleep 60"], { HYPRPI_AGENT_ID: "hp-stale" });
+  await sleep(900); assert.match(q.out, /STARTED/, "after its holder was SIGKILLed, the next launch starts");
+  q.kill("SIGTERM"); await Promise.race([q.done, sleep(3000)]);
+  console.log("ok 5 a leftover lock file doesn't block; a SIGKILLed holder releases the lock");
+}
+// 6. while one holds it, a later launch for the same agent is refused even with no pi visible yet
+{
+  const a = run(tok(300), ["bash", "-c", "echo STARTED; sleep 60"], { HYPRPI_AGENT_ID: "hp-held" });
+  await sleep(700);
+  const b = run(tok(301), ["bash", "-c", "echo STARTED; sleep 60"], { HYPRPI_AGENT_ID: "hp-held" });
+  assert.equal(await Promise.race([b.done, sleep(5000).then(() => "timeout")]), 3);
+  assert.match(b.out, /already running in this sandbox \(its window's g-run\)/);
+  a.kill("SIGTERM"); await Promise.race([a.done, sleep(3000)]);
+  console.log("ok 6 a held lock refuses the next launch (no pi needed)");
 }
 fs.rmSync(home, { recursive: true, force: true });
 console.log("g-run: all pass");
