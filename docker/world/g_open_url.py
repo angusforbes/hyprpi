@@ -237,6 +237,61 @@ def world_brave(world):
             "--no-first-run", "--no-default-browser-check"]
 
 
+HYPRCTL = os.environ.get("HYPRPI_HYPRCTL") or "hyprctl"   # tests: a stub
+LUA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hypr", "hyprpi.lua")
+
+
+def brave_home(letter):
+    """The world Brave's home workspace, from its window rule in hypr/hyprpi.lua (workspace = "NN silent"), or None."""
+    try:
+        txt = open(LUA, encoding="utf-8").read()
+    except OSError:
+        return None
+    i = txt.find(f"hyprpi\\\\.{letter}-brave")
+    if i < 0:
+        return None
+    end = txt.find("})", i)
+    import re
+    m = re.search(r'workspace\s*=\s*"(\d+)', txt[i:end if end > 0 else i + 600])
+    return int(m.group(1)) if m else None
+
+
+def bring_brave_home(world):
+    """J402 (Thoughts-B): before a link goes to the world's own Brave, a window of it that is parked (special:reprieve, or any
+    special workspace) or outside the world's workspaces is moved back to its home workspace silently (no focus change), and
+    that is logged. Moving it out of special:reprieve makes Reprieve drop its record. Never raises."""
+    try:
+        letter = world.removeprefix("world-")
+        home = brave_home(letter)
+        cfg_dir = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "hyprpi", "worlds")
+        try:
+            lo, hi = json.load(open(os.path.join(cfg_dir, f"{world}.json"))).get("workspaces", [None, None])[:2]
+        except Exception:
+            lo = hi = None
+        if not home or not isinstance(lo, int) or not isinstance(hi, int):
+            return
+        out = subprocess.run([HYPRCTL, "clients", "-j"], capture_output=True, text=True, timeout=5).stdout
+        for c in json.loads(out or "[]"):
+            if c.get("class") != f"hyprpi.{letter}-brave":
+                continue
+            addr, ws = str(c.get("address", "")), c.get("workspace") or {}
+            name, wid = str(ws.get("name", "")), ws.get("id")
+            parked = name.startswith("special:")
+            outside = not isinstance(wid, int) or not (lo <= wid <= hi)
+            if not (parked or outside) or not __import__("re").fullmatch(r"0x[0-9a-f]+", addr):
+                continue
+            subprocess.run([HYPRCTL, "dispatch", f'hl.dsp.window.move({{ window = "address:{addr}", workspace = "{home}", follow = false }})'], capture_output=True, timeout=5)
+            try:
+                log_dir = os.path.join(STATE_ROOT, "hyprpi", "worlds", world)
+                os.makedirs(log_dir, mode=0o700, exist_ok=True)
+                with open(os.path.join(log_dir, "helper.jsonl"), "a") as f:
+                    f.write(json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "op": "brave-home", "address": addr, "from": name, "to": home, "why": "parked" if parked else "outside the world's workspaces"}) + "\n")
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
 def tell(title, msg):
     try:
         subprocess.run(["notify-send", "-a", "hyprpi", "-u", "low", title, msg], timeout=5)
@@ -266,6 +321,8 @@ def main(argv):
             tell(f"Link from {who} not opened", out + (" (further refusals this minute are not shown)" if agent else ""))
         print(f"g_open_url: refused: {out}", file=sys.stderr)
         return 1
+    if agent:
+        bring_brave_home(world)  # J402: a parked or stray world Brave comes home first, so the new tab is visible there
     cmd = (world_brave(world) + ["--", out]) if agent else [OPENER, out]
     try:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
