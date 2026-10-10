@@ -23,6 +23,9 @@ export const KEYS = {
   "mode": { ok: (v) => MODES.includes(v), why: "strict, safe, open or yolo", proposable: true },
   "level": { ok: (v) => ["open", "safe", "strict"].includes(v), why: "open, safe or strict (deprecated: the mode decides the level)", proposable: false },
   "search.key_file": { ok: (v) => /^[~\/][^\0\n]{0,200}$/.test(v), why: "a path", proposable: false },
+  // J434 (Angus: "We can add the choice to doorman config file"): may Angus decide this sandbox's held items from the phone app? Default false. Angus
+  // only (config-set at his terminal, or editing the file); never proposable, so no agent or sandbox can turn it on, in any mode.
+  "phone_decisions": { ok: (v) => v === "true" || v === "false", why: "true or false", proposable: false },
 };
 const RANK = { mode: { strict: 0, safe: 1, open: 2, yolo: 3 }, level: { strict: 0, safe: 1, open: 2 } };
 

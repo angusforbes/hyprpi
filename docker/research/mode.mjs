@@ -95,6 +95,11 @@ export function worldsFor(cfgDir, sandbox) {
   for (const f of names) { let w; try { w = JSON.parse(fs.readFileSync(path.join(cfgDir, "worlds", f), "utf8")); } catch { continue; } if (w && typeof w === "object" && (typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox) hits.push({ f, w }); }
   return hits;
 }
+// J434: phone decisions on for this sandbox? Only when exactly one worlds file names it and its gateway block says phone_decisions true (fail closed).
+export function phoneDecisionsFor(cfgDir, sandbox) {
+  const hits = worldsFor(cfgDir, sandbox); if (hits.length !== 1) return false;
+  const v = hits[0].w?.gateway?.phone_decisions; return v === true || v === "true";
+}
 function relayFor(cfgDir) { try { return JSON.parse(fs.readFileSync(process.env.HYPRPI_RELAY_CONF || path.join(cfgDir, "sbx-relay.json"), "utf8")).sandboxes || []; } catch { return []; } }
 export function modeForSandbox(cfgDir, sandbox) {
   const hits = worldsFor(cfgDir, sandbox);

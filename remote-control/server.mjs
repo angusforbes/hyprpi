@@ -36,7 +36,9 @@ import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames,
 import { worldHex, theme } from "../lib/tui/term.mjs";
 import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
 import * as session from "./session-read.mjs";
-import * as gworld from "./gworld.mjs"; // J433: a sandboxed world's own agents (its inner daemon, via sbx exec) // an agent's session, tail-read (J161)
+import * as gworld from "./gworld.mjs";
+import { heldForSandboxes, heldDigest, phoneDecision, PHONE_REFUSED_KINDS } from "../lib/held.mjs"; // J434
+import { phoneDecisionsFor } from "../docker/research/mode.mjs"; // J434 v2: per sandbox, gateway.phone_decisions (default off) // J433: a sandboxed world's own agents (its inner daemon, via sbx exec) // an agent's session, tail-read (J161)
 import { shotRoutes } from "./shot.mjs"; // screenshots from the iPhone share sheet (J250)
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -435,6 +437,30 @@ function sessionFile(id) {
   return real.startsWith(SESSIONS + path.sep) && real.endsWith(".jsonl") ? real : null;
 }
 
+// ---- J434: a sandboxed world's held items, decided from the phone ------------------------------------------
+// The uid that owns the OTHER end of this request's TCP connection (/proc/net/tcp{,6}): tailscale serve's proxy is
+// root's tailscaled, so a phone request comes from uid 0; an agent's curl to localhost comes from Angus's uid.
+function peerUid(req) {
+  const rp = req.socket?.remotePort, lp = req.socket?.localPort; if (!rp || !lp) return -1;
+  const hex = (n) => n.toString(16).toUpperCase().padStart(4, "0");
+  for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let t = ""; try { t = fs.readFileSync(f, "utf8"); } catch { continue; }
+    for (const l of t.split("\n").slice(1)) {
+      const c = l.trim().split(/\s+/); if (c.length < 8) continue;
+      if (c[1].endsWith(":" + hex(rp)) && c[2].endsWith(":" + hex(lp))) return Number(c[7]);
+    }
+  }
+  return -1;
+}
+// world letter -> the sandboxes whose held items its Doorman window shows: the sandbox and its Doorman(s)
+function heldNames(r) {
+  const sb = gworld.sandboxOf(r); if (!sb) return [];
+  let c = {}; try { c = JSON.parse(fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi", "sbx-relay.json"), "utf8")); } catch { /* */ }
+  return [sb, ...(Array.isArray(c.sandboxes) ? c.sandboxes : []).filter((x) => x?.doorman_for === sb && /^[\w.-]+$/.test(x.name || "")).map((x) => x.name)];
+}
+const phoneOn = (r) => { const sb = gworld.sandboxOf(r); try { return !!sb && phoneDecisionsFor(path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi"), sb); } catch { return false; } };
+const heldShown = new Map(); // digest -> when the phone was shown it (the 2 s rule is counted from here)
+
 // ---- http ------------------------------------------------------------------------------------
 // A world letter that exists (one of the daemon's rooms); anything else is refused, so a stray POST
 // can't start a Thoughts for a world that isn't there (J161: a test to "Z" did).
@@ -644,6 +670,27 @@ const server = http.createServer(async (req, res) => {
         log("phone", what, a.name || id);
         return json(res, 200, await api.call("agent.interrupt", { agent: id, text: what === "interrupt" ? msg : "", via: "phone" }, { timeoutMs: 30000 }));
       } catch (e) { return json(res, 409, { error: e.message }); }
+    }
+    // GET /api/held?world=G: the first held item of a sandboxed world, in full (the relay's own record, as the Doorman window shows it).
+    // POST /api/held/decide {world, id, digest, choice, confirm?}: Angus's choice, typed after reading it (J434).
+    if (req.method === "GET" && url.pathname === "/api/held") {
+      const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
+      const names = heldNames(r); if (!names.length) return json(res, 200, { world: r, sandboxed: false, items: 0 });
+      const all = heldForSandboxes(names), h = all[0];
+      if (!h) return json(res, 200, { world: r, sandboxed: true, items: 0 });
+      const digest = heldDigest(h); if (!heldShown.has(digest)) heldShown.set(digest, Date.now()); if (heldShown.size > 200) heldShown.delete(heldShown.keys().next().value);
+      return json(res, 200, { world: r, sandboxed: true, items: all.length, item: { id: h.id, at: h.at, kind: h.kind, title: h.title, text: h.text, choices: h.choices, answer: !!h.answer, phone: phoneOn(r) && !PHONE_REFUSED_KINDS.test(h.kind) }, digest, phoneDecisions: phoneOn(r) });
+    }
+    if (req.method === "POST" && url.pathname === "/api/held/decide") {
+      // Only the phone through tailscale serve (a root-owned peer); never a process on this machine as Angus (an agent's curl).
+      const uid = peerUid(req);
+      if (uid !== 0) { log("held decide refused: peer uid", uid); return json(res, 403, { error: "held requests are decided from the phone app (or at the laptop), not from this machine" }); }
+      const b = await body(req), r = room(b.world); if (!r) return json(res, 400, { error: "world?" });
+      const names = heldNames(r); if (!names.length) return json(res, 400, { error: `world ${r} isn't sandboxed` });
+      const digest = String(b.digest || "");
+      const d = phoneDecision({ sandboxes: names, id: String(b.id || ""), digest, raw: String(b.choice || "").slice(0, 2100), confirm: b.confirm === true, shownAt: heldShown.get(digest) || 0, enabled: phoneOn(r) });
+      log("held decide (phone)", r, String(b.id || ""), d.ok ? d.verdict : `refused: ${d.text}`);
+      return json(res, d.ok ? 200 : 409, d);
     }
     if (req.method === "GET" && url.pathname === "/api/agents") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });

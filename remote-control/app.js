@@ -656,9 +656,9 @@ function agentsOf(w) {
   return l;
 }
 async function fetchAgents(w) {
-  const r = await call("GET", `/api/agents?world=${w}`), l = agentsOf(w);
-  const changed = !l.loaded || JSON.stringify(r.agents) !== JSON.stringify(l.agents);
-  l.agents = r.agents || []; l.loaded = true;
+  const [r, hd] = await Promise.all([call("GET", `/api/agents?world=${w}`), call("GET", `/api/held?world=${w}`).catch(() => null)]), l = agentsOf(w); // J434: a sandboxed world's held item
+  const changed = !l.loaded || JSON.stringify(r.agents) !== JSON.stringify(l.agents) || (hd?.digest || "") !== (l.held?.digest || "");
+  l.agents = r.agents || []; l.loaded = true; l.held = hd && hd.item ? hd : null;
   try { localStorage.setItem(LSA(w), JSON.stringify({ agents: l.agents })); } catch { /* memory only */ }
   if (w === world && view === "agents" && changed) renderAgents({ keepScroll: true });
 }
@@ -683,6 +683,16 @@ function renderAgents({ keepScroll = false } = {}) {
   const a = l.agents.find((x) => x.id === openAgent.get(world));
   const html = [];
   if (!a) {
+    // J434 (Angus "1b"): the sandboxed world's held request, in full (the relay's own record, as the Doorman window shows it), one at a
+    // time; type the same choice as there (1 · 1 text · 1+ [time] [text] · 2 [text]) after reading it (the box opens after 2 s).
+    if (l.held?.item) {
+      const h = l.held.item;
+      html.push(`<div class="psum held" id="heldbox"><h3>⏸ Held for you${l.held.items > 1 ? ` (1 of ${l.held.items})` : ""}: ${esc(h.title || h.kind)}</h3>`
+        + `<pre class="heldtext" style="white-space:pre-wrap;word-break:break-word;font-size:13px">${esc(h.text)}</pre>`
+        + (h.phone ? `<div class="small">Choices: ${esc(h.choices.join(" · "))}${h.choices.includes("1+") ? " (1+ [time] [text])" : ""}. ${h.answer ? "1 followed by your answer · 2 declines" : "1 approve · 1 text: approve and tell the asker · 2 [text]: back to the asker"}</div>`
+          + `<div style="display:flex;gap:6px;margin-top:6px"><input id="heldin" placeholder="1, 1 text, 2 text …" disabled autocomplete="off" style="flex:1"><button id="heldgo" disabled>Decide</button></div><div class="small" id="heldmsg"></div>`
+          : `<div class="small">${l.held.phoneDecisions ? "This one (a gateway / mode change) is decided at the laptop only." : "Read-only here: decisions for this world are made at the laptop (phone decisions are off)."}</div>`) + `</div>`);
+    }
     for (const x of l.agents) html.push(agentRow(x));
     if (!l.agents.length && l.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
   } else {
@@ -698,9 +708,34 @@ function renderAgents({ keepScroll = false } = {}) {
       + sec("In the stream", `${(a.recent || []).length ? `<ul class="items">${a.recent.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : `<div class="small">nothing in the last 200 interactions</div>`}${a.mark !== "◌" ? `<button class="tosession" data-a="${esc(a.id)}">Open ${esc(a.name)} session ›</button>` : ""}<button class="tostream" data-name="${esc(a.name)}">Stream: only ${esc(a.name)} ›</button>`)
       + `</div>`);
   }
+  { const i = document.getElementById("heldin"); if (i) heldKeep.value = i.value; }
   agentsEl.innerHTML = html.join("");
   linkNames(agentsEl); textGlyphs(agentsEl);
+  heldWire(l);
   agentsEl.scrollTop = keepScroll ? was : 0;
+}
+// J434: the held box's input opens 2 s after the request is drawn (the server checks its own 2 s too, and the digest of what was shown).
+const heldKeep = { digest: "", shownAt: 0, value: "" }; // a redraw (agents refresh) keeps what's typed and the 2 s already waited
+function heldWire(l) {
+  const inp = document.getElementById("heldin"), go = document.getElementById("heldgo"), msg = document.getElementById("heldmsg");
+  if (!inp || !go || !l.held) return;
+  const held = l.held, w = world;
+  if (heldKeep.digest !== held.digest) { heldKeep.digest = held.digest; heldKeep.shownAt = Date.now(); heldKeep.value = ""; }
+  inp.value = heldKeep.value;
+  setTimeout(() => { inp.disabled = false; go.disabled = false; }, Math.max(0, 2100 - (Date.now() - heldKeep.shownAt)));
+  const send = async (confirm = false) => {
+    const choice = inp.value.trim(); if (!choice) return;
+    go.disabled = true; msg.textContent = "…";
+    try {
+      const r = await call("POST", "/api/held/decide", { world: w, id: held.item.id, digest: held.digest, choice, confirm });
+      msg.textContent = "✓ " + r.text + " (the relay carries it out)"; inp.value = ""; setTimeout(() => fetchAgents(w).catch(() => {}), 1500);
+    } catch (e) {
+      if (e.body?.confirm && !confirm && window.confirm(e.body.text + "?")) return send(true);
+      msg.textContent = "✗ " + e.message; go.disabled = false;
+    }
+  };
+  go.addEventListener("click", () => send());
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
 }
 agentsEl.addEventListener("click", (e) => {
   const hs = e.target.closest(".phead .aopen"); if (hs) return openSession(hs.closest(".agent").dataset.a); // J236: › at the top right → its session

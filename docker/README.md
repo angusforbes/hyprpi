@@ -166,13 +166,15 @@ One block per sandbox in `~/.config/hyprpi/worlds/<name>.json`, every key option
   "search": { "provider": "sonar", "quick_model": "perplexity/perplexity/sonar", "deep_model": "perplexity/perplexity/sonar-deep-research", "key_file": "~/.config/<secrets>/<search-api-key>" },
   "report_model": "azure/openai/gpt-6-sol",
   "doorman_model": "azure/anthropic/claude-opus-5-5",
-  "mode": "safe"
+  "mode": "safe",
+  "phone_decisions": false
 }
 ```
 
 - `search.provider`: `sonar` (default: Perplexity Sonar through NVIDIA Inference Hub) or `brave` (Brave Search API: results only; the report model writes the report; needs `search.key_file`). Adapters live in docker/research/reader.py (`PROVIDERS`); to add one, add a function and an entry in docker/research/gateway.mjs `SEARCH_PROVIDERS` with the host it needs.
 - The reader sandbox may reach a provider's host only while that provider is selected: `research.mjs reader network [--apply]` shows or sets it (`sbx policy allow/rm network --sandbox <reader> <host>`, never global). `config-set` and an approved proposal run it for you.
 - `doorman_model` is the model for the Doorman's research checks (plan, vet), on the same Inference Hub account. The Doorman's CHAT session model is set when its sandbox is created (`model` in sbx-relay.json); the window visibility is `visibility` there. Both are shown, not changed, here.
+- `phone_decisions` (J434, default `false`): may Angus decide this sandbox's held items in the phone app (remote-control's Agnt tab for the world: the same full item as the Doorman window, oldest first, one at a time, the same keys 1 / 1 text / 1+ [time] [text] / 2 [text], typed after 2 s). The relay takes a "phone" decision only with this on, only for the digest of the item that was shown (a changed item stays held), never for a gateway / mode change, and logs `decision_via … via phone`. The phone server only accepts it from a root-owned TCP peer (tailscale serve), so a process on the laptop (an agent's curl) can't. Off: the phone shows held items read-only. Angus only: `config-set … phone_decisions=true|false` at his terminal or the file; not proposable. Test: `node docker/test-held-phone.mjs`.
 - Every host check is the same whichever provider or model is chosen: cleaning, J360 links, the number and copy checks, the Doorman's vet.
 - What is in effect: `node docker/research/research.mjs config --sandbox world-g` (`--json` for programs); the Doorman window shows it as a dim line under its header.
 - Who changes settings: only Angus. By editing the file, or `node docker/research/research.mjs config-set --sandbox world-g report_model=... mode=...`, which needs a real terminal and refuses under any agent ancestor (docker/agent-guard.mjs, shared with the relay's approve command). A host agent can only PROPOSE: `node docker/sbx-relay.mjs propose-gateway world-g --by NAME --changes '{"report_model":"..."}'` creates a held item in the Doorman window showing current → proposed; on Angus's 1 the relay applies exactly that (digest-checked, only if the values are still what was shown). `search.key_file` can't be proposed. Tests: docker/research/test-gateway.mjs.

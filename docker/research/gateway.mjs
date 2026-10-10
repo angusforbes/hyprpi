@@ -10,6 +10,7 @@
 //     "report_model": "azure/openai/gpt-6-sol",      // the model that writes the report from the search results
 //     "doorman_model": "azure/anthropic/claude-opus-5-5", // the model for the Doorman's research checks (plan, vet); same Inference Hub account
 //     "mode":  "safe",                               // strict | safe | open | yolo (the one dial: how much Angus reviews; J412)
+//     "phone_decisions": false,                      // J434: may Angus decide held items in the phone app (true) or only at the laptop (default)
 //     (the share level now follows the mode: strict, safe, open; the old "level" key is deprecated)
 //   }
 // Every key is optional. Precedence for each setting: the "gateway" block, then the older key it replaces (doorman.mode, access, research.json
@@ -57,6 +58,7 @@ export function resolveGateway({ w, research = {}, relay = [], sandbox = "", lev
   return {
     search: { provider, label: SEARCH_PROVIDERS[provider].label, quick_model: quick, deep_model: deep, key_file: searchKeyFile, hosts: SEARCH_PROVIDERS[provider].hosts.slice() },
     report_model: report, doorman_model: doorman, doorman_chat_model: doormanChat, doorman_visibility: dm.visibility || "",
+    phone_decisions: !ambiguous && (g.phone_decisions === true || g.phone_decisions === "true"), // J434: Angus may decide held items from the phone app
     mode, ...(() => { const l = effectiveLevel({ w, relay, sandbox, mode }); return { level: l.level, levelWhy: l.why }; })(), sources: { ...src, level: null }, notes,
   };
 }
@@ -68,7 +70,7 @@ export const levelFromGateway = (w) => { const l = w?.gateway?.level; return ["o
 export function summaryLine(e) {
   const short = (m) => String(m || "").split("/").pop();
   const srch = e.search.provider === "sonar" ? `search ${e.search.provider} (${short(e.search.quick_model)} / ${short(e.search.deep_model)})` : `search ${e.search.provider}`;
-  return `${srch} · report ${short(e.report_model)} · Doorman ${short(e.doorman_model || e.doorman_chat_model) || "?"}${e.doorman_model ? " (checks)" : ""} · mode ${e.mode}${e.level ? ` · level ${e.level}` : ""}`;
+  return `${srch} · report ${short(e.report_model)} · Doorman ${short(e.doorman_model || e.doorman_chat_model) || "?"}${e.doorman_model ? " (checks)" : ""} · mode ${e.mode}${e.level ? ` · level ${e.level}` : ""}${e.phone_decisions ? " · phone decisions on" : ""}`;
 }
 export function summaryText(e, sandbox) {
   const row = (k, v, from) => `  ${k.padEnd(22)} ${String(v).padEnd(48)} ${from ? `(${from})` : ""}`;
@@ -77,7 +79,7 @@ export function summaryText(e, sandbox) {
     ...(SEARCH_PROVIDERS[e.search.provider].models ? [row("quick search model", e.search.quick_model, e.sources["search.quick_model"]), row("deep search model", e.search.deep_model, e.sources["search.deep_model"])] : [row("search API key file", e.search.key_file || "(not set)", "gateway.search.key_file"), row("reader may reach", e.search.hosts.join(", ") || "(only the inference API)", "only while selected")]),
     row("report model", e.report_model, e.sources.report_model),
     row("Doorman checks model", e.doorman_model || "(the Doorman sandbox's own)", e.sources.doorman_model), row("Doorman chat model", e.doorman_chat_model || "?", "sbx-relay.json model"),
-    row("Doorman mode", e.mode, e.sources.mode), row("share level", e.level || "?", e.levelWhy),
+    row("Doorman mode", e.mode, e.sources.mode), row("phone decisions", e.phone_decisions ? "on" : "off", "gateway.phone_decisions (Angus only)"), row("share level", e.level || "?", e.levelWhy),
     row("window visibility", e.doorman_visibility || "?", "sbx-relay.json visibility"),
     ...(e.notes.length ? ["  Notes:", ...e.notes.map((n) => `    - ${n}`)] : [])].join("\n");
 }

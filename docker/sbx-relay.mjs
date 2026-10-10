@@ -40,10 +40,10 @@ import crypto from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { connect } from "../lib/client.mjs";
-import { logTurn } from "../lib/held.mjs"; // J289: decision notes as highlighted turns in the Thoughts panel
+import { logTurn, heldDigestFor, PHONE_REFUSED_KINDS } from "../lib/held.mjs"; // J289: decision notes as highlighted turns in the Thoughts panel
 import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
 import { logEvent as researchLog, conf as researchConf, dropPlan as researchDropPlan } from "./research/research.mjs"; // J309
-import { kindAction } from "./research/mode.mjs"; // J412: the dial decides per request kind: held, auto or refused
+import { kindAction, phoneDecisionsFor } from "./research/mode.mjs"; // (J434: phoneDecisionsFor) // J412: the dial decides per request kind: held, auto or refused
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { ownerNote, linkable, returnKey, holdReason, openPeer } from "./held-note.mjs"; // J370 (J386: holdReason; J378: openPeer; J412: linkable)
 import { parseAllowWord, ALLOW_MAX_MS } from "../lib/sbx-rules.mjs"; // J412: "1+ <dur>"
@@ -1103,12 +1103,24 @@ class Relay {
     const m = /^(.+)\.(approve|deny|allow-\d{1,5})$/.exec(file); if (!m) return;
     let [, id, verdict] = m;
     if (this.deciding?.has(id)) return; // (KeysReview) a decision on this item is being made right now; this file stays, nothing is decided twice
-    let via = "", note = "", badNote = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (n) { const c = strictNote(n[1]); if (c.ok) note = c.text; else badNote = c.reason; } else if (/^note:/.test(l)) badNote = "not readable"; } } catch { /* raced */ } // line "note:" = Angus's text after the key, cleaned again here
+    let via = "", note = "", badNote = "", digest = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (n) { const c = strictNote(n[1]); if (c.ok) note = c.text; else badNote = c.reason; } else if (/^note:/.test(l)) badNote = "not readable"; else { const g = /^digest:([0-9a-f]{64})$/.exec(l); if (g) digest = g[1]; } } } catch { /* raced */ } // line "note:" = Angus's text after the key, cleaned again here
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
     // (Paperwright #3) his text failed its checks (over 500 characters, unreadable): nothing is decided without it; the item stays held
     if (badNote) { log({ op: "decision", id, error: `the note ${badNote}; nothing decided, it stays held` }); return; }
+    // J434 (Angus "1b"): a decision from the phone (remote-control) counts only for exactly what was shown there: the digest of the item as the
+    // Doorman window draws it must still match, and the sandbox's own gateway / mode change is never decided from the phone. Otherwise it stays held.
+    if (via === "phone") {
+      { const sbP = this.sandboxes.find((x) => x.name === msg.sandbox), served = sbP?.doormanFor || msg.sandbox; // a Doorman's items belong to the sandbox it serves
+        let on = false; try { on = phoneDecisionsFor(path.dirname(CONFIG), served); } catch { /* fail closed */ }
+        if (!on) { log({ op: "decision", id, via, error: `phone decisions are off for ${served} (gateway.phone_decisions); nothing decided, it stays held` }); return; } }
+      const kindNow = msg.gatewayChange ? "gateway setting" : "";
+      if (kindNow && PHONE_REFUSED_KINDS.test(kindNow)) { log({ op: "decision", id, via, error: "a gateway / mode change is decided at the laptop only; it stays held" }); return; }
+      const want = (() => { try { return heldDigestFor(id, msg.sandbox); } catch { return ""; } })();
+      if (!digest || !want || digest !== want) { log({ op: "decision", id, via, error: "the phone decision was for a different or changed request (digest); nothing decided, it stays held" }); return; }
+      log({ sb: msg.sandbox, op: "decision_via", id, via: "phone", verdict, note: !!note }); // J434: every phone decision, in the relay log (the Doorman window's archive reads it)
+    }
     // (Paperwright #1) "1+" (allow-<minutes>) fits only a plain message to a peer, never a revision, as the window and CLI say; a raw decision file
     // asking it for anything else decides nothing (fail closed; Angus decides again with 1 or 2)
     if (/^allow-/.test(verdict) && !(linkable(msg) && msg.mode === "talk" && Array.isArray(msg.targets) && msg.targets.length && !msg.revises && !msg.hostJob)) {
