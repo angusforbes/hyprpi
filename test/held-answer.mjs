@@ -1,4 +1,4 @@
-// node test/held-answer.mjs  (J385: "a <answer>" on a host agent's question; isolated state, never the live relay)
+// node test/held-answer.mjs  (J385 / J412: "1 <answer>" on a host agent's question, "2" declines; isolated state, never the live relay)
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,24 +15,28 @@ const { heldForSandboxes, actOnHeld } = await import("../lib/held.mjs");
 const rp = (await import("../docker/doorman/review-provider.mjs")).default("door-t");
 const ok = (m) => console.log("ok " + m);
 const items = heldForSandboxes(["door-t", "world-t"]), q = items.find((x) => x.id === "door-t--a11111"), m = items.find((x) => x.id === "door-t--c33333");
-assert.equal(q.kind, "host agent's question"); assert.deepEqual(q.choices, ["a", "2"]); assert.equal(q.answer, true); assert.equal(q.editable, false);
-assert.ok(!m.choices.includes("a")); assert.equal(m.answer, false);
-ok("a held question offers only a (answer) and 2 (decline); other items don't offer a");
-// review-provider: a only on the question on screen, and only with text
-assert.match(rp.decide("door-t--a11111", "a", undefined, "").text, /a needs your answer/);
-assert.match(rp.decide("door-t--a11111", "a", undefined, undefined).text, /a needs your answer/);
+assert.equal(q.kind, "host agent's question"); assert.deepEqual(q.choices, ["1", "2"]); assert.equal(q.answer, true);
+assert.deepEqual(m.choices, ["1", "1+", "2"]); assert.equal(m.answer, false);
+ok("a held question offers 1 (answer, with text) and 2 (decline); a plain message offers 1, 1+ and 2");
+// review-provider: on the question, 1 needs text; 1+ isn't offered; the answer goes through the guarded CLI (refused under an agent)
+assert.match(rp.decide("door-t--a11111", "1", "").text, /say what to answer/);
+assert.match(rp.decide("door-t--a11111", "1").text, /say what to answer/);
+assert.match(rp.decide("door-t--a11111", "1+", "x").text, /fits only a plain message/);
+for (const gone of ["a", "e", "r", "3"]) assert.match(rp.decide("door-t--a11111", gone, "x").text, /isn't a decision/, gone);
 const cur = rp.current(); assert.equal(cur.id, "door-t--a11111"); assert.equal(cur.answer, true);
-assert.match(rp.decide("door-t--a11111", "1").text, /isn't a decision for this request/, "no approve on a question");
-ok("the window's provider: a needs text; 1 isn't offered on a question");
-// the guarded CLI: refuses a non-question and too-long text before anything; under an agent, the guard refuses (only Angus answers)
+assert.match(rp.decide("door-t--a11111", "1", "use G's profile").text, /only Angus can approve/);
+ok("the window's provider: 1 text answers (guarded), a bare 1 and 1+ are refused, a/e/r/3 are gone");
+// the guarded CLI
 const RELAY = new URL("../docker/sbx-relay.mjs", import.meta.url).pathname, env = { ...process.env };
 const cli = (...a) => spawnSync(process.execPath, [RELAY, ...a], { env, encoding: "utf8", timeout: 20000 });
-let r = cli("answer", "door-t--c33333", "--note", "sure"); assert.equal(r.status, 4); assert.match(r.stderr, /only fits a host agent's question/);
-r = cli("answer", "door-t--a11111", "--note", "x".repeat(501)); assert.equal(r.status, 4); assert.match(r.stderr, /at most 500/);
-r = cli("answer", "door-t--a11111"); assert.equal(r.status, 4); assert.match(r.stderr, /needs --note/);
-r = cli("answer", "door-t--a11111", "--note", "use G's profile"); assert.equal(r.status, 3, r.stderr); assert.match(r.stderr, /only Angus can approve/);
-assert.equal(fs.readdirSync(path.join(base, "state", "hyprpi", "sbx-relay")).includes("decisions") ? fs.readdirSync(path.join(base, "state", "hyprpi", "sbx-relay", "decisions")).filter((n) => !n.startsWith(".")).length : 0, 0, "no decision written by an agent");
-assert.equal(actOnHeld("door-t--a11111", { verdict: "answer" }, "doorman window", undefined, "").ok, false, "actOnHeld: an answer needs text");
-ok("CLI answer: non-question, too long and empty refused; the agent/terminal guard stops anyone but Angus; no decision written");
+let r = cli("answer", "door-t--a11111", "--note", "x"); assert.notEqual(r.status, 0); assert.match(r.stdout + r.stderr, /usage/, "answer is gone");
+r = cli("approve", "door-t--a11111"); assert.equal(r.status, 4); assert.match(r.stderr, /say what to answer/);
+r = cli("approve", "door-t--a11111", "--note", "x", "--allow-similar", "1h"); assert.equal(r.status, 4);
+r = cli("approve", "door-t--a11111", "--note", "x".repeat(501)); assert.equal(r.status, 4); assert.match(r.stderr, /at most 500/);
+r = cli("approve", "door-t--a11111", "--note", "a\u001b[31mb"); assert.equal(r.status, 4); assert.match(r.stderr, /control/);
+r = cli("approve", "door-t--a11111", "--note", "use G's profile"); assert.equal(r.status, 3, r.stderr); assert.match(r.stderr, /only Angus can approve/);
+const D = path.join(base, "state", "hyprpi", "sbx-relay", "decisions"); assert.equal(fs.existsSync(D) ? fs.readdirSync(D).filter((n) => !n.startsWith(".")).length : 0, 0, "no decision written");
+assert.equal(actOnHeld("door-t--a11111", { verdict: "answer" }, "doorman window", "x").ok, false, "actOnHeld: no answer verdict");
+ok("CLI: answer is gone; approve on a question needs --note, refuses 1+, too long and control characters; only Angus; no decision written");
 fs.rmSync(base, { recursive: true, force: true });
 console.log("held-answer: all pass");

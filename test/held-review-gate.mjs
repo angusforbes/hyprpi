@@ -31,8 +31,8 @@ assert.ok(/reason: "empty"/.test(body), "the empty-line return logs");
 assert.ok(!/return false; \/\/ \(J301: already in the box/.test(tui), "the old silent stale return is gone");
 assert.ok(/clickAction\(review, clicked\)/.test(tui) && /act === "rearm"/.test(tui), "pollReview re-arms on a same-id click");
 // (2a) bare numbers, the card they're aimed at, and the status text
-for (const x of ["1", "2", "3", " 1 ", "1.", "2)"]) assert.ok(bareChoice(x), x);
-for (const x of ["12", "1 yes", "a", "", "4"]) assert.ok(!bareChoice(x), x);
+for (const x of ["1", "2", "1+", " 1 ", "1.", "2)"]) assert.ok(bareChoice(x), x);
+for (const x of ["12", "1 yes", "a", "", "4", "3", "e", "r"]) assert.ok(!bareChoice(x), x);
 const card = { role: "held", kind: "request", id: "world-g--aaaaaa", ts: 1000 };
 assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 900, text: "1. a\n2. b" }]), card, "card newer than Thoughts' last numbered question: the number is for the card");
 assert.equal(cardForBareNumber([card], [{ role: "thoughts", ts: 1100, text: "Which one?\n1. Keep it\n2. Drop it" }]), null, "Thoughts asked a numbered question after the card: the number is for Thoughts");

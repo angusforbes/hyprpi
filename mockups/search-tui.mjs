@@ -30,7 +30,7 @@ import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
-import { REVIEW_TAG, heldFor, firstShow, claimReview, clickAction, reviewGate, heldStatus, statusText, bareChoice, cardForBareNumber, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
+import { REVIEW_TAG, CHOICES_LINE, heldFor, firstShow, claimReview, clickAction, reviewGate, heldStatus, statusText, bareChoice, cardForBareNumber, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
 
 const ESC = "\x1b[";
@@ -368,7 +368,7 @@ function completeName(dir = 1) {
 
 // J274 (Angus: Review "go to the appropriate Thoughts where we can interact and get context"): a held sandbox
 // message the relay handed to this world's panel. Thoughts writes the context; ONLY what Angus types here
-// decides it: a bare 1 / 2 / 3 at once, free-form wording ("3, but for 2 hours") after one confirming y.
+// decides it (J412): 1, "1 text", 1+, "1+ 2h [text]" (a longer time after one confirming y), 2, "2 text" (back to the asker with the reason).
 // The panel parses his words itself (lib/held.mjs parseChoice) and runs the relay's guarded CLI; nothing
 // Thoughts writes, and nothing from the sandbox, is ever taken as an answer.
 // One review per world (review J274 #2): switching worlds keeps each, but drops any half-confirmed choice.
@@ -407,7 +407,7 @@ function pollReview() {
         turns = heldTurns(room); bumpThread(); if (TH.pinned) TH.unseen++; else follow();
       } else {
       const rq = requestTurn(h);
-      logTurn({ room, id, ok: true, kind: "request", turn: `${rq.head}\n${rq.body}\n(1) Approve (2) Deny (3) Allow similar for 1 hour` });
+      logTurn({ room, id, ok: true, kind: "request", turn: `${rq.head}\n${rq.body}\n${CHOICES_LINE}` });
       turns = heldTurns(room); bumpThread();
       if (auto) { if (TH.pinned) TH.unseen++; else follow(); if (api) { TH.busy = true; api.call("thoughts.send", { room, text: reviewPrompt(h) }).catch(() => {}); } } // (no jump while he reads back)
       else { follow(); sendThought(reviewPrompt(h)); }
@@ -450,7 +450,7 @@ function reviewKey(raw) {
     logHeld({ room, id: review.id, raw: rawIfChoice, stage: gate.reason === "stale" ? "stale" : "early-return", reason: gate.reason });
     if (gate.reason === "stale") {
       review.typed = ""; // retyping the same choice now answers it
-      setBox(""); note = `🐳 that was already in the box when the review opened, so it can't answer it: type ${raw.length <= 12 ? raw : "1, 2 or 3"} again`; render(); return true;
+      setBox(""); note = `🐳 that was already in the box when the review opened, so it can't answer it: type ${raw.length <= 12 ? raw : "1, 1+ or 2"} again`; render(); return true;
     }
     // early: typed within 1.5 s of the review appearing. A choice can't answer it (the guard stays), but it isn't lost
     // to Thoughts either (HeldReview #1): say so. Anything else was meant for what was there before, as it always was.
@@ -463,7 +463,7 @@ function reviewKey(raw) {
     // J280 (Angus: "it should be a real turn that i can read … maybe even highlighted"): the decision as its own
     // highlighted turn in the thread, kept in panel-turns.jsonl (survives a reload). Review #1: the CLI only queues
     // it, so the turn waits for the relay's own result (its log) before saying ✓.
-    const what = ch.verdict === "deny" ? "Denied" : ch.verdict === "approve" ? "Approved" : ch.dur === "once" ? "Approved (just this one, no rule)" : `Approved, and similar messages allowed for ${ch.dur === "1h" ? "1 hour" : ch.dur}${/capped/.test(ch.label) ? " (capped at 24 hours)" : ""}`;
+    const what = ch.verdict === "deny" ? "Denied: back to the asker with the reason" : ch.verdict === "approve" ? "Approved" : `Approved, and similar messages allowed for ${ch.minutes % 60 ? `${ch.minutes} min` : `${ch.minutes / 60} h`}${/cut to/.test(ch.label) ? " (cut to the 8 h cap)" : ""}`; // (J412)
     const msg = `${h.sandbox} → ${h.to.join(", ")}: "${h.text.replace(/\s+/g, " ").trim()}"`; // J285 (Angus: "don't cut anything out. show the full message!")
     // J298 (Angus: "once i make my selection … just highlight what it is without repeating the request again"): a
     // successful Review decision is just its highlighted header (the request turn above shows the message); the text
@@ -486,7 +486,7 @@ function reviewKey(raw) {
         clearInterval(poll);
         if (!o) finish(false, `${what}: no answer from the relay yet`, "It may still be waiting: check docker/sbx-relay.mjs status and pending.");
         else {
-          const head = !o.ok ? `${what}, but it failed` : ch.verdict === "deny" ? "Denied" : o.ruled ? what : ch.verdict === "allow" && ch.dur !== "once" ? "Approved (no rule: rules cover plain talks only)" : "Approved";
+          const head = !o.ok ? `${what}, but it failed` : ch.verdict === "deny" ? "Denied" : o.ruled ? what : ch.verdict === "allow" ? "Approved (no rule: rules cover plain talks only)" : "Approved";
           finish(o.ok, head, `Relay: ${o.text}${o.ok && o.ruled ? "\nSame sandbox → same recipient, talk only, up to 30 an hour. See or end it: /rules in the room panel." : ""}`);
           // Thoughts of the world it was decided in (recheck #3), and only while connected
           if (o.ok && api) api.call("thoughts.send", { room: at, text: `[Angus decided held ${id}: ${head}. Relay: ${o.text}] (no reply needed: answer exactly OK)` }).catch(() => {});
@@ -507,12 +507,12 @@ function reviewKey(raw) {
   // J280: a line that isn't a choice goes to Thoughts as a question; say so where he is looking.
   // (review #2: sending clears the status line, so send first, then say so)
   const asQuestion = (hint) => {
-    if (!api) { note = "✗ daemon offline: not sent to Thoughts · to decide, type just 1, 2 or 3"; render(); return true; } // (recheck #2)
+    if (!api) { note = "✗ daemon offline: not sent to Thoughts · to decide, type 1, 1+ or 2"; render(); return true; } // (recheck #2)
     setBox(""); sendThought(raw, imagePaths(raw)); if (!note.startsWith("✗")) { note = hint; render(); } return true;
   };
-  if (!ch) return asQuestion("🐳 that went to Thoughts as a question · to decide, type just 1, 2 or 3 (or \"3, but for 2 hours\")");
+  if (!ch) return asQuestion("🐳 that went to Thoughts as a question · to decide, type 1, 1+ or 2 (\"1+ 2h\" for 2 hours; text after 1 or 2 goes to the asker)");
   if (review.h.research && ch.verdict !== "approve" && ch.verdict !== "deny") { setBox(""); note = "🔎 research is approved once or denied: type 1 or 2"; render(); return true; } // J309: no "allow similar"
-  if (ch.verdict === "unclear") return asQuestion("🐳 no usable duration (e.g. \"3 for 2 hours\", \"3 today\"): that went to Thoughts as a question");
+  if (ch.verdict === "unclear") { setBox(""); note = `🐳 ${ch.label}: nothing was decided`; render(); return true; } // (J412: a bad time or text is refused, not sent to Thoughts)
   if (ch.confirm) { review.confirm = ch; setBox(""); note = `🐳 ${ch.label}: ${review.h.sandbox} → ${review.h.to.join(", ")}, talk. Type y + ⏎ to confirm, anything else cancels`; render(); return true; }
   return decide(ch);
 }
@@ -794,7 +794,7 @@ function render() {
     } else {
     rows.push(fg(c, bold(clip(`🐳 held: ${h.sandbox} → ${h.to.join(", ")} (${h.mode})${review.waiting > 1 ? ` · 1 of ${review.waiting} waiting` : ""}`, W))));
     rows.push(clip("   " + h.text.replace(/\s+/g, " "), W));
-    rows.push(dim(clip(review.confirm ? `   ${review.confirm.label}? y + ⏎ confirms · anything else cancels` : "   (1) Approve (2) Deny (3) Allow similar for 1 hour · or e.g. \"3 for 2 hours\" · anything else goes to Thoughts", W)));
+    rows.push(dim(clip(review.confirm ? `   ${review.confirm.label}? y + ⏎ confirms · anything else cancels` : `   ${CHOICES_LINE} · or e.g. "1+ 2h", "2 off task" · anything else goes to Thoughts`, W)));
     }
   }
   const prompt = fg(c, bold(`${room} ❯ `)); // J198 (Angus): every panel's prompt is just "D ❯" (was a 💭)
@@ -898,7 +898,7 @@ function render() {
         flat.push({ l: `  ${bar}${bold(` ${plain || e.kind === "request" ? "" : e.ok ? "✓ " : "✗ "}${e.icon || "🐳"} ${head} `)}${off}${plain ? "" : dim("  " + when(e.ts))}`, meta: { item: k, textX: 3, header: true } });
         if (e.kind === "request" && e.id && /^\(1\) Approve/.test(rest[rest.length - 1] || "")) { // J356 (2a): the options line follows the card's state
           const st = heldStatus(e.id);
-          rest[rest.length - 1] = st.state === "pending" ? `${rest[rest.length - 1]} · type 1, 2 or 3 here + ⏎` : statusText(st);
+          rest[rest.length - 1] = st.state === "pending" ? `${rest[rest.length - 1]} · type 1, 1+ or 2 here + ⏎` : statusText(st);
         }
         for (const [li, line] of rest.entries()) add(wrap(line, tw - 4).map((w) => ({ l: `   ${fg(c, "│")} ${e.kind === "request" && li === rest.length - 1 ? bold(w) : w}` })), 6);
         continue;

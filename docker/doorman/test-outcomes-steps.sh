@@ -2,13 +2,18 @@
 # the Doorman receives carries any earlier exchange. Steps for docker/gateway/e2e.sh (its test daemon + relay, fake sandbox and Doorman):
 #   E2E_STEPS=docker/doorman/test-outcomes-steps.sh bash docker/gateway/e2e.sh
 FAILS=0; chk() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; FAILS=$((FAILS+1)); fi; }
-G() { cat $R/x/inbox/*.json 2>/dev/null; }
+# (J412: a decision reaches the asker as one {type: "receipt", for, text}; shown here as "for: [Outside] text" like the other outcomes)
+G() { python3 -c "import json,glob
+for f in sorted(glob.glob('$R/x/inbox/*.json')):
+  try: d=json.load(open(f))
+  except Exception: continue
+  print(d.get('for','')+': [Outside] '+d.get('text','') if d.get('type')=='receipt' else json.dumps(d, ensure_ascii=False))"; }
 echo "== draft for Alpha, approved"; D o1 '{"op":"draft","for":"Alpha","why":"needs a share","action":"share proj read-only"}'; ID=$(ls $P/pending/ | sed -n 's/\.json$//p' | head -1); printf 'terminal\n' > $P/decisions/$ID.approve; sleep 4
 chk "Alpha hears that its draft $ID was approved, from the relay" "G | grep -q 'Alpha: \[Outside\] Angus approved the request drafted for you ($ID)'"
-chk "… and Thoughts-G gets the same line (asked by Alpha)" "G | grep -q 'drafted for you ($ID).*(asked by Alpha)'"
+chk "… and Thoughts-G does NOT get a copy (J412: asker-only receipt)" "! G | grep -q 'drafted for you ($ID).*(asked by Alpha)'"
 echo "== draft for Beta, denied with a reason"; D o2 '{"op":"draft","for":"Beta","why":"wants a host","action":"allow example.com"}'; ID2=$(ls $P/pending/ | sed -n 's/\.json$//p' | head -1)
 printf 'terminal\nnote:%s\n' "$(printf 'not on this laptop' | base64 -w0)" > $P/decisions/$ID2.deny; sleep 4
-chk "Beta hears its draft $ID2 was denied, with Angus's reason" "G | grep -q 'Beta: \[Outside\] Angus denied the request drafted for you ($ID2). His reason (note from Angus): not on this laptop'"
+chk "Beta hears its draft $ID2 was denied, with Angus's reason" "G | grep -q 'Beta: \[Outside\] Angus denied the request drafted for you ($ID2): nothing was done.*Note from Angus: .not on this laptop.'"
 chk "Alpha's outcome never went to Beta and vice versa" "! G | grep -q 'Beta: \[Outside\] Angus approved the request drafted for you ($ID)'"
 echo "== task change for Gamma (J368 route)"; D o3 '{"op":"task_change","task":"Perovskite stability","why":"moved on","for":"Gamma"}'; ID3=$(ls $P/pending/ | sed -n 's/\.json$//p' | head -1); printf 'terminal\n' > $P/decisions/$ID3.approve; sleep 4
 chk "Gamma hears the task change outcome" "G | grep -q 'Gamma: \[Outside\] Angus approved the research task change ($ID3)'"

@@ -20,7 +20,7 @@
 // Usage:
 //   research.mjs ask --sandbox S [--from NAME] [--depth quick|deep] [--why TEXT] LOOKING_FOR   → one JSON line
 //   research.mjs run --rid R | drop --rid R                  strict mode (J314): run / drop a plan Angus decided
-//   research.mjs replan --rid R  (note on stdin)              J370: re-plan a plan Angus sent back with a note; always held
+//   research.mjs suggest --rid R  (reason on stdin)            J412: a suggested plan for a sent-back plan; writes nothing
 //   research.mjs mode [--sandbox S]                           the sandbox's Doorman mode (J325) and what it means
 //   research.mjs task [--sandbox S] [--set TEXT | --clear]    the sandbox's task (J352; Angus sets it, never the sandbox)
 //   research.mjs digest [--since 1h] [--send] [--json]       the hourly digest (--send: to the reporting Thoughts)
@@ -554,66 +554,26 @@ export function runPlan(rid) {
   logEvent({ ev: "plan-approved", ...p.base, searches: sent });
   return research({ cfg: conf(p.base.sandbox), base: p.base, q: p.q, depth: p.depth, plan: p.plan, sent });
 }
-// J370 (Angus: send it back with a note): Angus withdrew a held plan with a note for the Doorman. The old plan is claimed (it can never run), the
-// Doorman writes new searches from the same request with his note beside its previous searches, the same host checks run, and the revision is
-// ALWAYS held for Angus (whatever the mode) as a new plan that names the one it revises. No research cap or exception slot is taken: he asked.
-export function replan(rid, note) {
-  if (!/^q[0-9a-f]{8}$/.test(String(rid))) return { status: "error", reason: "bad plan id" };
-  const n = String(note ?? "").replace(/[\u0000-\u001f\u007f-\u009f]|\p{Cf}/gu, " ").replace(/\s+/g, " ").trim();
-  if (!n || n.length > 500) return { status: "error", rid, reason: "the note is empty or over 500 characters" };
-  const f = path.join(PLANS(), `${rid}.json`), taken = `${f}.replan${process.pid}`;
-  try { fs.renameSync(f, taken); } catch { return { status: "error", rid, reason: "no such plan waiting (already run, denied or expired)" }; }
-  let p; try { p = JSON.parse(fs.readFileSync(taken, "utf8")); } catch { return { status: "error", rid, reason: "the plan is unreadable" }; } finally { try { fs.unlinkSync(taken); } catch { /* */ } }
-  logEvent({ ev: "plan-returned", ...p.base, note: n });
+// J412 (spec 2.3.5): a "2" on a held plan sends it back to the asker; the Doorman may attach a SUGGESTED plan. This reads the plan (it doesn't
+// claim it: the relay drops it after), asks the Doorman for searches from the same request with the hold's reason (and Angus's text) beside its
+// previous searches, and runs the same host plan checks; on a task it must be on task. It writes nothing and nothing is sent or held: the
+// asker reads the suggestion and decides whether to ask again. → { ok, searches, brief } | { ok: false, reason }
+export function suggestPlan(rid, note) {
+  if (!/^q[0-9a-f]{8}$/.test(String(rid))) return { ok: false, reason: "bad plan id" };
+  const n = String(note ?? "").replace(/[\u0000-\u001f\u007f-\u009f]|\p{Cf}/gu, " ").replace(/\s+/g, " ").trim().slice(0, 900);
+  let p; try { p = JSON.parse(fs.readFileSync(path.join(PLANS(), `${rid}.json`), "utf8")); } catch { return { ok: false, reason: "no such plan waiting" }; }
   const cfg = conf(p.base.sandbox), q = p.q, depth = p.depth === "deep" ? "deep" : "quick";
-  const nrid = "q" + crypto.randomBytes(4).toString("hex"), base = { ...p.base, rid: nrid, revises: rid, ...(cfg.task ? { task_hash: taskHash(cfg.task) } : {}) };
   const previous = depth === "deep" ? [p.plan?.brief || ""] : (p.plan?.searches || []);
   const recent = recentRequests(p.base.sandbox, 6, cfg.task);
   const ask1 = (feedback) => doormanCheck(cfg, { mode: "plan", looking_for: q, depth, owner_note: n, previous, ...(feedback ? { feedback } : {}), ...(cfg.task ? { task: cfg.task, recent } : {}) });
   let plan = ask1("");
-  if (!("refuse" in plan)) { logEvent({ ev: "error", stage: "doorman", ...base, reason: plan.reason }); return { status: "error", rid: nrid, reason: `Not re-planned: ${plan.reason}` }; }
-  if (plan.refuse) { logEvent({ ev: "refused", stage: "doorman", ...base, reason: plan.reason }); return { status: "refused", rid: nrid, reason: `The Doorman refused to rewrite the searches: ${plan.reason}` }; }
+  if (!("refuse" in plan) || plan.refuse) return { ok: false, reason: plan.reason || "the Doorman wrote no suggestion" };
   let pc = planCheck(q, plan, { strict: cfg.strict, task: cfg.task });
   if (pc.length) { const p2 = ask1(pc.join("; ")); if ("refuse" in p2 && !p2.refuse) { const pc2 = planCheck(q, p2, { strict: cfg.strict, task: cfg.task }); if (!pc2.length) { plan = p2; pc = []; } else pc = pc2; } }
-  if (pc.length) { logEvent({ ev: "refused", stage: "paraphrase", ...base, reason: pc.join("; "), searches: plan.searches, brief: plan.brief }); return { status: "refused", rid: nrid, reason: `The Doorman's rewritten searches didn't pass the host's checks (${pc.join("; ")})` }; }
-  const sent = depth === "deep" ? [plan.brief] : plan.searches;
-  const exception = !cfg.task ? NO_TASK : plan.on_task !== true ? "unrelated to this sandbox's task" : plan.drift !== false ? "topic drift across this sandbox's recent requests" : "";
-  mkState(); fs.mkdirSync(PLANS(), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(PLANS(), `${nrid}.json`), JSON.stringify({ created: Date.now(), base, q, depth, plan: { searches: plan.searches || [], brief: plan.brief || "" }, revises: rid, note: n }), { mode: 0o600 });
-  const file = path.join(DELIVERABLES(), `${nrid}.plan.md`);
-  fs.writeFileSync(file, `# Searches planned for ${base.sandbox}${base.from ? ` (asked by ${base.from})` : ""}: REVISION\n\nRevises plan ${rid}, which Angus sent back with the note: "${n}"\n\nDoorman mode: ${cfg.mode}\n\nTask: ${cfg.task || "(none set)"}\n${exception ? `\nNote: ${exception}.\n` : ""}\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Previous searches (sent back)\n\n${previous.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\n## Revised searches (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\nNothing has been sent yet. Approve to run exactly these; deny and nothing goes out.\n`, { mode: 0o600 });
-  logEvent({ ev: "planned", ...base, searches: sent, revision: true, ...(exception ? { exception } : {}) });
-  return { status: "planned", rid: nrid, file, searches: sent, depth, looking_for: q, from: base.from, revises: rid, ...(exception ? { exception, task: cfg.task } : {}) };
-}
-// J365 ("approve with modifications"), in two steps so that nothing is changed until Angus's approval is actually being carried out:
-//   checkPlanEdit(rid, text): validates the edit with the same host checks as the Doorman's own plan (planCheck: pattern pre-check, copied words and
-//     numbers against the request, J360 link rules, task) and returns the canonical searches. It writes NOTHING. An overlong line is refused, not cut.
-//   applyPlanEdit(rid, searches): called by the relay while it carries out the approval, after the held item was claimed; it replaces the stored
-//     searches (the plan file keeps the original) and fails if the plan is gone, so a plan that was run or dropped is never resurrected.
-export function checkPlanEdit(rid, text) {
-  if (!/^q[0-9a-f]{8}$/.test(String(rid))) return { ok: false, reason: "bad plan id" };
-  let p; try { p = JSON.parse(fs.readFileSync(path.join(PLANS(), `${rid}.json`), "utf8")); } catch { return { ok: false, reason: "no such plan waiting" }; }
-  if (String(text ?? "").length > 4000) return { ok: false, reason: "the edit is over 4000 characters: nothing was cut, nothing applied; shorten it" }; // J372b (red team): refuse, never cut
-  const lines = String(text ?? "").replace(/\r/g, "").split("\n").map((x) => x.trim()).filter(Boolean), deep = p.depth === "deep";
-  if (deep) { const brief = lines.join(" ").trim(); if (!brief) return { ok: false, reason: "the edit is empty" }; if (brief.length > 700) return { ok: false, reason: "a research brief is at most 700 characters" }; var plan = { brief, searches: [] }; }
-  else { if (!lines.length) return { ok: false, reason: "the edit is empty" }; if (lines.length > 3) return { ok: false, reason: "at most 3 searches" }; if (lines.some((x) => x.length > 200)) return { ok: false, reason: "a search is at most 200 characters" }; plan = { searches: lines, brief: "" }; }
-  const cfg = conf(p.base.sandbox), pc = planCheck(p.q, { ...plan, public_terms: [] }, { strict: cfg.strict, task: cfg.task });
-  if (pc.length) { logEvent({ ev: "plan-edit-refused", ...p.base, reason: pc.join("; ").slice(0, 300) }); return { ok: false, reason: `your edit doesn't pass the host's checks: ${pc.join("; ")}` }; }
-  const original = deep ? [p.plan.brief || ""] : (p.plan.searches || []);
-  return { ok: true, searches: deep ? [plan.brief] : plan.searches, original, deep };
-}
-export function applyPlanEdit(rid, searches) {
-  if (!/^q[0-9a-f]{8}$/.test(String(rid)) || !Array.isArray(searches) || !searches.length) return { ok: false, reason: "bad edit" };
-  const f = path.join(PLANS(), `${rid}.json`); let p; try { p = JSON.parse(fs.readFileSync(f, "utf8")); } catch { return { ok: false, reason: "the plan is gone (already run, denied or expired)" }; }
-  const deep = p.depth === "deep", original = p.edited ? p.edited.original : { searches: p.plan.searches || [], brief: p.plan.brief || "" };
-  const next = { ...p, plan: deep ? { brief: String(searches[0]), searches: [] } : { searches: searches.map(String), brief: "" }, edited: { original, at: Date.now() } };
-  const tmp = `${f}.edit${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
-  // Only the relay calls this, once, while carrying out the approval of an item it already claimed, and it is the same process that later queues the run:
-  // nothing else claims or drops this plan in between (an expiry sweep works from the pending record, which is already gone). The check below is a last guard.
-  if (!fs.existsSync(f)) { try { fs.unlinkSync(tmp); } catch { /* */ } return { ok: false, reason: "the plan is gone (already run, denied or expired)" }; } // never resurrect a plan
-  fs.renameSync(tmp, f);
-  logEvent({ ev: "plan-edited", ...p.base, original: deep ? [original.brief] : original.searches, searches: deep ? [next.plan.brief] : next.plan.searches });
-  return { ok: true };
+  if (pc.length) return { ok: false, reason: `the suggestion didn't pass the host's checks (${pc.join("; ")})` };
+  if (cfg.task && plan.on_task !== true) return { ok: false, reason: "the suggestion isn't on the sandbox's task" };
+  logEvent({ ev: "plan-suggested", ...p.base, searches: depth === "deep" ? [plan.brief] : plan.searches });
+  return depth === "deep" ? { ok: true, brief: String(plan.brief || ""), searches: [] } : { ok: true, searches: plan.searches || [], brief: "" };
 }
 // J314: a denied (or expired) plan: drop it; nothing was sent.
 export function dropPlan(rid, why = "denied") {
@@ -678,12 +638,8 @@ async function main(argv) {
     if (flags.set || flags.clear) { const r = setTask(path.dirname(CONFIG), sb, flags.clear ? "" : String(flags.set)); console.log(JSON.stringify({ sandbox: sb, ...r })); return; }
     const c = conf(sb); console.log(JSON.stringify({ sandbox: sb, task: c.task, note: c.taskNote || (c.task ? "" : NO_TASK) }));
   } else if (cmd === "mode") { const c = conf(flags.sandbox || "world-g"); console.log(JSON.stringify({ sandbox: flags.sandbox || "world-g", mode: c.mode, note: c.modeNote, means: MODE_TEXT[c.mode] }));
-  } else if (cmd === "replan") { console.log(JSON.stringify(replan(flags.rid, fs.readFileSync(0, "utf8")))); // J370: only the relay calls this (Angus's note on stdin)
+  } else if (cmd === "suggest") { console.log(JSON.stringify(suggestPlan(flags.rid, fs.readFileSync(0, "utf8")))); // J412: only the relay calls this (the reason and Angus's text on stdin); writes nothing
   } else if (cmd === "run") { console.log(JSON.stringify(runPlan(flags.rid))); // J314: only the relay calls this, after Angus approved the plan
-  } else if (cmd === "edit-check") { // J365: only the relay's guarded CLI calls this (the edit arrives on stdin); it writes nothing
-    console.log(JSON.stringify(checkPlanEdit(flags.rid, fs.readFileSync(0, "utf8"))));
-  } else if (cmd === "edit-apply") { // J365: only the relay calls this, while carrying out an approval (searches as JSON on stdin)
-    let a; try { a = JSON.parse(fs.readFileSync(0, "utf8")); } catch { a = null; } console.log(JSON.stringify(applyPlanEdit(flags.rid, a)));
   } else if (cmd === "config") { // J372: what is in effect for a sandbox, and where each value comes from
     const sb = flags.sandbox || "world-g";
     const e = resolveGateway({ ambiguous: worldCount(sb) > 1, w: worldFor(sb), research: (() => { try { return JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sb] || {}; } catch { return {}; } })(), relay: relayEntries(), sandbox: sb });
