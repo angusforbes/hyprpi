@@ -114,7 +114,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
       budget: Type.Optional(Type.Object({ tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
-      const r = await call("orch.spawn", p);
+      const r = await call("orch.spawn", p, p.model ? { timeoutMs: 120000 } : undefined); // J383: an explicit model is test-called first
       return text(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model || "default model"}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}; budget ${Math.round((r.budget?.tokens || 0) / 1000)}k tokens / ${r.budget?.minutes || 0} min. It reports back to you; wait_report blocks until it does.`, r);
     },
   });

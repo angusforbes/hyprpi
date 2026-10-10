@@ -184,7 +184,7 @@ export default function thoughts(pi: ExtensionAPI) {
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       checkThinking(p.thinking);
-      const r: any = await call("thoughts.setModel", p);
+      const r: any = await call("thoughts.setModel", p, p.model ? 120000 : 20000); // J383
       return out(`${r.agent}: ${r.before || "?"} → ${r.model}${r.thinking ? ` (thinking ${r.thinking})` : ""}.`, { action: `set @${r.agent}'s model to ${r.model}` });
     },
   });
@@ -358,7 +358,7 @@ export default function thoughts(pi: ExtensionAPI) {
       let model = "";
       checkThinking(p.thinking); // pi·wpzt's N48 test: "banana" used to be dropped silently
       if (p.model) { const m = findModel(ctx, String(p.model).trim()); if (!m) throw new Error(`no model "${p.model}" here (list_models shows the ids)`); model = `${m.provider}/${m.id}`; }
-      const r: any = await call("thoughts.open", { ...p, model });
+      const r: any = await call("thoughts.open", { ...p, model }, model ? 120000 : 20000); // J383
       return out(`Opened ${r.icon ? r.icon + " " : ""}${r.agent} on workspace ${r.workspace}${model ? ` on ${model}` : ""} with ${r.job} v1.`, { action: `opened a new agent, ${r.icon ? r.icon + " " : ""}${r.agent}${r.project ? ` (@${r.project})` : ""}${model ? ` on ${model}` : ""} ${r.job}: ${String(p.goal || p.task).replace(/\s+/g, " ").slice(0, 120)}` });
     },
   });
@@ -376,7 +376,7 @@ export default function thoughts(pi: ExtensionAPI) {
       cwd: Type.Optional(Type.String()), project: Type.Optional(Type.String()),
       budget: Type.Optional(Type.Object({ tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) })),
     }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { checkThinking(p.thinking); const r: any = await call("orch.spawn", { ...p, ...T }); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
+    execute: async (_id: string, p: any) => { checkThinking(p.thinking); const r: any = await call("orch.spawn", { ...p, ...T }, p.model ? 120000 : 20000); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
   });
   pi.registerTool({
     name: "wait_report",
