@@ -9,7 +9,7 @@ export PATH="$S/e2e-docker-stub:$PATH" E2E_DIR=$R/x HYPRPI_TEST=1 HYPRLAND_INSTA
 export XDG_CONFIG_HOME=$R/x/cfg XDG_STATE_HOME=$R/x/xstate DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent HYPRPI_NO_ENSURE=1 HYPRPI_G_AGENT_OPENER=$S/e2e-opener.sh HYPRPI_SBX=$S/e2e-sbx-stub.sh
 HA=${HOSTAGENTS:-true}
 cat > $R/x/cfg/hyprpi/sbx-relay.json <<J
-{ "sandboxes": [ { "name": "world-t", "agent_id": "sbx-world-t", "workspace": "$R/x/ws", "inbox": "$R/x/inbox", "workspace_num": 99 },
+{ "sandboxes": [ { "name": "world-t", "agent_id": "sbx-world-t", "host_agents": ${SERVED_HOSTAGENTS:-true}, "workspace": "$R/x/ws", "inbox": "$R/x/inbox", "workspace_num": 99 },
   { "name": "doorman-t", "display": "Doorman-T", "doorman_for": "world-t", "reports_to": "Thoughts-B", "host_agents": $HA, "workspace": "$R/x/dws", "inbox": "$R/x/dinbox", "card": "$R/x/card", "workspace_num": 98 } ] }
 J
 echo '{ "projectFolders": ["'$R'/x/Work"] }' > $R/x/cfg/hyprpi/config.json
