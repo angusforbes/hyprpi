@@ -100,7 +100,8 @@ r = await cli("settings", "world-t"); assert.equal(r.code, 0); assert.equal(r.j.
   ok("settings: no key file path, only (set)/(not set); a failing command's output isn't shown (J379)"); }
 r = await cli("propose", "world-t", "level=open"); assert.equal(r.code, 0); assert.match(r.j.text, /held for the owner/);
 // 7. the MCP server: initialize, tools/list, and every tool called once
-const mcp = spawn(CLI, ["mcp"], { env: { ...env, DOORMAN_BRIDGE_AGENT: "mcp-test" } }); let mout = ""; mcp.stdout.on("data", (d) => (mout += d));
+// (J424: unnamed, so it registers only through register_agent, as tested here; the self-registration has its own e2e steps)
+const mcp = spawn(CLI, ["mcp"], { env: { ...env, DOORMAN_BRIDGE_AGENT: "" } }); let mout = ""; mcp.stdout.on("data", (d) => (mout += d));
 const rpc = (m) => mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
 mcp.stdin.write("null\n[]\n42\n{\"jsonrpc\":\"2.0\",\"id\":7}\n"); // (BridgeReview: odd valid JSON must not crash it)
 rpc({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } }); rpc({ method: "notifications/initialized" }); rpc({ id: 2, method: "tools/list" });

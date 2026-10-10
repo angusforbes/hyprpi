@@ -57,6 +57,22 @@ The relay only knows a host agent exists if it registers. A host agent registers
 - The job's action is stored as its own field (`approved.action_line`, taken from the Doorman's draft), never parsed out of the text, so a line inside the sandbox's "why" can't pose as the action.
 - `settings` shows no key file paths. Anything key-, token- or secret-like is shown only as "(set)" or "(not set)".
 
+## Self-describing (J424): only the MCP config
+
+A host agent needs only the MCP config; no long first prompt.
+
+- The initialize result carries the rules as MCP `instructions`: register, list/claim/show, do only what's approved, ask_owner when unsure, report_job.
+- With `DOORMAN_BRIDGE_AGENT` set in the server's `env`, the server registers the agent itself on connect, heartbeats, and unregisters when the client closes it.
+  - Harness: `DOORMAN_BRIDGE_HARNESS`, else the client's own name from initialize (Claude Code says claude-code).
+  - Optional: `DOORMAN_BRIDGE_SCOPE` (comma-separated sandboxes) and `DOORMAN_BRIDGE_CAPS` (one line).
+  - These are cleaned to letters, digits and a few separators.
+  - Without the variable nothing is automatic, and `register_agent` works as before.
+- The MCP prompt `check` does the next waiting job: list, claim, show, do it, report. In Claude Code it's the slash command `/mcp__doorman-bridge__check`.
+- A per-job run (`DOORMAN_BRIDGE_JOB`) gets none of this: the runner registers and prompts it.
+- `skill/doorman-bridge/SKILL.md` holds the same rules as a skill, for clients that don't show MCP instructions; pi passes only one line of them. It works as a Claude Code skill or a pi project skill (`.pi/skills/`).
+- Registering still grants nothing new.
+- Tests: `docker/bridge/test-self-describing-steps.sh` (isolated); `test-claude-check-steps.sh` and `test-pi-check-steps.sh` (manual, real agents).
+
 ## From Claude Code
 
 ```sh
@@ -69,7 +85,7 @@ claude -p "Work the Doorman bridge: list jobs, claim one, show it, do exactly wh
 with `bridge-mcp.json`:
 
 ```json
-{ "mcpServers": { "doorman-bridge": { "command": "/path/to/docker/bridge/doorman-bridge", "args": ["mcp"], "env": { "DOORMAN_BRIDGE_AGENT": "claude-code" } } } }
+{ "mcpServers": { "doorman-bridge": { "command": "/path/to/docker/bridge/doorman-bridge", "args": ["mcp"], "env": { "DOORMAN_BRIDGE_AGENT": "Doorman-Host" } } } }
 ```
 
 Give the agent only the tools and folders the job names (`show` lists them). For anything that writes, a throwaway sandbox or a separate user is stronger than tool flags.
