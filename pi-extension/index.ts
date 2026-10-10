@@ -159,7 +159,21 @@ export default function hyprpi(pi: ExtensionAPI) {
     try { ctx.ui.setStatus?.("hyprpi", `${d.icon ? d.icon + " " : ""}\x1b[1m${name}\x1b[22m \x1b[2m· ${where}\x1b[22m`); } catch { /* no footer */ }
     // Window title: the bare name only (no icon, colour tags or emoji).
     const plain = String(d.name || d.display || "").replace(/\{#[0-9a-fA-F]{6}\}/g, "").replace(/[^\p{L}\p{N}\s\-_.']/gu, "").replace(/\s+/g, " ").trim();
-    if (plain) try { ctx.ui.setTitle?.(`π - ${plain} - ${String(ctx.cwd || process.cwd()).split("/").pop()}`); } catch { /* no title */ }
+    // J403 v3 (Angus): a host agent moved or summoned onto a sandboxed world's workspace says so in its title
+    const warn = !process.env.HYPRPI_SANDBOX_WORLD && onSandboxedWs(d.workspace) ? "⚠ host · " : "";
+    if (plain) try { ctx.ui.setTitle?.(`${warn}π - ${plain} - ${String(ctx.cwd || process.cwd()).split("/").pop()}`); } catch { /* no title */ }
+  }
+  // Is ws in a sandboxed world's range (~/.config/hyprpi/worlds/*.json "workspaces": [lo, hi])? Read on each call (rare).
+  function onSandboxedWs(ws: any): boolean {
+    if (!Number.isInteger(ws) || ws <= 0) return false;
+    try {
+      const dir = `${process.env.XDG_CONFIG_HOME || `${process.env.HOME || ""}/.config`}/hyprpi/worlds`;
+      for (const f of fs.readdirSync(dir)) {
+        if (!/^[a-z0-9-]{1,32}\.json$/.test(f)) continue;
+        try { const w = JSON.parse(fs.readFileSync(`${dir}/${f}`, "utf8")).workspaces; if (Array.isArray(w) && ws >= w[0] && ws <= w[1]) return true; } catch { /* skip */ }
+      }
+    } catch { /* no worlds */ }
+    return false;
   }
 
   function onEvent(event: string, d: any) {

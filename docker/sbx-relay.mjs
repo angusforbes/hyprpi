@@ -245,6 +245,8 @@ class Sandbox {
       model: "sandboxed", acks: false,
       });
       if (!me || me.agent_id !== this.agentId) throw new Error(`hello answered for ${me?.agent_id || "nobody"}`);
+      // J403 v2 (Angus: the whale for actual sandboxed agents everywhere): its posts carry 🐳 (the icon before its name)
+      await c.call("agent.update", { agent_id: this.agentId, icon: "🐳" }).catch(() => {});
     } catch (e) { log({ sb: this.name, error: `hello refused: ${e.message}` }); try { c.close(); } catch { /* */ } retry(); return; }
     ready = true; this.conn = c; this.room = me.room || null; this.display = me.name || this.name;
     log({ sb: this.name, note: `connected as ${this.display} (${this.agentId}) in room ${this.room}` });
@@ -809,6 +811,8 @@ class Relay {
     const args = runRid ? [RESEARCH, "run", "--rid", runRid] : replanRid ? [RESEARCH, "replan", "--rid", replanRid] : [RESEARCH, "ask", "--stdin", "--sandbox", sb.name, "--depth", depth, ...(from ? ["--from", from] : []), ...(why ? ["--why", why] : [])];
     // Its own transient unit: the relay's own unit is capped (MemoryMax 256M, TasksMax 32), and a deep request runs for
     // minutes with sbx clients under it. stdin/stdout still come back here (--pipe).
+    // J403: sandboxd must not start inside this short-lived unit (its exit would kill it and every sandbox window)
+    try { execFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "sbx-daemon.sh"), ["ensure"], { stdio: "ignore", timeout: 45000 }); } catch { /* sbx starts it itself */ }
     const unit = ["systemd-run", "--user", "--pipe", "--wait", "--collect", "--quiet", `--unit=hyprpi-research-${sb.name}-${token}`, "--property=MemoryMax=512M", `--setenv=PATH=${process.env.PATH || ""}`, process.execPath, ...args];
     let k; try { k = spawn(process.env.HYPRPI_RESEARCH_DIRECT ? process.execPath : unit[0], process.env.HYPRPI_RESEARCH_DIRECT ? args : unit.slice(1), { stdio: ["pipe", "pipe", "pipe"] }); } catch (e) { done({ status: "error", reason: `couldn't start: ${e.message}` }); return; }
     const kill = setTimeout(() => { try { k.kill("SIGTERM"); } catch { /* */ } }, (depth === "deep" ? 50 : 20) * 60e3);

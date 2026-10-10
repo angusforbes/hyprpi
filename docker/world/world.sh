@@ -28,6 +28,7 @@ in_sb() { sbx exec "$SB" sh -c "mkdir -p ~/.hyprpi-g && printf '$HE\\n' > ~/.hyp
 
 case "$CMD" in
   start)
+    "$H/docker/sbx-daemon.sh" ensure || echo "world.sh: couldn't start sandboxd in its own unit (hyprpi-sandboxd.service); sbx will start it itself" >&2
     systemctl --user is-active --quiet hyprpi-sbx-relay || node "$H/docker/sbx-relay.mjs" start
     systemctl --user is-active --quiet "hyprpi-$WORLD-helper" || node "$H/docker/world/world-helper.mjs" start "$WORLD"
     # J322: sbx refuses to start when a saved mount's host folder is gone (moved or deleted while it was stopped):

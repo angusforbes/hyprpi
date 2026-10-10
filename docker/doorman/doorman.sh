@@ -80,6 +80,7 @@ create)
   echo "doorman $NAME created for $FOR (model $MODEL). Next: add it to the relay (restart it with nothing held), then: $0 start $NAME"
   ;;
 start)
+  "$H/docker/sbx-daemon.sh" ensure || echo "doorman: couldn't start sandboxd in its own unit (hyprpi-sandboxd.service)" >&2 # J403
   systemctl --user is-active --quiet hyprpi-sbx-relay || { echo "doorman: the relay isn't running" >&2; exit 3; }
   systemctl --user is-active --quiet "$UNIT" && { echo "doorman: $UNIT already runs"; exit 0; }
   sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true # a Pi left from an earlier run would answer too (its process is named "pi")
@@ -96,7 +97,7 @@ start)
   fi
   # J373 (stateless Doorman): doorman-rpc.mjs runs pi and starts a fresh session after every turn (it also keeps pi's stdin open, as the
   # idle tail did); the drop-box extension gives each session one message plus the relay's bounded context for that asker.
-  RUN="set -o pipefail; DOORMAN_PIRUN=$(printf %q "$PIRUN") $(command -v node) $(printf %q "$H/docker/doorman/doorman-rpc.mjs")$OUT" # when pi, sbx or the logger ends, the unit ends (and restarts)
+  RUN="$(printf %q "$H/docker/sbx-daemon.sh") ensure >/dev/null 2>&1; set -o pipefail; DOORMAN_PIRUN=$(printf %q "$PIRUN") $(command -v node) $(printf %q "$H/docker/doorman/doorman-rpc.mjs")$OUT" # when pi, sbx or the logger ends, the unit ends (and restarts)
   systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M bash -c "$RUN"
   echo "started $UNIT (visibility $VIS)"
   [[ "$VIS" == developer || "$VIS" == observer ]] && [[ -z "${DOORMAN_NO_WINDOW:-}" ]] && "$0" window "$NAME" || true

@@ -95,10 +95,18 @@ class Filter:
                         self._osc8(body, out)
                     elif k == 0x5d and self._keep_osc(body):
                         if self.link is not None: self.link["bad"] = True  # anything but text inside a link: no link
-                        if SAFE_BODY.fullmatch(body): put(b"\x1b]" + body + b"\x1b\\")   # re-emitted canonically (ST), only if plain text
+                        if SAFE_BODY.fullmatch(body): put(b"\x1b]" + self._mark_title(body) + b"\x1b\\")   # re-emitted canonically (ST), only if plain text
                     i = end + tl
                     continue
-                put(b[i:i + 2]); i += 2  # other ESC x (CSI etc.): the rest follows as plain bytes
+                if k == 0x5b:  # CSI: J403 (J403Test): window ops (final 't': title stack push/pop 22t/23t, resize, report…)
+                    j = i + 2  # are dropped, so a pop can't bring back an unmarked title; every other CSI passes as before
+                    while j < n and (0x20 <= b[j] <= 0x3f or (b[j] < 0x20 and b[j] not in (0x1b, 0x18, 0x1a))): j += 1  # C0 inside a CSI is run by the terminal, which then carries on (J403Test)
+                    if j >= n:
+                        if n - i > 256: put(b[i:i + 2]); i += 2; continue  # absurd: pass the intro, the rest as text
+                        break  # need more
+                    if b[j] == 0x74: i = j + 1; continue      # ESC [ … t : dropped
+                    put(b[i:j + 1]); i = j + 1; continue
+                put(b[i:i + 2]); i += 2  # other ESC x: the rest follows as plain bytes
                 continue
             if c == 0xC2:
                 if i + 1 >= n: break  # need the second byte
@@ -148,6 +156,13 @@ class Filter:
             elif b[j] == 0xC2 and j + 1 < len(b) and b[j + 1] == 0x9c: return j, 2   # C1 ST
             j += 1
         return -1, 0
+    def _mark_title(self, body: bytes) -> bytes:
+        """J403 (Angus: the whale for actual sandboxed agents): a window title the sandbox sets (OSC 0 / 2) always starts
+        with "🐳 <letter>: ", added here on the host, so it can't be dropped or faked away from inside."""
+        code, _, text = body.partition(b";")
+        if code not in (b"0", b"2"): return body
+        mark = ("\U0001f433 " + ((self.world or WORLD).removeprefix("world-")[:1].upper() or "?") + ": ").encode()
+        return code + b";" + mark + (text[len(mark):] if text.startswith(mark) else text)
     @staticmethod
     def _keep_osc(body: bytes) -> bool:
         return body.split(b";", 1)[0] in KEEP_OSC
@@ -169,6 +184,8 @@ def main():
     if os.isatty(0):
         old = termios.tcgetattr(0); tty.setraw(0)
     f = Filter(WORLD)
+    # J403: the window's very first title is marked too (before the sandbox sets one)
+    os.write(1, b"\x1b]2;" + f._mark_title(b"2;sandboxed").split(b";", 1)[1] + b"\x1b\\")
     try:
         while True:
             try: r, _, _ = select.select([0, fd], [], [], 0.3 if f.link is not None else None)

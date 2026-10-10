@@ -262,6 +262,8 @@ class Helper {
     // panel title (from a fixed table). The workspace number is an integer we checked.
     const cls = kind === "agent" ? "hyprpi.g-agent" : PANEL_KINDS[kind].replace(/^hyprpi\./, "hyprpi.g-");
     const H = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+    // J403: sandboxd must not start inside this window's scope (closing the window would kill it and every other one)
+    try { execFileSync(path.join(H, "docker", "sbx-daemon.sh"), ["ensure"], { stdio: "ignore", timeout: 45000 }); } catch { /* sbx starts it itself */ }
     const kconf = ["--config", this.kittyConf(H)];
     const title = kind === "agent" ? [] : ["--title", `G: hyprpi-${kind} G`];
     // Review #1: the window gets a locked-down kitty config (no clipboard, links, remote control or host-shell

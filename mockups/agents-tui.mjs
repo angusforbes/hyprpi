@@ -200,14 +200,23 @@ function reportedFor(r) {
   reportedCache = { t: now, room: r, v }; return v;
 }
 const SAFE = (s, n) => String(s ?? "").replace(/[^A-Za-z0-9 _.\-]/g, "").slice(0, n); // (the helper already checked them; belt and braces)
+// J403 v2: is this workspace a sandboxed world's? (worlds/*.json "workspaces"; re-read at most every 5 s)
+import { sandboxedWorldFor } from "../lib/sandbox-gate.mjs";
+const sbxWsCache = { at: 0, map: new Map() };
+function sandboxedWs(ws) {
+  if (Date.now() - sbxWsCache.at > 5000) { sbxWsCache.at = Date.now(); sbxWsCache.map.clear(); }
+  if (!sbxWsCache.map.has(ws)) { let w = null; try { w = sandboxedWorldFor(ws); } catch { /* none */ } sbxWsCache.map.set(ws, !!w); }
+  return sbxWsCache.map.get(ws);
+}
+
 function reportedRows(r, W) {
   const j = reportedFor(r); if (!j) return [];
   const age = Date.now() - Number(j.at || 0);
   if (!(age < 90000)) return [dim(clip(`  ◇ world ${SAFE(j.room, 1)}'s own agents: not reporting (last ${Math.round(age / 60000)} min ago)`, W))];
   const marks = { working: "●", background: "◐", blocked: "×", done: "✓", idle: "○" };
   const out = [dim(clip(`  reported by ${SAFE(j.room, 1)} (inside its sandbox, display only):`, W))];
-  for (const a of j.agents.slice(0, 12)) out.push(dim(clip(`   ${marks[a.status] || "○"} ${SAFE(a.name, 31)} · ${SAFE(a.status, 12)}${a.ws ? " · " + wsLabel(Number(a.ws), WORLD_SIZE) : ""}${a.model ? " · " + SAFE(a.model, 40) : ""} · reported by ${SAFE(j.room, 1)}`, W)));
-  if (j.thoughts) out.push(dim(clip(`   💭 Thoughts-${SAFE(j.room, 1)} · ${SAFE(j.thoughts, 10)} · reported by ${SAFE(j.room, 1)}`, W)));
+  for (const a of j.agents.slice(0, 12)) out.push(dim(clip(`   ${marks[a.status] || "○"} 🐳 ${SAFE(a.name, 31)} · ${SAFE(a.status, 12)}${a.ws ? " · " + wsLabel(Number(a.ws), WORLD_SIZE) : ""}${a.model ? " · " + SAFE(a.model, 40) : ""} · reported by ${SAFE(j.room, 1)}`, W)));
+  if (j.thoughts) out.push(dim(clip(`   💭 🐳 Thoughts-${SAFE(j.room, 1)} · ${SAFE(j.thoughts, 10)} · reported by ${SAFE(j.room, 1)}`, W)));
   return out;
 }
 function render() { if (restarting) return; if (batching) { dirty = true; return; } draw(); }
@@ -258,11 +267,13 @@ function draw() {
     const dot = " · ";
     const ws = !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? dot + wsLabel(a.workspace, WORLD_SIZE) : "";
     const boxed = a.container ? " (🐳 " + String(a.container).split(":")[0] + ")" : "";
+    // J403 v2 (Angus): a HOST agent sitting on a sandboxed world's workspace is marked, so it can't pass for a sandboxed one
+    const hostWarn = !a.container && a.model !== "sandboxed" && !/^sbx-/.test(String(a.id)) && Number.isInteger(a.workspace) && sandboxedWs(a.workspace) ? `${dot}${ESC}33m⚠ host (not sandboxed)${ESC}39m` : "";
     const hl = helpersLine(a);
     const cp = a.compactions >= 1 ? dot + "⟳" + a.compactions : ""; // J117: compactions of its session
     const depth = depthOf.get(a.id) || 0, tree = depth ? "  ".repeat(depth - 1) + "↳ " : ""; // J130: under its parent
     const away = a.parent && !depth ? dot + `↳ child of ${a.parent}` : ""; // its parent isn't in this list
-    const rest = boxed + ws + away + cp + (hl ? dot + hl : "") + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
+    const rest = boxed + hostWarn + ws + away + cp + (hl ? dot + hl : "") + (a.topic ? dot + `${ESC}3m${a.topic}${ESC}23m` : "") + (model ? dot + model : "");
     if (a.dormant || a.parked) { // greyed, same columns as a live row
       const nm = a.id === cursorId ? (nameBg ? `${ESC}48;2;${rgb(nameBg)}m${bare}${ESC}49m` : `${ESC}4m${bare}${ESC}24m`) : bare;
       // J78: a crash leftover says when it was lost ("lost in the 9/30 crash"); others stay "closed".

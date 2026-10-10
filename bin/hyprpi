@@ -212,6 +212,12 @@ async function cmdNew() {
   // Panel mode (mockups/panels): that workspace is the three floating panels, so a new
   // agent would open behind them. Put it on the next free workspace of the same world.
   if (workspace && !silent && !here) workspace = await awayFromPanels(workspace, cfg);
+  { // J403 v2 (Angus): never a host agent on a sandboxed world's workspace: a new one opens inside the sandbox, a host
+    // agent's resume / twin / --beside there is refused (lib/sandbox-gate.mjs)
+    const { gate, carryOut } = await import("../lib/sandbox-gate.mjs");
+    const g = gate({ workspace, wantId, twinOf, beside, noFocus: args.includes("--no-focus"), silent }); // includes, not flag(): flag() removes it, and line ~271 still needs it
+    if (g) { if (process.env.HYPRPI_GATE_DRYRUN) { console.log(JSON.stringify(g)); process.exit(0); } process.exit(carryOut(g)); }
+  }
 
   const id = wantId || newId();
   const ext = path.join(ROOT, "pi-extension", "index.ts");
