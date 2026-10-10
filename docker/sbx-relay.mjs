@@ -689,7 +689,10 @@ class Relay {
     // J363 (Angus: approvals happen in the Doorman window): a sandbox configured with "review_in": "<doorman entry>" has its held items
     // reviewed in THAT Doorman's host window; its rooms become the sandbox's own world letter ("review_room", default G) so no other world's
     // Thoughts panel claims them, and the toast's Review raises the window (openReview).
-    const ri = typeof sb.cfg?.review_in === "string" && /^[A-Za-z0-9._-]{1,40}$/.test(sb.cfg.review_in) ? sb.cfg.review_in : "";
+    // Only when that Doorman exists, serves a sandbox, and its window can take a typed decision (visibility "developer"); otherwise the
+    // usual routing (the Thoughts panel) stays, so a held item is never left without a place to be decided.
+    const rt = typeof sb.cfg?.review_in === "string" ? this.sandboxes.find((x) => x.name === sb.cfg.review_in) : null;
+    const ri = rt && rt.cfg?.doorman_for && rt.cfg.visibility === "developer" && (rt.cfg.doorman_for === sb.name || rt === sb) ? rt.name : "";
     if (ri) msg = { ...msg, rooms: [/^[A-I]$/.test(String(sb.cfg.review_room || "")) ? sb.cfg.review_room : "G"], reviewIn: ri };
     fs.mkdirSync(PENDING, { recursive: true, mode: 0o700 });
     const mine = fs.readdirSync(PENDING).filter((n) => n.startsWith(sb.name + "--"));

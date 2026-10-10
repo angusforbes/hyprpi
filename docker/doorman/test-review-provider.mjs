@@ -38,3 +38,10 @@ const req = JSON.parse(fs.readFileSync(path.join(out, files[0]), "utf8")); asser
 assert.equal(r.suggest("Research: " + "x".repeat(1100)).ok, false); assert.equal(r.suggest("Research:   ").ok, false);
 assert.ok(RESEARCH_RE.test("research: x") && !RESEARCH_RE.test("re-research: x"));
 console.log("review-provider: all pass");
+// a symlinked drop-box directory must not be followed (the sandbox controls it)
+fs.rmSync(path.join(ws, ".hyprpi-dropbox"), { recursive: true }); const elsewhere = path.join(T, "elsewhere"); fs.mkdirSync(elsewhere);
+fs.mkdirSync(path.join(ws, ".hyprpi-dropbox")); fs.symlinkSync(elsewhere, path.join(ws, ".hyprpi-dropbox", "outbox"));
+const bad = r.suggest("Research: sneaky"); assert.equal(bad.ok, false); assert.deepEqual(fs.readdirSync(elsewhere), [], "nothing written through the symlink");
+fs.rmSync(path.join(ws, ".hyprpi-dropbox"), { recursive: true }); fs.mkdirSync(path.join(T, "real-db", "outbox"), { recursive: true }); fs.symlinkSync(path.join(T, "real-db"), path.join(ws, ".hyprpi-dropbox"));
+assert.equal(r.suggest("Research: sneaky2").ok, false, "a symlinked parent is refused too");
+console.log("review-provider: symlink cases pass");

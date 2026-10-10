@@ -24,6 +24,19 @@ function entries(name) {
   return { me, served, names: [name, me.doorman_for].filter(Boolean) };
 }
 
+// Write `file` into a directory the SANDBOX controls without ever following one of its symlinks: every component is opened with
+// O_NOFOLLOW (the directory inode is pinned by fd), and the file is created exclusively under the pinned directory.
+function writeInto(dir, file, data) {
+  const parts = path.resolve(dir).split("/").filter(Boolean);
+  let fd = fs.openSync("/", fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try {
+    for (const name of parts) { const nfd = fs.openSync(`/proc/self/fd/${fd}/${name}`, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); fs.closeSync(fd); fd = nfd; }
+    const base = `/proc/self/fd/${fd}`, tmp = `${base}/.${file}.tmp`;
+    fs.writeFileSync(tmp, data, { mode: 0o600, flag: "wx" });
+    fs.renameSync(tmp, `${base}/${file}`);
+  } finally { fs.closeSync(fd); }
+}
+
 export default function createReview(name) {
   const { served, names } = entries(name);
   const first = () => heldForSandboxes(names)[0] || null;
@@ -46,11 +59,9 @@ export default function createReview(name) {
       if (Buffer.byteLength(want) > 1000) return { ok: false, text: "not sent: a research request is at most 1000 bytes" };
       const ws = served && tilde(served.workspace);
       if (!ws) return { ok: false, text: "no sandbox is configured for this Doorman" };
-      const out = path.join(ws, ".hyprpi-dropbox", "outbox");
       try {
-        const file = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`, tmp = path.join(out, `.${file}.tmp`);
-        fs.writeFileSync(tmp, JSON.stringify({ op: "research", looking_for: want, depth, from: "Angus (window)" }), { mode: 0o600, flag: "wx" });
-        fs.renameSync(tmp, path.join(out, file));
+        const file = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`;
+        writeInto(path.join(ws, ".hyprpi-dropbox", "outbox"), file, JSON.stringify({ op: "research", looking_for: want, depth, from: "Angus (window)" }));
       } catch (e) { return { ok: false, text: `couldn't reach the relay's drop-box: ${e.code || e.message}` }; }
       return { ok: true, text: `research (${depth}) sent for ${served.name} as your own request; its plan or deliverable will appear here when held for you` };
     },
