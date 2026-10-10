@@ -55,7 +55,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     handler: async (_a: any, ctx: any) => { ctxRef?.ui?.notify?.("🧹 reloading: hyprpi code changed", "info"); await ctx.reload(); },
   });
   // J130 orchestration primitives (spawn_agent, report_to_parent, wait_report, close_agent, …; budgets).
-  const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef, flushHeld: () => flushHeld() });
+  const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef, flushHeld: () => flushHeld(), dropHeld: (pred: (m: any) => boolean) => dropHeld(pred) });
   // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
   // coordination; a "followUp" talk once arrived only after the work it asked about was done, @hyprpi N44).
   // Not steered (Thoughts' tasks, room questions): held HERE while the agent works and started as
@@ -103,6 +103,12 @@ export default function hyprpi(pi: ExtensionAPI) {
   };
   // J272 fix 2: a message for this agent ends a running wait_report (it would otherwise sit behind a wait of up to an hour).
   function wakeWait(message: any) { if (!orchEvent.waiting?.()) return; const who = message?.details?.from?.name || "someone"; call("orch.unwait", { why: `a message from ${who} arrived` }).catch(() => {}); }
+  // J391: drop held (not yet delivered) messages a predicate picks, e.g. a closed child's stale notices. -> how many.
+  function dropHeld(pred: (m: any) => boolean) {
+    let n = 0;
+    for (let i = held.length - 1; i >= 0; i--) { try { if (pred(held[i])) { held.splice(i, 1); n++; } } catch { /* keep it */ } }
+    return n;
+  }
   // J272: steer everything held into the current turn (a wait_report woken by a message: answer it now).
   function flushHeld() {
     const n = held.length;

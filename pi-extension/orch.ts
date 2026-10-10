@@ -12,9 +12,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { garbled } from "../lib/garble.mjs";
 
-type Deps = { call: (m: string, p?: any, o?: any) => Promise<any>; inject: (m: any, steer?: boolean) => void; idle: () => boolean; ctx: () => any; flushHeld?: () => number };
+type Deps = { call: (m: string, p?: any, o?: any) => Promise<any>; inject: (m: any, steer?: boolean) => void; idle: () => boolean; ctx: () => any; flushHeld?: () => number; dropHeld?: (pred: (m: any) => boolean) => number };
 
-export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld }: Deps) {
+export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld, dropHeld }: Deps) {
   let waits = 0; // J272: wait_report calls running now (index.ts wakes them when a message arrives)
   const text = (t: string, details: any = {}) => ({ content: [{ type: "text" as const, text: t }], details });
   let me: any = null; // { budget, used, startedAt, status, parent } when this agent was spawned
@@ -86,9 +86,13 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   pi.on("agent_end", async () => { if (garble) { const why = `model output garbled: ${garble}`; garble = ""; if (!me) await loadMe(); if (me) call("orch.stalled", { why }).catch(() => {}); } });
   pi.on("agent_end", async () => { if (me && lastErr) { const why = `its turn ended on an error: ${lastErr.replace(/\s+/g, " ").slice(0, 200)}`; lastErr = ""; call("orch.stalled", { why }).catch(() => {}); } });
 
+  // J391 (Ledger, J377: old budget / progress / stall notices kept arriving after it had taken its helpers' final
+  // reports and closed them): once a child's final report is taken or the child is closed, its not-yet-delivered
+  // non-final notices are dropped (a held final report stays).
+  const dropStale = (ids: string[]) => { const set = new Set(ids.filter(Boolean)); if (!set.size) return 0; return dropHeld?.((m: any) => m?.customType === "hyprpi-orch" && set.has(m?.details?.orch_child) && !m?.details?.orch_final) || 0; };
   const onEvent = (event: string, d: any) => {
     if (event === "orch.report") {
-      inject({ customType: "hyprpi-orch", display: true, content: String(d?.text || ""), details: { request_id: `orch-report-${d?.child}-${Date.now()}` } });
+      inject({ customType: "hyprpi-orch", display: true, content: String(d?.text || ""), details: { request_id: `orch-report-${d?.child}-${Date.now()}`, orch_child: d?.child || "", orch_final: !!d?.final } });
     } else if (event === "orch.close") {
       closing = d || {}; tryClose();
     } else if (event === "orch.budget") {
@@ -160,6 +164,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
         // nobody reads any more. (A daemon without orch.unwait: the wait runs on as before.)
         r = await call("orch.wait", p, { timeoutMs: (t + 30) * 1000 });
       } finally { waits--; signal?.removeEventListener?.("abort", onAbort); }
+      dropStale(r.reports.filter((x: any) => x.final).map((x: any) => x.id)); // J391
       const lines = r.reports.map((x: any) => `## ${x.name} (${x.id})${x.final ? " · final" : ""}\n${x.text}`);
       const woke = r.woken ? (/message/.test(String(r.woken)) ? `Woken early: ${r.woken}; it follows this result, so answer it first, then call wait_report again if you still need to. ` : `Ended early: ${r.woken === true ? "woken" : r.woken}. `) : "";
       if (r.woken && /message/.test(String(r.woken))) setTimeout(() => flushHeld?.(), 0);
@@ -171,7 +176,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     label: "Close an agent",
     description: "Close a child you spawned (id or name) once you've taken its result, or yourself (no id) when you're a spawned agent that's finished. It closes at its next idle moment; its last report is kept.",
     parameters: Type.Object({ id: Type.Optional(Type.String()), reason: Type.Optional(Type.String()) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { const r = await call("orch.close", p); return text(r.already ? `${r.name} was already closed.` : `Closing ${r.name}${r.closing ? " (at its next idle moment)" : " (it wasn't connected: closed now)"}.`, r); },
+    execute: async (_id: string, p: any) => { const r = await call("orch.close", p); dropStale([r.id]); return text(r.already ? `${r.name} was already closed.` : `Closing ${r.name}${r.closing ? " (at its next idle moment)" : " (it wasn't connected: closed now)"}.`, r); },
   });
   pi.registerTool({
     name: "extend_budget",
