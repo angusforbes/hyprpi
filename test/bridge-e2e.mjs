@@ -86,7 +86,10 @@ r = await cli("settings", "world-t"); assert.equal(r.code, 0); assert.equal(r.j.
 { const e2 = { ...env, DOORMAN_SETTINGS_CMD: JSON.stringify(["sh", "-c", 'echo "{\\"search\\":{\\"key_file\\":\\"/home/x/secret.key\\",\\"provider\\":\\"sonar\\"},\\"api_token\\":\\"\\"}"']) };
   const rr = await new Promise((res) => execFile(CLI, ["--json", "settings", "world-t"], { env: e2 }, (e, out) => res(JSON.parse(out))));
   assert.equal(rr.settings.search.key_file, "(set)"); assert.equal(rr.settings.api_token, "(not set)"); assert.equal(rr.settings.search.provider, "sonar"); assert.ok(!JSON.stringify(rr).includes("secret.key"));
-  ok("settings: no key file path, only (set)/(not set) (J379)"); }
+  const e3 = { ...env, DOORMAN_SETTINGS_CMD: JSON.stringify(["sh", "-c", 'echo "{\\"key_file\\":\\"/host/secret.key\\"}"; exit 1']) };
+  const r3 = await new Promise((res) => execFile(CLI, ["--json", "settings", "world-t"], { env: e3 }, (e, out) => res(JSON.parse(out))));
+  assert.equal(r3.ok, false); assert.ok(!JSON.stringify(r3).includes("secret.key"), "a failing command's output isn't passed on");
+  ok("settings: no key file path, only (set)/(not set); a failing command's output isn't shown (J379)"); }
 r = await cli("propose", "world-t", "level=open"); assert.equal(r.code, 0); assert.match(r.j.text, /held for the owner/);
 // 7. the MCP server: initialize, tools/list, and every tool called once
 const mcp = spawn(CLI, ["mcp"], { env: { ...env, DOORMAN_BRIDGE_AGENT: "mcp-test" } }); let mout = ""; mcp.stdout.on("data", (d) => (mout += d));

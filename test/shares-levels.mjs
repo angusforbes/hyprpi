@@ -121,5 +121,12 @@ ok("addProject: validated, within the level, atomic, other keys kept; plan shows
   world({ access: "safe", projects: [] }); fs.renameSync(path.join(work, "alpha"), path.join(work, "alpha-old")); fs.mkdirSync(path.join(work, "alpha"));
   const sw = addProject("world-t", "alpha", "ro", idA); assert.equal(sw.ok, false); assert.match(sw.text, /isn't the folder that was approved/);
   ok("addProject with the reviewed identity: a swapped folder isn't shared (J379)"); }
+{ const { projectIdentity } = await import("../docker/world/shares.mjs");
+  world({ access: "safe", projects: [] }); const idB = projectIdentity("beta"); assert.ok(addProject("world-t", "beta", "ro", idB).ok);
+  const ent = JSON.parse(fs.readFileSync(path.join(cfg, "hyprpi", "worlds", "world-t.json"), "utf8")).projects.find((e) => e.name === "beta"); assert.equal(ent.ino, idB.ino, "the identity is stored with the entry");
+  let pl = execFileSync(process.execPath, [SH, "plan", "world-t"], { env, encoding: "utf8" }); assert.match(pl, /projects \(1\): beta ro/);
+  fs.renameSync(path.join(work, "beta"), path.join(work, "beta-old")); fs.mkdirSync(path.join(work, "beta")); // swapped AFTER it was added, before apply
+  pl = execFileSync(process.execPath, [SH, "plan", "world-t"], { env, encoding: "utf8" }); assert.match(pl, /beta \(not the folder that was approved/); assert.match(pl, /projects \(0\)/);
+  ok("the identity stays with the entry: a folder swapped after adding is never mounted (J379)"); }
 fs.rmSync(base, { recursive: true, force: true });
 console.log("shares-levels: all pass");
