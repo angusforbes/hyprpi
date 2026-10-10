@@ -43,5 +43,9 @@ t = trackHeld("w--888888"); assert.ok(t.done); assert.match(t.text, /ended witho
 log({ sb: "w", op: "research-plan", decision: "approved", id: "w--999999", rid: "q5", delivered: ["x"], searches: [] });
 log({ sb: "w", op: "research", decision: "approved", id: "w--aaaaab", rid: "q5", error: "disk full" });
 assert.match(trackHeld("w--999999").text, /couldn't deliver it: disk full/);
+log({ sb: "w", op: "research-plan", decision: "approved", id: "w--bbbbbc", rid: "q6", delivered: ["x"], searches: [] });
+log({ sb: "w", op: "research", token: "r6", status: "ready", rid: "q6" });
+log({ sb: "w", op: "research", mode: "doorman-open", delivered: ["w"], rid: "q6", file: "research-q6.md", reviewed: false });
+t = trackHeld("w--bbbbbc"); assert.ok(t.done); assert.match(t.text, /straight into w \(doorman-open/);
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log("held-track: all pass");
