@@ -21,8 +21,8 @@ const clean = (s) => String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-
 const ctx = { fs, path, PENDING, DECISIONS, STATE: T, GPUDIR: path.join(T, "gpu"), RESEARCH: "r.mjs", LIMITS: { pendingTtlMs: 24 * 3600e3, pendingPerSandbox: 20 }, process, Buffer, Date, JSON, Map, Set, String, Array, Number, Object, Math, RegExp, Promise, console,
   log: (o) => logs.push(o), heldNote: (sb, msg, via, what, outcome) => notes.push({ what, outcome }), inboxWrite: (sb, o) => inbox.push({ to: sb.name, ...o }), closeNotif() {}, clean,
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: () => ({ on() { return this; } }), textMeta: () => ({}), now: () => new Date().toISOString(), watchReply() {}, replyNote() {},
-  ownerNote: (t) => ({ ok: true, text: String(t) }), returnable: () => false, senderLabel: () => "", returnKey: () => "", researchLog() {}, logTurn() {} };
-const R = vm.runInNewContext(`${fnAsker}\n(class R { constructor() { this.draftAnswers = new Map(); } ${method("tellOutcome", "  // J368: what the typed-request")}\n${method("async decide", "  // J370 (Angus: \"shouldn't another option")}\n${method("sweepPending", "  async run()")}\n jobRecord(id, p) { this.jobs = { ...(this.jobs || {}), [id]: p }; } breakerNote() {} })`, ctx);
+  ownerNote: (t) => ({ ok: true, text: String(t) }), returnable: () => false, senderLabel: () => "", returnKey: () => "", researchLog() {}, logTurn() {}, REQ_TYPES: { note_to_owner: "note to the owner" } };
+const R = vm.runInNewContext(`${fnAsker}\n(class R { constructor() { this.draftAnswers = new Map(); } ${method("tellOutcome", "  // J368: what the typed-request")}\n${method("async decide", "  // J370 (Angus: \"shouldn't another option")}\n${method("sweepPending", "  async run()")}\n jobRecord(id, p) { this.jobs = { ...(this.jobs || {}), [id]: p }; } breakerNote() {} agentFree() { return false; } })`, ctx);
 const S = vm.runInNewContext(`${fnAsker}\n(class S { constructor(n, df, relay) { this.name = n; this.doormanFor = df; this.relay = relay; this.delivered = new Map(); this.reportsTo = "Thoughts-B"; }\n${method("boundAsker", "  async handle(")}\n${method("onEvent", "  rateOk(")}\n doormanHears() { return true; } })`, ctx);
 const askerOf = vm.runInNewContext(`${fnAsker}\naskerOfDelivered`, ctx);
 const relay = new R(), world = new S("world-t", "", relay), door = new S("doorman-t", "world-t", relay);
@@ -67,11 +67,11 @@ ok("a denial reaches the asker with Angus's reason");
 const old = (rec) => { put(rec); const f = path.join(PENDING, rec.id + ".json"), t = new Date(Date.now() - 25 * 3600e3); fs.utimesSync(f, t, t); };
 old(draft("doorman-t--e00001"));
 old({ id: "doorman-t--e00002", sandbox: "doorman-t", draft: true, taskChange: { sandbox: "world-t", task: "x", for: "Gamma" } });
-old({ id: "doorman-t--e00003", sandbox: "doorman-t", draft: true, typed: { type: "note_to_owner", for: "Delta" } });
+old({ id: "doorman-t--e00003", sandbox: "doorman-t", draft: true, typed: { type: "note_to_owner", for: "Delta", sandbox: "world-t" } });
 old({ id: "doorman-t--e00004", sandbox: "doorman-t", draft: true, gpu: { for: "Epsilon", dir: "/nonexistent" } });
 relay.sweepPending();
 assert.match(toAsker("Alpha").at(-1), /The request drafted for you \(doorman-t--e00001\) expired without a decision/);
-assert.match(toAsker("Gamma").at(-1), /The research task change \(doorman-t--e00002\) expired/); assert.match(toAsker("Delta").at(-1), /The request \(doorman-t--e00003\) expired/);
+assert.match(toAsker("Gamma").at(-1), /The research task change \(doorman-t--e00002\) expired/); assert.match(toAsker("Delta").at(-1), /\(doorman-t--e00003\) expired without Angus's decision/);
 assert.match(toAsker("Epsilon").at(-1), /The GPU lease \(doorman-t--e00004\) expired/); assert.equal(relay.jobs["doorman-t--e00003"].state, "expired");
 assert.equal(fs.readdirSync(PENDING).length, 0);
 ok("an expired draft, task change, typed request or GPU lease is announced to its asker (and the typed record ends as expired)");
