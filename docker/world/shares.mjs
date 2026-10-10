@@ -43,7 +43,7 @@ import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { modeForSandbox, levelOf, MODE_TEXT, withWorldsLock } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
-import { loadLevels } from "../research/levels.mjs"; // J380 v3
+import { loadLevels, capShare } from "../research/levels.mjs"; // J380 v3
 import { currentValues } from "../research/gateway-admin.mjs";
 import { taskForSandbox } from "../research/task.mjs"; // J352: the host-set research task in the host card
 
@@ -69,7 +69,10 @@ function die(m) { console.error(`shares: ${m}`); process.exit(2); }
 const log = (m) => console.log(`shares ${WORLD}: ${m}`);
 
 // The sandbox policy: home subfolders are allowed; home itself, /tmp, system and root folders are not.
+const HOST_ONLY = [CFG, path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "hyprpi")]; // J380 v3: the host's settings, levels and decision files are never shared (nor a folder that holds them)
+const holdsOrIs = (p) => HOST_ONLY.some((h) => h === p || h.startsWith(p + "/") || p.startsWith(h + "/"));
 function allowedPath(p) {
+  if (holdsOrIs(p)) return false;
   return p.startsWith(HOME + "/") && !p.startsWith(HOME + "/.ssh") && !p.startsWith(HOME + "/.gnupg");
 }
 
@@ -86,7 +89,7 @@ function config() {
 // J366: the world's access level and why (see the header)
 export const LEVELS = ["open", "safe", "strict"];
 function accessLevel(w, relay, sandbox, world = WORLD) { // J412: the mode decides (one resolver: research/mode.mjs); the old gateway.level / access still win, deprecated
-  const m = modeForSandbox(CFG, sandbox), l = levelOf(w, m.mode);
+  const m = modeForSandbox(CFG, sandbox), l0 = levelOf(w, m.mode), l = { ...l0, level: capShare(loadLevels(CFG).levels, l0.level) }; // J380 v3: never wider than the host's max_share_level
   return { level: l.level, why: l.why.startsWith("mode") ? `mode ${m.mode} (worlds/${world}.json "gateway": {"mode"}${m.note ? `; ${m.note}` : ""})` : `${l.why} in worlds/${world}.json` };
 }
 // one "projects" entry → { name, rw } or null: "kev", "kev:rw", "kev:ro", { "name": "kev", "mode": "rw" }

@@ -32,9 +32,12 @@ assert.ok(d.issues.every((i) => i.fix), "every issue says how to fix it"); asser
 ok("broken: doctor finds the dead Doorman, the missing runner, the stale path (the J375 bug), the failed unit, the missing key and the duplicate worlds file, each with a fix");
 // install / start / stop plan the pieces' own commands, in order, and skip what already runs
 const pi = plan("install", "demo", P).steps.map((s) => s.what); assert.deepEqual(pi, ["start the relay", "start the Doorman doorman-demo", "install the per-job runner (path unit)", "install the hourly and daily digest timers"]);
-assert.deepEqual(plan("stop", "demo", P).steps.map((s) => s.what), ["stop the Doorman doorman-demo", "stop the relay"]);
+assert.deepEqual(plan("stop", "demo", P).steps.map((s) => s.what), ["stop the Doorman doorman-demo", "stop the per-job runner (path unit)", "stop the relay"]);
 const ran = []; apply(plan("install", "demo", P), { ...healthy, active: (u) => (/sbx-relay/.test(u) ? "active" : "inactive"), run: (c, a) => { ran.push(path.basename(c) + " " + a.join(" ")); return { status: 0, stdout: "", stderr: "" }; } }, () => {});
 assert.ok(!ran.some((r) => /sbx-relay\.mjs start/.test(r)), "the running relay isn't started again"); assert.ok(ran.some((r) => /doorman\.sh start doorman-demo/.test(r)) && ran.some((r) => /runner --install/.test(r)) && ran.some((r) => /digest-timer\.sh/.test(r)));
 ok("install/start/stop: the right commands in order, a running piece is skipped");
+assert.equal(apply(plan("install", "demo", P), { ...healthy, active: () => "inactive", run: () => ({ status: 1, stdout: "", stderr: "boom" }) }, () => {}), false, "a failed step makes apply report failure (the CLI exits 1)");
+assert.equal(apply(plan("stop", "demo", P), { ...healthy, run: () => ({ status: 0, stdout: "", stderr: "" }) }, () => {}), true);
+ok("a failed install step is reported as failure");
 assert.match(plan("status", "nope", P).error || renderStatus(gather("nope", healthy, P)), /no sandbox "nope"/); ok("an unknown world is a clear error");
 fs.rmSync(T, { recursive: true, force: true }); console.log("doorman-ctl: all pass");

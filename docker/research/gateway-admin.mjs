@@ -83,7 +83,7 @@ export const digestOf = (sandbox, changes) => crypto.createHash("sha256").update
 // was shown ("not applied: changed since proposed"). Returns { file, before, after }.
 export function applyChanges(cfgDir, sandbox, changes, opts = {}) { return withWorldsLock(cfgDir, () => applyChangesLocked(cfgDir, sandbox, changes, opts)); }
 function applyChangesLocked(cfgDir, sandbox, changes, { expectBefore } = {}) {
-  const v = validateChanges(changes, { admin: true }); if (!v.ok) throw new Error(v.errors.join("; "));
+  const v = validateChanges(changes, { admin: true, levels: loadLevels(cfgDir).levels }); if (!v.ok) throw new Error(v.errors.join("; "));
   const hits = worldsFor(cfgDir, sandbox); if (hits.length !== 1) throw new Error(hits.length ? `${hits.length} worlds files name ${sandbox}; fix that first` : `no worlds file names ${sandbox}`);
   const f = path.join(cfgDir, "worlds", hits[0].f), w = JSON.parse(fs.readFileSync(f, "utf8")), before = Object.fromEntries(Object.keys(v.changes).map((k) => [k, effective(cfgDir, w, sandbox, k)]));
   if (expectBefore) for (const k of Object.keys(v.changes)) if (before[k] !== expectBefore[k]) throw new Error(`not applied: ${k} is now ${before[k]}, it was ${expectBefore[k]} when proposed`);
@@ -116,7 +116,7 @@ export function syncReaderNetwork({ reader, provider, sbxBin = process.env.HYPRP
 export function adminSet(cfgDir, sandbox, kv, opts = {}) {
   const why = (opts.guard || ownerTtyProblem)(); if (why) return { ok: false, code: 3, text: `only Angus can change these settings, from his own terminal (${why}). An agent may propose a change through the bridge.` };
   const changes = {}; for (const a of kv) { const i = a.indexOf("="); if (i < 1) return { ok: false, code: 2, text: `expected key=value, got ${JSON.stringify(a).slice(0, 40)}` }; changes[a.slice(0, i)] = a.slice(i + 1); }
-  const v = validateChanges(changes, { admin: true }); if (!v.ok) return { ok: false, code: 2, text: v.errors.join("; ") };
+  const v = validateChanges(changes, { admin: true, levels: loadLevels(cfgDir).levels }); if (!v.ok) return { ok: false, code: 2, text: v.errors.join("; ") };
   let r; try { r = applyChanges(cfgDir, sandbox, v.changes); } catch (e) { return { ok: false, code: 1, text: e.message }; }
   return { ok: true, text: describeChange(sandbox, r.before, v.changes).replace("Research gateway settings for", "Applied: research gateway settings for"), changes: v.changes, before: r.before };
 }
@@ -124,7 +124,7 @@ export function adminSet(cfgDir, sandbox, kv, opts = {}) {
 // A proposal from a host agent / the bridge: writes a held item (a pending record) for the Doorman-G window. Needs no tty (an agent may call it); it
 // changes NOTHING until Angus approves. entry = { sandbox, reviewIn?, room? } from the relay config.
 export function proposeChange({ cfgDir, PENDING, sandbox, changes, by = "a host agent", reviewIn = "", room = "G" }) {
-  const v = validateChanges(changes, { admin: false }); if (!v.ok) return { ok: false, text: v.errors.join("; ") };
+  const v = validateChanges(changes, { admin: false, levels: loadLevels(cfgDir).levels }); if (!v.ok) return { ok: false, text: v.errors.join("; ") };
   let before; try { before = currentValues(cfgDir, sandbox, Object.keys(v.changes)); } catch (e) { return { ok: false, text: e.message }; }
   for (const k of Object.keys(v.changes)) if (before[k] === v.changes[k]) return { ok: false, text: `${k} is already ${v.changes[k]}` };
   const by2 = String(by).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 60);

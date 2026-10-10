@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { modeForSandbox } from "../research/mode.mjs";
+import { modeForSandbox, phoneDecisionsFor, withWorldsLock } from "../research/mode.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), H = path.resolve(HERE, "../..");
 const home = (p) => String(p || "").replace(/^~(?=\/|$)/, os.homedir());
@@ -60,9 +60,9 @@ export function gather(world, sys = realSys, P = paths()) {
   if (!dm) add("doorman", "fail", `no Doorman entry (doorman_for: "${S}") in sbx-relay.json`, "doorman install");
   else {
     const du = `hyprpi-doorman-${dm.name}`, dUp = up(du), dbx = sbxs ? sbxs[dm.name] : undefined;
-    add("doorman", dUp && dbx === "running" ? "ok" : dUp ? "warn" : "fail", dUp ? `${dm.name} running (${dm.visibility || "strict"} window mode${dbx && dbx !== "running" ? `; its sandbox is ${dbx}` : ""})` : `${dm.name} is not running`, dUp ? "" : `doorman start ${S}`);
-    const vis = dm.visibility;
-    if (vis === "developer" || vis === "observer") { const w = sys.window(`hyprpi-doorman-${dm.name}`); add("window", w === null ? "off" : w ? "ok" : "warn", w === null ? "can't check (no desktop session)" : w ? "the decision window is open" : "the decision window isn't open (it opens when the Doorman starts)", w === false ? `docker/doorman/doorman.sh window ${dm.name}` : ""); }
+    add("doorman", dUp && dbx === "running" ? "ok" : dUp ? "warn" : "fail", dUp ? `${dm.name} running (${mode.mode === "open" ? "developer" : mode.mode === "strict" ? "strict" : "safe"} window mode${dbx && dbx !== "running" ? `; its sandbox is ${dbx}` : ""})` : `${dm.name} is not running`, dUp ? "" : `doorman start ${S}`);
+    const vis = mode.mode === "open" ? "developer" : mode.mode === "strict" ? "strict" : "safe"; // the window the mode implies (doorman.sh): open = developer, safe/yolo = safe, strict = strict
+    if (vis === "developer") { const w = sys.window(`hyprpi-doorman-${dm.name}`); add("window", w === null ? "off" : w ? "ok" : "warn", w === null ? "can't check (no desktop session)" : w ? "the decision window is open" : "the decision window isn't open (it opens when the Doorman starts)", w === false ? `docker/doorman/doorman.sh window ${dm.name}` : ""); }
   }
   // world helpers
   for (const [k, u] of [["helper", `hyprpi-${S}-helper`], ["shares", `hyprpi-${S}-shares`]]) { const a = sys.active(u); if (a === "active") add(k, "ok", `${u} running`); else add(k, "off", `${u} not running (only needed for a world with its own windows/shares)`); }
@@ -82,8 +82,8 @@ export function gather(world, sys = realSys, P = paths()) {
   // digests
   for (const [k, u] of [["digest (hourly)", "hyprpi-research-digest.timer"], ["digest (daily)", "hyprpi-research-daily.timer"]]) { const e = sys.enabled(u), a = sys.active(u); add(k, e === "enabled" && a === "active" ? "ok" : "fail", e === "enabled" && a === "active" ? "scheduled" : "timer missing or stopped", "doorman install"); }
   // phone decisions, remote app
-  const phone = dm && (dm.phone_decisions ?? R.conf?.phone_decisions);
-  add("phone decisions", "off", phone === true ? "on" : phone === false || phone === undefined ? "off" : `unknown value ${JSON.stringify(phone)}`);
+  let phone = false; try { phone = phoneDecisionsFor(P.cfg, S); } catch { /* fail closed */ }
+  add("phone decisions", "off", phone ? "on (the world asks for it and the host allows it)" : "off");
   const ra = sys.active("hyprpi-remote-control"); add("remote app", ra === "active" ? "ok" : "off", ra === "active" ? "the phone web app is up" : "not running (optional)");
   // held + errors
   const pend = fs.existsSync(path.join(P.relayState, "pending")) ? fs.readdirSync(path.join(P.relayState, "pending")).filter((f) => f.startsWith(`${dm?.name || S}--`)).length : 0;
@@ -140,11 +140,13 @@ export function plan(action, world, P = paths()) {
   const relay = [node, path.join(H, "docker/sbx-relay.mjs")], dsh = path.join(H, "docker/doorman/doorman.sh"), bridge = path.join(H, "docker/bridge/doorman-bridge");
   if (action === "stop") {
     if (dm) steps.push({ what: `stop the Doorman ${dm.name}`, cmd: [dsh, "stop", dm.name], env: { DOORMAN_NO_WINDOW: "1" } });
+    if (dm && dm.host_agents === "bridge") steps.push({ what: "stop the per-job runner (path unit)", cmd: ["systemctl", "--user", "stop", "doorman-bridge-runner.path"] });
     steps.push({ what: "stop the relay", cmd: [...relay, "stop"] });
     return { steps };
   }
   steps.push({ what: "start the relay", cmd: [...relay, "start"], skipIfActive: "hyprpi-sbx-relay" });
   if (dm) steps.push({ what: `start the Doorman ${dm.name}`, cmd: [dsh, "start", dm.name], env: { DOORMAN_NO_WINDOW: "" }, skipIfActive: `hyprpi-doorman-${dm.name}` });
+  if (action === "start" && dm && dm.host_agents === "bridge" && fs.existsSync(path.join(P.units, "doorman-bridge-runner.path"))) steps.push({ what: "start the per-job runner (path unit)", cmd: ["systemctl", "--user", "start", "doorman-bridge-runner.path"] });
   if (action === "install") {
     if (dm && dm.host_agents === "bridge") steps.push({ what: "install the per-job runner (path unit)", cmd: [bridge, "runner", "--install"] });
     steps.push({ what: "install the hourly and daily digest timers", cmd: [path.join(H, "docker/research/digest-timer.sh")] });
@@ -152,11 +154,14 @@ export function plan(action, world, P = paths()) {
   return { steps };
 }
 export function apply(p, sys = realSys, out = console.log) {
+  let allOk = true;
   for (const s of p.steps) {
     if (s.skipIfActive && sys.active(s.skipIfActive) === "active") { out(`  already running: ${s.what.replace(/^start /, "")}`); continue; }
     const r = sys.run(s.cmd[0], s.cmd.slice(1), s.env || {});
+    if (r.status !== 0) allOk = false;
     out(`  ${r.status === 0 ? "done" : "FAILED"}: ${s.what}${r.status === 0 ? "" : ` (${String(r.stderr || r.stdout || "").trim().split("\n").pop().slice(0, 140)})`}`);
   }
+  return allOk;
 }
 
 // ---- config: the one place to see and change a world's gateway settings (J380 v3) --------------------------------------------------
@@ -175,7 +180,10 @@ export function configRows(world, P = paths()) {
   const rows = Object.keys(KEYS).map((k) => ({ key: k, value: cur[k], range: RANGE(k, levels), where: "worlds/<world>.json gateway block", settable: true }));
   const ro = [["host_agents", dm?.host_agents === undefined ? "(not set: agent-free)" : String(dm.host_agents), "false | bridge", "sbx-relay.json, the Doorman's entry"], ["window", dm?.visibility || "(strict)", "strict | safe | observer | developer", "sbx-relay.json, the Doorman's entry"], ["bridge defaults", dm?.bridge ? JSON.stringify(dm.bridge).slice(0, 80) : "(none)", "tools, folders, time_limit_s", "sbx-relay.json, the Doorman's entry"], ["doorman model", dm?.model || "(default)", "a model id", "sbx-relay.json, the Doorman's entry"]];
   for (const [key, value, range, where] of ro) rows.push({ key, value, range, where, settable: false });
-  const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, host_runner: cur.host_runner && !/default/.test(cur.host_runner) ? cur.host_runner : "" });
+  // host_runner (J425) is read from the worlds file itself, so a value outside the levels shows even where the setting's own key isn't defined yet
+  let hr = ""; try { const h = worldsFor(P.cfg, sb.name); if (h.length === 1) hr = h[0].w?.gateway?.host_runner ?? ""; } catch { /* none */ }
+  if (hr && !rows.some((r) => r.key === "host_runner")) rows.push({ key: "host_runner", value: typeof hr === "object" ? JSON.stringify(hr).slice(0, 60) : String(hr), range: RANGE("host_runner", levels), where: "worlds/<world>.json gateway block", settable: false });
+  const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, host_runner: hr });
   return { world: sb.name, rows, levels, levelsError: error, violations: viol, levelsFile: levelsFile(P.cfg) };
 }
 export function renderConfig(c) {
@@ -199,8 +207,11 @@ export function configCommand(args, P = paths(), opts = {}) {
     const patch = {}; for (const p of pairs) { const i = p.indexOf("="), k = p.slice(0, i), v = p.slice(i + 1); patch[k] = k === "modes" || k === "runner_harnesses" ? v.split(",").map((x) => x.trim()).filter(Boolean) : k === "phone_decisions" ? v === "on" || v === "true" : v; }
     try { const l = writeLevels(P.cfg, patch); return { code: 0, text: ["Host levels now:", ...describeLevels(l).map((x) => "  " + x), "", "Worlds already outside the new levels are clamped (the mode) and listed by doorman status and doctor."].join("\n") }; } catch (e) { return { code: 2, text: e.message }; }
   }
-  const world = rest.length && !rest[0].includes("=") && (resolveWorld(rest[0], P).sb || sub === "" || rest.length % 2 === 1 && sub !== "get") ? ((resolveWorld(rest[0], P).sb) ? rest[0] : "") : "";
-  const tail = world ? rest.slice(1) : rest, R = resolveWorld(world, P); if (R.error) return { code: 2, text: R.error };
+  // WORLD is explicit when given (an unknown name is an error, never a silent fallback to the only world):
+  //   config [WORLD] | config get [WORLD] KEY | config set [WORLD] KEY VALUE... (or KEY=VALUE) | config edit [WORLD]
+  const isKey = (x) => Object.hasOwn(KEYS, x) || x === "host_runner" || x.includes("=");
+  const worldGiven = sub === "" ? rest.length >= 1 : sub === "get" ? rest.length >= 2 : sub === "set" ? rest.length >= 1 && !isKey(rest[0]) : rest.length >= 1;
+  const world = worldGiven ? rest[0] : "", tail = worldGiven ? rest.slice(1) : rest, R = resolveWorld(world, P); if (R.error) return { code: 2, text: R.error };
   if (!sub) return { code: 0, text: renderConfig(configRows(R.sb.name, P)) };
   if (sub === "get") { const c = configRows(R.sb.name, P); if (c.error) return { code: 2, text: c.error }; const r = c.rows.find((x) => x.key === tail[0]); return r ? { code: 0, text: String(r.value) } : { code: 2, text: `unknown setting ${JSON.stringify(tail[0] || "").slice(0, 40)}; see doorman config ${R.sb.name}` }; }
   if (sub === "set") {
@@ -210,11 +221,22 @@ export function configCommand(args, P = paths(), opts = {}) {
   if (sub === "edit") {
     const why = guard(); if (why) return { code: 3, text: `only the owner can edit settings, from a real terminal (${why})` };
     const hits = worldsFor(P.cfg, R.sb.name); if (hits.length !== 1) return { code: 2, text: hits.length ? `${hits.length} worlds files name ${R.sb.name}: fix that first` : `no worlds file names ${R.sb.name}` };
-    const f = path.join(P.cfg, "worlds", hits[0].f), before = fs.readFileSync(f, "utf8"), had = new Set(configRows(R.sb.name, P).violations || []);
-    const ed = (process.env.VISUAL || process.env.EDITOR || "nano").split(/\s+/); const r = (opts.run || spawnSync)(ed[0], [...ed.slice(1), f], { stdio: "inherit" });
-    const after = fs.readFileSync(f, "utf8"); if (after === before) return { code: 0, text: "no change" };
-    try { JSON.parse(after); const c = configRows(R.sb.name, P); if (c.error) throw new Error(c.error); const fresh = c.violations.filter((x) => !had.has(x)); if (fresh.length) throw new Error("outside the host's levels: " + fresh.join("; ")); /* what was already outside before the edit doesn't block an unrelated change */ } catch (e) { fs.writeFileSync(f, before); return { code: 2, text: `not kept: ${e.message}. The file is back as it was.` }; }
-    return { code: 0, text: `saved ${f}` };
+    const f = fs.realpathSync(path.join(P.cfg, "worlds", hits[0].f)), before = fs.readFileSync(f, "utf8"), had = new Set(configRows(R.sb.name, P).violations || []);
+    // the editor works on a private copy; nothing live changes until the edit is checked, and then it is written under the worlds lock
+    const stage = path.join(os.tmpdir(), `doorman-edit-${process.pid}-${Date.now()}.json`); fs.writeFileSync(stage, before, { mode: 0o600 });
+    try {
+      const ed = (process.env.VISUAL || process.env.EDITOR || "nano").split(/\s+/); (opts.run || spawnSync)(ed[0], [...ed.slice(1), stage], { stdio: "inherit" });
+      const after = fs.readFileSync(stage, "utf8"); if (after === before) return { code: 0, text: "no change" };
+      return withWorldsLock(P.cfg, () => {
+        if (fs.readFileSync(f, "utf8") !== before) return { code: 2, text: "not kept: the settings changed while you were editing (another change was applied). Run doorman config edit again." };
+        try { JSON.parse(after); } catch (e) { return { code: 2, text: `not kept: ${e.message}. Nothing changed.` }; }
+        const tmp = `${f}.edit${process.pid}`, mode = fs.statSync(f).mode & 0o777;
+        fs.writeFileSync(tmp, after, { mode }); fs.renameSync(tmp, f);
+        try { const c = configRows(R.sb.name, P); if (c.error) throw new Error(c.error); const fresh = c.violations.filter((x) => !had.has(x)); if (fresh.length) throw new Error("outside the host's levels: " + fresh.join("; ")); }
+        catch (e) { fs.writeFileSync(tmp, before, { mode }); fs.renameSync(tmp, f); return { code: 2, text: `not kept: ${e.message}. The file is back as it was.` }; }
+        return { code: 0, text: `saved ${f}` };
+      });
+    } finally { try { fs.unlinkSync(stage); } catch { /* gone */ } }
   }
 }
 import { worldsFor } from "../research/mode.mjs";

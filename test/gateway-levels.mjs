@@ -46,7 +46,23 @@ c = C.configCommand(["edit", "world-t"], P, { guard: owner, run: (_, a) => { fs.
 c = C.configCommand(["edit", "world-t"], P, { guard: owner, run: (_, a) => { const w = JSON.parse(fs.readFileSync(a.at(-1), "utf8")); w.gateway.mode = "strict"; w.note = "x"; fs.writeFileSync(a.at(-1), JSON.stringify(w)); return { status: 0 }; } }); assert.equal(c.code, 0, c.text);
 assert.equal(C.configCommand(["edit"], P, { guard: agent }).code, 3);
 ok("config edit: a result outside the levels or not JSON is undone; a valid edit is kept; an agent can't edit");
+// 4b. (review) the share cap, clamping that never widens, the levels of the cfgDir being changed, an explicit unknown world, host-only folders
+fs.writeFileSync(L.levelsFile(cfg), JSON.stringify({ modes: ["strict", "safe", "open", "yolo"], max_share_level: "strict", phone_decisions: true }));
+c = C.configCommand(["set", "mode", "open"], P, { guard: owner }); assert.equal(c.code, 2); assert.match(c.text, /would share more than this host allows/); assert.equal(L.clampMode(L.loadLevels(cfg).levels, "open").mode, "strict");
+write({ gateway: { mode: "open" }, projects: "all", workspace: path.join(base, "ws") });
+const SHp = new URL("../docker/world/shares.mjs", import.meta.url).pathname, plan = execFileSync(process.execPath, [SHp, "plan", "world-t"], { env: { ...process.env, PATH: `${path.join(base, "bin") || ""}:${process.env.PATH}` }, encoding: "utf8" });
+assert.match(plan, /^access level: strict/m, "the share level never exceeds the host's max_share_level, whatever the mode");
+fs.writeFileSync(L.levelsFile(cfg), JSON.stringify({ modes: ["yolo"] })); write({ gateway: { mode: "typo" } }); assert.equal(M.modeForSandbox(cfg, "world-t").mode, "strict", "an invalid mode stays strict even when only yolo is allowed");
+const other = path.join(base, "other", "hyprpi"); fs.mkdirSync(path.join(other, "worlds"), { recursive: true }); fs.writeFileSync(path.join(other, "worlds", "world-t.json"), JSON.stringify({ sandbox: "world-t" })); fs.writeFileSync(L.levelsFile(other), JSON.stringify({ modes: ["strict"] }));
+assert.throws(() => A.applyChanges(other, "world-t", { mode: "yolo" }), /isn't allowed/, "levels come from the config dir being changed");
+fs.writeFileSync(L.levelsFile(cfg), JSON.stringify({})); fs.rmSync(L.levelsFile(cfg));
+c = C.configCommand(["set", "typo-world", "mode", "safe"], P, { guard: owner }); assert.equal(c.code, 2); assert.match(c.text, /no sandbox "typo-world"/); c = C.configCommand(["edit", "typo-world"], P, { guard: owner, run: () => assert.fail("the editor must not start") }); assert.equal(c.code, 2);
+const HOSTONLY = execFileSync(process.execPath, [SHp, "plan", "world-t"], { env: { ...process.env, PATH: process.env.PATH }, encoding: "utf8" });
+write({ gateway: { mode: "safe" }, shares: [{ path: cfg, mode: "rw" }, { path: cfgHome, mode: "rw" }, { path: path.join(base, "state", "hyprpi"), mode: "ro" }] });
+const sp = execFileSync(process.execPath, [SHp, "plan", "world-t"], { env: { ...process.env, PATH: `${path.join(base, "bin")}:${process.env.PATH}` }, encoding: "utf8" }); assert.ok(!new RegExp(`^(rw|ro)  (${cfg}|${cfgHome}|${path.join(base, "state", "hyprpi")})\\b`, "m").test(sp), "the host's settings folder, a folder holding it and the host state folder are never shared");
+ok("review fixes: the share cap is enforced (mode and sharing), clamping never widens, levels come from the cfgDir changed, an unknown world is refused, host-only folders are not shared");
 // 5. status/doctor show it; host-agent-config prints the line
+fs.writeFileSync(L.levelsFile(cfg), JSON.stringify({ modes: ["strict", "safe"], phone_decisions: false }));
 const sys = { active: () => "active", enabled: () => "enabled", failed: () => [], sbx: () => ({ "world-t": "running", "doorman-t": "running" }), window: () => true };
 write({ gateway: { mode: "safe", phone_decisions: true } });
 const s = C.renderStatus(C.gather("world-t", sys, P)); assert.match(s, /levels\s+.*outside the host's levels.*phone/i); assert.ok(C.doctor("world-t", sys, P).issues.some((i) => /levels/.test(i.what) && /phone/.test(i.why)));
@@ -57,6 +73,6 @@ const SH = new URL("../docker/world/shares.mjs", import.meta.url).pathname, bin 
 write({ workspace: path.join(base, "ws"), gateway: { mode: "safe" } }); fs.mkdirSync(path.join(base, "ws"));
 execFileSync(process.execPath, [SH, "card", "world-t"], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" });
 const card = fs.readFileSync(path.join(process.env.XDG_STATE_HOME, "hyprpi", "sandboxes", "world-t", "card", "host-card.md"), "utf8");
-assert.match(card, /## Settings the host has set for you/); assert.match(card, /Mode now: safe \(the host allows: strict, safe\)/); assert.match(card, /Share level now: .* \(at most safe\)/); assert.match(card, /refused, not held/);
+assert.match(card, /## Settings the host has set for you/); assert.match(card, /Mode now: safe \(the host allows: strict, safe\)/); assert.match(card, /Share level now: .* \(at most open\)/); assert.match(card, /refused, not held/);
 ok("the card shows the current settings and the allowed range, read from the same source");
 fs.rmSync(base, { recursive: true, force: true }); console.log("gateway-levels: all pass");

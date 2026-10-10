@@ -25,7 +25,7 @@ The world helper and the folder-sharing watcher belong to a world with its own w
 
 `doorman doctor [WORLD]` finds the broken pieces (a dead unit, a unit that points at a path that moved, a missing key file, two worlds files naming one sandbox, a setting outside the host's levels) and says how to fix each.
 
-`doorman install [WORLD]` starts the relay and the Doorman, installs the runner (when host agents are on) and the digest timers. It is safe to repeat. `doorman start` and `doorman stop` start and stop the relay and the Doorman.
+`doorman install [WORLD]` starts the relay and the Doorman, installs the runner (when host agents are on) and the digest timers. It is safe to repeat. `doorman start` and `doorman stop` start and stop the relay, the Doorman and the runner's path unit (the digest timers are a schedule, not a process: remove them with docker/research/digest-timer.sh stop). A step that fails makes the command exit 1.
 
 `doorman config [WORLD]` shows every setting with its allowed range. `doorman config get KEY`, `doorman config set KEY VALUE` and `doorman config edit` change them, only from your own terminal (a process with an agent above it is refused). `doorman config levels` shows the host's levels; `doorman config levels set KEY VALUE` changes them.
 
@@ -44,14 +44,14 @@ The host also decides which settings a world may use AT ALL, in `~/.config/hyprp
 | phone_decisions | whether decisions from the phone may be turned on |
 | runner_harnesses | the host agents the runner may start (claude-code, codex, pi) |
 
-No file means everything is allowed, as before. A setting or a proposal from a sandbox or host agent outside the levels is refused (not held for review), a mode in a hand-edited worlds file is clamped to the widest allowed mode below it, and a broken levels file fails closed to the strictest. The sandbox's host card shows its current settings and the allowed range.
+No file means everything is allowed, as before. The share cap applies to the mode too (a mode that implies a wider share level than max_share_level is not allowed) and to the folders actually shared. A setting or a proposal from a sandbox or host agent outside the levels is refused (not held for review), a mode in a hand-edited worlds file is clamped to the widest allowed mode below it (a stricter mode is never widened), and a broken levels file fails closed to the strictest. The sandbox's host card shows its current settings and the allowed range.
 
 ## Config files today, and their fate
 
 | file | holds | fate |
 | --- | --- | --- |
 | worlds/WORLD.json | shares, roles, projects, ports, the gateway block, gpu, task | the source of truth for a world; edit through doorman config |
-| gateway-levels.json | what the host allows (new) | the source for the allowed range |
+| gateway-levels.json | what the host allows (new) | the source for the allowed range; the host's settings and state folders are never shared into a sandbox |
 | sbx-relay.json | the relay's sandboxes and Doorman entries (names, folders, key file, model, window, host_agents, bridge defaults) | stays: wiring, shown read-only by doorman config |
 | config.json | host-wide: project folders, protected, role folders, thoughts model | stays |
 | hyprpi.jsonc | routing, budgets and other hyprpi policy | stays; unrelated to the gateway |

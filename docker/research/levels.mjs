@@ -34,6 +34,10 @@ export function validateLevels(j) {
   if (j.runner_harnesses !== undefined) { if (!Array.isArray(j.runner_harnesses) || !j.runner_harnesses.every((h) => typeof h === "string" && NAME.test(h))) errors.push("runner_harnesses must be a list of names"); else out.runner_harnesses = [...new Set(j.runner_harnesses)]; }
   return { errors, levels: out };
 }
+export const shareOfMode = (m) => (m === "strict" ? "strict" : m === "safe" ? "safe" : "open"); // the share level a mode implies (mode.mjs levelOfMode)
+const shareOk = (levels, share) => SHARE.indexOf(share) <= SHARE.indexOf(levels.max_share_level);
+// the modes a world may really use: listed AND not implying a share level wider than the host's cap
+export const usableModes = (levels) => levels.modes.filter((m) => shareOk(levels, shareOfMode(m)));
 const strictestMode = (levels) => ALL_MODES.find((m) => levels.modes.includes(m)) || "strict";
 // is this value allowed? -> "" or the reason (key: mode | level | phone_decisions | runner.harness)
 // the harness a host_runner value names: "claude-code" | "codex" | "pi", or { harness, command, model } (OpenRoute J425: gateway.host_runner)
@@ -42,7 +46,7 @@ export const harnessOf = (v) => String(v && typeof v === "object" ? v.harness : 
 export const allowedHarness = (levels, harness) => !!harness && levels.runner_harnesses.includes(String(harness));
 export function checkValue(levels, key, value) {
   const v = String(value);
-  if (key === "mode") return levels.modes.includes(v) ? "" : `mode ${v} isn't allowed on this host (allowed: ${levels.modes.join(", ")})`;
+  if (key === "mode") return usableModes(levels).includes(v) ? "" : levels.modes.includes(v) ? `mode ${v} would share more than this host allows (share level ${shareOfMode(v)}, at most ${levels.max_share_level})` : `mode ${v} isn't allowed on this host (allowed: ${levels.modes.join(", ")})`;
   if (key === "level") return SHARE.indexOf(v) <= SHARE.indexOf(levels.max_share_level) ? "" : `share level ${v} is wider than this host allows (at most ${levels.max_share_level})`;
   if (key === "phone_decisions") return /^(on|true)$/i.test(v) && !levels.phone_decisions ? "decisions from the phone aren't allowed on this host" : "";
   if (key === "host_runner") { const h = harnessOf(value); return levels.runner_harnesses.includes(h) ? "" : `host runner ${h || "?"} isn't allowed on this host (allowed: ${levels.runner_harnesses.join(", ") || "none"})`; }
@@ -51,13 +55,16 @@ export function checkValue(levels, key, value) {
 }
 // the mode actually used: the world's, or the widest allowed mode that is not wider than it (else the strictest allowed one)
 export function clampMode(levels, mode) {
-  if (levels.modes.includes(mode)) return { mode, note: "" };
-  const r = ALL_MODES.indexOf(mode), below = ALL_MODES.filter((m, i) => i < r && levels.modes.includes(m)), use = below.length ? below.at(-1) : strictestMode(levels);
-  return { mode: use, note: `mode ${mode} isn't allowed by the host's levels (${levels.modes.join(", ")}): using ${use}` };
+  const ok = usableModes(levels); if (ok.includes(mode)) return { mode, note: "" };
+  const r = ALL_MODES.indexOf(mode), below = ALL_MODES.filter((m, i) => i < r && ok.includes(m));
+  if (!below.length) return { mode, note: "" }; // already stricter than anything allowed: a stricter mode is never widened (a fail-closed strict stays strict)
+  return { mode: below.at(-1), note: `mode ${mode} isn't allowed by the host's levels (${ok.join(", ") || "none"}): using ${below.at(-1)}` };
 }
+// the share level actually used: the world's, capped by the host
+export const capShare = (levels, level) => (shareOk(levels, level) ? level : levels.max_share_level);
 // everything a world has that is outside the levels -> [reason]
 export function violations(levels, eff) {
-  const out = []; for (const k of ["mode", "level", "phone_decisions", "host_runner"]) if (eff[k] !== undefined && eff[k] !== "") { const r = checkValue(levels, k, eff[k]); if (r) out.push(r); } return out;
+  const out = []; if (eff.mode !== undefined && !ALL_MODES.includes(String(eff.mode))) { /* not a mode: nothing to compare */ } for (const k of ["mode", "level", "phone_decisions", "host_runner"]) if (eff[k] !== undefined && eff[k] !== "") { const r = checkValue(levels, k, eff[k]); if (r) out.push(r); } return out;
 }
 export const describeLevels = (l) => [`modes a world may use: ${l.modes.join(", ")}`, `widest share level: ${l.max_share_level}`, `decisions from the phone: ${l.phone_decisions ? "may be turned on" : "not allowed"}`, `host agents the runner may start: ${l.runner_harnesses.join(", ") || "none"}`];
 
