@@ -452,6 +452,24 @@ function peerUid(req) {
   }
   return -1;
 }
+// The phone, not this laptop: tailscale serve (root's tailscaled) proxies the phone's request and sets X-Forwarded-For to the CLIENT's tailnet
+// address (a client can't set it: the proxy rewrites it). A request from this laptop to its own tailnet URL also arrives through tailscaled, so
+// its client address must not be one of this machine's own tailnet addresses. -> "" (ok) or why not.
+let ownTs = null;
+function ownTailnetIps() {
+  if (ownTs) return ownTs;
+  try { ownTs = new Set(execFileSync("tailscale", ["ip"], { encoding: "utf8", timeout: 5000 }).split("\n").map((x) => x.trim().toLowerCase()).filter(Boolean)); } catch { ownTs = null; return null; }
+  return ownTs;
+}
+const isTailnet = (ip) => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(ip) || /^fd7a:115c:a1e0:/i.test(ip);
+function notFromPhone(req) {
+  const uid = peerUid(req); if (uid !== 0) return `the connection isn't from tailscale serve (peer uid ${uid})`;
+  const xff = String(req.headers["x-forwarded-for"] || "").split(",").map((x) => x.trim()).filter(Boolean).pop() || "";
+  if (!isTailnet(xff)) return "no tailnet client address";
+  const own = ownTailnetIps(); if (!own) return "can't read this machine's tailnet addresses";
+  if (own.has(xff.toLowerCase())) return "the request came from this laptop, not the phone";
+  return "";
+}
 // world letter -> the sandboxes whose held items its Doorman window shows: the sandbox and its Doorman(s)
 function heldNames(r) {
   const sb = gworld.sandboxOf(r); if (!sb) return [];
@@ -679,12 +697,12 @@ const server = http.createServer(async (req, res) => {
       const all = heldForSandboxes(names), h = all[0];
       if (!h) return json(res, 200, { world: r, sandboxed: true, items: 0 });
       const digest = heldDigest(h); if (!heldShown.has(digest)) heldShown.set(digest, Date.now()); if (heldShown.size > 200) heldShown.delete(heldShown.keys().next().value);
-      return json(res, 200, { world: r, sandboxed: true, items: all.length, item: { id: h.id, at: h.at, kind: h.kind, title: h.title, text: h.text, choices: h.choices, answer: !!h.answer, phone: phoneOn(r) && !PHONE_REFUSED_KINDS.test(h.kind) }, digest, phoneDecisions: phoneOn(r) });
+      return json(res, 200, { world: r, sandboxed: true, items: all.length, item: { id: h.id, at: h.at, kind: h.kind, title: h.title, text: h.text, choices: h.choices, answer: !!h.answer, phone: phoneOn(r) && !PHONE_REFUSED_KINDS.test(h.kind) }, digest, phoneDecisions: phoneOn(r), from: notFromPhone(req) || "phone" });
     }
     if (req.method === "POST" && url.pathname === "/api/held/decide") {
       // Only the phone through tailscale serve (a root-owned peer); never a process on this machine as Angus (an agent's curl).
-      const uid = peerUid(req);
-      if (uid !== 0) { log("held decide refused: peer uid", uid); return json(res, 403, { error: "held requests are decided from the phone app (or at the laptop), not from this machine" }); }
+      const why = notFromPhone(req);
+      if (why) { log("held decide refused:", why); return json(res, 403, { error: `held requests are decided from the phone app (or at the laptop), not from this machine (${why})` }); }
       const b = await body(req), r = room(b.world); if (!r) return json(res, 400, { error: "world?" });
       const names = heldNames(r); if (!names.length) return json(res, 400, { error: `world ${r} isn't sandboxed` });
       const digest = String(b.digest || "");
