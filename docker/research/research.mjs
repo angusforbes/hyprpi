@@ -344,7 +344,7 @@ export function stripCode(text) {
   // A line's content after any blockquote markers ("> > ") and list markers ("- ", "1. "): a fence or code block inside a quote or a list counts too.
   // Containers may nest in any order ("- > - ~~~"): strip quote and list markers repeatedly until none is left (bounded).
   const unquote = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, "");
-  const inner = (l) => { for (let k = 0; k < 40; k++) { const n = l.replace(/^[ \t]*>[ \t]?/, "").replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/, ""); if (n === l) break; l = n; } return l; };
+  const inner = (l) => l.replace(/^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*/, ""); // every quote / list marker, any depth, one pass
   const out = []; let fence = null, prevBlank = true, inInd = false;
   for (const line of t1.split("\n")) {
     const c = inner(line), q = unquote(line);
@@ -360,12 +360,17 @@ export function stripCode(text) {
 // HTML code-like elements (pre, code, samp, kbd, script, style) by a linear tag scan with a depth count, so a nested element can't end the
 // outer one early; everything from the outermost open tag to its matching close (or the end) becomes "[code omitted]".
 export function htmlCode(t) {
-  const re = /<(\/?)(pre|code|samp|kbd|script|style)\b[^>]*>/gi; let depth = 0, start = 0, cur = 0, res = "", m;
+  // a stack of open element names: a close tag counts only when it closes the innermost open element; inside script/style (raw text) nothing but
+  // its own close tag counts. Outermost open to its real close (or the end, fail closed) -> "[code omitted]".
+  const re = /<(\/?)(pre|code|samp|kbd|script|style)\b[^>]*>/gi, st = []; let start = 0, cur = 0, res = "", m;
   while ((m = re.exec(t))) {
-    if (!m[1]) { if (depth++ === 0) start = m.index; }
-    else if (depth > 0 && --depth === 0) { res += t.slice(cur, start) + "[code omitted]"; cur = re.lastIndex; }
+    const name = m[2].toLowerCase(), top = st[st.length - 1];
+    if (top === "script" || top === "style") { if (m[1] && name === top) st.pop(); else continue; }
+    else if (!m[1]) { if (!st.length) start = m.index; st.push(name); continue; }
+    else if (top === name) st.pop(); else continue;
+    if (!st.length) { res += t.slice(cur, start) + "[code omitted]"; cur = re.lastIndex; }
   }
-  return depth > 0 ? res + t.slice(cur, start) + "[code omitted]" : res + t.slice(cur);
+  return st.length ? res + t.slice(cur, start) + "[code omitted]" : res + t.slice(cur);
 }
 // Inline code spans by a linear scan (no backtracking regex, GapReview): a run of N backticks opens a span that the next run of exactly N backticks
 // in the same paragraph (no blank line between) closes; the whole span becomes "[code]". An unmatched run is left (its backticks are dropped later).

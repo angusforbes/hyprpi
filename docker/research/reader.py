@@ -70,28 +70,32 @@ def _unquote(line):
 
 
 def _inner(line):
-    # containers may nest in any order: strip quote and list markers repeatedly until none is left (bounded)
-    for _ in range(40):
-        n = re.sub(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)", "", re.sub(r"^[ \t]*>[ \t]?", "", line, count=1), count=1)
-        if n == line:
-            break
-        line = n
-    return line
+    # every quote / list marker, any depth, one pass (same regex as research.mjs)
+    return re.sub(r"^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*", "", line)
 
 
 def html_code(t):
-    # same as research.mjs htmlCode: a linear tag scan with a depth count; outermost open to its matching close (or the end) -> [code omitted]
-    depth, start, cur, res = 0, 0, 0, []
+    # same as research.mjs htmlCode: a stack of open names; a close counts only for the innermost open element; script/style are raw text
+    st, start, cur, res = [], 0, 0, []
     for m in re.finditer(r"<(/?)(pre|code|samp|kbd|script|style)\b[^>]*>", t, flags=re.I):
-        if not m.group(1):
-            if depth == 0:
+        name, top = m.group(2).lower(), (st[-1] if st else None)
+        if top in ("script", "style"):
+            if m.group(1) and name == top:
+                st.pop()
+            else:
+                continue
+        elif not m.group(1):
+            if not st:
                 start = m.start()
-            depth += 1
-        elif depth > 0:
-            depth -= 1
-            if depth == 0:
-                res.append(t[cur:start]); res.append("[code omitted]"); cur = m.end()
-    if depth > 0:
+            st.append(name)
+            continue
+        elif top == name:
+            st.pop()
+        else:
+            continue
+        if not st:
+            res.append(t[cur:start]); res.append("[code omitted]"); cur = m.end()
+    if st:
         res.append(t[cur:start]); res.append("[code omitted]")
     else:
         res.append(t[cur:])
