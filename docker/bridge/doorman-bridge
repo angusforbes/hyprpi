@@ -17,6 +17,7 @@
 //   doorman-bridge wait [--timeout S] [--scope SANDBOX]... [--mine ID]... [--agent-token T]   block until a job in scope waits, an answer
 //                                                     comes to one of your jobs (--mine), or S seconds pass (default 240, max 290); with
 //                                                     --agent-token it heartbeats meanwhile (J431). Exit 0 with event job|answer|none.
+//                                                     "Once" holds within one call only: pass --seen ID#N for answers you already have.
 //   doorman-bridge agents                             registered host agents and each sandbox's mode (read-only)
 //   doorman-bridge mcp                                the MCP server (stdio)
 //   doorman-bridge run-job ID | dispatch | runner --install|--uninstall|--status    the per-job runner (runner.mjs, J387)
@@ -30,7 +31,7 @@ const argv = process.argv.slice(2), opts = { ran: [], changed: [] }, pos = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--json" || a === "--all") opts[a.slice(2)] = true;
-  else if (a === "--mine") (opts.mine ||= []).push(argv[++i]);
+  else if (a === "--mine" || a === "--seen") { const v = argv[++i]; if (v === undefined || v.startsWith("--")) { console.error(`doorman-bridge: ${a} needs a value`); process.exit(2); } (opts[a.slice(2)] ||= []).push(v); }
   else if (["--by", "--lease", "--token", "--summary", "--harness", "--caps", "--agent-token", "--timeout"].includes(a)) opts[a.slice(2).replace("-t", "T")] = argv[++i];
   else if (a === "--scope") (opts.scope ||= []).push(argv[++i]);
   else if (a === "--ran" || a === "--changed") opts[a.slice(2)].push(argv[++i]);
@@ -49,9 +50,11 @@ else if (cmd === "register") { const r = await register({ name: id || by, harnes
 else if (cmd === "heartbeat") out(await heartbeat(opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""));
 else if (cmd === "unregister") out(await unregister(opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""));
 else if (cmd === "receipts") { const r = receipts(by); out(opts.json ? r : { ok: true, text: r.receipts.map((x) => `${x.at} ${x.id}: ${x.text}`).join("\n") || "no receipts" }); } // J412: decisions on your settings proposals
-else if (cmd === "wait") { // J431
+else if (cmd === "wait") { // J431 (WaitReview LOW 5: malformed options are a usage error)
+  for (const k of ["timeout", "agentToken"]) if (k in opts && (opts[k] === undefined || String(opts[k]).startsWith("--"))) { console.error(`doorman-bridge: --${k === "agentToken" ? "agent-token" : k} needs a value`); process.exit(2); }
+  if ("timeout" in opts && !/^\d+(\.\d+)?$/.test(String(opts.timeout))) { console.error("doorman-bridge: --timeout takes seconds (1 to 290)"); process.exit(2); }
   const t = opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || "", hb = t ? setInterval(() => { heartbeat(t).catch(() => {}); }, 30000) : null;
-  const r = await waitForJob({ scope: opts.scope || [], mine: opts.mine || [], timeoutS: opts.timeout }); if (hb) clearInterval(hb);
+  const r = await waitForJob({ scope: opts.scope || [], mine: opts.mine || [], owner: opts.by || "", seen: new Set(opts.seen || []), timeoutS: opts.timeout }); if (hb) clearInterval(hb);
   out(opts.json ? r : { ok: true, text: r.event === "none" ? r.text : `${r.event}: ${r.text}` }); }
 else if (cmd === "agents") { const r = agents(); out(opts.json ? r : { ok: true, text: [...r.agents.map((a) => `${a.name} (${a.harness}${a.on_demand ? ", on demand" : ""}) since ${a.since}, last heartbeat ${a.last}${a.scope?.length ? `, for ${a.scope.join(", ")}` : ""}`), ...Object.entries(r.modes).map(([s, m]) => `${s}: ${m.mode}${m.agents.length ? ` (${m.agents.join(", ")})` : ""}`)].join("\n") || "no host agents registered" }); }
 else if (cmd === "list") {

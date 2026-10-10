@@ -76,13 +76,38 @@ assert.equal(oc.ok, true); assert.equal((await tool("claim_job", { id: "doorman-
 r = await tool("wait_for_job", { timeout_s: 2 }); assert.equal(r.event, "none");
 ok("first claim wins: the other agent's claim stands, ours fails, the wait finds nothing more");
 
+// 4b. (WaitReview HIGH 1) a wait doesn't hold up a request sent in the same chunk after it
+{ const t = Date.now(); const ids = [nid++, nid++]; const got = {};
+  const done = new Promise((res) => { const f = () => { for (const l of mout.split("\n")) { try { const m = JSON.parse(l); if (ids.includes(m.id) && !got[m.id]) got[m.id] = Date.now() - t; } catch { /* */ } } if (got[ids[1]] && got[ids[0]]) res(); else setTimeout(f, 50); }; f(); });
+  mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: ids[0], method: "tools/call", params: { name: "wait_for_job", arguments: { timeout_s: 3 } } }) + "\n" + JSON.stringify({ jsonrpc: "2.0", id: ids[1], method: "ping" }) + "\n");
+  await done; assert.ok(got[ids[1]] < 1000, `ping answered in ${got[ids[1]]} ms, not after the wait`); assert.ok(got[ids[0]] >= 2800); }
+ok("a wait doesn't block a request sent after it in the same chunk");
+// 4c. (WaitReview HIGH 2) an answer on a job whose claim this session LOST (lapsed, now another agent's) doesn't wake it
+{ mk("doorman-t--b00006"); assert.equal((await tool("claim_job", { id: "doorman-t--b00006" })).ok, true);
+  jobRecord("doorman-t--b00006", { state: "waiting", claim: null }); // the lease lapsed (as the relay's sweep does)
+  const oc2 = await new Promise((res) => execFile(CLI, ["--json", "claim", "doorman-t--b00006", "--by", "Runner", "--agent-token", other.agent_token], { env }, (e, o) => res(JSON.parse(o)))); assert.equal(oc2.ok, true);
+  const oa = await new Promise((res) => execFile(CLI, ["--json", "ask", "doorman-t--b00006", "--by", "Runner", "--token", oc2.token, "Runner's question"], { env }, (e, o) => res(JSON.parse(o)))); assert.equal(oa.ok, true);
+  assert.equal(bridge.answer("doorman-t--b00006", 1, "for the runner", held.at(-1).hid), true);
+  r = await tool("wait_for_job", { timeout_s: 2 }); assert.equal(r.event, "none", "another agent's answer on a job we lost doesn't wake us"); }
+ok("an answer on a job whose claim this session lost (now another agent's) doesn't wake it");
+// 4d. (WaitReview MEDIUM 3) a claim refused for a reason other than a lost race: told to stop, and that job isn't offered again
+{ mk("doorman-t--b00007"); r = await tool("wait_for_job", { timeout_s: 3 }); assert.equal(r.job.id, "doorman-t--b00007");
+  const regs = JSON.parse(fs.readFileSync(path.join(st, "bridge", "agents.json"), "utf8")); for (const k of Object.keys(regs.agents)) if (regs.agents[k].name === "Waiter") delete regs.agents[k];
+  fs.writeFileSync(path.join(st, "bridge", "agents.json"), JSON.stringify(regs)); // the registration expired
+  const c7 = await tool("claim_job", { id: "doorman-t--b00007" }); assert.equal(c7.ok, false); assert.match(c7.text, /not a lost race: stop and tell the user/);
+  r = await tool("wait_for_job", { timeout_s: 2 }); assert.equal(r.event, "none", "the job that failed that way isn't offered again (no tight loop)");
+  fs.unlinkSync(path.join(REQ, "doorman-t--b00007.json")); }
+ok("a claim refused for another reason: told to stop; the job isn't offered again");
 // 5. the CLI: wait --scope/--timeout, the same events
 let c = await new Promise((res) => execFile(CLI, ["--json", "wait", "--timeout", "2", "--scope", "world-t"], { env }, (e, o) => res({ code: e ? e.code : 0, j: JSON.parse(o) })));
 assert.equal(c.code, 0); assert.equal(c.j.event, "none");
 setTimeout(() => mk("doorman-t--b00005"), 1000);
 c = await new Promise((res) => execFile(CLI, ["--json", "wait", "--timeout", "20", "--scope", "world-t"], { env }, (e, o) => res({ code: e ? e.code : 0, j: JSON.parse(o) })));
 assert.equal(c.j.event, "job"); assert.equal(c.j.job.id, "doorman-t--b00005");
-ok("CLI: doorman-bridge wait returns none on timeout and the job when one is approved");
+c = await new Promise((res) => execFile(CLI, ["--json", "wait", "--timeout", "2", "--mine", "doorman-t--b00003"], { env }, (e, o) => res(JSON.parse(o)))); assert.equal(c.event, "answer");
+c = await new Promise((res) => execFile(CLI, ["--json", "wait", "--timeout", "2", "--scope", "world-x", "--mine", "doorman-t--b00003", "--seen", "doorman-t--b00003#1"], { env }, (e, o) => res(JSON.parse(o)))); assert.equal(c.event, "none", "--seen: an answer already had");
+for (const bad of [["--timeout"], ["--timeout", "abc"], ["--mine"], ["--agent-token"]]) { const x = await new Promise((res) => execFile(CLI, ["wait", ...bad], { env }, (e) => res(e ? e.code : 0))); assert.equal(x, 2, bad.join(" ")); }
+ok("CLI: doorman-bridge wait returns none on timeout and the job when one is approved; --seen; malformed options exit 2");
 
 // 6. no new powers; a per-job (bound) server has no wait_for_job
 assert.equal(snap(), before, "config, decisions and pending are byte-identical");
