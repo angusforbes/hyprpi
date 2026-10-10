@@ -26,7 +26,7 @@ try {
   const sp = (model) => c.call("orch.spawn", { thoughts: "A", prompt: "test", name: "Mc" + Math.random().toString(36).slice(2, 6), model }, { timeoutMs: 150000 });
   // W1: blocked model refused, with a suggestion.
   let err = ""; try { await sp(BAD); } catch (e) { err = e.message; }
-  ok("blocked model refused", /can't run here/.test(err) && /no agent was started/.test(err), err.slice(0, 260));
+  ok("blocked model refused", /can't run here/.test(err) && /wasn.t used/.test(err), err.slice(0, 260));
   ok("refusal suggests a model", /Use \S+\/\S+ instead/.test(err));
   // W2: working model starts; second time cached.
   let t0 = Date.now(); const r1 = await sp(GOOD).catch((e) => ({ error: e.message })); const first = Date.now() - t0;
@@ -41,5 +41,8 @@ try {
   const r3 = await sp("anthropic/claude-haiku-4-5").catch((e) => ({ error: e.message }));
   ok("ladder model needs no call", !r3.error && (fs.readFileSync(logf, "utf8").match(/model check: /g) || []).length === 2);
   c.close();
+  const { isDefinite } = await import("../lib/modelcheck.mjs");
+  ok("429 / timeout are transient", !isDefinite("429: rate limit") && !isDefinite("no answer within 90 s") && !isDefinite("ECONNRESET"));
+  ok("guardrail / not found are definite", isDefinite('404: {"message":"0 endpoints … guardrail') && isDefinite('Error: Model "x/y" not found.'));
 } finally { d.kill("SIGTERM"); await sleep(400); try { d.kill("SIGKILL"); } catch { /* gone */ } fs.rmSync(T, { recursive: true, force: true }); }
 console.log(fails ? `FAIL (${fails})` : "PASS"); process.exit(fails ? 1 : 0);
