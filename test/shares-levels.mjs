@@ -115,5 +115,11 @@ a = addProject("world-t", "gamma"); assert.ok(a.ok); assert.match(a.text, /alrea
 r = world({ access: "safe", projects: ["alpha"], keep: 1 }); assert.ok(addProject("world-t", "gamma").ok); assert.equal(wj().keep, 1, "other keys kept");
 assert.match(execFileSync(process.execPath, [SH, "plan", "world-t"], { env, encoding: "utf8" }), /projects \(2\): alpha ro, gamma ro/);
 ok("addProject: validated, within the level, atomic, other keys kept; plan shows it");
+{ const { projectIdentity } = await import("../docker/world/shares.mjs");
+  world({ access: "safe", projects: [] }); const idA = projectIdentity("alpha"); assert.ok(idA && idA.realpath.endsWith("/alpha") && idA.ino);
+  assert.ok(addProject("world-t", "alpha", "ro", idA).ok, "the approved folder: shared");
+  world({ access: "safe", projects: [] }); fs.renameSync(path.join(work, "alpha"), path.join(work, "alpha-old")); fs.mkdirSync(path.join(work, "alpha"));
+  const sw = addProject("world-t", "alpha", "ro", idA); assert.equal(sw.ok, false); assert.match(sw.text, /isn't the folder that was approved/);
+  ok("addProject with the reviewed identity: a swapped folder isn't shared (J379)"); }
 fs.rmSync(base, { recursive: true, force: true });
 console.log("shares-levels: all pass");

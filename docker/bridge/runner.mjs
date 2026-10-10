@@ -16,7 +16,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
-import { list, show, claim, release, report, stateDir, saveToken } from "./client.mjs";
+import { list, show, claim, release, report, stateDir } from "./client.mjs";
 import { validId } from "./core.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), CLI = path.join(HERE, "doorman-bridge");
@@ -62,12 +62,11 @@ export async function runJob(id) {
   const c = await claim(id, by, pre?.approved?.time_limit_s); // (RunnerReview) the lease runs to the job's deadline (the relay caps it at claimed_at + time limit)
   if (!c.ok) { log({ id, ev: "not claimed", text: c.text }); return c; }
   const job = show(id);
-  const token = c.token; saveToken(id, ""); // the runner keeps its token itself (not in the shared cache)
+  const token = c.token; // the runner keeps its token; the run's MCP server gets it in DOORMAN_BRIDGE_TOKEN (J379: no shared cache)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "doorman-run-")), mcpConfig = path.join(tmp, "mcp.json"), cache = path.join(tmp, "cache");
   // (RunnerReview HIGH) the agent's MCP server is bound to THIS job and has a private token cache holding this job's token only
-  const prev = process.env.XDG_CACHE_HOME; process.env.XDG_CACHE_HOME = cache; saveToken(id, token); if (prev === undefined) delete process.env.XDG_CACHE_HOME; else process.env.XDG_CACHE_HOME = prev;
-  const env = { ...process.env, DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, XDG_CACHE_HOME: cache };
-  fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { "doorman-bridge": { command: CLI, args: ["mcp"], env: { DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, XDG_CACHE_HOME: cache } } } }), { mode: 0o600 });
+  const env = { ...process.env, DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, DOORMAN_BRIDGE_TOKEN: token, XDG_CACHE_HOME: cache };
+  fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { "doorman-bridge": { command: CLI, args: ["mcp"], env: { DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, DOORMAN_BRIDGE_TOKEN: token, XDG_CACHE_HOME: cache } } } }), { mode: 0o600 }); // (0600, in the run's private temp folder)
   const work = path.join(tmp, "work"); fs.mkdirSync(work, { mode: 0o700 }); // (RunnerReview) a job without folders runs in a private empty folder, not /tmp
   const p = plan(job, { mcpConfig, cwd: work }), asked0 = (job.questions || []).length;
   log({ id, ev: "start", argv: p.argv, cwd: p.cwd, dropped: p.dropped, time_limit_s: job.approved.time_limit_s });

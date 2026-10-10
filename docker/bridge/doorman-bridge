@@ -13,7 +13,7 @@
 //   doorman-bridge propose SANDBOX key=value...       propose a settings change; it waits for the owner's approval
 //   doorman-bridge mcp                                the MCP server (stdio)
 //   doorman-bridge run-job ID | dispatch | runner --install|--uninstall|--status    the per-job runner (runner.mjs, J387)
-// Options: --json (machine output), --token T (else the claim's token from ~/.cache/doorman-bridge).
+// Options: --json (machine output), --token T (the token claim printed; required for renew/ask/report/release, J379).
 // The bridge can't approve, deny or edit anything, create jobs or change settings: the owner decides in the Doorman
 // window; the relay applies. Exit 0 = ok, 1 = refused, 2 = usage.
 import { list, show, claim, renew, release, ask, report } from "./client.mjs";
@@ -40,7 +40,7 @@ else if (cmd === "list") {
   if (opts.json) out(jobs);
   else { for (const j of jobs) console.log(`${j.id}  ${j.state}  for ${j.for || "?"} in ${j.sandbox}  ${String(j.approved.action).split("\n").find((l) => /^Action asked for:/.test(l))?.slice(18, 120) || String(j.approved.action).slice(0, 100).replace(/\s+/g, " ")}`); if (!jobs.length) console.log("(no jobs waiting)"); }
 } else if (cmd === "show") { if (!id) usage(); const j = show(id); out(j ? (opts.json ? j : formatJob(j)) : { ok: false, text: "no such host job" }); }
-else if (cmd === "claim") { if (!id) usage(); out(await claim(id, by, lease)); }
+else if (cmd === "claim") { if (!id) usage(); const r = await claim(id, by, lease); if (r.ok && !opts.json) { console.log(`${r.text}\ntoken: ${r.token}  (pass it with --token to renew, ask, report or release; it isn't stored anywhere)`); process.exit(0); } out(r); }
 else if (cmd === "renew") { if (!id) usage(); out(await renew(id, by, lease, opts.token)); }
 else if (cmd === "release") { if (!id) usage(); out(await release(id, by, opts.token)); }
 else if (cmd === "ask") { if (!id || !rest.length) usage(); out(await ask(id, by, rest.join(" "), opts.token)); }

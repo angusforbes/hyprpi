@@ -17,7 +17,7 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
     let failed = "";
     for (const e of list || []) {
       if (e.kind === "outcome") {
-        const act = (/^Action asked for: (.*)$/m.exec(String(rec.approved?.action || "")) || [])[1] || String(rec.approved?.action || "");
+        const act = String(rec.approved?.action_line || rec.approved?.action || ""); // (J379) the structured action, never a line parsed from text
         const text = `the host agent's job ${rec.id} ("${act.replace(/\s+/g, " ").slice(0, 120)}") ended ${e.state}: ${e.summary}`;
         try { tellOutcome(rec.sandbox, rec.for, text); } catch (err) { log({ error: `bridge outcome ${rec.id}: ${err.message}` }); }
         log({ op: "host_job", id: rec.id, sandbox: rec.sandbox, state: e.state, outcome: e.summary, ran: e.ran || [], changed: e.changed || [] });

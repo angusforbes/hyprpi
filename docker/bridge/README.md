@@ -1,6 +1,6 @@
 # The Doorman bridge
 
-A sandboxed agent asks for something on the host that no fixed request type covers ("set up X", "find this in my notes"). The Doorman drafts it, the owner approves it in the Doorman window (as is, or edited), and it becomes a host job. The bridge lets any host agent work that job: Claude Code, Codex, pi, or a script. The bridge is a CLI, `doorman-bridge`, plus an MCP server with the same operations.
+A sandboxed agent asks for something on the host that no fixed request type covers ("set up X", "find this in my notes"). The Doorman drafts it, the owner approves it in the Doorman window, and it becomes a host job. (A free-form draft can't be edited before approval today; the job carries the text he approved.) The bridge lets any host agent work that job: Claude Code, Codex, pi, or a script. The bridge is a CLI, `doorman-bridge`, plus an MCP server with the same operations.
 
 The bridge can't approve, deny or edit anything, create jobs or change settings. The owner decides in the Doorman window, and the relay applies the decisions. The sandbox never uses the bridge; it only asks, through the Doorman.
 
@@ -31,12 +31,14 @@ In `~/.config/hyprpi/sbx-relay.json`, on the Doorman's entry:
 | settings SANDBOX         | read_settings    | settings, read-only     |
 | propose SANDBOX k=v      | propose_settings | wait for the owner's OK |
 
-- show gives only the owner's approved (possibly edited) text, the tools and folders he allowed, the time limit, and questions with their answers. It never gives the sandbox's own words, unless he approved them as they were.
+- show gives only the owner's approved text, the tools and folders he allowed, the time limit, and questions with their answers. It never gives the sandbox's own words, unless he approved them as they were.
 - claim: one claimer. The lease (30 minutes by default, never past the job's time limit) runs out unless renewed; then the job is waiting again ("abandoned" in its history). A job with no report when its time limit is used up ends as no_report.
 - ask: the question becomes a held item in the owner's Doorman window, and the job waits. Read his answer with show. Ask the owner nowhere else.
 - report: done, failed or partial, a summary, and exactly what you ran (`--ran`) and changed (`--changed`). The relay records it, tells the agent that asked and its coordinator, and the Doorman's archive keeps it.
 - propose: the change waits in the Doorman window. The owner approves it with 1, and the host applies it, only if nothing changed meanwhile.
-- `--json` gives machine output. A claim's token is kept in `~/.cache/doorman-bridge` for its later commands.
+- `--json` gives machine output. `claim` prints a token. Pass it with `--token` to renew, ask, report or release. It isn't stored anywhere, so another process of the same user can't act on your claim. The MCP server keeps the tokens of its own claims in memory, and a per-job run gets its own token in `DOORMAN_BRIDGE_TOKEN`.
+- The job's action is stored as its own field (`approved.action_line`, taken from the Doorman's draft), never parsed out of the text, so a line inside the sandbox's "why" can't pose as the action.
+- `settings` shows no key file paths. Anything key-, token- or secret-like is shown only as "(set)" or "(not set)".
 
 ## From Claude Code
 

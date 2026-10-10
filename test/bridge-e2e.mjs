@@ -42,10 +42,12 @@ ok("list and show: the approved job");
 const claims = await Promise.all(Array.from({ length: 10 }, (_, i) => cli("claim", "doorman-t--a00001", "--by", `agent-${i}`)));
 const winners = claims.filter((c) => c.code === 0 && c.j?.ok);
 assert.equal(winners.length, 1, `exactly one claim wins (${winners.length})`); assert.ok(claims.filter((c) => c.code === 1).every((c) => /claimed by agent-/.test(c.j.text)));
-const winner = winners[0].j; const who = JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00001.json"), "utf8")).claim.by;
+const winner = winners[0].j; const who = JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00001.json"), "utf8")).claim.by, T1 = winner.token;
 ok(`10 simultaneous claims: exactly one (${who})`);
 // 3. ask: a held item for the owner, the job waits; the answer comes back through the relay's decision
-r = await cli("ask", "doorman-t--a00001", "--by", who, "Which profile should open it?");
+// (J379) without its token, another process can't act on the claim (no shared cache)
+assert.equal((await cli("ask", "doorman-t--a00001", "--by", "intruder", "x")).code, 1); assert.equal((await cli("release", "doorman-t--a00001", "--by", "intruder")).code, 1);
+r = await cli("ask", "doorman-t--a00001", "--by", who, "--token", T1, "Which profile should open it?");
 assert.equal(r.code, 0, r.out + r.err); assert.equal(held.length, 1); assert.equal(held[0].n, 1); assert.match(held[0].text, /Which profile/);
 assert.equal((await cli("show", "doorman-t--a00001")).j.state, "asked");
 assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00001.json"), "utf8")).questions[0].held_id, held[0].hid, "the job links the held item");
@@ -55,11 +57,11 @@ r = await cli("show", "doorman-t--a00001"); assert.equal(r.j.state, "claimed"); 
 ok("ask: a held item, the job waits; the owner's answer comes back in show");
 // 3b. a question that can't be held is undone (the job doesn't hang in "asked")
 { mk("doorman-t--a00009"); const c = await cli("claim", "doorman-t--a00009", "--by", "x"); assert.equal(c.code, 0); failHold = true;
-  const q = await cli("ask", "doorman-t--a00009", "--by", "x", "q?"); failHold = false; assert.equal(q.code, 1); assert.match(q.j.text, /couldn't be put to the owner/);
+  const q = await cli("ask", "doorman-t--a00009", "--by", "x", "--token", c.j.token, "q?"); failHold = false; assert.equal(q.code, 1); assert.match(q.j.text, /couldn't be put to the owner/);
   const rr = JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00009.json"), "utf8")); assert.equal(rr.state, "claimed"); assert.equal(rr.questions.length, 0);
   ok("a question that can't be held is undone and refused"); }
 // 4. report: through the outcome routing (asker + coordinator) and the log; final
-r = await cli("report", "doorman-t--a00001", "done", "--by", who, "--summary", "Opened it in G's profile.", "--ran", "g_open_url.py --agent file:///x");
+r = await cli("report", "doorman-t--a00001", "done", "--by", who, "--token", T1, "--summary", "Opened it in G's profile.", "--ran", "g_open_url.py --agent file:///x");
 assert.equal(r.code, 0, r.out + r.err); assert.equal(told.length, 1); assert.equal(told[0].a, "Alpha"); assert.match(told[0].t, /ended done: Opened it/);
 assert.ok(logs.some((l) => l.op === "host_job" && l.state === "done" && l.ran[0].startsWith("g_open_url")));
 assert.equal((await cli("claim", "doorman-t--a00001", "--by", "late")).code, 1, "done is final");
@@ -81,6 +83,10 @@ const raw = path.join(st, "bridge", "in", `${crypto.randomBytes(12).toString("he
 for (const op of ["approve", "deny", "edit", "create", "set"]) { fs.writeFileSync(raw, JSON.stringify({ op, id: "doorman-t--a00002", by: "x" })); await bridge.scan(); }
 assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00002.json"), "utf8")).state, "claimed", "a raw request for another operation changes nothing");
 r = await cli("settings", "world-t"); assert.equal(r.code, 0); assert.equal(r.j.settings.gateway.level, "safe");
+{ const e2 = { ...env, DOORMAN_SETTINGS_CMD: JSON.stringify(["sh", "-c", 'echo "{\\"search\\":{\\"key_file\\":\\"/home/x/secret.key\\",\\"provider\\":\\"sonar\\"},\\"api_token\\":\\"\\"}"']) };
+  const rr = await new Promise((res) => execFile(CLI, ["--json", "settings", "world-t"], { env: e2 }, (e, out) => res(JSON.parse(out))));
+  assert.equal(rr.settings.search.key_file, "(set)"); assert.equal(rr.settings.api_token, "(not set)"); assert.equal(rr.settings.search.provider, "sonar"); assert.ok(!JSON.stringify(rr).includes("secret.key"));
+  ok("settings: no key file path, only (set)/(not set) (J379)"); }
 r = await cli("propose", "world-t", "level=open"); assert.equal(r.code, 0); assert.match(r.j.text, /held for the owner/);
 // 7. the MCP server: initialize, tools/list, and every tool called once
 const mcp = spawn(CLI, ["mcp"], { env: { ...env, DOORMAN_BRIDGE_AGENT: "mcp-test" } }); let mout = ""; mcp.stdout.on("data", (d) => (mout += d));
@@ -101,12 +107,9 @@ assert.equal(res(0).jobs.length, 1); assert.equal(res(2).ok, true); assert.equal
 assert.equal(res(7).ok, true); assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00004.json"), "utf8")).state, "asked", "released with an open question: stays asked, unclaimed");
 assert.equal(res(8).ok, false, "no report without a claim");
 ok("MCP: initialize, 9 tools (none decides or writes), every tool callable");
-// 7b. (BridgeReview) parallel token saves don't race: 24 processes, 24 tokens kept
-{ const { saveToken, tokens } = await import("../docker/bridge/client.mjs");
-  await Promise.all(Array.from({ length: 24 }, (_, i) => new Promise((res) => execFile(process.execPath, ["--input-type=module", "-e", `import { saveToken } from ${JSON.stringify(new URL("../docker/bridge/client.mjs", import.meta.url).href)}; saveToken("doorman-t--b${String(i).padStart(5, "0")}", "t${i}")`], { env }, res))));
-  const t = tokens(); assert.equal(Object.keys(t).filter((k) => k.startsWith("doorman-t--b")).length, 24); assert.equal(t["doorman-t--b00007"], "t7");
-  const st2 = fs.statSync(path.join(cache, "doorman-bridge", "tokens", "doorman-t--b00007")); assert.equal(st2.mode & 0o777, 0o600); void saveToken;
-  ok("24 parallel token saves: all kept, files 600"); }
+// 7b. (J379 red team) tokens aren't stored anywhere: no cache for another process of the user to reuse
+assert.ok(!fs.existsSync(path.join(cache, "doorman-bridge")), "no token cache written");
+ok("claim tokens are never cached (another process can't reuse them)");
 // 7c. (J387, RunnerReview HIGH) a job-bound MCP server (a per-job run) can't touch another job, even with that job's token cached
 { mk("doorman-t--e00001"); mk("doorman-t--e00002");
   const ca = await cli("claim", "doorman-t--e00001", "--by", "run-a"), cb = await cli("claim", "doorman-t--e00002", "--by", "run-b"); assert.equal(ca.code, 0); assert.equal(cb.code, 0);

@@ -433,8 +433,15 @@ async function watch() {
 // only; open with "all": already shared), writes worlds/<world>.json atomically, and doesn't apply (the watcher, or
 // `shares.mjs apply WORLD`, does). → { ok, text }
 // J372 (review): a worlds-file writer: serialised with the other writers (setTask, gateway settings) so a stale write can't revert their change.
-export function addProject(world, name, mode = "") { return withWorldsLock(CFG, () => addProjectLocked(world, name, mode)); }
-function addProjectLocked(world, name, mode = "") {
+// (J379 red team) expect = { realpath, ino } as shown when the owner approved it: if the folder was removed or swapped since, refuse
+// what to show (and keep) at review time, for addProject's expect
+export function projectIdentity(name) {
+  const g = readJson(path.join(CFG, "config.json")); const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  const hit = (g.projectFolders || []).map(exp).map(real).map((d) => path.join(d, String(name))).find((d) => { try { return fs.lstatSync(d).isDirectory(); } catch { return false; } });
+  if (!hit) return null; const st = fs.statSync(hit); return { realpath: real(hit), ino: String(st.ino) };
+}
+export function addProject(world, name, mode = "", expect = null) { return withWorldsLock(CFG, () => addProjectLocked(world, name, mode, expect)); }
+function addProjectLocked(world, name, mode = "", expect = null) {
   if (typeof world !== "string" || !/^[a-z0-9-]{1,32}$/.test(world)) return { ok: false, text: "bad world name" };
   if (typeof mode !== "string") return { ok: false, text: `mode must be "rw" or "ro"` };
   if (typeof name !== "string" || !/^[\w.-]+$/.test(name) || name === "." || name === "..") return { ok: false, text: `bad project name ${JSON.stringify(name)}` };
@@ -446,6 +453,7 @@ function addProjectLocked(world, name, mode = "") {
   const pf = (g.projectFolders || []).map(exp).map(real);
   const hit = pf.map((d) => path.join(d, name)).find((d) => { try { return fs.lstatSync(d).isDirectory() && path.dirname(fs.realpathSync(d)) === fs.realpathSync(path.dirname(d)); } catch { return false; } });
   if (!hit) return { ok: false, text: `${name} isn't a project folder in ${pf.join(", ") || "(no projectFolders)"}` };
+  if (expect) { let st = null; try { st = fs.statSync(hit); } catch { /* */ } if (real(hit) !== expect.realpath || !st || String(st.ino) !== String(expect.ino)) return { ok: false, text: `${name} isn't the folder that was approved (it was ${expect.realpath}, inode ${expect.ino}; now ${real(hit)}, inode ${st?.ino ?? "?"}): not shared` }; }
   const { level, why } = accessLevel(w, relay, w.sandbox || world, world);
   if (level === "open" && w.projects === "all") return { ok: true, text: `${name} is already shared (${world} is at the open level with "projects": "all"; ${why})` };
   if (level === "strict" && mode === "rw") return { ok: false, text: `${world} is at the strict level (${why}): projects are read-only there; add it as ro, or change the level` };

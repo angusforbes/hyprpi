@@ -20,7 +20,10 @@ export function settings(sandbox) {
   if (!SANDBOX_RE.test(String(sandbox))) return { ok: false, text: "bad sandbox name" };
   const r = run([...cmd("DOORMAN_SETTINGS_CMD", [process.execPath, path.join(H, "research", "research.mjs"), "config", "--json", "--sandbox"]), sandbox]);
   if (r.status !== 0 || !r.json) return { ok: false, text: `couldn't read the settings: ${r.text || "no output"}` };
-  return { ok: true, sandbox, settings: r.json, text: JSON.stringify(r.json, null, 1) };
+  // (J379 red team) a secret-free view: no key file paths (or anything key/token/secret-like), only whether one is set
+  const scrub = (v) => Array.isArray(v) ? v.map(scrub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => (/key|token|secret|password|credential/i.test(k) ? [k, x ? "(set)" : "(not set)"] : [k, scrub(x)]))) : v;
+  const view = scrub(r.json);
+  return { ok: true, sandbox, settings: view, text: JSON.stringify(view, null, 1) };
 }
 
 // changes: { key: value } from the host's proposable list (the host validates; the bridge only passes it on)

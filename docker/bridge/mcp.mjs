@@ -10,6 +10,7 @@ const BY = process.env.DOORMAN_BRIDGE_AGENT || "mcp agent";
 // it, and claim/release/settings tools don't exist; its token cache (XDG_CACHE_HOME) holds that job's token alone
 const JOB = /^[A-Za-z0-9._-]{1,80}--[0-9a-f]{6}$/.test(process.env.DOORMAN_BRIDGE_JOB || "") ? process.env.DOORMAN_BRIDGE_JOB : "";
 const JOB_TOOLS = new Set(["list_jobs", "show_job", "renew_job", "ask_owner", "report_job"]);
+const MINE = new Map(); // (J379) an unbound server keeps the tokens of ITS OWN claims only (no shared cache): id -> token
 const S = (props, req = []) => ({ type: "object", properties: props, required: req, additionalProperties: false });
 const id = { type: "string", description: "the job id (from list_jobs)" };
 const TOOLS = [
@@ -32,11 +33,11 @@ const call = async (name, a = {}) => {
   switch (name) {
     case "list_jobs": return { ok: true, jobs: list({ all: !!a.all }) };
     case "show_job": return show(String(a.id || "")) || { ok: false, text: "no such host job" };
-    case "claim_job": return claim(String(a.id || ""), BY, a.lease_s);
-    case "renew_job": return renew(String(a.id || ""), BY, a.lease_s);
-    case "ask_owner": return ask(String(a.id || ""), BY, String(a.question || ""));
-    case "report_job": return report(String(a.id || ""), BY, { state: a.state, summary: a.summary, ran: a.ran || [], changed: a.changed || [] });
-    case "release_job": return release(String(a.id || ""), BY);
+    case "claim_job": { const r = await claim(String(a.id || ""), BY, a.lease_s); if (r.ok && r.token) MINE.set(String(a.id), r.token); const { token, ...rest } = r; return rest; } // the token stays in this server
+    case "renew_job": return renew(String(a.id || ""), BY, a.lease_s, MINE.get(String(a.id || "")));
+    case "ask_owner": return ask(String(a.id || ""), BY, String(a.question || ""), MINE.get(String(a.id || "")));
+    case "report_job": { const r = await report(String(a.id || ""), BY, { state: a.state, summary: a.summary, ran: a.ran || [], changed: a.changed || [] }, MINE.get(String(a.id || ""))); if (r.ok) MINE.delete(String(a.id)); return r; }
+    case "release_job": { const r = await release(String(a.id || ""), BY, MINE.get(String(a.id || ""))); if (r.ok) MINE.delete(String(a.id)); return r; }
     case "read_settings": return settings(String(a.sandbox || ""));
     case "propose_settings": return propose(String(a.sandbox || ""), a.changes, BY);
     default: return { ok: false, text: `unknown tool ${name}` };
