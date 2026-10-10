@@ -1,4 +1,4 @@
-// J376: full subprocess/relay checks for J372, plus the J373 real-Pi fixture when it lands.
+// J376: full subprocess/relay checks for J372, and J373/J395 (no-memory Doorman: real-Pi fixture + real relay asker binding).
 // This module never starts a relay, changes a live world, or invokes a provider. All paths/env come from the owned rig.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -192,92 +192,200 @@ export async function runConfig(ctx) {
   });
 }
 
-const J373_FILES = ['docker/doorman/test-stateless.mjs', 'docker/doorman/doorman-rpc.mjs', 'docker/doorman/history.mjs'];
+// J373 + J395: the Doorman has NO memory at all (Angus chose "c": no relay-supplied history either). history.mjs was deleted by J395,
+// so it is not a feature dependency. The real-Pi fixture proves fresh sessions; the relay cases prove the asker binding that replaced memory.
+const J373_FILES = ['docker/doorman/test-stateless.mjs', 'docker/doorman/doorman-rpc.mjs', 'docker/sbx-dropbox-ext.ts'];
+const FIXTURE_PASS_MIN = 16; // the J395 builder fixture's own PASS lines (its no-memory rewrite has 16)
 export async function runStateless(ctx) {
   await ctx.feature('J373', J373_FILES, async () => {
-    await ctx.testcase('J373: real Pi/extension fresh sessions with local SSE fixture and captured requests', async () => {
-      const dir = ctx.rig.P('artifacts/j373-fixture');
-      fs.mkdirSync(path.join(dir, 'tmp'), { recursive: true });
-      // The rig provides regular executable bin/pi and bin/bash wrappers: real Pi, no login profiles.
-      // test-stateless.mjs creates its own HOME under TMPDIR. Protected rig HOME/XDG/PATH remain unchanged.
-      for (const command of ['pi', 'bash']) {
-        const file = ctx.rig.P('bin', command), st = fs.lstatSync(file);
-        assert.ok(st.isFile() && !st.isSymbolicLink(), 'J373 requires a regular scratch ' + command + ' wrapper');
-      }
-      const dump = path.join(dir, 'requests.jsonl'), env = { TMPDIR: path.join(dir, 'tmp'), PI_OFFLINE: '1', KEEP: '1', DUMP: dump };
-      const n = 6, r = await ctx.cli(J373_FILES[0], [String(n)], { env, timeout: 450000 });
-      fs.writeFileSync(path.join(dir, 'stdout.txt'), String(r.stdout || ''));
-      fs.writeFileSync(path.join(dir, 'stderr.txt'), String(r.stderr || ''));
-      assert.ok(r.stdout && r.stdout.trim(), 'stateless fixture must produce assertions, not empty output');
-      const passLines = r.stdout.split('\n').filter(l => /^PASS\s+/.test(l));
-      const requests = fs.existsSync(dump) ? fs.readFileSync(dump, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
-      const questionCalls = requests.filter(q => q.messages?.at(-1)?.role !== 'tool');
-      proof(ctx, 'j373-stateless-fixture', {
-        status: r.status, n, assertions: passLines, stdout: r.stdout, stderr: r.stderr,
-        requestCount: requests.length, questionCallCount: questionCalls.length,
-        messagesPerQuestion: questionCalls.map(q => q.messages?.length), requests,
-        scope: 'real Pi + real controller/extension; local fake SSE provider and stand-in relay, NOT the live integration relay',
-      });
-      succeeded(r, 'stateless fixture');
-      assert.doesNotMatch(output(r), /(^|\n)FAIL\s|\d+ FAILED|timed out waiting/);
-      assert.match(r.stdout, /(^|\n)all passed\s*$/);
-      assert.ok(passLines.length >= 17, 'all expected fixture assertions must execute, including five tools, retry and refused-session restart');
-      assert.ok(questionCalls.length >= n + 12, 'model request dump proves long run, five tool turns, retry, receipt followups and cancelled-session turn');
-      assert.ok(questionCalls.every(q => q.messages?.length === 2), 'every question is system + one user envelope, including relay-supplied history');
-      assert.ok(questionCalls.every(q => q.messages[0]?.role === 'system'), 'fresh sessions retain the system rules');
-      assert.match(r.stdout, /one session file per message/);
-      assert.match(r.stdout, /no receipt was delivered.*message of its own/);
-    });
-    await relayHistory(ctx);
+    await statelessFixture(ctx);
+    await relayBinding(ctx);
   });
 }
 
-async function relayHistory(ctx) {
-  await ctx.testcase('J373: actual relay isolates two signed same-sandbox askers and receipts', async () => {
-    const baseline = ctx.readWorld(), captured = [];
-    let held, receipt;
-    const send = async (who, marker) => {
-      const r = await ctx.ask('sandbox', { op: 'talk', to: ['sbx-' + ctx.rig.doorman], mode: 'demand', text: `[${who}, in world I] ${marker}` });
-      assert.equal(r.ok, true, JSON.stringify(r));
-      assert.ok(r.request_id, 'worker peer talk returns a real daemon request ID');
-      const item = await ctx.waitFor('actual Doorman message ' + marker, () => ctx.inbox('doorman').find(x => x.type === 'message' && x.request_id === r.request_id));
-      assert.equal(item.from, ctx.rig.sandbox, 'asker source comes from the actual daemon, not fixture inbox seeding');
-      captured.push(item);
-      return item;
-    };
-    const reply = async item => {
-      const r = await ctx.ask('doorman', { op: 'reply', request_id: item.request_id, text: 'RELAY-ANSWER-' + item.text });
-      assert.equal(r.ok, true, JSON.stringify(r));
-      assert.equal(r.delivered, true, JSON.stringify(r));
-    };
-    const historyText = item => JSON.stringify(item.history || []);
-    try {
-      const a = await send('FixtureAlpha', 'RELAY-SECRET-ALPHA1');
-      const draft = await ctx.ask('doorman', { op: 'task_change', task: 'RELAY-RECEIPT-ALPHA synthetic perovskite task', why: 'fixture receipt attribution', about: a.request_id });
-      assert.equal(draft.ok, true, JSON.stringify(draft));
-      held = ctx.holdFrom(draft);
-      assert.equal(held.taskChange.sandbox, ctx.rig.sandbox);
-      await reply(a);
-      await ctx.decide(held.id, '1');
-      receipt = await ctx.waitFor('actual relay task receipt ' + held.id, () => ctx.inbox('doorman').find(x => x.type === 'task_change' && x.id === held.id));
-      assert.equal(receipt.status, 'applied');
-      assert.match(receipt.outcome, /RELAY-RECEIPT-ALPHA/);
-      const b = await send('FixtureBeta', 'RELAY-SECRET-BETA1');
-      assert.doesNotMatch(historyText(b), /RELAY-SECRET-ALPHA1|RELAY-RECEIPT-ALPHA/);
-      await reply(b);
-      const a2 = await send('FixtureAlpha', 'RELAY-SECRET-ALPHA2');
-      assert.match(historyText(a2), /RELAY-SECRET-ALPHA1/);
-      assert.match(historyText(a2), /RELAY-ANSWER-/);
-      assert.match(historyText(a2), /RELAY-RECEIPT-ALPHA/);
-      assert.doesNotMatch(historyText(a2), /RELAY-SECRET-BETA1/);
-      await reply(a2);
-      const b2 = await send('FixtureBeta', 'RELAY-SECRET-BETA2');
-      assert.match(historyText(b2), /RELAY-SECRET-BETA1/);
-      assert.doesNotMatch(historyText(b2), /RELAY-SECRET-ALPHA|RELAY-RECEIPT-ALPHA/);
-      await reply(b2);
-    } finally {
-      ctx.writeWorld(() => structuredClone(baseline));
-      proof(ctx, 'j373-real-relay-history', { captured, receipt, held, scope: 'actual relay+private daemon+Docker outbox worker; checks signed-label history isolation through the real sandbox quoting envelope. Pi freshness and receipt omission are proven by the separate real-Pi fixture, not this worker.' });
+const msgText = m => typeof m?.content === 'string' ? m.content : Array.isArray(m?.content) ? m.content.map(x => x?.text || '').join('') : '';
+async function statelessFixture(ctx) {
+  await ctx.testcase('J373/J395: real Pi/extension fresh sessions; every captured question is [system, one incoming message]', async () => {
+    const dir = ctx.rig.P('artifacts/j373-fixture');
+    fs.mkdirSync(path.join(dir, 'tmp'), { recursive: true });
+    // The rig provides regular executable bin/pi and bin/bash wrappers: real Pi, no login profiles.
+    // test-stateless.mjs creates its own HOME under TMPDIR. Protected rig HOME/XDG/PATH remain unchanged.
+    for (const command of ['pi', 'bash']) {
+      const file = ctx.rig.P('bin', command), st = fs.lstatSync(file);
+      assert.ok(st.isFile() && !st.isSymbolicLink(), 'J373 requires a regular scratch ' + command + ' wrapper');
+    }
+    const dump = path.join(dir, 'requests.jsonl'), env = { TMPDIR: path.join(dir, 'tmp'), PI_OFFLINE: '1', KEEP: '1', DUMP: dump };
+    const n = 6, r = await ctx.cli(J373_FILES[0], [String(n)], { env, timeout: 450000 });
+    fs.writeFileSync(path.join(dir, 'stdout.txt'), String(r.stdout || ''));
+    fs.writeFileSync(path.join(dir, 'stderr.txt'), String(r.stderr || ''));
+    const passLines = String(r.stdout || '').split('\n').filter(l => /^PASS\s+/.test(l));
+    const requests = fs.existsSync(dump) ? fs.readFileSync(dump, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+    const questionCalls = requests.filter(q => q.messages?.at(-1)?.role !== 'tool');
+    const incoming = q => (q.messages || []).filter(m => m.role === 'user').map(msgText).join('\n');
+    const markers = q => incoming(q).match(/SECRET-[A-Z0-9]+/g) || [];
+    const callWith = marker => questionCalls.filter(q => incoming(q).includes(marker));
+    // Explicit request-level checks over the captured model requests (independent of the fixture's own PASS lines).
+    const checks = [];
+    const check = (name, ok, detail) => { checks.push({ name, ok: !!ok, ...(detail === undefined ? {} : { detail }) }); };
+    check('every question call is exactly [system, user]', questionCalls.length && questionCalls.every(q => q.messages?.length === 2 && q.messages[0]?.role === 'system' && q.messages[1]?.role === 'user'), questionCalls.map(q => (q.messages || []).map(m => m.role).join('+')));
+    check('every system message carries the Doorman rules', questionCalls.every(q => /test Doorman/.test(msgText(q.messages[0]))));
+    check('every incoming message is the relay-quoted drop-box envelope', questionCalls.every(q => /via the drop-box relay/.test(incoming(q))));
+    check('no question call carries any marker but its own', questionCalls.every(q => new Set(markers(q)).size <= 1));
+    const b1 = callWith('SECRET-BETA1'), a2 = callWith('SECRET-ALPHA2'), a3 = callWith('SECRET-ALPHA3'), b3 = callWith('SECRET-BETA3');
+    check('cross-asker: Beta\'s question holds nothing of Alpha (text, id, answer)', b1.length && b1.every(q => !/SECRET-ALPHA1|rid-a(?![0-9])|answer about/.test(JSON.stringify(q.messages))));
+    check('same-asker: Alpha\'s second question holds neither its own first question/answer nor Beta\'s', a2.length && a2.every(q => !/SECRET-ALPHA1|SECRET-BETA1|answer about SECRET|rid-a(?![0-9])|rid-b/.test(JSON.stringify(q.messages))));
+    check('receipt omission: no request anywhere carries the task-change receipt', requests.length && !requests.some(q => JSON.stringify(q.messages || []).includes('SECRET-TASK')));
+    check('receipt omission: the next questions of both askers carry no receipt or earlier marker', a3.length && b3.length && [...a3, ...b3].every(q => !/SECRET-TASK|SECRET-ALPHA[12]|SECRET-BETA1/.test(JSON.stringify(q.messages))));
+    check('no Angus/receipt turn was given to the model as a message of its own', !questionCalls.some(q => /\[hyprpi\] Angus/.test(incoming(q))));
+    check('transient retry: the FLAKY question was sent again as the same [system, user] turn', callWith('FLAKY-1').length >= 2 && callWith('FLAKY-1').every(q => q.messages?.length === 2));
+    check('long run plus tools, retry, receipt followups and cancelled-session turn all reached the model', questionCalls.length >= n + 12, questionCalls.length);
+    proof(ctx, 'j373-stateless-fixture', {
+      status: r.status, n, assertions: passLines, checks, stdout: r.stdout, stderr: r.stderr,
+      requestCount: requests.length, questionCallCount: questionCalls.length,
+      messagesPerQuestion: questionCalls.map(q => q.messages?.length), requests,
+      scope: 'real installed Pi + real doorman-rpc controller + real drop-box extension; local fake SSE provider and stand-in relay, NOT the live integration relay',
+    });
+    assert.ok(r.stdout && r.stdout.trim(), 'stateless fixture must produce assertions, not empty output');
+    succeeded(r, 'stateless fixture');
+    assert.doesNotMatch(output(r), /(^|\n)FAIL\s|\d+ FAILED|timed out waiting/);
+    assert.match(r.stdout, /(^|\n)all passed\s*$/);
+    assert.ok(passLines.length >= FIXTURE_PASS_MIN, `all ${FIXTURE_PASS_MIN} J395 fixture assertions must execute (got ${passLines.length})`);
+    assert.match(r.stdout, /one session file per message/);
+    assert.match(r.stdout, /after a transient error and pi's retry/, 'transient retry assertion executed');
+    assert.match(r.stdout, /a cancelled new session ends pi/, 'refused-session restart assertion executed');
+    assert.match(r.stdout, /no receipt was delivered.*message of its own/);
+    for (const c of checks) assert.ok(c.ok, 'request-level check failed: ' + c.name + (c.detail === undefined ? '' : ' ' + JSON.stringify(c.detail)));
+    assert.ok(passLines.length + checks.length >= 17, 'fixture plus explicit request checks cover at least 17 assertions');
+  });
+}
+
+// --- J395 through the ACTUAL relay: Docker worker -> private daemon -> Doorman. No model runs: the "Doorman" acts through its real drop-box.
+// A signed message carries no history; a draft/task_change/request names the message it answers (about) and is bound to that message's
+// signed asker, even when the model's "for" is wrong and even after the reply consumed the delivered ID. Outcomes are the relay's real
+// served-inbox envelopes ("Asker: [Outside] …" plus the unprefixed coordinator line), decided through the genuine owner PTY.
+const MARK = /RELAY-SECRET-[A-Z0-9]+/g;
+async function signed(ctx, who, marker, seen) {
+  const r = await ctx.ask('sandbox', { op: 'talk', to: ['sbx-' + ctx.rig.doorman], mode: 'demand', text: `[${who}, in world I] ${marker}` });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.request_id, 'worker peer talk returns a real daemon request ID');
+  const item = await ctx.waitFor('actual Doorman message ' + marker, () => ctx.inbox('doorman').find(x => x.type === 'message' && x.request_id === r.request_id));
+  assert.equal(item.from, ctx.rig.sandbox, 'asker source comes from the actual daemon, not fixture inbox seeding');
+  assert.equal(item.history, undefined, 'J395: the relay envelope carries no history field');
+  assert.deepEqual(Object.keys(item).filter(k => !['v', 'type', 'mode', 'from', 'request_id', 'text'].includes(k)), [], 'no extra (history/context) field in the envelope');
+  assert.ok(String(item.text).startsWith(`🐳 [sandboxed: ${ctx.rig.sandbox}] (message from a sandboxed agent`), 'real relay quoting envelope');
+  assert.ok(String(item.text).includes(`🐳│ [${who}, in world I] ${marker}`), 'the sandbox\'s signature reaches the Doorman inside the quote');
+  assert.deepEqual(String(item.text).match(MARK), [marker], 'no other asker\'s (or own earlier) message rides along');
+  for (const earlier of seen) assert.ok(!String(item.text).includes(earlier.request_id), 'no earlier request ID in the envelope');
+  seen.push(item);
+  return item;
+}
+async function answer(ctx, item) {
+  const r = await ctx.ask('doorman', { op: 'reply', request_id: item.request_id, text: 'RELAY-ANSWER for ' + item.request_id });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.delivered, true, JSON.stringify(r));
+  const again = await ctx.ask('doorman', { op: 'reply', request_id: item.request_id, text: 'second reply must be refused' });
+  assert.notEqual(again.ok, true, 'the reply consumed the delivered ID: ' + JSON.stringify(again));
+  assert.match(JSON.stringify(again), /unknown request_id/);
+}
+// The relay's real served-inbox envelopes for this held ID: one addressed to the bound asker, one unprefixed to the coordinator.
+async function envelopes(ctx, id, asker, wrong, contains) {
+  const got = await ctx.waitFor('bound asker + coordinator outcome for ' + id, () => {
+    const mine = ctx.inbox('sandbox').filter(x => x.type === 'message' && x.from === 'Outside' && typeof x.text === 'string' && x.text.includes(id));
+    const toAsker = mine.find(x => x.text.startsWith(asker + ': [Outside] ') && contains.test(x.text));
+    const toCoordinator = mine.find(x => x.text.startsWith('[Outside] ') && contains.test(x.text) && x.text.endsWith(`(asked by ${asker})`));
+    return toAsker && toCoordinator ? { mine, toAsker, toCoordinator } : false;
+  });
+  assert.equal(got.toAsker.mode, 'talk'); assert.equal(got.toCoordinator.mode, 'talk');
+  assert.equal(got.toAsker.request_id, ''); assert.equal(got.toCoordinator.request_id, '');
+  assert.equal(got.mine.filter(x => /^[^\s:\[]{1,60}: \[Outside\] /.test(x.text)).length, 1, 'exactly one addressed envelope: ' + JSON.stringify(got.mine));
+  assert.ok(!got.mine.some(x => x.text.startsWith(wrong + ': ') || x.text.includes(`asked by ${wrong}`)), 'never addressed to the model-chosen name ' + wrong);
+  return got;
+}
+async function relayBinding(ctx) {
+  const baseline = ctx.readWorld(), evidence = { cases: {} };
+  const relayCase = (name, fn) => ctx.testcase(name, async () => {
+    const seen = [], held = [];
+    const rec = evidence.cases[name] = { seen, held };
+    try { await fn({ seen, held, rec }); }
+    finally {
+      for (const h of held) if (ctx.pendingItems().some(p => p.id === h.id)) await ctx.decide(h.id, '2'); // never leave a hold behind
+      rec.leftPending = held.filter(h => ctx.pendingItems().some(p => p.id === h.id)).map(h => h.id);
     }
   });
+  try {
+    // Prior cases may leave the bridge on. Agent-free host first: task_change and typed requests are valid there, free-form drafts are not.
+    await ctx.restartRelay({ hostAgents: false });
+
+    await relayCase('J395 relay: approved task_change after the reply is bound to the signed asker, not the model\'s for', async ({ seen, held, rec }) => {
+      const a = await signed(ctx, 'FixtureAlpha', 'RELAY-SECRET-ALPHA1', seen);
+      const b = await signed(ctx, 'FixtureBeta', 'RELAY-SECRET-BETA1', seen);
+      await answer(ctx, a); await answer(ctx, b);
+      const task = 'RELAY-TASK-ALPHA synthetic perovskite task';
+      const draft = await ctx.ask('doorman', { op: 'task_change', task, why: 'J395 binding fixture', for: 'FixtureBeta', about: a.request_id });
+      assert.equal(draft.ok, true, JSON.stringify(draft));
+      const h = ctx.holdFrom(draft); held.push(h); rec.hold = h;
+      assert.equal(h.taskChange.sandbox, ctx.rig.sandbox);
+      assert.equal(h.taskChange.for, 'FixtureAlpha', 'bound by about to the asker of the message it answers, not the model\'s for');
+      await ctx.decide(h.id, '1');
+      const log = await ctx.waitFor('durable task_change log ' + h.id, () => ctx.logs().find(l => l.op === 'task_change' && l.id === h.id));
+      assert.equal(log.decision, 'approved'); assert.equal(log.applied, true, log.outcome);
+      const receipt = await ctx.waitFor('Doorman task receipt ' + h.id, () => ctx.inbox('doorman').find(x => x.type === 'task_change' && x.id === h.id));
+      assert.equal(receipt.status, 'applied');
+      assert.equal(ctx.readWorld().task, task, 'the approval actually wrote the task');
+      rec.log = log; rec.receipt = receipt;
+      rec.envelopes = await envelopes(ctx, h.id, 'FixtureAlpha', 'FixtureBeta', /approved the research task change/);
+      // A later signed message gets no receipt or earlier history either.
+      const a2 = await signed(ctx, 'FixtureAlpha', 'RELAY-SECRET-ALPHA2', seen);
+      assert.doesNotMatch(a2.text, /RELAY-TASK-ALPHA|RELAY-ANSWER|RELAY-SECRET-ALPHA1|RELAY-SECRET-BETA1/);
+      await answer(ctx, a2);
+    });
+
+    for (const [choice, decision] of [['1', 'approved'], ['2', 'denied']]) {
+      await relayCase(`J395 relay: ${decision} typed request is bound to the signed asker, not a wrong for`, async ({ seen, held, rec }) => {
+        const b = await signed(ctx, 'FixtureBeta', 'RELAY-SECRET-BETA' + (choice === '1' ? 'T1' : 'T2'), seen);
+        const a = await signed(ctx, 'FixtureAlpha', 'RELAY-SECRET-ALPHA' + (choice === '1' ? 'T1' : 'T2'), seen);
+        await answer(ctx, b); await answer(ctx, a);
+        const draft = await ctx.ask('doorman', { op: 'request', type: 'note_to_owner', for: 'WrongModelName', about: b.request_id, params: { text: `J395 synthetic note (${decision}); no model or action runs.` } });
+        assert.equal(draft.ok, true, JSON.stringify(draft));
+        const h = ctx.holdFrom(draft); held.push(h); rec.hold = h;
+        assert.equal(h.typed.for, 'FixtureBeta', 'typed request bound to the real asker');
+        assert.equal(h.typed.sandbox, ctx.rig.sandbox);
+        await ctx.decide(h.id, choice);
+        const log = await ctx.waitFor('durable typed log ' + h.id, () => ctx.logs().find(l => l.op === 'typed' && l.id === h.id));
+        assert.equal(log.decision, decision);
+        assert.equal(log.ok, choice === '1', 'approved deterministic note must complete; denial executes nothing');
+        const note = await ctx.waitFor('Doorman typed receipt ' + h.id, () => ctx.inbox('doorman').find(x => x.type === 'typed' && x.id === h.id));
+        assert.equal(note.status, choice === '1' ? 'done' : 'denied');
+        rec.log = log; rec.receipt = note;
+        rec.envelopes = await envelopes(ctx, h.id, 'FixtureBeta', 'WrongModelName', new RegExp(`Angus ${decision} the request`));
+        assert.ok(!rec.envelopes.mine.some(x => x.text.startsWith('FixtureAlpha: ')), 'the other signed asker is not told');
+      });
+    }
+
+    // A free-form draft needs a host agent: switch the scratch relay's fixture flag to the bridge (no real host agent starts), deny only.
+    await ctx.restartRelay({ hostAgents: 'bridge' });
+    await relayCase('J395 relay: denied free-form draft is bound via about to the signed asker after the reply', async ({ seen, held, rec }) => {
+      const a = await signed(ctx, 'FixtureAlpha', 'RELAY-SECRET-ALPHAD', seen);
+      const b = await signed(ctx, 'FixtureBeta', 'RELAY-SECRET-BETAD', seen);
+      await answer(ctx, a); await answer(ctx, b);
+      const draft = await ctx.ask('doorman', { op: 'draft', for: 'FixtureBeta', about: a.request_id, why: 'J395 binding fixture', tried: 'nothing', action: 'Synthetic denied action; never execute' });
+      assert.equal(draft.ok, true, JSON.stringify(draft));
+      const h = ctx.holdFrom(draft); held.push(h); rec.hold = h;
+      assert.equal(h.draftFor, 'FixtureAlpha', 'draft bound to the real asker, not the model\'s for');
+      assert.match(h.text, /drafted by .* for FixtureAlpha\./);
+      await ctx.decide(h.id, '2');
+      const log = await ctx.waitFor('durable draft decision ' + h.id, () => ctx.logs().find(l => l.id === h.id && l.decision === 'denied'));
+      rec.log = log;
+      rec.envelopes = await envelopes(ctx, h.id, 'FixtureAlpha', 'FixtureBeta', /Angus denied the request drafted for you/);
+    });
+  } finally {
+    await ctx.testcase('J395 relay: restore agent-free relay and original fixture world; no hold left', async () => {
+      await ctx.restartRelay({ hostAgents: false });
+      ctx.writeWorld(() => structuredClone(baseline));
+      assert.deepEqual(ctx.readWorld(), baseline);
+      const left = Object.values(evidence.cases).flatMap(c => c.held.map(h => h.id)).filter(id => ctx.pendingItems().some(p => p.id === id));
+      assert.deepEqual(left, [], 'every hold this module made is decided');
+      proof(ctx, 'j395-real-relay-binding', { ...evidence, scope: 'actual relay + private daemon + Docker worker outbox; owner decisions via the genuine PTY; outcomes read from the served sandbox inbox and the durable relay log. No model, no host agent, no forged events or history.' });
+    });
+  }
 }

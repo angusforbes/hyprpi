@@ -66,8 +66,17 @@ if os.environ.get('HOME')!=${JSON.stringify(P('home'))} or os.environ.get('XDG_C
 with open(${JSON.stringify(effects)},'a') as f: f.write(json.dumps({'kind':'opener','args':args,'ok':True})+'\\n')
 print('fixture browser: opened (no actual browser)')
 `, { mode: 0o700 });
-  // Refuse a bus connection for this exact fixture link-gate call. Product fallback then runs the real gate with the inert opener.
-  fs.writeFileSync(P('bin/systemd-run'), `#!/usr/bin/env python3\nimport sys,re,os\na=sys.argv[1:]\nif os.environ.get('HOME')==${JSON.stringify(P('home'))} and len(a)==10 and a[:4]==['--user','--scope','--collect','--quiet'] and re.fullmatch(${JSON.stringify('--unit=hyprpi-open-' + rig.sandbox + '-[0-9a-f]{8}')},a[4]) and a[5:]==['python3',${JSON.stringify(fileURLToPath(new URL('../../docker/world/g_open_url.py', import.meta.url)))},'--agent','https://example.org/gateway-fixture',${JSON.stringify(rig.sandbox)}]:\n    print('Failed to connect to fixture bus (no real bus exposed)',file=sys.stderr)\nelse:\n    print('fixture systemd-run refused unsupported operation',file=sys.stderr)\nsys.exit(97)\n`, { mode: 0o700 });
+  // J393: record the exact service-manager handoff, without a bus, gate child or browser. Never execute supplied argv.
+  fs.writeFileSync(P('bin/systemd-run'), `#!/usr/bin/env python3
+import sys,re,os,json
+a=sys.argv[1:]
+url='https://example.org/gateway-fixture'
+world=${JSON.stringify(rig.sandbox)}
+if os.environ.get('HOME')!=${JSON.stringify(P('home'))} or os.environ.get('XDG_CONFIG_HOME')!=${JSON.stringify(P('config'))} or not os.path.isfile(${JSON.stringify(P('.j376-owned'))}) or len(a)!=13 or a[:6]!=['--user','--wait','--pipe','--collect','--quiet','--property=KillMode=process'] or not re.fullmatch(${JSON.stringify('--unit=hyprpi-open-' + rig.sandbox + '-[0-9a-f]{8}')},a[6]) or a[7]!='--setenv=HYPRPI_G_AGENT_OPENER='+${JSON.stringify(opener)} or a[8:]!=['python3',${JSON.stringify(fileURLToPath(new URL('../../docker/world/g_open_url.py', import.meta.url)))},'--agent',url,world]:
+    print('fixture systemd-run refused unsupported operation',file=sys.stderr);sys.exit(97)
+with open(${JSON.stringify(effects)},'a') as f: f.write(json.dumps({'kind':'opener-request','args':a,'url':url,'sandbox':world,'ok':True})+'\\n')
+print('fixture manager accepted handoff; no actual service or browser')
+`, { mode: 0o700 });
   // sbx is NEVER called for real. The exact production handler still chooses the policy/mount operation.
   const sbx = P('fake-sbx.py');
   fs.writeFileSync(sbx, `#!/usr/bin/env python3
