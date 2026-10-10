@@ -8,6 +8,10 @@ The sandbox plans and security design are kept privately.
 > ⚠️ Not strong isolation: the container gets the main hyprpi socket, which can steer other agents.
 > Trusted workloads only for now.
 
+## The gateway as one thing
+
+The relay, the Doorman, its window, the per-job runner, the digests and the settings are installed, checked and configured with one command: `docker/doorman/doorman status|doctor|install|start|stop|config`. See [GATEWAY.md](GATEWAY.md) (the named parts, the commands, the host's levels file, every config file and its fate).
+
 ## Files
 
 - `Dockerfile.pi`: the `pi-sandbox` image. node:24-bookworm-slim + bash, git, ripgrep, procps, curl, wget,
