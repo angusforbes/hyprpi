@@ -231,12 +231,13 @@ function sendThought(text, images = []) {
 const T = () => `Thoughts-${room}`;
 function jotCommands() {
   return jotKinds().map((k) => ({
-    name: "/" + k.command, usage: `/${k.command} ${k.mode === "list" ? "[add ITEM | done ITEM | FOCUS]" : k.compose ? "[DIRECTION]" : "[@Title] TEXT"}`,
+    name: "/" + k.command, usage: `/${k.command} ${k.mode === "list" ? "[add ITEM | done ITEM | FOCUS]" : k.converse ? (k.needsProject ? "@project [NOTES]" : "TEXT") : k.compose ? "[DIRECTION]" : "[@Title] TEXT"}`,
     help: k.mode === "list" ? `${k.description} (agent windows only: it edits files)` : `${k.description} (pi-jot, in ${T()})`,
     run: (arg, text) => {
       // A list kind (/jot-todo) has the agent read and edit the todo notes: Thoughts has no file tools.
       if (k.mode === "list") { setBox(text); note = `✗ /${k.command}: needs file tools, so it works in an agent window, not ${T()}`; return render(); }
       if (!api) { setBox(text); note = "✗ daemon offline: not kept"; return render(); }
+      if (k.needsProject && !/^@\S/.test(String(arg || "").trim())) { setBox(text); note = `✗ /${k.command} needs a project: /${k.command} @project [notes]`; return render(); } // J398
       const what = jotWhat(k, arg, T());
       note = `📝 /${k.command}: ${what}…`; render();
       api.call("thoughts.jot", { room, text: `/${k.command}${arg ? " " + arg : ""}` })
