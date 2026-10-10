@@ -243,15 +243,19 @@ function plan() {
     if (hidden.length > MAX_HIDE) { skipped.push(`${hidden.length - MAX_HIDE} more gitignored paths not hidden (limit ${MAX_HIDE})`); hidden.length = MAX_HIDE; }
   }
   // J366: every shared project by name and mode, for the card ("all" = each folder in the project folders)
-  const roAt = (d) => { const cov = mounts.filter((m) => under(d, m.host)).sort((a, b) => b.host.length - a.host.length)[0]; return !cov || cov.ro; }; // the most specific mount decides
-  // what is really mounted under the project folders (not the mounts' labels): each project folder child a mount
-  // covers, plus mounts deeper than a child
+  // what is really mounted under the project folders (not the mounts' labels), judged by REAL paths (LevelReview: a
+  // share may alias a folder), shown at the path the sandbox sees: each project-folder child a mount covers, plus
+  // mounts deeper than a child, with the mode of the most specific covering mount
+  const rmounts = mounts.map((m) => ({ ...m, r: real(m.host) }));
+  const cover = (d) => rmounts.filter((m) => under(d, m.r)).sort((a, b) => b.r.length - a.r.length)[0];
   const projects = [], seen = new Set();
-  const put = (d, f) => { if (seen.has(d) || d === own) return; seen.add(d); projects.push({ name: d === f ? path.basename(f) : path.relative(f, d), path: d, mode: roAt(d) ? "ro" : "rw" }); };
-  const covered = (d) => mounts.some((m) => under(d, m.host));
+  const put = (d, f) => {
+    const c = cover(d); if (!c || seen.has(d) || d === real(own)) return; seen.add(d);
+    projects.push({ name: path.relative(f, d), path: path.join(c.at, path.relative(c.r, d)), mode: c.ro ? "ro" : "rw" });
+  };
   for (const f of pf) {
-    for (const d of subdirs(f)) if (covered(d)) put(d, f); else for (const m of mounts) if (under(m.host, d) && m.why !== "hidden") put(m.host, f);
-    for (const m of mounts) if (path.dirname(m.host) === f && path.basename(m.host).startsWith(".")) put(m.host, f); // (a listed dot-folder project)
+    for (const d of subdirs(f)) if (cover(d)) put(d, f); else for (const m of rmounts) if (under(m.r, d) && m.why !== "hidden") put(m.r, f);
+    for (const m of rmounts) if (path.dirname(m.r) === f && path.basename(m.r).startsWith(".")) put(m.r, f); // (a listed dot-folder project)
   }
   projects.sort((a, b) => a.name.localeCompare(b.name));
   return { sandbox, mounts, hidden, skipped, own, access, projects };
@@ -410,7 +414,8 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
 // --- watch: re-apply when the config or a project folder's contents change ---------------------------
 function fingerprint() {
   const { g, w } = config();
-  const parts = [fs.readFileSync(path.join(CFG, "config.json"), "utf8"), JSON.stringify(w)];
+  // (LevelReview) sbx-relay.json too: the Doorman's visibility decides the default level (J366)
+  const parts = [fs.readFileSync(path.join(CFG, "config.json"), "utf8"), JSON.stringify(w), JSON.stringify(readJson(path.join(CFG, "sbx-relay.json"), {}))];
   for (const f of (g.projectFolders || []).map(exp)) parts.push(subdirs(f).join("\n"));
   return crypto.createHash("sha256").update(parts.join("\0")).digest("hex");
 }
@@ -427,8 +432,9 @@ async function watch() {
 // only; open with "all": already shared), writes worlds/<world>.json atomically, and doesn't apply (the watcher, or
 // `shares.mjs apply WORLD`, does). → { ok, text }
 export function addProject(world, name, mode = "") {
-  if (!/^[a-z0-9-]{1,32}$/.test(String(world))) return { ok: false, text: "bad world name" };
-  if (!/^[\w.-]+$/.test(String(name)) || name === "." || name === "..") return { ok: false, text: `bad project name ${JSON.stringify(name)}` };
+  if (typeof world !== "string" || !/^[a-z0-9-]{1,32}$/.test(world)) return { ok: false, text: "bad world name" };
+  if (typeof mode !== "string") return { ok: false, text: `mode must be "rw" or "ro"` };
+  if (typeof name !== "string" || !/^[\w.-]+$/.test(name) || name === "." || name === "..") return { ok: false, text: `bad project name ${JSON.stringify(name)}` };
   if (!["", "rw", "ro"].includes(mode)) return { ok: false, text: `mode must be "rw" or "ro"` };
   const f = path.join(CFG, "worlds", `${world}.json`);
   let w; try { w = JSON.parse(fs.readFileSync(f, "utf8")); } catch { return { ok: false, text: `no readable ${f}` }; }

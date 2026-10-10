@@ -96,7 +96,8 @@ const alias = path.join(base, "protAlias"); fs.symlinkSync(path.join(work, "prot
 r = world({ access: "open", projects: [], shares: [{ path: alias, mode: "rw" }] }); assert.equal(r.mounts[alias], "ro");
 const parentAlias = path.join(base, "WorkAlias"); fs.symlinkSync(work, parentAlias);
 r = world({ access: "open", projects: [], shares: [{ path: parentAlias, mode: "rw" }] }); assert.equal(r.mounts[path.join(parentAlias, "prot-x")], "ro", "overlay at the alias's place");
-ok("an alias of a protected project is ro; an alias of its parent gets the ro overlay");
+assert.match(r.out, /projects \(\d+\): alpha rw, beta rw, gamma rw, prot-x ro/, "the card lists what an alias share really gives");
+ok("an alias of a protected project is ro; an alias of its parent gets the ro overlay and the card lists its projects");
 // addProject (OpenRoute's share_project): within the level, atomically, never wider
 process.env.XDG_CONFIG_HOME = cfg; process.env.XDG_STATE_HOME = st;
 const { addProject } = await import("../docker/world/shares.mjs");
@@ -105,7 +106,7 @@ world({ access: "safe", projects: ["alpha"] });
 let a = addProject("world-t", "beta", "rw"); assert.ok(a.ok, a.text); assert.deepEqual(wj().projects, ["alpha", "beta:rw"]);
 a = addProject("world-t", "beta"); assert.ok(a.ok); assert.deepEqual(wj().projects, ["alpha", "beta:ro"], "re-adding replaces, ro by default at safe");
 assert.equal(addProject("world-t", "nope").ok, false); assert.equal(addProject("world-t", "../x").ok, false); assert.equal(addProject("world-t", "linky").ok, false, "no symlinked project");
-assert.equal(addProject("World T", "alpha").ok, false); assert.equal(addProject("world-t", "alpha", "write").ok, false);
+assert.equal(addProject("World T", "alpha").ok, false); assert.equal(addProject("world-t", 7).ok, false); assert.equal(addProject("world-t", ["alpha"]).ok, false); assert.equal(addProject("world-t", "alpha", 1).ok, false); assert.equal(addProject("world-t", "alpha", "write").ok, false);
 world({ access: "strict", projects: [] });
 a = addProject("world-t", "alpha", "rw"); assert.equal(a.ok, false); assert.match(a.text, /strict level/, "never wider than the level");
 assert.ok(addProject("world-t", "alpha", "ro").ok); assert.deepEqual(wj().projects, ["alpha:ro"]);
