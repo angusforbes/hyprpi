@@ -15,7 +15,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [--here] [--no-focus] [-- PI_ARGS...]
                               open a Pi agent in its own terminal window (SUPER+A);
                               starts in the focused terminal's/agent's folder unless --cwd
-  hyprpi room [ROOM] [--toggle]  show (or toggle) the room widget; no ROOM = current world, following it
+  hyprpi room [ROOM] [--toggle]  --toggle: jump to the current world's agents panel, or open it here (the bar's click); with ROOM: the retired room widget
   hyprpi search [ROOM] [--toggle]  open the search window for a room (default: current world)
   hyprpi find [--room R] [--ai] QUERY  search from the terminal (keyword, or AI with --ai)
   hyprpi list [--json]        live agents and rooms
@@ -33,7 +33,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
                               (compacts first; frees memory, picks up the current pi); --wait prints before/after
   hyprpi mcp-gateway [install|status]   the MCP gateway (mcp-gateway/): install writes + starts its systemd --user unit
   hyprpi remote [install|status]   the phone app (remote-control/): the same for its unit
-  hyprpi integration [status|install|uninstall] [NAME…]   hyprpi's home-folder wiring, piece by piece (hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy; "recommended")
+  hyprpi integration [status|install|uninstall] [NAME…]   hyprpi's home-folder wiring, piece by piece (hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy, pi, pi-packages; "recommended" or "all")
   hyprpi finder [--list]      find an agent or project (the Omarchy menu; the finder add-on, SUPER+SHIFT+SPACE)
   hyprpi move AGENT... --to WS|WORLD   move agents' windows (focus stays); a world letter keeps
                               each one's slot (C4 -> F4). --room C moves every live agent in C
@@ -43,7 +43,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi whoami               this agent (inside a hyprpi agent)
   hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
   hyprpi status [FOCUS] [--world X] [--self] [--json]   the /status facts: running jobs, recently done, waiting on
-                              Angus, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
+                              you, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
   hyprpi daemon restart [--reason R] [--ttl MIN]   restart the daemon once everyone is idle (returns at once; never poll for idle) · --status · --cancel

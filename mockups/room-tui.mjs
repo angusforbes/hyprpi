@@ -7,7 +7,7 @@
 // with its project when known. Ctrl+F cycles the views: full text → compact (one line each) →
 // topics (topic changes only, drawn as before the Stream: the agent's name, its topics under it; no times) →
 // all activity (J147: full text plus upkeep, Thoughts' automatic notices, ✓ / ×, board bookkeeping).
-// Filters (combinable): /stream @Blink @Sankey @hyprpi (a union of agents and projects) · 3h ·
+// Filters (combinable): /stream @Atlas @Forge @hyprpi (a union of agents and projects) · 3h ·
 // today · since 9am · words (narrow) · raw (also tool lines); the header shows it, Esc or /stream clears.
 //
 //   ~/Work/hyprpi/mockups/room-tui [ROOM]   (kitty launcher with the mouse settings)
@@ -49,7 +49,7 @@ const helpRows = () => {
     ...list.map(([c, d]) => `   ${bold(c.padEnd(w))}  ${d}`),
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
-    `   ${bold("/stream FILTER".padEnd(w))}  ${dim("@Blink @Sankey @hyprpi (agents or projects, any of them) · 3h · today · since 9am · words (all of them) · raw (tool lines too); combinable")}`,
+    `   ${bold("/stream FILTER".padEnd(w))}  ${dim("@Atlas @Forge @hyprpi (agents or projects, any of them) · 3h · today · since 9am · words (all of them) · raw (tool lines too); combinable")}`,
     `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F cycles full → compact → topics → all activity")}`,
     `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
