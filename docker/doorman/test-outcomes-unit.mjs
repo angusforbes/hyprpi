@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { kindAction } from "../research/mode.mjs";
 
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j395-"));
 const src = fs.readFileSync(new URL("../sbx-relay.mjs", import.meta.url), "utf8");
@@ -21,8 +22,11 @@ const clean = (s) => String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-
 const ctx = { fs, path, PENDING, DECISIONS, STATE: T, GPUDIR: path.join(T, "gpu"), RESEARCH: "r.mjs", LIMITS: { pendingTtlMs: 24 * 3600e3, pendingPerSandbox: 20 }, process, Buffer, Date, JSON, Map, Set, String, Array, Number, Object, Math, RegExp, Promise, console,
   log: (o) => logs.push(o), heldNote: (sb, msg, via, what, outcome) => notes.push({ what, outcome }), inboxWrite: (sb, o) => inbox.push({ to: sb.name, ...o }), closeNotif() {}, clean,
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: () => ({ on() { return this; } }), textMeta: () => ({}), now: () => new Date().toISOString(), watchReply() {}, replyNote() {},
-  ownerNote: (t) => ({ ok: true, text: String(t) }), returnable: () => false, senderLabel: () => "", returnKey: () => "", researchLog() {}, logTurn() {}, REQ_TYPES: { note_to_owner: "note to the owner" } };
-const R = vm.runInNewContext(`${fnAsker}\n(class R { constructor() { this.draftAnswers = new Map(); } ${method("tellOutcome", "  // J368: what the typed-request")}\n${method("async decide", "  // J370 (Angus: \"shouldn't another option")}\n${method("sweepPending", "  async run()")}\n jobRecord(id, p) { this.jobs = { ...(this.jobs || {}), [id]: p }; } breakerNote() {} agentFree() { return false; } })`, ctx);
+  ownerNote: (t) => ({ ok: true, text: String(t) }), returnable: () => false, senderLabel: () => "", returnKey: () => "", researchLog() {}, logTurn() {}, REQ_TYPES: { note_to_owner: "note to the owner" },
+  kindAction, researchConf: () => ({ mode: MODE.now }), notifyHeld: () => null, REVIEW_CMD: ["node", "relay", "review"],
+  newHostJob: (o) => ({ ...o, state: "waiting", history: [{ ev: "created" }] }) };
+const MODE = { now: "safe" }; // J412: the dial the test relay sees
+const R = vm.runInNewContext(`${fnAsker}\n(class R { constructor() { } ${between("  // J412 (spec 1.5): which request kind", "  hold(sb, msg) {")}\n${method("tellOutcome", "  // J368: what the typed-request")}\n${method("async decide", "  // J370 (Angus: \"shouldn't another option")}\n${method("sweepPending", "  async run()")}\n jobRecord(id, p) { this.jobs = { ...(this.jobs || {}), [id]: p }; } breakerNote() {} agentFree() { return false; } })`, ctx);
 const S = vm.runInNewContext(`${fnAsker}\n(class S { constructor(n, df, relay) { this.name = n; this.doormanFor = df; this.relay = relay; this.delivered = new Map(); this.reportsTo = "Thoughts-B"; }\n${method("boundAsker", "  async handle(")}\n${method("onEvent", "  rateOk(")}\n doormanHears() { return true; } })`, ctx);
 const askerOf = vm.runInNewContext(`${fnAsker}\naskerOfDelivered`, ctx);
 const relay = new R(), world = new S("world-t", "", relay), door = new S("doorman-t", "world-t", relay);
@@ -41,27 +45,31 @@ door.onEvent("talk", { request_id: "rq-2", mode: "talk", from: { name: "Thoughts
 assert.equal(door.boundAsker({ about: "rq-2", for: "Beta" }).asker, "", "an unsigned message is bound to nobody, never to the model's 'for'");
 ok("a draft is bound to the asker of the message being answered (about), also after the reply; an unsigned message to nobody; never the model's 'for'");
 
-// #2: approve: what actually happened goes to the asker; an answer to it comes straight back to the asker
+// #2 (J412, spec 4): an approved draft is ALWAYS a bridge job, never a message to Thoughts-A; with nobody registered it is not done, and the asker hears why
 const put = (rec) => fs.writeFileSync(path.join(PENDING, rec.id + ".json"), JSON.stringify(rec));
 const decide = (id, verdict, note) => { fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "terminal" + (note ? `\nnote:${Buffer.from(note).toString("base64")}` : "")); return relay.decide(`${id}.${verdict}`); };
-const draft = (id) => ({ id, sandbox: "doorman-t", mode: "talk", draft: true, draftFor: "Alpha", draftAction: "share proj", to: ["Thoughts-B"], targets: [{ kind: "thoughts", id: "Thoughts-B" }], shown: ["Thoughts-B"], text: "x", body: "x" });
-door.conn = { call: async () => ({ delivered: ["Thoughts-B"], skipped: [], request_id: "host-rq-9" }) };
+const draft = (id) => ({ id, sandbox: "doorman-t", mode: "talk", draft: true, draftFor: "Alpha", draftAction: "share proj", to: ["the host-agent bridge"], targets: [], shown: ["world-t (free-form request for a host agent)"], text: "x", body: "x" });
+let talks = 0; door.conn = { call: async () => { talks++; return { delivered: ["Thoughts-B"], skipped: [], request_id: "host-rq-9" }; } };
+relay.bridge = { mode: () => ({ mode: "host agent available", agents: ["Builder"] }) };
 put(draft("doorman-t--a00001")); await decide("doorman-t--a00001", "approve");
-assert.match(toAsker("Alpha").at(-1), /approved the request drafted for you \(doorman-t--a00001\); it went to Thoughts-B/); assert.equal(toAsker("Beta").length, 0);
-door.onEvent("talk.reply", { request_id: "host-rq-9", from: { name: "Thoughts-B" }, text: "Done: proj is shared read-only." });
-assert.match(toAsker("Alpha").at(-1), /Thoughts-B answered the request drafted for you \(doorman-t--a00001\): Done: proj is shared/);
-assert.ok(!inbox.some((m) => m.to === "doorman-t" && m.type === "reply"), "the answer is not given to the Doorman (it couldn't route it)");
-ok("an approved draft: the asker hears where it went, and the host agent's answer comes straight to the asker, not the Doorman");
-door.conn = { call: async () => ({ delivered: [], skipped: [{ name: "Thoughts-B", reason: "not running" }] }) };
+assert.equal(talks, 0, "no Thoughts-A (or any host agent) message for a draft"); assert.equal(relay.jobs["doorman-t--a00001"].state, "waiting");
+assert.match(toAsker("Alpha").at(-1), /approved the request \(doorman-t--a00001\); a host agent will take it/); assert.equal(toAsker("Beta").length, 0);
+ok("an approved draft becomes a bridge job (waiting), no message goes to Thoughts-A, and the asker hears it's waiting for a host agent");
+relay.bridge = { mode: () => ({ mode: "agent-free", agents: [] }) };
 put(draft("doorman-t--a00002")); await decide("doorman-t--a00002", "approve");
-assert.match(toAsker("Alpha").at(-1), /\(doorman-t--a00002\), but it reached nobody \(skipped: Thoughts-B\); nothing was sent/);
-door.conn = { call: async () => { throw new Error("daemon gone"); } };
-put(draft("doorman-t--a00003")); await decide("doorman-t--a00003", "approve");
-assert.match(toAsker("Alpha").at(-1), /\(doorman-t--a00003\), but the relay couldn't send it, so nothing was sent/);
-ok("an approval that reached nobody, or couldn't be sent, is told as such (never 'it went to …')");
+assert.equal(talks, 0); assert.equal(relay.jobs["doorman-t--a00002"], undefined);
+assert.match(toAsker("Alpha").at(-1), /\(doorman-t--a00002\) wasn't done: no host agent is registered now/);
+relay.bridge = null; put(draft("doorman-t--a00003")); await decide("doorman-t--a00003", "approve");
+assert.match(toAsker("Alpha").at(-1), /\(doorman-t--a00003\) wasn't done: no host agent/);
+ok("approved while nobody is registered (or no bridge at all): nothing is done and the asker is told why");
+relay.bridge = { mode: () => ({ mode: "host agent available", agents: ["Builder"] }) };
 put(draft("doorman-t--a00004")); await decide("doorman-t--a00004", "deny", "not on this laptop");
 assert.match(toAsker("Alpha").at(-1), /denied the request drafted for you \(doorman-t--a00004\)\. His reason \(note from Angus\): not on this laptop/);
 ok("a denial reaches the asker with Angus's reason");
+MODE.now = "strict"; put(draft("doorman-t--a00005")); await decide("doorman-t--a00005", "approve");
+assert.equal(relay.jobs["doorman-t--a00005"], undefined); assert.match(toAsker("Alpha").at(-1), /\(doorman-t--a00005\)\. His reason \(note from Angus\): mode strict doesn't allow free-form requests/);
+MODE.now = "safe";
+ok("a draft held before the mode became strict is denied on approval, with the mode's reason");
 
 // #3: an expired draft, task change, typed request or GPU lease: the asker hears so
 const old = (rec) => { put(rec); const f = path.join(PENDING, rec.id + ".json"), t = new Date(Date.now() - 25 * 3600e3); fs.utimesSync(f, t, t); };

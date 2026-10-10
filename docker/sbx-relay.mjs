@@ -61,6 +61,7 @@ const CONFIG = path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config
 const STATE = path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "hyprpi", "sbx-relay");
 const PENDING = path.join(STATE, "pending");
 const DECISIONS = path.join(STATE, "decisions");
+const REVIEW_CMD = [process.execPath, fileURLToPath(import.meta.url), "review"]; // J412: the review command a toast's Review runs (+ the id)
 const LOG = path.join(STATE, "log.jsonl");
 const REVIEWS = path.join(STATE, "reviews");   // J274: a Review click asks that world's Thoughts panel to take it
 const AUTO = path.join(STATE, "auto.jsonl");   // J274: messages a rule let through, for the receiving room panel
@@ -1013,9 +1014,9 @@ class Relay {
         if (isAuto && pol !== "auto") {
           try { const rec = JSON.parse(fs.readFileSync(pf, "utf8")); delete rec.auto; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* */ }
           log({ sb: sb0.name, op: "decision", id, kind, note: `the mode changed before it ran; held for Angus instead (${pol})` });
-          if (pol === "refused") { verdict = "deny"; note = this.refusalFor(sb0, kind); }
-          else { const notif = notifyHeld(sb0, msg, [process.execPath, fileURLToPath(import.meta.url), "review", id]); if (notif) { try { const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* */ } } return; }
-        } else if (/^(approve|allow-)/.test(verdict) && pol === "refused") { verdict = "deny"; note = this.refusalFor(sb0, kind); }
+          if (pol === "refused") { verdict = "deny"; note = `(the dial, not typed by Angus) ${this.refusalFor(sb0, kind)}`; }
+          else { const notif = notifyHeld(sb0, msg, [...REVIEW_CMD, id]); if (notif) { try { const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* */ } } return; }
+        } else if (/^(approve|allow-)/.test(verdict) && pol === "refused") { verdict = "deny"; note = `(the dial, not typed by Angus) ${this.refusalFor(sb0, kind)}`; }
         if (isAuto && verdict !== "deny") log({ sb: sb0.name, op: "auto", kind, reviewed: false, auto: msg.auto.mode, via, id }); // (Doorview's digest reads this one line)
       }
     }
