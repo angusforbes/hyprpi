@@ -123,7 +123,7 @@ try {
   }
   // a transient model error: pi retries the SAME turn; what the retry drafts is still tied to the asker, the asker gets one real answer (no early "couldn't answer"), and pi isn't ended mid-retry
   ask("world-g", "Alpha", "rid-flaky", "please TOOL:hyprpi_draft_request FLAKY-1");
-  await waitFor(() => replies.some((r) => r.request_id === "rid-flaky"), 60000, "answer after a retry");
+  await waitFor(() => replies.some((r) => r.request_id === "rid-flaky") && ops.some((o) => o.op === "draft" && o.about === "rid-flaky"), 60000, "the retry's draft and the answer");
   await sleep(1500);
   ok(ops.some((o) => o.op === "draft" && o.about === "rid-flaky") && replies.filter((r) => r.request_id === "rid-flaky").length === 1 && !/couldn't answer/.test(replies.find((r) => r.request_id === "rid-flaky")?.text || "") && flaked.size === 1 && ctl.exitCode === null, "after a transient error and pi's retry, the draft still names its message (about), the asker gets one real answer (no early 'couldn't answer'), and pi keeps running");
   // W3: a receipt for a task change drafted while answering Alpha comes back with Alpha's next message, not Beta's
