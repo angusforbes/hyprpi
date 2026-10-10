@@ -70,7 +70,32 @@ def _unquote(line):
 
 
 def _inner(line):
-    return re.sub(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+", "", _unquote(line))
+    # containers may nest in any order: strip quote and list markers repeatedly until none is left (bounded)
+    for _ in range(40):
+        n = re.sub(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)", "", re.sub(r"^[ \t]*>[ \t]?", "", line, count=1), count=1)
+        if n == line:
+            break
+        line = n
+    return line
+
+
+def html_code(t):
+    # same as research.mjs htmlCode: a linear tag scan with a depth count; outermost open to its matching close (or the end) -> [code omitted]
+    depth, start, cur, res = 0, 0, 0, []
+    for m in re.finditer(r"<(/?)(pre|code|samp|kbd|script|style)\b[^>]*>", t, flags=re.I):
+        if not m.group(1):
+            if depth == 0:
+                start = m.start()
+            depth += 1
+        elif depth > 0:
+            depth -= 1
+            if depth == 0:
+                res.append(t[cur:start]); res.append("[code omitted]"); cur = m.end()
+    if depth > 0:
+        res.append(t[cur:start]); res.append("[code omitted]")
+    else:
+        res.append(t[cur:])
+    return "".join(res)
 
 
 def strip_code(s):
@@ -80,7 +105,7 @@ def strip_code(s):
     s = re.sub(r"\r\n?", "\n", s)
     s = re.sub(r"[\u0080-\u009f]", "", s)
     s = re.sub(r"[\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\f\v]", " ", s)
-    s = re.sub(r"<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:</\1[ \t]*>|$)", "[code omitted]", s, flags=re.I)
+    s = html_code(s)
     out, fence, prev_blank, in_ind = [], None, True, False
     for line in s.split("\n"):
         c, q = _inner(line), _unquote(line)

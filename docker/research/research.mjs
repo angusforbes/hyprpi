@@ -340,11 +340,13 @@ export function cleanSources(list) {
 export function stripCode(text) {
   // normalised first, the same way as reader.py: CR/LF, C1 controls out, Unicode spaces to plain spaces; capped so parsing stays fast
   const t0 = String(text ?? "").slice(0, 200000).replace(/\r\n?/g, "\n").replace(/[\u0080-\u009f]/g, "").replace(/[\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\f\v]/g, " ")
-    .replace(/<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:<\/\1[ \t]*>|$)/gi, "[code omitted]"); // HTML code elements (an unclosed one runs to the end)
+  ; const t1 = htmlCode(t0); // HTML code elements, nested ones too (an unclosed one runs to the end)
   // A line's content after any blockquote markers ("> > ") and list markers ("- ", "1. "): a fence or code block inside a quote or a list counts too.
-  const unquote = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, ""), inner = (l) => unquote(l).replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
+  // Containers may nest in any order ("- > - ~~~"): strip quote and list markers repeatedly until none is left (bounded).
+  const unquote = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, "");
+  const inner = (l) => { for (let k = 0; k < 40; k++) { const n = l.replace(/^[ \t]*>[ \t]?/, "").replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/, ""); if (n === l) break; l = n; } return l; };
   const out = []; let fence = null, prevBlank = true, inInd = false;
-  for (const line of t0.split("\n")) {
+  for (const line of t1.split("\n")) {
     const c = inner(line), q = unquote(line);
     if (fence) { const m = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null; continue; }
     const f = /^[ \t]*(`{3,}|~{3,})/.exec(c);
@@ -354,6 +356,16 @@ export function stripCode(text) {
     inInd = false; prevBlank = false; out.push(line);
   }
   return inlineCode(out.join("\n")).replace(/`/g, "");
+}
+// HTML code-like elements (pre, code, samp, kbd, script, style) by a linear tag scan with a depth count, so a nested element can't end the
+// outer one early; everything from the outermost open tag to its matching close (or the end) becomes "[code omitted]".
+export function htmlCode(t) {
+  const re = /<(\/?)(pre|code|samp|kbd|script|style)\b[^>]*>/gi; let depth = 0, start = 0, cur = 0, res = "", m;
+  while ((m = re.exec(t))) {
+    if (!m[1]) { if (depth++ === 0) start = m.index; }
+    else if (depth > 0 && --depth === 0) { res += t.slice(cur, start) + "[code omitted]"; cur = re.lastIndex; }
+  }
+  return depth > 0 ? res + t.slice(cur, start) + "[code omitted]" : res + t.slice(cur);
 }
 // Inline code spans by a linear scan (no backtracking regex, GapReview): a run of N backticks opens a span that the next run of exactly N backticks
 // in the same paragraph (no blank line between) closes; the whole span becomes "[code]". An unmatched run is left (its backticks are dropped later).
