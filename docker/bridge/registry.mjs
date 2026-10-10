@@ -19,12 +19,16 @@ const WORD_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._:@-]{0,59}$/u;
 
 export const empty = () => ({ agents: {} });
 // a registration that is still alive (heartbeat within TTL_S)
+// (RegReview) a registration's full shape: anything else is dropped as malformed, never live
+export const wellFormed = (k, a) => /^[0-9a-f]{64}$/.test(String(k)) && !!a && typeof a === "object" && !Array.isArray(a) && WORD_RE.test(String(a.name)) && WORD_RE.test(String(a.harness))
+  && typeof a.caps === "string" && Array.isArray(a.scope) && a.scope.length <= 10 && a.scope.every((x) => SB_RE.test(String(x))) && Number.isFinite(Date.parse(a.since)) && Number.isFinite(Date.parse(a.last)) && typeof a.on_demand === "boolean";
+export const sanitize = (reg) => ({ agents: Object.fromEntries(Object.entries(reg && typeof reg.agents === "object" && reg.agents && !Array.isArray(reg.agents) ? reg.agents : {}).filter(([k, a]) => wellFormed(k, a))) });
 export const isLive = (a, nowMs = Date.now()) => !!a && typeof a === "object" && typeof a.name === "string" && nowMs - Date.parse(a.last) < TTL_S * 1000; // (a malformed entry is never live)
-export function lookup(reg, token, nowMs = Date.now()) { const a = token ? reg?.agents?.[hash(token)] : null; return a && isLive(a, nowMs) ? a : null; }
+export function lookup(reg, token, nowMs = Date.now()) { const a = token ? sanitize(reg).agents[hash(token)] : null; return a && isLive(a, nowMs) ? a : null; }
 
 // The live agents that serve a sandbox (no scope = all), oldest first: what the relay shows on a held item and the card.
 export function liveFor(reg, sandbox, nowMs = Date.now()) {
-  return Object.values(reg?.agents || {}).filter((a) => isLive(a, nowMs) && (!a.scope?.length || a.scope.includes(sandbox)))
+  return Object.values(sanitize(reg).agents).filter((a) => isLive(a, nowMs) && (!a.scope?.length || a.scope.includes(sandbox)))
     .sort((x, y) => String(x.since).localeCompare(String(y.since)));
 }
 export const label = (a) => `${a.name} (${a.harness}${a.on_demand ? ", on demand" : ""})`;
@@ -32,7 +36,7 @@ export const label = (a) => `${a.name} (${a.harness}${a.on_demand ? ", on demand
 // Drop expired registrations. → { reg, removed: [names] }
 export function prune(reg, nowMs = Date.now()) {
   const agents = {}, removed = [];
-  for (const [k, a] of Object.entries(reg?.agents || {})) (isLive(a, nowMs) ? (agents[k] = a) : removed.push(a.name));
+  for (const [k, a] of Object.entries(sanitize(reg).agents)) (isLive(a, nowMs) ? (agents[k] = a) : removed.push(a.name));
   return { reg: { agents }, removed };
 }
 

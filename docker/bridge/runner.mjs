@@ -16,7 +16,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
-import { list, show, claim, release, report, register, unregister, stateDir } from "./client.mjs";
+import { list, show, claim, release, report, register, heartbeat, unregister, stateDir } from "./client.mjs";
 import { validId } from "./core.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), CLI = path.join(HERE, "doorman-bridge");
@@ -59,9 +59,10 @@ export async function runJob(id) {
   if (!validId(id)) return { ok: false, text: "bad job id" };
   const by = `runner:${id}`.slice(0, 60);
   // J407: the per-job runner registers as an on-demand host agent for this run only (a claim needs a live registration), and unregisters after
-  const reg = await register({ name: by, harness: `per-job runner (${path.basename(agentCmd()[0])})`, caps: "one fresh agent run for one approved job", onDemand: true });
+  const reg = await register({ name: by, harness: `per-job runner ${path.basename(agentCmd()[0]).replace(/[^A-Za-z0-9._-]/g, "")}`.trim(), caps: "one fresh agent run for one approved job", onDemand: true });
   if (!reg.ok) { log({ id, ev: "not registered", text: reg.text }); return reg; }
-  try { return await runRegistered(id, by, reg.agent_token); } finally { await unregister(reg.agent_token).catch(() => {}); }
+  const hb = setInterval(() => { heartbeat(reg.agent_token).catch(() => {}); }, 30000); // (RegReview) alive for the whole run
+  try { return await runRegistered(id, by, reg.agent_token); } finally { clearInterval(hb); await unregister(reg.agent_token).catch(() => {}); }
 }
 async function runRegistered(id, by, agentToken) {
   const pre = show(id);
@@ -134,10 +135,15 @@ function redispatchLater(id) {
 
 // the systemd path unit that runs dispatch when a job record changes (installed only by the owner)
 // J407: the runner is installed for THIS state (its path unit watches this state's job records): it counts as an on-demand host agent
+const runnerActive = { at: 0, v: false };
 export function runnerInstalled() {
   // (RegReview) the path unit's own PathChanged= line must name this state's requests folder, and its service must exist
   try { const d = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user"), u = fs.readFileSync(path.join(d, "doorman-bridge-runner.path"), "utf8");
-    return u.split("\n").some((l) => l.trim() === `PathChanged=${path.join(stateDir(), "requests").replace(/%/g, "%%")}`) && fs.existsSync(path.join(d, "doorman-bridge-runner.service")); } catch { return false; }
+    if (!u.split("\n").some((l) => l.trim() === `PathChanged=${path.join(stateDir(), "requests").replace(/%/g, "%%")}`) || !fs.existsSync(path.join(d, "doorman-bridge-runner.service"))) return false;
+    if (process.env.DOORMAN_RUNNER_ASSUME_ACTIVE === "1") return true; // (tests only)
+    const now = Date.now(); if (runnerActive.at && now - runnerActive.at < 30000) return runnerActive.v;
+    const r = spawnSync("systemctl", ["--user", "is-active", "doorman-bridge-runner.path"], { encoding: "utf8", timeout: 3000 }); // (RegReview) installed AND active, else not available (fail closed)
+    runnerActive.at = now; runnerActive.v = r.status === 0 && String(r.stdout).trim() === "active"; return runnerActive.v; } catch { return false; }
 }
 export function runnerUnits(action) {
   const dir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user"), name = "doorman-bridge-runner";

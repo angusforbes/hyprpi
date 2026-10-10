@@ -23,15 +23,15 @@ assert.ok(R.isLive({ name: "x", last: new Date(t0).toISOString() }, t0) && !R.is
 console.log("ok registry rules");
 // the relay side: a malformed registry doesn't crash it and reads as agent-free
 const st = fs.mkdtempSync(path.join(os.tmpdir(), "j407r-")); fs.mkdirSync(path.join(st, "bridge"), { recursive: true });
-fs.writeFileSync(path.join(st, "bridge", "agents.json"), JSON.stringify({ agents: { broken: null, n: 5, x: { name: "Live", harness: "h", last: new Date().toISOString(), since: new Date().toISOString(), scope: [] } } }));
+fs.writeFileSync(path.join(st, "bridge", "agents.json"), JSON.stringify({ agents: { broken: null, n: 5, ["a".repeat(64)]: { name: "Live", harness: "h", caps: "", on_demand: false, last: new Date().toISOString(), since: new Date().toISOString(), scope: [] }, ["b".repeat(64)]: { name: "x", harness: "h", caps: "", on_demand: false, last: new Date().toISOString(), since: new Date().toISOString(), scope: { length: 1 } } } }));
 const { startBridge } = await import("../docker/bridge/relay-bridge.mjs");
 const b = startBridge({ stateDir: st, log: () => {}, jobRecord: () => {}, tellOutcome: () => {}, holdQuestion: () => null, sandboxes: () => ["w"] });
-assert.equal(b.mode("w").mode, "host agent available"); fs.writeFileSync(path.join(st, "bridge", "agents.json"), "{corrupt"); assert.equal(b.mode("w").mode, "agent-free", "corrupt: agent-free (fail closed)");
+assert.deepEqual(b.mode("w").agents, ["Live (h)"], "only the well-formed entry counts (a bad scope shape is dropped, no throw)"); fs.writeFileSync(path.join(st, "bridge", "agents.json"), "{corrupt"); assert.equal(b.mode("w").mode, "agent-free", "corrupt: agent-free (fail closed)");
 b.stop(); fs.rmSync(st, { recursive: true, force: true });
 console.log("ok a bad registry reads as agent-free, no crash");
 // runnerInstalled: only a real PathChanged= line for this state, with its service
 const cfg = fs.mkdtempSync(path.join(os.tmpdir(), "j407c-")), d = path.join(cfg, "systemd", "user"); fs.mkdirSync(d, { recursive: true });
-process.env.XDG_CONFIG_HOME = cfg; process.env.DOORMAN_STATE = "/tmp/j407-state";
+process.env.XDG_CONFIG_HOME = cfg; process.env.DOORMAN_STATE = "/tmp/j407-state"; process.env.DOORMAN_RUNNER_ASSUME_ACTIVE = "1";
 const { runnerInstalled } = await import("../docker/bridge/runner.mjs");
 fs.writeFileSync(path.join(d, "doorman-bridge-runner.path"), "[Path]\n# PathChanged=/tmp/j407-state/requests\nPathChanged=/elsewhere\n"); fs.writeFileSync(path.join(d, "doorman-bridge-runner.service"), "x");
 assert.equal(runnerInstalled(), false, "a comment naming the folder doesn't count");

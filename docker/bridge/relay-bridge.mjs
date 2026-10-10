@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { apply, sweep, answer as answerRule, validId } from "./core.mjs";
-import { REG_OPS, applyReg, lookup, prune, modeFor, empty as emptyReg } from "./registry.mjs"; // J407: host-agent registration
+import { REG_OPS, applyReg, lookup, prune, modeFor, sanitize, empty as emptyReg } from "./registry.mjs"; // J407: host-agent registration
 
 const RID_RE = /^[0-9a-f]{24}\.json$/, MAX_REQ = 16384;
 
@@ -16,7 +16,7 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
   const IN = path.join(stateDir, "bridge", "in"), OUT = path.join(stateDir, "bridge", "out"), REQ = path.join(stateDir, "requests");
   const AGENTS = path.join(stateDir, "bridge", "agents.json"), MODE = path.join(stateDir, "bridge", "mode.json");
   // (RegReview) a missing, corrupt or malformed registry reads as nobody registered (agent-free: the fail-closed direction); bad entries are dropped
-  const readReg = () => { try { const r = JSON.parse(fs.readFileSync(AGENTS, "utf8")); if (!r || typeof r.agents !== "object" || r.agents === null || Array.isArray(r.agents)) return emptyReg(); return { agents: Object.fromEntries(Object.entries(r.agents).filter(([, a]) => a && typeof a === "object" && typeof a.name === "string")) }; } catch { return emptyReg(); } };
+  const readReg = () => { try { return sanitize(JSON.parse(fs.readFileSync(AGENTS, "utf8"))); } catch { return emptyReg(); } };
   const writeAtomic = (f, v) => { fs.writeFileSync(f + ".tmp", JSON.stringify(v, null, 1), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); };
   let lastMode = ""; try { lastMode = JSON.stringify(JSON.parse(fs.readFileSync(MODE, "utf8")).sandboxes || {}); } catch { /* none yet */ }
   const refreshMode = () => { // the mode per sandbox, written for the card (mode.json, readable by the card writer) and told on change
