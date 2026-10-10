@@ -148,7 +148,7 @@ The relay (`op: "research"`) then holds the finished deliverable as one message 
 - Searches must be plain text (no markup or links) in every mode (J352 review): any plan may end up in front of Angus.
 - Limits: 10 quick and 3 deep requests an hour, 2 running at once, 1000 bytes per request.
 - `node docker/research/research.mjs digest [--send]` sums up the last hour for the reporting Thoughts.
-  - The hourly timer is a transient systemd user unit (gone after a reboot or logout): `docker/research/digest-timer.sh` installs it from this checkout (`stop` removes it).
+  - The hourly timer is a permanent systemd user unit pair (~/.config/systemd/user, enabled): `docker/research/digest-timer.sh` installs it from this checkout (re-run after moving the checkout or changing node); `stop` removes it.
 - Tests: `node docker/research/test-research.mjs`.
 
 
