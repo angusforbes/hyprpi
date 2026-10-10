@@ -233,7 +233,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "board" && data?.room === room) loadBoard();
-        else if (ev === "board.open" && data?.room === room && data.project) openCard(data.project);
+        else if (ev === "board.open" && data?.room === room && data.project) openCard(data.project, data.item);
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
     });
@@ -242,11 +242,22 @@ async function start() {
     await loadBoard();
     // Opened by ⏎ on a project row in the agents panel: that card (asked just before we started).
     const req = await api.call("board.open", { room }).catch(() => null);
-    if (req?.project) openCard(req.project);
+    if (req?.project) openCard(req.project, req.item);
   } catch { online = false; render(); setTimeout(start, 1500); }
 }
-// The agents panel's ⏎ on a project row (daemon board.open): show that card.
-function openCard(id) { bv.focus(id); note = ""; loadBoard(); }
+// The agents panel's ⏎ on a project row (daemon board.open): show that card. With an item (a click on a
+// job id like J402 in the Thoughts thread): the cursor on that item, scrolled near the top, archived
+// items shown if it is one of them.
+async function openCard(id, item = "") {
+  bv.focus(id); note = "";
+  if (item) { bv.st.cur = `it:${id}:${item}`; bv.st.moved = "jump"; }
+  await loadBoard();
+  if (!item) return;
+  const it = board?.projects?.find((p) => p.id === id)?.items?.find((x) => x.h === item);
+  if (it?.archived && !bv.st.archOpen.has(id)) { bv.st.archOpen.add(id); bv.st.moved = "jump"; }
+  note = it ? "" : `${item} is no longer on this card`;
+  render();
+}
 function cycle(dir) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
