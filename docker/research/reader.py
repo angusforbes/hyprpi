@@ -65,26 +65,35 @@ def call(key, model, system, user, max_tokens, timeout):
         out({"ok": False, "error": f"{model}: no answer"})
 
 
+def _inner(line):
+    return re.sub(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+", "", re.sub(r"^(?:[ \t]*>)+[ \t]?", "", line))
+
+
 def strip_code(s):
-    # J378: same rules as research.mjs stripCode: ``` and ~~~ fences (unclosed runs to the end), indented code blocks, inline code spans
+    # J378: same rules as research.mjs stripCode: HTML code elements, ``` and ~~~ fences (also inside quotes and lists; unclosed runs to the end),
+    # indented code blocks, inline code spans (also across lines within a paragraph)
+    s = re.sub(r"\r\n?", "\n", s)
+    s = re.sub(r"<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:</\1\s*>|$)", "[code omitted]", s, flags=re.I)
     out, fence, prev_blank, in_ind = [], None, True, False
     for line in s.split("\n"):
+        c = _inner(line)
         if fence:
-            m = re.match(r"^ {0,3}(`{3,}|~{3,})\s*$", line)
+            m = re.match(r"^\s*(`{3,}|~{3,})\s*$", c)
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
                 fence = None
             continue
-        f = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        f = re.match(r"^\s*(`{3,}|~{3,})", c)
         if f:
             fence = (f.group(1)[0], len(f.group(1))); out.append("[code omitted]"); prev_blank = False; in_ind = False; continue
-        if not line.strip():
-            prev_blank = True; out.append(""); continue
-        if re.match(r"^( {4,}|\t)", line) and (in_ind or prev_blank) and not re.match(r"^\s*([-*+]|\d{1,9}[.)])\s", line):
+        if not c.strip():
+            prev_blank = True; out.append(line.strip()); continue
+        q = re.sub(r"^(?:[ \t]*>)+[ \t]?", "", line)
+        if re.match(r"^( {4,}|\t)", q) and (in_ind or prev_blank) and not re.match(r"^\s*([-*+]|\d{1,9}[.)])\s", q):
             if not in_ind:
                 out.append("[code omitted]")
             in_ind = True; prev_blank = False; continue
         in_ind = False; prev_blank = False; out.append(line)
-    t = re.sub(r"(?<!`)(`+)(?!`)[^\n]+?(?<!`)\1(?!`)", "[code]", "\n".join(out))
+    t = re.sub(r"(?<!`)(`+)(?!`)(?:[^\n`]|`+(?!\1(?!`))|\n(?![ \t]*\n)){1,2000}?(?<!`)\1(?!`)", "[code]", "\n".join(out))
     return t.replace("`", "")
 
 

