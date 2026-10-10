@@ -238,7 +238,9 @@ function draw() {
   // indented under the text, instead of being clipped. All lines of one row are the same item for
   // the cursor, the clicks (listRowAgent / projRowY) and the scroll counts (still per agent).
   boxArea = { y0: H - IR.rows.length, n: IR.rows.length, inTop: IR.inTop, pw: promptW };
-  const contentRows = Math.max(1, H - 3 - IR.rows.length); // the list + [blank + rule + projects]
+  // J401 (StatusReview): the reported rows' space is taken FIRST (at most a third of the pane), so the projects and their click map stay right
+  const reported = showHelp ? [] : reportedRows(room, W).slice(0, Math.max(0, Math.floor((H - IR.rows.length) / 3)));
+  const contentRows = Math.max(1, H - 3 - IR.rows.length - reported.length); // the list + [blank + rule + projects]
   const nameW = Math.min(24, Math.max(6, ...here.map((a) => width(a.display))));
   // A fixed icon column (Angus: the names in the agent list and the project list line up): the
   // icon padded to 2 cells + a space, or 3 spaces for an agent without one; projects skip it too.
@@ -357,7 +359,7 @@ function draw() {
   }
   // J401: a sandboxed world's agents as its own daemon reports them (checked by world-helper against a strict schema): dim,
   // display-only rows. They aren't in listRowAgent, so no click, Enter, ^W or message can reach them from here.
-  if (!showHelp) for (const l of reportedRows(room, W)) rows.push(l);
+  for (const l of reported) rows.push(l);
   pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
   if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ ${" ".repeat(ICON_W)}starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
   projRowY = {}; projMemberX = {};

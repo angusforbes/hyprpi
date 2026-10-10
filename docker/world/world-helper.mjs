@@ -132,7 +132,7 @@ class Helper {
   // The world's windows: kitty processes this helper started carry G_WORLD=<world> and G_TOKEN.
   async windows() {
     const all = await hj("clients");
-    const mine = [];
+    const mine = [], launched = []; // launched: every window of this world we opened, wherever it is now (host-only, for dismiss)
     for (const c of all) {
       if (!c?.pid || !G_CLASS.test(c.class || "")) continue;
       let o = this.owned.get(c.address);
@@ -145,20 +145,23 @@ class Helper {
         o = { pid: c.pid, agent: t.agent || "", kind: t.kind || "agent", token: TOKEN_RE.test(tok) ? tok : "", home: this.inWorld(t.ws) ? t.ws : 0 };
         this.owned.set(c.address, o);
       }
+      launched.push({ c, o });
       // Review #5: a G window Angus moved out of G's workspaces is no longer the world's to see or touch.
       if (!this.inWorld(c.workspace?.id)) continue;
       mine.push({ c, o });
     }
     for (const [a, o] of [...this.owned]) if (!all.some((c) => c.address === a)) { this.owned.delete(a); this.closed(o.token); if (o.token) { this.tokens.delete(o.token); this.saveTokens(); } }
-    this.saveWindows(mine);
+    this.saveWindows(launched);
     return mine;
   }
   // J401: the world's windows as the HOST knows them (class set by our own launch, home recorded at launch), for the host daemon's
   // dismiss: { address: { kind, home } }. Host-only file; nothing in it comes from the sandbox but the agent id it asked for.
   saveWindows(mine) {
-    const v = JSON.stringify(Object.fromEntries(mine.map(({ c, o }) => [c.address, { kind: o.kind, home: o.home || 0, agent: o.agent }])));
-    if (v === this.lastWindows) return; this.lastWindows = v;
-    try { const f = path.join(STATE, "windows.json"); fs.writeFileSync(f + ".tmp", JSON.stringify({ lo: this.cfg.lo, hi: this.cfg.hi, windows: JSON.parse(v) }), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); } catch { /* */ }
+    // (StatusReview) each window with its pid, so the host acts only on the very window we launched (an address can be reused)
+    const v = JSON.stringify(Object.fromEntries(mine.map(({ c, o }) => [c.address, { kind: o.kind, home: o.home || 0, pid: c.pid }])));
+    if (v === this.lastWindows) return;
+    try { const f = path.join(STATE, "windows.json"); fs.writeFileSync(f + ".tmp", JSON.stringify({ world: WORLD, lo: this.cfg.lo, hi: this.cfg.hi, windows: JSON.parse(v) }), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); this.lastWindows = v; }
+    catch (e) { log({ error: `windows.json: ${e.message}` }); } // (not cached: the next scan tries again)
   }
   // J401: the world's agents as its own daemon reports them, checked against a strict schema (g-status.mjs); the workspace comes
   // from OUR window map (the agent id each window was opened for), never from the report. Written for the host's agents panel.
