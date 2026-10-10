@@ -101,7 +101,7 @@ async function cleanup() {
       for (const f of ['relay.log', 'daemon.log']) try { report.diagnostics[f] = fs.readFileSync(rig.P(f), 'utf8').slice(-20000); } catch { /* startup may not have reached the log */ }
       if (!errors.length) for (const owned of [...ownedRigs].reverse()) try { await owned.close(); } catch (e) { errors.push(e.message); }
       else errors.push('scratch retained because a subprocess did not stop');
-      report.ownedScratch = [...ownedRigs].map(owned => ({ root: owned.root, removed: !fs.existsSync(owned.root) }));
+      report.ownedScratch = [...ownedRigs].map(owned => ({ root: owned.root, removed: !fs.existsSync(owned.root), dockerTrace: owned.dockerTrace }));
       report.scratchRemoved = report.ownedScratch.every(item => item.removed);
     }
     report.cleanup = { ok: errors.length === 0 && (!rig || report.scratchRemoved), errors };

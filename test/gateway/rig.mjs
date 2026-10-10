@@ -199,7 +199,16 @@ export async function createRig(options = {}) {
     }
     return e;
   };
-  const docker = (args, opts = {}) => execution(DOCKER, args, baseline, { timeout: 30000, ...opts });
+  const dockerTrace = [];
+  const docker = (args, opts = {}) => {
+    const started = Date.now(), timeoutMs = opts.timeout ?? 30000;
+    const result = execution(DOCKER, args, baseline, { timeout: timeoutMs, ...opts });
+    const name = args.indexOf('--name');
+    dockerTrace.push({ started: new Date(started).toISOString(), elapsedMs: Date.now() - started, operation: args.slice(0, 2).join(' '),
+      target: name >= 0 ? args[name + 1] : args.find(a => NAME.test(a) || /^[a-f0-9]{64}$/.test(a)) || '', timeoutMs,
+      status: result.status, signal: result.signal, error: result.error?.code || '', stderr: result.stderr.slice(-1000) });
+    return result;
+  };
   const prerequisites = () => {
     assertRoot(); validateConfig(); safeEnv();
     if (imageId) return;
@@ -211,7 +220,9 @@ export async function createRig(options = {}) {
     imageId = info.Id;
   };
   const ownedStart = (args, name, what) => {
-    const result = docker(args);
+    // A measured CREATE completed at the host's 30-second NVMe completion poll, just beyond our old deadline.
+    // Give a SINGLE create 90s, not another attempt: it must succeed, then all ID/label/mount checks still run.
+    const result = docker(args, { timeout: 90000 });
     // A killed client does not cancel Docker's POST. A missing name is NOT cleanup proof until this creation is observed.
     if (result.error || result.status !== 0) uncertainCreates.add(name);
     return must(result, what);
@@ -385,6 +396,7 @@ export async function createRig(options = {}) {
     fs.rmSync(root, { recursive: true, force: true }); closed = true;
   };
   const rig = { root, env, sandbox, doorman, reader, P, start, proof, request, owner, cli, close,
+    get dockerTrace() { return structuredClone(dockerTrace); },
     validate: (extra = {}) => { assertRoot(); validateConfig(); return safeEnv(extra); },
     registerWindow: (name, value) => { if (!/^[0-9a-f]{24}$/.test(value) || name !== 'j376-view-' + value) fail('invalid window ownership'); windows.set(name, value); },
     windowCreateUncertain: name => { if (!windows.has(name)) fail('unregistered window'); uncertainCreates.add(name); },
