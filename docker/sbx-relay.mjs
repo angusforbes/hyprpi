@@ -1035,11 +1035,13 @@ class Relay {
         fs.rmSync(g.dir, { recursive: true, force: true });
         heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", verdict === "deny" ? `nothing ran${why}` : "but the sandbox it serves isn't configured");
         if (served) { try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "denied", id }); } catch { /* */ } this.gpuTell(served, sb, g, `Angus denied your GPU lease ${g.lease} (${g.job.slice(0, 80)}); nothing ran.${reason ? ` His reason (note from Angus): ${reason}` : ""}`); }
+        try { inboxWrite(sb, { type: "decision", kind: "gpu", id, decision: "denied", outcome: verdict === "deny" ? "nothing ran" : "not run: the sandbox it serves isn't configured" }); } catch { /* */ } // J373: the receipt for the asker's history
         return;
       }
       log({ sb: sb.name, op: "gpu_lease", decision: "approved", id, lease: g.lease, files: (g.files || []).map((x) => `${x.path}:${x.sha256.slice(0, 12)}`), seconds: g.seconds, vramMib: g.vramMib, via: via || "terminal" });
       heldNote(sb, what, via, "Approved", "the GPU worker starts (developer mode)");
       try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "running", id }); } catch { /* */ }
+      try { inboxWrite(sb, { type: "decision", kind: "gpu", id, decision: "approved", outcome: "the worker runs it now" }); } catch { /* */ } // J373: the receipt for the asker's history
       try { fs.writeFileSync(path.join(g.dir, "running.json"), JSON.stringify({ sandbox: served.name, doorman: sb.name, for: g.for, lease: g.lease, job: String(g.job).slice(0, 200) }), { mode: 0o600 }); } catch { /* */ }
       this.gpuTell(served, sb, g, `Angus approved your GPU lease ${g.lease}; the worker runs it now (developer mode). Results arrive in your inbox.`);
       this.runGpu(sb, served, msg, via);

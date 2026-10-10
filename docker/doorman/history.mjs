@@ -27,11 +27,23 @@ const clean = (s, max) => {
   if (t.length > max) t = t.slice(0, max) + "… [cut]";
   return t;
 };
-// "[Alpha, in world G] question…" → "Alpha" (the gate's signature; unverified, see above)
-export const askerLabel = (text) => ((/^\[([^\],\n]{1,40}), in world [A-I]\]/.exec(String(text ?? "")) || [])[1] || "").trim();
-export const askerKey = (from, text) => `${String(from || "?").slice(0, 64)}|${askerLabel(text)}`;
-// the question as recorded: without the signature (the key already says who asked)
-const question = (text) => String(text ?? "").replace(/^\[[^\],\n]{1,40}, in world [A-I]\]\s*/, "");
+// A sandbox's talk reaches its Doorman wrapped by the relay itself (sbx-relay.mjs "talk": the line
+// "🐳 [sandboxed: world-g] (message from a sandboxed agent …)" and then every line of the text quoted with "🐳│ "). That wrapper is
+// the relay's own (plain code); inside it, the gate's signature "[Alpha, in world G]" opens the text. unwrap() undoes the wrapper.
+export function unwrap(text) {
+  const t = String(text ?? ""), m = /^🐳 \[sandboxed: [A-Za-z0-9._-]{1,40}\] \(message from a sandboxed agent[^\n]*\)\n/.exec(t);
+  return m ? t.slice(m[0].length).split("\n").map((l) => l.replace(/^🐳│ ?/, "")).join("\n") : t;
+}
+// "[Alpha, in world G] question…" (after unwrap) → "Alpha" (the gate's signature, names up to 64 characters; unverified, see above)
+export const askerLabel = (text) => ((/^\[([^\],\n]{1,64}), in world [A-I]\]/.exec(unwrap(text)) || [])[1] || "").trim();
+// The asker: the sender plus the signature. A message from a sandbox (relay-wrapped) WITHOUT a readable signature has no asker
+// key at all (""): it gets no history and leaves none, so unsigned messages never share one bucket (review: StatelessReview).
+export const askerKey = (from, text) => {
+  const label = askerLabel(text), wrapped = unwrap(text) !== String(text ?? "");
+  return wrapped && !label ? "" : `${String(from || "?").slice(0, 64)}|${label}`;
+};
+// the question as recorded: without the relay's wrapper and the signature (the key already says who asked)
+const question = (text) => unwrap(text).replace(/^\[[^\],\n]{1,64}, in world [A-I]\]\s*/, "");
 
 export function openStore(file) {
   const load = () => {
@@ -58,19 +70,20 @@ export function openStore(file) {
   return {
     // what goes along with a message from this asker (oldest first), already bounded and cleaned
     context(d, key, now = Date.now()) {
+      if (!key) return [];
       const x = of(load(), d); prune(x, now);
       return (x.hist[key] || []).map((e) => e.note ? { t: e.t, note: e.note } : { t: e.t, q: e.q, a: e.a });
     },
     // a message reached the Doorman: remember who asked what, until it answers
     asked(d, rid, from, text) {
-      if (!rid) return;
-      edit(d, (x, now) => { x.asks[String(rid).slice(0, 64)] = { t: now, key: askerKey(from, text), q: clean(question(text), Q_MAX) }; });
+      const key = askerKey(from, text); if (!rid || !key) return;
+      edit(d, (x, now) => { x.asks[String(rid).slice(0, 64)] = { t: now, key, q: clean(question(text), Q_MAX) }; });
     },
     // the Doorman answered rid: one exchange in that asker's history (a second answer to the same rid is ignored)
     answered(d, rid, text) {
       return edit(d, (x, now) => {
-        const k = String(rid || "").slice(0, 64), ask = x.asks[k]; if (!ask) return false;
-        delete x.asks[k];
+        const k = String(rid || "").slice(0, 64), ask = x.asks[k]; if (!ask || ask.done) return false;
+        ask.done = true; // kept (until ASK_TTL_MS) so a draft made after the reply is still tied to this asker (review: StatelessReview)
         (x.hist[ask.key] ||= []).push({ t: now, q: ask.q, a: clean(text, A_MAX) });
         return true;
       });
@@ -91,6 +104,9 @@ export function openStore(file) {
   };
 }
 
+// The history goes along as it is when the message is written to the Doorman's inbox. A second message from the same asker that
+// arrives while the first is still being answered carries the history from before that answer (the Doorman takes one message at a
+// time, so this only happens in a burst). Known and accepted (review: StatelessReview, LOW).
 // The relay's inbox items for a Doorman, as one fresh call each sees them (used by docker/sbx-relay.mjs inboxWrite):
 //   a message / reply → it carries `history` (this asker's bounded context) and is recorded as asked;
 //   a receipt (decision, task_change, typed) → filed in the asker's history; the Doorman gets no separate turn for it.
@@ -108,7 +124,7 @@ export function forDoorman(store, doorman, obj) {
 }
 export function receiptText(obj) {
   const id = clean(obj?.id, 40);
-  if (obj?.type === "decision") return `Angus ${obj.decision === "approved" ? "approved" : obj.decision === "returned" ? "sent back" : "denied"} ${id}${obj.note ? ` (his note: ${clean(obj.note, 300)})` : ""}.`;
+  if (obj?.type === "decision") return `Angus ${obj.decision === "approved" ? "approved" : obj.decision === "returned" ? "sent back" : "denied"} ${obj.kind === "gpu" ? "the GPU lease " : ""}${id}${obj.note ? ` (his note: ${clean(obj.note, 300)})` : ""}${obj.outcome ? `: ${clean(obj.outcome, 200)}` : ""}.`;
   if (obj?.type === "task_change") return `Angus ${obj.status === "applied" ? "approved the task change" : obj.status === "denied" ? "denied the task change" : "approved the task change, but it wasn't applied"} ${id}: ${clean(obj.outcome, 300)}`;
   if (obj?.type === "typed") return `Angus decided the typed request ${id}: ${clean(obj.outcome || obj.status || obj.decision, 300)}`;
   return "";
