@@ -47,7 +47,8 @@ ok("redeliver: only the final", sent.length === 1 && /final \(parent offline\)/.
 // ---- B) parent side: load pi-extension/orch.ts with a stand-in for typebox
 const src = fs.readFileSync(path.join(ROOT, "pi-extension/orch.ts"), "utf8")
   .replace(/^import type .*$/m, "")
-  .replace(/^import \{ Type \} from "typebox";$/m, "const Type: any = new Proxy({}, { get: () => (..._a: any[]) => ({}) });");
+  .replace(/^import \{ Type \} from "typebox";$/m, "const Type: any = new Proxy({}, { get: () => (..._a: any[]) => ({}) });")
+  .replace(/from "\.\.\/lib\//g, `from "${path.join(ROOT, "lib")}/`); // the copy lives in a temp dir: absolute lib imports
 const tmp = path.join(T, "orch-ext.ts"); fs.writeFileSync(tmp, src);
 const { orchAgent } = await import(tmp);
 const tools = {}, held = [];
