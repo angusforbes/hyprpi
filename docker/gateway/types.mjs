@@ -144,10 +144,10 @@ const V = {
     if (!ctx.snapshotDir) return { error: "no snapshot folder" };
     fs.mkdirSync(ctx.snapshotDir, { recursive: true, mode: 0o700 });
     for (const n of fs.readdirSync(ctx.snapshotDir)) { try { if (Date.now() - fs.statSync(path.join(ctx.snapshotDir, n)).mtimeMs > 3 * 86400e3) fs.unlinkSync(path.join(ctx.snapshotDir, n)); } catch { /* */ } } // (held requests expire long before)
-    const snap = path.join(ctx.snapshotDir, `${sha}.bin`); if (!fs.existsSync(snap)) { fs.writeFileSync(snap + ".tmp", buf, { mode: 0o600 }); fs.renameSync(snap + ".tmp", snap); }
+    const snap = path.join(ctx.snapshotDir, `${sha.slice(0, 16)}-${crypto.randomBytes(6).toString("hex")}.bin`); fs.writeFileSync(snap, buf, { mode: 0o600, flag: "wx" }); // one per request (recheck: identical requests never share one)
     const text = /^\.(txt|md|csv|json|xml|yaml|yml|tex|bib|log)$/.test(ext) ? buf.toString("utf8") : "";
     const nl = text ? text.split("\n").length : 0;
-    const preview = text ? `\nFirst ${Math.min(8, nl)} of ${nl} lines${nl > 8 ? " (the rest isn't shown here)" : ""}:\n${text.split("\n").slice(0, 8).map((l) => "  " + l.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "").slice(0, 160)).join("\n")}` : "";
+    const preview = text ? `\nFirst ${Math.min(8, nl)} of ${nl} lines${nl > 8 ? " (the rest isn't shown here)" : ""}, each cut at 160 characters:\n${text.split("\n").slice(0, 8).map((l) => "  " + l.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "").slice(0, 160)).join("\n")}` : "";
     return { params: { path: pp.path, sha256: sha, size: buf.length, snapshot: snap }, show: `Send a read-only copy of ${pp.path} (${Math.ceil(pp.stat.size / 1024)} KB, sha256 ${sha.slice(0, 16)}…) into ${ctx.served.name}'s inbox${preview}` };
   },
   // 5. allow a web host for the sandbox (sbx policy, scoped to that one sandbox).
