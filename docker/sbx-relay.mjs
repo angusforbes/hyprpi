@@ -1004,6 +1004,7 @@ class Relay {
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
     // J371 (BridgeReview HIGH): an "answer" fits only a host agent's question; on anything else it decides nothing (the item stays held)
     if (verdict === "answer" && !msg.hostJob) { log({ op: "decision", id, error: "an answer only fits a host agent's question; the item stays held" }); return; }
+    let byDial = false; // J412: a denial the dial made (not Angus): its reason is labelled as the dial's everywhere
     // J412: the dial at decision time. An auto approval goes ahead only if the mode still says auto for this kind (else the item stays held and Angus is
     // shown it now); an approval of a kind the mode now refuses becomes a denial with that reason.
     { const sb0 = this.sandboxes.find((s) => s.name === msg.sandbox), kind = this.kindOfMsg(msg);
@@ -1014,9 +1015,9 @@ class Relay {
         if (isAuto && pol !== "auto") {
           try { const rec = JSON.parse(fs.readFileSync(pf, "utf8")); delete rec.auto; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* */ }
           log({ sb: sb0.name, op: "decision", id, kind, note: `the mode changed before it ran; held for Angus instead (${pol})` });
-          if (pol === "refused") { verdict = "deny"; note = `(the dial, not typed by Angus) ${this.refusalFor(sb0, kind)}`; }
+          if (pol === "refused") { verdict = "deny"; note = this.refusalFor(sb0, kind); byDial = true; }
           else { const notif = notifyHeld(sb0, msg, [...REVIEW_CMD, id]); if (notif) { try { const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* */ } } return; }
-        } else if (/^(approve|allow-)/.test(verdict) && pol === "refused") { verdict = "deny"; note = `(the dial, not typed by Angus) ${this.refusalFor(sb0, kind)}`; }
+        } else if (/^(approve|allow-)/.test(verdict) && pol === "refused") { verdict = "deny"; note = this.refusalFor(sb0, kind); byDial = true; }
         if (isAuto && verdict !== "deny") log({ sb: sb0.name, op: "auto", kind, reviewed: false, auto: msg.auto.mode, via, id }); // (Doorview's digest reads this one line)
       }
     }
@@ -1038,7 +1039,8 @@ class Relay {
     if (msg.revises) this.closeReturn(msg.sandbox, String(msg.revises)); // J370b: Angus decided the revision: that send-back is closed (rules resume when none is open)
     if (verdict === "return" && !returnable(msg)) verdict = "deny"; // (J386: the note is optional; the hold's own reason always goes along)
     if (verdict === "return") return this.sendBack(sb, msg, id, via, note);
-    const reason = verdict === "deny" ? note : "", why = reason ? ` (Angus's reason: ${reason})` : "";
+    const whose = byDial ? "the mode dial's reason (not Angus's)" : "Angus's reason", hisReason = byDial ? "Reason (the mode dial, not Angus)" : "His reason (note from Angus)";
+    const reason = verdict === "deny" ? note : "", why = reason ? ` (${whose}: ${reason})` : "";
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, verdict === "deny");
     // (review J368 #2) a free-form draft held before the host went agent-free can't be carried out any more: denied, with the reason
@@ -1108,7 +1110,7 @@ class Relay {
         log({ sb: sb.name, op: "gpu_lease", decision: verdict === "deny" ? "denied" : "approved-but-no-sandbox", id, lease: g.lease, ran: false, ...(reason ? { reason } : {}) });
         fs.rmSync(g.dir, { recursive: true, force: true });
         heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", verdict === "deny" ? `nothing ran${why}` : "but the sandbox it serves isn't configured");
-        if (served) { try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "denied", id }); } catch { /* */ } this.gpuTell(served, sb, g, `Angus denied your GPU lease ${g.lease} (${g.job.slice(0, 80)}); nothing ran.${reason ? ` His reason (note from Angus): ${reason}` : ""}`); }
+        if (served) { try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "denied", id }); } catch { /* */ } this.gpuTell(served, sb, g, `${byDial ? "The mode dial denied" : "Angus denied"} your GPU lease ${g.lease} (${g.job.slice(0, 80)}); nothing ran.${reason ? ` ${hisReason}: ${reason}` : ""}`); }
         return;
       }
       log({ sb: sb.name, op: "gpu_lease", decision: "approved", id, lease: g.lease, files: (g.files || []).map((x) => `${x.path}:${x.sha256.slice(0, 12)}`), seconds: g.seconds, vramMib: g.vramMib, via: via || "terminal" });
@@ -1141,7 +1143,7 @@ class Relay {
       if (verdict === "deny") {
         log({ sb: sb.name, op: "research", decision: "denied", id, rid: rs.rid, ...(reason ? { reason } : {}) }); // rid: the Doorman window follows a plan to its deliverable
         try { researchLog({ ev: "denied", ...ev, ...(reason ? { reason } : {}) }); } catch { /* */ }
-        heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Denied", reason ? `Angus's reason: ${reason}` : "");
+        heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Denied", reason ? `${whose[0].toUpperCase() + whose.slice(1)}: ${reason}` : "");
         try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id, ...(reason ? { note: reason } : {}) }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
         return;
       }
@@ -1184,9 +1186,9 @@ class Relay {
     }
     if (verdict === "deny") {
       log({ sb: sb.name, op: "talk", decision: "denied", id, ...(reason ? { reason } : {}) });
-      heldNote(sb, msg, via, `Denied`, reason ? `Angus's reason: ${reason}` : "");
+      heldNote(sb, msg, via, `Denied`, reason ? `${whose[0].toUpperCase() + whose.slice(1)}: ${reason}` : "");
       // J395 (the Doorman remembers nothing): the agent a Doorman draft was for hears the outcome itself
-      if (msg.draft && sb.doormanFor) this.tellOutcome(sb.doormanFor, typeof msg.draftFor === "string" ? msg.draftFor : "", `Angus denied the request drafted for you (${id})${reason ? `. His reason (note from Angus): ${reason}` : ""}.`);
+      if (msg.draft && sb.doormanFor) this.tellOutcome(sb.doormanFor, typeof msg.draftFor === "string" ? msg.draftFor : "", `${byDial ? "The mode dial denied" : "Angus denied"} the request drafted for you (${id})${reason ? `. ${hisReason}: ${reason}` : ""}.`);
       if (!sb.conn) return;
       inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to, ...(reason ? { note: reason } : {}) });
       return;

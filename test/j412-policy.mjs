@@ -31,9 +31,9 @@ const R = vm.runInNewContext(`(class R {
   returnedFor() { return null; }
   ${body}
   // the part of decide() that applies the dial (verbatim), wrapped: returns { verdict, note, held } for an id and a decision file
-  async dialCheck(id, verdict, via) { const pf = path.join(PENDING, id + ".json"); let note = ""; const msg = JSON.parse(fs.readFileSync(pf, "utf8"));
+  async dialCheck(id, verdict, via) { const pf = path.join(PENDING, id + ".json"); let note = "", byDial = false; const msg = JSON.parse(fs.readFileSync(pf, "utf8"));
     ${decideHead}
-    return { verdict, note, msg }; }
+    return { verdict, note, msg, byDial }; }
 })`, ctx);
 const relay = new R();
 const world = { name: "world-t", cfg: {}, relay }, door = { name: "doorman-t", doormanFor: "world-t", cfg: {}, relay, conn: { call: async () => ({}) } };
@@ -91,7 +91,7 @@ clear(); MODE.now = "yolo"; const idA = relay.hold(door, structuredClone(MSG.sen
 { const r = await relay.dialCheck(idA, "approve", "auto (yolo)"); assert.equal(r, undefined); assert.equal(shown.length, 1); assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, idA + ".json"), "utf8")).auto, undefined, "no longer marked auto"); }
 // an approval of a kind the mode now refuses becomes a denial with the dial's reason
 clear(); MODE.now = "safe"; const idB = relay.hold(door, structuredClone(MSG.allow_host)); MODE.now = "strict";
-{ const r = await relay.dialCheck(idB, "approve", "terminal"); assert.equal(r.verdict, "deny"); assert.match(r.note, /\(the dial, not typed by Angus\) mode strict doesn't allow allowing web hosts/); }
+{ const r = await relay.dialCheck(idB, "approve", "terminal"); assert.equal(r.verdict, "deny"); assert.equal(r.byDial, true, "labelled as the dial's denial"); assert.match(r.note, /mode strict doesn't allow allowing web hosts/); }
 // a forged "auto" decision for an item that wasn't auto is ignored
 clear(); MODE.now = "safe"; const idC = relay.hold(door, structuredClone(MSG.send_file));
 { const r = await relay.dialCheck(idC, "approve", "auto (safe)"); assert.equal(r, undefined); assert.ok(fs.existsSync(path.join(PENDING, idC + ".json")), "still held"); }

@@ -67,7 +67,7 @@ put(draft("doorman-t--a00004")); await decide("doorman-t--a00004", "deny", "not 
 assert.match(toAsker("Alpha").at(-1), /denied the request drafted for you \(doorman-t--a00004\)\. His reason \(note from Angus\): not on this laptop/);
 ok("a denial reaches the asker with Angus's reason");
 MODE.now = "strict"; put(draft("doorman-t--a00005")); await decide("doorman-t--a00005", "approve");
-assert.equal(relay.jobs["doorman-t--a00005"], undefined); assert.match(toAsker("Alpha").at(-1), /\(doorman-t--a00005\)\. His reason \(note from Angus\): mode strict doesn't allow free-form requests/);
+assert.equal(relay.jobs["doorman-t--a00005"], undefined); assert.match(toAsker("Alpha").at(-1), /The mode dial denied the request drafted for you \(doorman-t--a00005\)\. Reason \(the mode dial, not Angus\): mode strict doesn't allow free-form requests/);
 MODE.now = "safe";
 ok("a draft held before the mode became strict is denied on approval, with the mode's reason");
 
