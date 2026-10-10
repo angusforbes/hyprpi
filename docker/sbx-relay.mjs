@@ -733,6 +733,8 @@ class Relay {
   }
   runResearch(sb, token, { want, depth, from, why, runRid = "", heldId = "", room = "" }) {
     const done = (o) => {
+      // every way this request ends without a deliverable is in the log too, with the plan's rid (the Doorman window follows a plan to its end)
+      if (o.status !== "held" && o.status !== "ready" && o.status !== "planned") log({ sb: sb.name, op: "research", token, status: o.status, rid: runRid || o.rid || undefined, reason: o.reason, end: true });
       // J314 review #4: an approved plan that then fails shows up where Angus approved it
       if (runRid && heldId && /^[A-I]$/.test(room) && o.status !== "held") logTurn({ room, id: heldId, ok: false, turn: `Research searches were approved, but the research ${o.status === "refused" ? "was refused" : "failed"}: ${String(o.reason || "").slice(0, 300)}` }); sb.research?.delete(token); this.pumpPlans(sb); try { inboxWrite(sb, { type: "research", token, ...o }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); } };
     let out = "", err = "";
@@ -740,11 +742,11 @@ class Relay {
     // Its own transient unit: the relay's own unit is capped (MemoryMax 256M, TasksMax 32), and a deep request runs for
     // minutes with sbx clients under it. stdin/stdout still come back here (--pipe).
     const unit = ["systemd-run", "--user", "--pipe", "--wait", "--collect", "--quiet", `--unit=hyprpi-research-${sb.name}-${token}`, "--property=MemoryMax=512M", `--setenv=PATH=${process.env.PATH || ""}`, process.execPath, ...args];
-    let k; try { k = spawn(process.env.HYPRPI_RESEARCH_DIRECT ? process.execPath : unit[0], process.env.HYPRPI_RESEARCH_DIRECT ? args : unit.slice(1), { stdio: ["pipe", "pipe", "pipe"] }); } catch (e) { log({ sb: sb.name, op: "research", token, status: "error", rid: runRid || undefined, reason: `couldn't start: ${e.message}` }); done({ status: "error", reason: `couldn't start: ${e.message}` }); return; }
+    let k; try { k = spawn(process.env.HYPRPI_RESEARCH_DIRECT ? process.execPath : unit[0], process.env.HYPRPI_RESEARCH_DIRECT ? args : unit.slice(1), { stdio: ["pipe", "pipe", "pipe"] }); } catch (e) { done({ status: "error", reason: `couldn't start: ${e.message}` }); return; }
     const kill = setTimeout(() => { try { k.kill("SIGTERM"); } catch { /* */ } }, (depth === "deep" ? 50 : 20) * 60e3);
     k.stdout.on("data", (d) => { if (out.length < 65536) out += d; });
     k.stderr.on("data", (d) => { if (err.length < 4096) err += d; });
-    k.on("error", (e) => { clearTimeout(kill); log({ sb: sb.name, op: "research", token, status: "error", rid: runRid || undefined, reason: e.message.slice(0, 200) }); done({ status: "error", reason: e.message.slice(0, 200) }); });
+    k.on("error", (e) => { clearTimeout(kill); done({ status: "error", reason: e.message.slice(0, 200) }); });
     k.on("close", () => {
       clearTimeout(kill);
       let r; try { r = JSON.parse(out.trim().split("\n").pop()); } catch { r = { status: "error", reason: (err.trim().split("\n").pop() || "no answer").slice(0, 200) }; }
