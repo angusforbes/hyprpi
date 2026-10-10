@@ -107,6 +107,23 @@ ok("MCP: initialize, 9 tools (none decides or writes), every tool callable");
   const t = tokens(); assert.equal(Object.keys(t).filter((k) => k.startsWith("doorman-t--b")).length, 24); assert.equal(t["doorman-t--b00007"], "t7");
   const st2 = fs.statSync(path.join(cache, "doorman-bridge", "tokens", "doorman-t--b00007")); assert.equal(st2.mode & 0o777, 0o600); void saveToken;
   ok("24 parallel token saves: all kept, files 600"); }
+// 7c. (J387, RunnerReview HIGH) a job-bound MCP server (a per-job run) can't touch another job, even with that job's token cached
+{ mk("doorman-t--e00001"); mk("doorman-t--e00002");
+  const ca = await cli("claim", "doorman-t--e00001", "--by", "run-a"), cb = await cli("claim", "doorman-t--e00002", "--by", "run-b"); assert.equal(ca.code, 0); assert.equal(cb.code, 0);
+  const m2 = spawn(CLI, ["mcp"], { env: { ...env, DOORMAN_BRIDGE_AGENT: "run-a", DOORMAN_BRIDGE_JOB: "doorman-t--e00001" } }); let o2 = ""; m2.stdout.on("data", (d) => (o2 += d));
+  const r2 = (m) => m2.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+  r2({ id: 1, method: "initialize", params: {} }); r2({ id: 2, method: "tools/list" });
+  r2({ id: 3, method: "tools/call", params: { name: "report_job", arguments: { id: "doorman-t--e00002", state: "done", summary: "not mine" } } });
+  r2({ id: 4, method: "tools/call", params: { name: "list_jobs", arguments: { all: true } } });
+  r2({ id: 5, method: "tools/call", params: { name: "release_job", arguments: { id: "doorman-t--e00001" } } });
+  r2({ id: 6, method: "tools/call", params: { name: "read_settings", arguments: { sandbox: "world-t" } } });
+  for (let t = 0; t < 100 && (o2.match(/"id":[3-6]/g) || []).length < 4; t++) await new Promise((res) => setTimeout(res, 100)); m2.stdin.end();
+  const by2 = Object.fromEntries(o2.trim().split("\n").map((l) => JSON.parse(l)).map((m) => [m.id, m])), body = (i) => JSON.parse(by2[i].result.content[0].text);
+  assert.deepEqual(by2[2].result.tools.map((x) => x.name).sort(), ["ask_owner", "list_jobs", "renew_job", "report_job", "show_job"]);
+  assert.equal(body(3).ok, false); assert.match(body(3).text, /works job doorman-t--e00001 only/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--e00002.json"), "utf8")).state, "claimed", "the other job is untouched");
+  assert.deepEqual(body(4).jobs.map((j) => j.id), ["doorman-t--e00001"]); assert.equal(body(5).ok, false); assert.equal(body(6).ok, false);
+  ok("a job-bound MCP server works its own job only (no cross-job report, list, release or settings)"); }
 // 8. nothing the bridge did wrote config, a decision or a held item
 assert.equal(snap(), before, "config, decisions/ and pending/ are byte-identical");
 ok("no bridge command or MCP tool wrote config, decisions or held items");

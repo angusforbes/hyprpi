@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { list, show, claim, release, report, stateDir } from "./client.mjs";
+import { list, show, claim, release, report, stateDir, saveToken } from "./client.mjs";
 import { validId } from "./core.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), CLI = path.join(HERE, "doorman-bridge");
@@ -56,9 +56,12 @@ export async function runJob(id) {
   const c = await claim(id, by, undefined); // the lease: up to the job's time limit (the relay caps it)
   if (!c.ok) { log({ id, ev: "not claimed", text: c.text }); return c; }
   const job = show(id);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "doorman-run-")), mcpConfig = path.join(tmp, "mcp.json");
-  const env = { ...process.env, DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by };
-  fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { "doorman-bridge": { command: CLI, args: ["mcp"], env: { DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, XDG_CACHE_HOME: env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache") } } } }), { mode: 0o600 });
+  const token = c.token; saveToken(id, ""); // the runner keeps its token itself (not in the shared cache)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "doorman-run-")), mcpConfig = path.join(tmp, "mcp.json"), cache = path.join(tmp, "cache");
+  // (RunnerReview HIGH) the agent's MCP server is bound to THIS job and has a private token cache holding this job's token only
+  const prev = process.env.XDG_CACHE_HOME; process.env.XDG_CACHE_HOME = cache; saveToken(id, token); if (prev === undefined) delete process.env.XDG_CACHE_HOME; else process.env.XDG_CACHE_HOME = prev;
+  const env = { ...process.env, DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, XDG_CACHE_HOME: cache };
+  fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { "doorman-bridge": { command: CLI, args: ["mcp"], env: { DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, XDG_CACHE_HOME: cache } } } }), { mode: 0o600 });
   const p = plan(job, { mcpConfig });
   log({ id, ev: "start", argv: p.argv, cwd: p.cwd, dropped: p.dropped, time_limit_s: job.approved.time_limit_s });
   // stopped a little BEFORE the job's time limit, so the runner (not the lease sweep) records why: "failed, hit the time limit"
@@ -77,10 +80,10 @@ export async function runJob(id) {
   const after = show(id);
   log({ id, ev: "end", code: res.code, timedOut: res.timedOut, state: after?.state, tail: res.out.slice(-600) });
   if (!after) return { ok: false, text: "the job is gone" };
-  if (after.state === "asked") { const r = await release(id, by); return { ok: true, text: `asked the owner; the claim is given back (${r.text})` }; } // its answer brings a new run
+  if (after.state === "asked") { const r = await release(id, by, token); return { ok: true, text: `asked the owner; the claim is given back (${r.text})` }; } // its answer brings a new run
   if (after.state === "claimed" && after.claimed_by === by) {
     const why = res.timedOut ? `the run hit the job's time limit (${job.approved.time_limit_s} s) and was stopped` : `the run ended (exit ${res.code}) without reporting`;
-    const r = await report(id, by, { state: "failed", summary: `${why}. Its last output: ${res.out.replace(/\s+/g, " ").slice(-400) || "(none)"}` });
+    const r = await report(id, by, { state: "failed", summary: `${why}. Its last output: ${res.out.replace(/\s+/g, " ").slice(-400) || "(none)"}` }, token);
     return { ok: false, text: `${why}; reported failed (${r.text})` };
   }
   return { ok: true, text: `the job is ${after.state}` };
