@@ -108,7 +108,9 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
   const head = (f, n) => { const fd = fs.openSync(f, "r"); try { const b = Buffer.alloc(n); return b.subarray(0, fs.readSync(fd, b, 0, n, 0)); } finally { fs.closeSync(fd); } };
   // the name he shared it under, if the Shortcut sends it (X-File-Name, optional): safe, no path, no dot first
   const sharedName = (req) => {
-    let h = String(req.headers["x-file-name"] || ""); try { h = decodeURIComponent(h); } catch { /* raw */ }
+    let h = String(req.headers["x-file-name"] || "");
+    if (/%[0-9a-f]{2}/i.test(h)) { try { h = decodeURIComponent(h); } catch { /* raw */ } }
+    else { try { h = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(h, "latin1")); } catch { /* latin1 as is */ } } // iOS sends it raw UTF-8; Node reads header bytes as latin1 (Pocket)
     const n = path.basename(h).replace(/[\x00-\x1f/\\:*?"<>|]/g, "").replace(/^\.+/, "").trim().slice(0, 120);
     return n || "";
   };
@@ -173,7 +175,7 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
       if (MIME_EXT[ct]) return MIME_EXT[ct];
       return text != null ? (/^(<!doctype html|<html)/i.test(text.trim()) ? "html" : "txt") : "bin";
     })();
-    const label = fk ? fk[1] : ext === "pdf" ? "PDF" : text != null ? "text" : "file";
+    const label = fk ? fk[1] : text != null ? "text" : "file"; // only the bytes say PDF/video/audio (Pocket)
     const base = named ? path.basename(named, path.extname(named)) || `shared-${stamp()}` : `${label === "PDF" ? "pdf" : label}-${stamp()}`;
     const file = freeName(base, ext);
     fs.renameSync(tmp, file); fs.chmodSync(file, 0o644);
