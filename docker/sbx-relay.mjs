@@ -45,7 +45,7 @@ import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule
 import { logEvent as researchLog, conf as researchConf } from "./research/research.mjs"; // J309
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
-import { ownerNote, returnable, senderLabel, returnKey } from "./held-note.mjs"; // J370
+import { ownerNote, returnable, senderLabel, returnKey, holdReason } from "./held-note.mjs"; // J370
 import { agentAncestor } from "./agent-guard.mjs"; // J372: shared with the gateway admin command
 import { applyChanges, proposeChange, syncReaderNetwork, validateChanges, digestOf } from "./research/gateway-admin.mjs"; // J372
 import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman bridge for host agents
@@ -981,7 +981,7 @@ class Relay {
       return;
     }
     // J370: a send-back is only for a sandbox agent's message or a research plan; anything else that somehow carries one is denied (nothing goes out)
-    if (verdict === "return" && (!returnable(msg) || !note)) verdict = "deny";
+    if (verdict === "return" && !returnable(msg)) verdict = "deny"; // (J386: the note is optional; the hold's own reason always goes along)
     if (verdict === "return") return this.sendBack(sb, msg, id, via, note);
     const reason = verdict === "deny" ? note : "", why = reason ? ` (Angus's reason: ${reason})` : "";
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
@@ -1197,21 +1197,32 @@ class Relay {
     }
   }
   sendBack(sb, msg, id, via, note) {
+    const reason = holdReason(msg); // J386: always forwarded (verbatim, labelled), with Angus's note only if he typed one
     try { takeEdit(id, "", msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) }); } catch { /* a stale edit is just dropped */ }
+    if (msg.research?.plan && !note) {
+      // J386: a bare r on a research plan goes back to the ASKER (it can rephrase or drop the request): the Doorman can't fix why it was held
+      // (off-task, drift, no task, strict mode); with a note, it goes to the Doorman to re-plan, as before.
+      const rs = msg.research, rid = String(rs.rid || "");
+      log({ sb: sb.name, op: "research-plan", decision: "returned", to: "asker", id, rid, token: rs.token, sent: false, reason });
+      spawn(process.execPath, [RESEARCH, "drop", "--rid", rid], { stdio: "ignore" }).on("error", () => {});
+      heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Sent back to the asker", `nothing was sent; ${reason}`);
+      try { inboxWrite(sb, { type: "research", token: rs.token, status: "returned-asker", id, reason }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
+      return;
+    }
     if (msg.research?.plan) {
       const rs = msg.research, rid = String(rs.rid || "");
-      log({ sb: sb.name, op: "research-plan", decision: "returned", id, rid, token: rs.token, sent: false, note });
+      log({ sb: sb.name, op: "research-plan", decision: "returned", id, rid, token: rs.token, sent: false, note, reason });
       heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Sent back to the Doorman with your note", `nothing was sent; the revised searches come back for your review. Your note: ${note}`);
-      try { inboxWrite(sb, { type: "research", token: rs.token, status: "returned", id, note }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
+      try { inboxWrite(sb, { type: "research", token: rs.token, status: "returned", id, note, reason }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
       (sb.research ||= new Map()).set(rs.token, { at: Date.now() }); this.setReplan(rs.token, { sb: sb.name, id, at: Date.now() });
       this.runResearch(sb, rs.token, { want: rs.want, depth: rs.depth, from: rs.from, replanRid: rid, note, revisesId: id });
       return;
     }
     const s = senderLabel(msg.text);
-    log({ sb: sb.name, op: "talk", decision: "returned", id, note });
-    heldNote(sb, msg, via, "Sent back with your note", `nothing was sent; ${s || "the asker"} can revise it. Your note: ${note}`);
+    log({ sb: sb.name, op: "talk", decision: "returned", id, note, reason });
+    heldNote(sb, msg, via, note ? "Sent back with your note" : "Sent back", `nothing was sent; ${s || "the asker"} can revise it. ${reason}${note ? `. Your note: ${note}` : ""}`);
     this.setReturned(returnKey(sb.name, msg), { id, note, at: Date.now() });
-    try { inboxWrite(sb, { type: "decision", id, decision: "returned", to: msg.to, note }); } catch (e) { log({ sb: sb.name, error: `inbox (decision): ${e.message}` }); }
+    try { inboxWrite(sb, { type: "decision", id, decision: "returned", to: msg.to, note, reason }); } catch (e) { log({ sb: sb.name, error: `inbox (decision): ${e.message}` }); }
   }
   // J308 (design §9, from Codex / Claude Code): after 3 denied drafts in a row, a Doorman's drafts are refused for an
   // hour, so it stops trying variations; it is told to wait for Angus. An approval resets the count.
@@ -1465,7 +1476,6 @@ if (cmd === "run") {
   const note = fi > 0 ? ownerNote(raw) : { ok: true, text: "" };
   if (!note.ok) { console.error(`sbx-relay: ${cmd === "return" ? "note" : "reason"} refused: ${note.reason}`); process.exit(4); }
   if (cmd === "return") {
-    if (!note.text) { console.error("sbx-relay: return needs --note TEXT (what the author should change)"); process.exit(4); }
     let rec = null; try { rec = JSON.parse(fs.readFileSync(path.join(PENDING, arg + ".json"), "utf8")); } catch { /* */ }
     if (!returnable(rec)) { console.error("sbx-relay: only a sandbox agent's message or a research plan can be sent back; approve or deny this one"); process.exit(4); }
   }

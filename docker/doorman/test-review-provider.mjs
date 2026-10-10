@@ -31,7 +31,7 @@ c = r.current(); assert.equal(c.id, "world-t--000001"); assert.deepEqual(c.choic
 fs.rmSync(path.join(P, "world-t--000001.json"));
 c = r.current(); assert.equal(c.id, "world-t--000004"); assert.match(c.text, /research plan/); assert.match(c.text, /- s one\n- s two/); assert.deepEqual(c.choices, ["1", "2", "e", "r"]);
 // J370: r needs a note; r and a deny WITH a reason go through the guarded host path (refused under an agent); a note only rides with r or 2
-assert.equal(r.decide("world-t--000004", "r").ok, false, "r without a note"); assert.equal(r.decide("world-t--000004", "1", undefined, "note").ok, false, "approve carries no note");
+{ const b = r.decide("world-t--000004", "r"); assert.equal(b.ok, false); assert.match(b.text, /only Angus/, "J386: a bare r is allowed, through the guarded path"); } assert.equal(r.decide("world-t--000004", "1", undefined, "note").ok, false, "approve carries no note");
 const rb = r.decide("world-t--000004", "r", undefined, "use plainer words"); assert.equal(rb.ok, false); assert.match(rb.text, /only Angus/, rb.text);
 const dr = r.decide("world-t--000004", "2", undefined, "not on task"); assert.equal(dr.ok, false); assert.match(dr.text, /only Angus/, dr.text);
 // J365: nothing typed in the window starts anything: no suggest hook, no research drop-box writer

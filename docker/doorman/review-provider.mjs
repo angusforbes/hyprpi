@@ -39,7 +39,7 @@ export default function createReview(name) {
         if (heldStatus(id, Date.now(), { fresh: true }).state !== "pending") return { ok: false, text: "that request was already decided" };
         return actOnHeld(id, { verdict: "answer" }, "doorman window", undefined, String(note));
       }
-      if (k === "r") { if (!note || !String(note).trim()) return { ok: false, text: "r needs your note" }; if (heldStatus(id, Date.now(), { fresh: true }).state !== "pending") return { ok: false, text: "that request was already decided" }; return actOnHeld(id, { verdict: "return" }, "doorman window", undefined, String(note)); }
+      if (k === "r") { if (heldStatus(id, Date.now(), { fresh: true }).state !== "pending") return { ok: false, text: "that request was already decided" }; return actOnHeld(id, { verdict: "return" }, "doorman window", undefined, String(note ?? "")); }
       if (edited !== undefined && (!h.editable || k !== "1")) return { ok: false, text: "only approve can carry an edit, and only for an editable request" };
       if (heldStatus(id, Date.now(), { fresh: true }).state !== "pending") return { ok: false, text: "that request was already decided" };
       const choice = parseChoice(k);

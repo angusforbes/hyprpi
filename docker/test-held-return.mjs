@@ -33,7 +33,7 @@ const logs = [], notes = [], inbox = [], runs = [], spawned = [];
 const ctx = { fs, path, crypto: await import("node:crypto"), PENDING, DECISIONS, STATE: T, RESEARCH: "research.mjs", LIMITS: { pendingPerSandbox: 20 }, process, Buffer, Date, JSON, Map, String, Array, Number, Object, Math, RegExp, Promise, console,
   log: (o) => logs.push(o), heldNote: (sb, msg, via, what, outcome) => notes.push({ what, outcome }), inboxWrite: (sb, o) => inbox.push(o), closeNotif() {}, notifyHeld() { return null; },
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: (...a) => { spawned.push(a); return { on() { return this; } }; }, textMeta: () => ({}), now: () => new Date().toISOString(), fileURLToPath, import: { meta: { url: "file:///x" } },
-  ownerNote: N.ownerNote, returnable: N.returnable, senderLabel: N.senderLabel, returnKey: N.returnKey, researchLog() {}, gpuTell() {} };
+  ownerNote: N.ownerNote, holdReason: N.holdReason, returnable: N.returnable, senderLabel: N.senderLabel, returnKey: N.returnKey, researchLog() {}, gpuTell() {} };
 const R = vm.runInNewContext(cls.replace(/import\.meta\.url/g, '"file:///x"'), ctx);
 const relay = new R(); const RR = vm.runInNewContext(`(class { ${method("returnedAll", "  // J370 (ReturnReview)")}\n${method("replansAll", "  sendBack(")} })`, ctx); for (const k of ["returnedAll", "returnedFor", "setReturned", "replansAll", "setReplan", "reconcileReplans"]) relay[k] = RR.prototype[k]; const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
 relay.sandboxes = [sb]; relay.runResearch = (s, token, opts) => runs.push({ token, ...opts }); relay.pumpPlans = () => {}; relay.saveQueue = () => {};
@@ -85,7 +85,24 @@ assert.ok(logs.some((l) => l.token === "r01234567" && l.status === "error" && l.
 // a send-back for a kind that can't be returned, or without a note, is a deny (fail closed)
 const gpu = { id: "world-t--cccccc", sandbox: "world-t", mode: "talk", to: ["x"], text: "draft", draft: true }; put(gpu); calls = 0;
 await decideFile(gpu.id, "return", "x"); assert.equal(calls, 0); assert.equal(inbox.at(-1).decision, "denied");
-const t2 = { ...talk, id: "world-t--dddddd" }; put(t2); await decideFile(t2.id, "return"); assert.equal(inbox.at(-1).decision, "denied", "no note: denied, nothing sent"); assert.equal(calls, 0);
+// J386: a bare r (no note) sends it back with the hold's own reason, verbatim and labelled
+const t2 = { ...talk, id: "world-t--dddddd" }; put(t2); await decideFile(t2.id, "return");
+assert.equal(inbox.at(-1).decision, "returned", "a bare r sends it back"); assert.equal(calls, 0, "nothing sent");
+assert.equal(inbox.at(-1).note, ""); assert.match(inbox.at(-1).reason, /^held because \(relay\): a message from the sandbox to Lenswatch waits for Angus's approval/);
+// a bare r on a research plan held as an exception goes back to the ASKER with the Doorman's reason verbatim; the plan is dropped, no re-plan
+const ex = { id: "world-t--e1e1e1", sandbox: "world-t", mode: "talk", to: ["x"], text: "Searches planned", research: { plan: true, rid: "q1111aaaa", token: "r11111111", want: "w", depth: "quick", from: "Alpha", searches: ["a"], exception: "unrelated to this sandbox's task: it asks about \u001b[31mfootball\u202e" } };
+const runsBefore = runs.length; spawned.length = 0; put(ex); await decideFile(ex.id, "return");
+assert.equal(inbox.at(-1).status, "returned-asker"); assert.equal(runs.length, runsBefore, "no re-plan");
+assert.equal(inbox.at(-1).reason, "held because (Doorman): unrelated to this sandbox's task: it asks about [31mfootball", "verbatim, labelled, cleaned");
+assert.ok(spawned.some((a) => a[1]?.includes("drop")), "the plan is dropped");
+// r <note> on a plan still re-plans via the Doorman, and carries the reason too
+const ex2 = { ...ex, id: "world-t--e2e2e2", research: { ...ex.research, rid: "q2222bbbb", token: "r22222222" } }; put(ex2); await decideFile(ex2.id, "return", "keep it on perovskites");
+assert.equal(inbox.at(-1).status, "returned"); assert.equal(runs.at(-1).replanRid, "q2222bbbb"); assert.match(inbox.at(-1).reason, /^held because \(Doorman\)/);
+// no recorded reason: says so
+assert.equal(N.holdReason({ research: { plan: true } }), "held for review; no reason recorded");
+assert.equal(N.holdReason({ research: { plan: true, mode: "doorman-strict" } }).startsWith("held because (host): strict mode"), true);
+assert.ok(N.holdReason({ research: { plan: true, exception: "x".repeat(2000) } }).length <= N.REASON_MAX, "capped");
+assert.match(N.holdReason({ research: { plan: true, exception: "no task set for this sandbox" } }), /^held because \(host\)/);
 
 // W2: deny with a reason reaches the asker; a plain deny still works
 const t3 = { ...talk, id: "world-t--eeeeee" }; put(t3); await decideFile(t3.id, "deny", "not on task");
@@ -120,7 +137,7 @@ const cli = (...a) => spawnSync(process.execPath, [RL, ...a], { encoding: "utf8"
 let c = cli("return", "world-t--c3c3c3", "--note", "please revise"); assert.equal(c.status, 3, c.stderr); assert.match(c.stderr, /only Angus/);
 c = cli("deny", "world-t--c3c3c3", "--reason", "nope"); assert.equal(c.status, 3, "a reason is labelled as Angus's: agents can't send one");
 c = cli("return", "world-t--c3c3c3", "--note", "x".repeat(501)); assert.equal(c.status, 4); assert.match(c.stderr, /note refused/);
-c = cli("return", "world-t--c3c3c3"); assert.equal(c.status, 4, "a send-back needs a note");
+c = cli("return", "world-t--c3c3c3"); assert.equal(c.status, 3, "a bare send-back is allowed but still needs Angus (terminal, no agent)");
 c = cli("deny", "world-t--c3c3c3"); assert.equal(c.status, 0, c.stderr); assert.ok(fs.existsSync(path.join(T, "state", "hyprpi", "sbx-relay", "decisions", "world-t--c3c3c3.deny")));
 fs.rmSync(T, { recursive: true, force: true });
 console.log("held-return: all pass");

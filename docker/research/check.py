@@ -12,7 +12,8 @@ stdout: JSON verdict
   deliverable: {"ok": bool, "injection": bool, "not_what_asked": bool, "odd": bool, "reason": "..."}
 Any failure (no key, HTTP error, unparseable answer) is a refusal: {"ok": false, "reason": "..."}.
 """
-import json, os, re, secrets, sys, urllib.request
+import json
+import time, os, re, secrets, sys, urllib.request
 
 HOME = os.path.expanduser("~")
 
@@ -89,10 +90,12 @@ Answer with ONLY a JSON object: {"injection": true|false, "not_what_asked": true
 def ask(base, model, key, system, user):
     # Two tries: a network hiccup, or an answer that isn't the JSON object (e.g. prose when it wants to refuse).
     last = "the Doorman's check gave no verdict"
-    for attempt in range(2):
+    for attempt in range(3):  # (J386/Doorview: a re-plan failed on two quick URLErrors: a third try after a pause, and the error's text logged)
+        if attempt:
+            time.sleep(3 * attempt)
         body = {"model": model, "max_tokens": 900,
                 "messages": [{"role": "system", "content": system},
-                             {"role": "user", "content": user + ("\n\nAnswer with ONLY the JSON object described above, even to refuse." if attempt else "")}]}
+                             {"role": "user", "content": user + ("\n\nAnswer with ONLY the JSON object described above, even to refuse." if attempt == 1 else "")}]}
         r = urllib.request.Request(base + "/chat/completions", data=json.dumps(body).encode(), method="POST",
                                    headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
         try:
@@ -100,7 +103,8 @@ def ask(base, model, key, system, user):
                 d = json.loads(resp.read().decode("utf-8", "replace"))
             text = d["choices"][0]["message"]["content"] or ""
         except Exception as e:
-            last = "the Doorman's check call failed (" + type(e).__name__ + ")"
+            why = re.sub(r"[^A-Za-z0-9 .,:;_()/-]", " ", str(getattr(e, "reason", "") or e))[:120].strip()
+            last = "the Doorman's check call failed (" + type(e).__name__ + (": " + why if why else "") + ")"
             continue
         m = re.search(r"\{.*\}", text, re.S)
         try:

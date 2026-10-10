@@ -49,7 +49,7 @@ log({ sb: "w", op: "research", mode: "doorman-open", delivered: ["w"], rid: "q6"
 t = trackHeld("w--bbbbbc"); assert.ok(t.done); assert.match(t.text, /straight into w \(doorman-open/);
 // J370: sent back with a note, followed to its revision; a deny with a reason says so
 log({ sb: "w", op: "talk", decision: "returned", id: "w--c1c1c1", note: "shorter" });
-t = trackHeld("w--c1c1c1"); assert.equal(t.state, "returned"); assert.equal(t.done, false); assert.match(t.text, /sent back to w's asking agent with your note/);
+t = trackHeld("w--c1c1c1"); assert.equal(t.state, "returned"); assert.equal(t.done, false); assert.match(t.text, /sent back to w's asking agent with the reason and your note/);
 log({ sb: "w", op: "revision", id: "w--c2c2c2", revises: "w--c1c1c1" });
 t = trackHeld("w--c1c1c1"); assert.ok(t.done); assert.match(t.text, /revised message is held for you as w--c2c2c2/);
 log({ sb: "w", op: "research-plan", decision: "returned", id: "w--d1d1d1", rid: "q7", token: "r7", note: "plainer" });
