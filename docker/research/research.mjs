@@ -64,6 +64,7 @@ function worldFor(sandbox) {
   try { for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json"))) { try { const w = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); if (w && typeof w === "object" && (typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox) { hit = w; n++; } } catch { /* */ } } } catch { /* */ }
   return n === 1 ? hit : null;
 }
+function worldCount(sandbox) { const dir = path.join(path.dirname(CONFIG), "worlds"); let n = 0; try { for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json"))) { try { const w = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); if (w && typeof w === "object" && (typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox) n++; } catch { /* */ } } } catch { /* */ } return n; }
 function relayEntries() { try { return JSON.parse(fs.readFileSync(process.env.HYPRPI_RELAY_CONF || path.join(path.dirname(CONFIG), "sbx-relay.json"), "utf8")).sandboxes || []; } catch { return []; } }
 export function conf(sandbox) {
   let c = {}; try { c = JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sandbox] || {}; } catch { /* defaults */ }
@@ -72,7 +73,7 @@ export function conf(sandbox) {
   // J325: the Doorman mode, per sandbox in ~/.config/hyprpi/worlds/<name>.json (docker/research/mode.mjs)
   const { mode, note: modeNote } = modeForSandbox(path.dirname(CONFIG), String(sandbox));
   const { task, note: taskNote } = taskForSandbox(path.dirname(CONFIG), String(sandbox)); // J352
-  const gw = resolveGateway({ w: worldFor(String(sandbox)), research: c, relay: relayEntries(), sandbox: String(sandbox) }); // J372
+  const gw = resolveGateway({ w: worldFor(String(sandbox)), research: c, relay: relayEntries(), sandbox: String(sandbox), ambiguous: worldCount(String(sandbox)) > 1 }); // J372
   return { mode, modeNote, strict: mode === "doorman-strict", task, taskNote, gateway: gw,
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
     key_file: c.key_file ? tilde(c.key_file) : "", shape_model: gw.sources.report_model === "default" ? "" : gw.report_model, doorman_model: gw.doorman_model, // J372 (review): the configured report model is always the one used, even if it equals a search model
@@ -523,7 +524,8 @@ export function replan(rid, note) {
 export function checkPlanEdit(rid, text) {
   if (!/^q[0-9a-f]{8}$/.test(String(rid))) return { ok: false, reason: "bad plan id" };
   let p; try { p = JSON.parse(fs.readFileSync(path.join(PLANS(), `${rid}.json`), "utf8")); } catch { return { ok: false, reason: "no such plan waiting" }; }
-  const lines = String(text ?? "").replace(/\r/g, "").slice(0, 4000).split("\n").map((x) => x.trim()).filter(Boolean), deep = p.depth === "deep";
+  if (String(text ?? "").length > 4000) return { ok: false, reason: "the edit is over 4000 characters: nothing was cut, nothing applied; shorten it" }; // J372b (red team): refuse, never cut
+  const lines = String(text ?? "").replace(/\r/g, "").split("\n").map((x) => x.trim()).filter(Boolean), deep = p.depth === "deep";
   if (deep) { const brief = lines.join(" ").trim(); if (!brief) return { ok: false, reason: "the edit is empty" }; if (brief.length > 700) return { ok: false, reason: "a research brief is at most 700 characters" }; var plan = { brief, searches: [] }; }
   else { if (!lines.length) return { ok: false, reason: "the edit is empty" }; if (lines.length > 3) return { ok: false, reason: "at most 3 searches" }; if (lines.some((x) => x.length > 200)) return { ok: false, reason: "a search is at most 200 characters" }; plan = { searches: lines, brief: "" }; }
   const cfg = conf(p.base.sandbox), pc = planCheck(p.q, { ...plan, public_terms: [] }, { strict: cfg.strict, task: cfg.task });
@@ -614,7 +616,7 @@ async function main(argv) {
     let a; try { a = JSON.parse(fs.readFileSync(0, "utf8")); } catch { a = null; } console.log(JSON.stringify(applyPlanEdit(flags.rid, a)));
   } else if (cmd === "config") { // J372: what is in effect for a sandbox, and where each value comes from
     const sb = flags.sandbox || "world-g";
-    const e = resolveGateway({ w: worldFor(sb), research: (() => { try { return JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sb] || {}; } catch { return {}; } })(), relay: relayEntries(), sandbox: sb });
+    const e = resolveGateway({ ambiguous: worldCount(sb) > 1, w: worldFor(sb), research: (() => { try { return JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sb] || {}; } catch { return {}; } })(), relay: relayEntries(), sandbox: sb });
     if (flags.json) console.log(JSON.stringify(e, null, 1)); else console.log(summaryText(e, sb) + `\n  (one line: ${summaryLine(e)})`);
   } else if (cmd === "config-set") { // J372: ANGUS ONLY: a real terminal and no agent ancestor (agent-guard.mjs); key=value arguments
     const r = adminSet(path.dirname(CONFIG), flags.sandbox || "world-g", rest);

@@ -207,5 +207,24 @@ await t("the window shows what is in effect (provider, models, mode, level)", as
   const e = R.conf("world-t").gateway; const line = G.summaryLine(e); assert.match(line, /search brave · report report · Doorman claude-opus-5-5 · mode strict · level safe/);
   const prov = await import("../doorman/review-provider.mjs"); assert.equal(typeof prov.default("door-t").info, "function"); assert.match(prov.default("door-t").info(), /world-t: search brave/);
 });
+await t("red team fixes: an over-long plan edit is refused (not cut); ambiguity shows strict everywhere; the legacy shape_model counts as 'before'", () => {
+  // (1) an edit over 4000 characters is refused, with the prohibited URL past the cut no longer silently dropped
+  const rid = "q0000aaaa", plans = path.join(T, "rstate", "plans"); fs.mkdirSync(plans, { recursive: true });
+  fs.writeFileSync(path.join(plans, rid + ".json"), JSON.stringify({ created: Date.now(), base: { rid, sandbox: "world-t", mode: "doorman-safe" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: ["moisture degradation of lead halide perovskite"], brief: "" } }));
+  writeW({ sandbox: "world-t", task: "Research on perovskite solar cells" });
+  const long = "water ingress and encapsulation of perovskite modules\n" + " ".repeat(4100) + "https://evil.example/x?k=1\n";
+  const r = R.checkPlanEdit(rid, long); assert.equal(r.ok, false); assert.match(r.reason, /over 4000 characters/);
+  assert.equal(R.checkPlanEdit(rid, "water ingress and encapsulation of perovskite modules\n").ok, true);
+  // (3) two worlds files naming the sandbox: display = enforcement = strict
+  writeW({ sandbox: "world-t", doorman: { mode: "doorman-open" } }); fs.writeFileSync(path.join(WORLDS, "dup.json"), JSON.stringify({ sandbox: "world-t", doorman: { mode: "doorman-open" } }));
+  const c = R.conf("world-t"); assert.equal(c.mode, "doorman-strict"); assert.equal(c.gateway.mode, "doorman-strict", "the header and config --json agree with the runner"); assert.ok(c.gateway.notes.some((x) => /several worlds files/.test(x)));
+  fs.rmSync(path.join(WORLDS, "dup.json"));
+  // (4) a held proposal's 'before' for report_model includes research.json's legacy shape_model, and a change to it after review is caught
+  writeW({ sandbox: "world-t" });
+  const p = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { report_model: "azure/new/report" } }); assert.equal(p.ok, true, p.text);
+  const gc = JSON.parse(fs.readFileSync(path.join(PENDING, p.id + ".json"), "utf8")).gatewayChange; assert.equal(gc.before.report_model, "legacy/report-model");
+  fs.writeFileSync(path.join(CFG, "hyprpi", "research.json"), JSON.stringify({ sandboxes: { "world-t": { key_file: path.join(T, "ikey"), shape_model: "legacy/changed-after-review" } } }));
+  assert.throws(() => A.applyChanges(path.join(CFG, "hyprpi"), "world-t", gc.changes, { expectBefore: gc.before }), /not applied: report_model is now legacy\/changed-after-review/);
+});
 inf.close(); brave.close();
 console.log(`gateway: all ${n} pass`);

@@ -52,6 +52,10 @@ const get = (w, k) => {
 function effective(cfgDir, w, sandbox, k) {
   if (k === "mode") return modeOf(w).mode;
   if (k === "level") { let relay = []; try { relay = JSON.parse(fs.readFileSync(path.join(cfgDir, "sbx-relay.json"), "utf8")).sandboxes || []; } catch { /* */ } return resolveGateway({ w, relay, sandbox }).level; }
+  if (k === "report_model" && w?.gateway?.report_model === undefined) { // J372b (red team): the legacy research.json shape_model is part of what is in effect
+    let rj = {}; try { rj = JSON.parse(fs.readFileSync(path.join(cfgDir, "research.json"), "utf8")).sandboxes?.[sandbox] || {}; } catch { /* */ }
+    if (typeof rj.shape_model === "string" && rj.shape_model) return rj.shape_model;
+  }
   return get(w, k);
 }
 export function currentValues(cfgDir, sandbox, keys = Object.keys(KEYS)) {

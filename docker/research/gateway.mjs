@@ -32,7 +32,7 @@ const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\/:+-]{0,99}$/;
 const tilde = (p) => String(p || "").replace(/^~(?=\/|$)/, os.homedir());
 
 // w = the worlds/<name>.json object (or null); research = the sandbox's entry in research.json; relay = the sbx-relay.json sandbox entries.
-export function resolveGateway({ w, research = {}, relay = [], sandbox = "", levelOf = null } = {}) {
+export function resolveGateway({ w, research = {}, relay = [], sandbox = "", levelOf = null, ambiguous = false } = {}) {
   const g = w && typeof w === "object" && w.gateway && typeof w.gateway === "object" && !Array.isArray(w.gateway) ? w.gateway : {};
   const notes = [], src = {};
   const pick = (name, vals, fallback) => { for (const [v, from] of vals) if (v !== undefined && v !== null && v !== "") { src[name] = from; return v; } src[name] = "default"; return fallback; };
@@ -47,12 +47,13 @@ export function resolveGateway({ w, research = {}, relay = [], sandbox = "", lev
   const doormanChat = String(dm.model || "").replace(/^nv-claude\//, "");
   const doorman = g.doorman_model !== undefined ? model("doorman_model", [[g.doorman_model, "gateway.doorman_model"]], "") : (src.doorman_model = "the Doorman sandbox's own model", "");
   // The mode is whatever the runner resolves (mode.mjs modeOf: gateway.mode, else doorman.mode, else the deprecated research.strict), so the display can never differ from what is enforced.
-  const mo = modeOf(w), mode = mo.mode, valid = (x) => ["doorman-strict", "doorman-safe", "doorman-open"].includes(x);
+  let mo = modeOf(w), mode = mo.mode, valid = (x) => ["doorman-strict", "doorman-safe", "doorman-open"].includes(x);
   let modeFrom = g.mode !== undefined ? (valid(g.mode) ? "gateway.mode" : "default (gateway.mode is invalid)") : w?.doorman?.mode !== undefined ? (valid(w.doorman.mode) ? "doorman.mode" : "default (doorman.mode is invalid)") : w?.research?.strict === true ? "research.strict (deprecated)" : "default";
   if (mo.note) notes.push(mo.note);
   src.mode = modeFrom;
   const searchKeyFile = s.key_file ? tilde(s.key_file) : "";
   if (SEARCH_PROVIDERS[provider].ownKey && !searchKeyFile) notes.push(`search provider ${provider} needs gateway.search.key_file (an API key file); research with it will fail until it is set`);
+  if (ambiguous) { mode = "doorman-strict"; notes.push("several worlds files name this sandbox: the runner and the card use doorman-strict and the strict level until only one does"); src.mode = "ambiguous worlds files (fail closed)"; }
   return {
     search: { provider, label: SEARCH_PROVIDERS[provider].label, quick_model: quick, deep_model: deep, key_file: searchKeyFile, hosts: SEARCH_PROVIDERS[provider].hosts.slice() },
     report_model: report, doorman_model: doorman, doorman_chat_model: doormanChat, doorman_visibility: dm.visibility || "",
