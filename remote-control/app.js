@@ -292,7 +292,15 @@ function setWorld(w) {
   fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
   fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); fetchStream(w).catch(() => {});
 }
+// J417 follow-up: a new version of the page on the laptop → reload (the draft and waiting 📎 files are
+// kept in localStorage; not while a file is uploading or a message is going: try again shortly).
+let build = null;
+function reloadForUpdate() {
+  if (sending || atts.some((a) => !a.path && !a.err)) return setTimeout(reloadForUpdate, 5000);
+  location.reload();
+}
 function applyState(s) {
+  if (s.build) { if (!build) build = s.build; else if (s.build !== build) { build = s.build; reloadForUpdate(); return; } }
   worlds = s.worlds || []; online = !!s.online;
   if (s.directory) { const sig = JSON.stringify(s.directory); if (sig !== dirSig) { dirSig = sig; dirVer++; setDirectory(s.directory); if (world) rerenderAll(); } }
   if (s.theme) { for (const [k, v] of Object.entries(s.theme)) document.documentElement.style.setProperty("--" + k, v); document.querySelector("meta[name=theme-color]").content = s.theme.bg; }

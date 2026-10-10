@@ -201,8 +201,14 @@ function directory() {
   for (const [room, list] of projectNames) for (const p of list) projects.push({ ...p, display: p.name, room, kind: "project" });
   return { agents, projects };
 }
+// J417 follow-up (Angus's 📎 still showed only images at 13:26): the Home Screen app keeps its page in
+// memory for days, so a new app.js never reaches it. build = the page files' mtimes; the page reloads
+// itself when it changes (app.js applyState).
+const BUILD_FILES = ["index.html", "app.js", "style.css", "md.mjs", "share.mjs", "fileview.mjs"];
+const build = () => BUILD_FILES.map((f) => { try { return Math.round(fs.statSync(path.join(HERE, f)).mtimeMs).toString(36); } catch { return "-"; } }).join(".");
 function state() {
   return {
+    build: build(),
     home: HOME, // J190: the web pages show paths as ~/… with this (was hard-coded)
     directory: directory(),
     worlds: worlds(),
