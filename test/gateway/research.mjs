@@ -103,7 +103,7 @@ export async function runResearch(ctx) {
       assert.match(held.research.exception, /unrelated to this sandbox's task/);
       assert.match(held.text, /Held as an exception[\s\S]*Task: Perovskite/);
       assert.equal(calls().length, n, 'off-task searches have not been sent');
-      assert.ok(inboxOf(result.research).some(x => x.status === 'planned' && x.exception === 'off-task'));
+      await ctx.waitFor('off-task planned receipt (relay writes it after holding)', () => inboxOf(result.research).some(x => x.status === 'planned' && x.exception === 'off-task'));
       await ctx.decide(held.id, '2', { note: 'outside the fixture task' });
       const denied = await ctx.waitFor('off-task deny reason', () => ctx.inbox('sandbox').find(x => x.id === held.id && x.status === 'denied'));
       if (keysReady()) { // spec 2.3: the asker always hears it was denied, why it was held, Angus's text, and what to do next
@@ -129,7 +129,7 @@ export async function runResearch(ctx) {
         assert.match(held.research.exception, /^no task is set for this sandbox/);
         assert.match(held.text, /Held as an exception: no task is set[\s\S]*Task: \(none set\)/);
         assert.equal(calls().length, n, 'nothing was searched without a task');
-        assert.ok(inboxOf(result.research).some(x => x.status === 'planned' && x.exception === 'no-task'));
+        await ctx.waitFor('no-task planned receipt (relay writes it after holding)', () => inboxOf(result.research).some(x => x.status === 'planned' && x.exception === 'no-task'));
         await ctx.decide(held.id, '2');
         await ctx.waitFor('no-task plan receipt', () => inboxOf(result.research).find(x => x.status === 'denied'));
         assert.equal(calls().length, n);
@@ -149,7 +149,7 @@ export async function runResearch(ctx) {
       assert.deepEqual(held.research.searches, SEARCH_OFF);
       assert.deepEqual(plans().slice(pn).map(x => x.mode), ['plan'], 'only the plan check ran; no search, no vet');
       assert.equal(calls().length, n);
-      assert.ok(inboxOf(result.research).some(x => x.status === 'planned' && x.exception === 'off-task'));
+      await ctx.waitFor('strict off-task planned receipt (relay writes it after holding)', () => inboxOf(result.research).some(x => x.status === 'planned' && x.exception === 'off-task'));
       await ctx.decide(held.id, '2');
       await ctx.waitFor('strict off-task plan denied', () => inboxOf(result.research).find(x => x.status === 'denied'));
       assert.equal(calls().length, n);
@@ -323,8 +323,9 @@ export async function runResearch(ctx) {
       const token = await start(OFF);
       const refused = await outcome(token);
       assert.equal(refused.status, 'refused');
-      assert.match(refused.reason, /3 such requests already wait for Angus this hour/);
+      assert.match(refused.reason, /3 such requests already went out flagged this hour/);
       assert.equal(calls().length, n, 'nothing was searched');
+      assert.doesNotMatch(refused.reason, /wait for Angus/);
       assert.deepEqual(items(token), []);
       assert.ok(!ctx.inbox('sandbox').some(x => x.token === token && x.status === 'delivered-open'));
       assert.deepEqual(plans().slice(pn).map(x => x.mode), ['plan'], 'the plan check ran; the result vet did not');

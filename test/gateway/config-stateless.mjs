@@ -103,18 +103,20 @@ export async function runConfig(ctx) {
             ctx.writeWorld(w => { delete w.access; delete w.doorman; w.gateway = { mode }; return w; });
             const e = await effective(ctx); assert.equal(e.mode, mode); assert.equal(e.level, level); assert.equal(e.levelWhy, 'mode ' + mode);
           }
-          ctx.writeWorld(w => ({ ...w, gateway: { mode: 'unknown-permissive' } }));
-          let e = await effective(ctx); assert.equal(e.mode, 'strict'); assert.equal(e.level, 'strict'); assert.match(e.notes.join(' '), /unknown mode/);
+          for (const invalid of ['unknown-permissive', 'constructor', '__proto__', 'toString']) {
+            ctx.writeWorld(w => ({ ...w, gateway: { mode: invalid } }));
+            const e = await effective(ctx); assert.equal(e.mode, 'strict', invalid + ' cannot resolve via an object prototype'); assert.equal(e.level, 'strict'); assert.match(e.notes.join(' '), /unknown mode/);
+          }
           ctx.writeWorld(w => ({ ...w, gateway: { mode: 'yolo' } }));
           fs.writeFileSync(duplicate, JSON.stringify(ctx.readWorld()));
-          e = await effective(ctx); assert.equal(e.mode, 'strict'); assert.equal(e.level, 'strict'); assert.match(e.notes.join(' '), /several worlds files/);
+          const e = await effective(ctx); assert.equal(e.mode, 'strict'); assert.equal(e.level, 'strict'); assert.match(e.notes.join(' '), /several worlds files/);
         } finally { fs.rmSync(duplicate, { force: true }); ctx.writeWorld(() => initial); }
       });
 
       await ctx.testcase('J412 dial: legacy values are read with warnings, never used for new writes', async () => {
         const initial = ctx.readWorld();
         try {
-          for (const [legacy, mode] of [['doorman-strict', 'strict'], ['doorman-safe', 'safe'], ['doorman-open', 'yolo']]) {
+          for (const [legacy, mode] of [['doorman-strict', 'strict'], ['doorman-safe', 'safe'], ['doorman-open', 'open']]) {
             ctx.writeWorld(w => { delete w.gateway; delete w.access; w.doorman = { mode: legacy }; return w; });
             const e = await effective(ctx); assert.equal(e.mode, mode); assert.match(e.notes.join(' '), /legacy mode/);
           }

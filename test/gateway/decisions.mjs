@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export async function runDecisions(ctx) {
-  const names = ['1 text reaches only the asker, never the recipient', '1+ defaults to one hour and authorizes a subsequent similar message', '1+ 5m minimum is accepted', '1+ 2h text sets two hours and preserves the asker note', '1+ over eight hours is capped', '1+ under five minutes refuses without a decision or rule', '2 carries the hold reason and note; the revision cannot use an existing rule', 'removed CLI verbs and edit option refuse without mutation'];
+  const names = ['1 text reaches only the asker, never the recipient', '1+ defaults to one hour and authorizes a subsequent similar message', '1+ 5m minimum is accepted', '1+ 2h text sets two hours and preserves the asker note', '1+ over eight hours is capped', '1+ under five minutes refuses without a decision or rule', '2 carries the hold reason and note; the revision cannot use an existing rule', 'removed CLI verbs and edit option refuse without mutation', 'yolo: a denied send-back does not pause a later auto message'];
   if (!ctx.parts.keys) { for (const name of names) ctx.pending('J412 message: ' + name, 'new key CLI and asker-only receipt helper have not landed'); return; }
   assert.equal(process.env.HYPRPI_SOCKET, ctx.rig.P('d.sock'), 'peer must capture only the private daemon');
   const { connect } = await import(pathToFileURL(path.join(ctx.repoRoot, 'lib/client.mjs')).href);
@@ -60,7 +60,7 @@ export async function runDecisions(ctx) {
         await delivery(h); await receipt(h, 'approved', note); await endRule(h, minutes, started);
         if (note) assert.ok(!events.some(x => String(x.data.text).includes(note)));
         if (index === 1) {
-          const r = await ask('fixture subsequent similar message'); assert.deepEqual(r.pending, []); assert.ok(r.ruled); assert.ok(r.delivered.includes(peerId));
+          const r = await ask('fixture subsequent similar message'); assert.deepEqual(r.pending, []); assert.ok(r.ruled); assert.deepEqual(r.delivered, [peerName], 'relay reports the shown recipient label, not the peer id');
           await ctx.waitFor('similar message delivered under rule', () => events.some(x => x.event === 'talk' && x.data.text.includes('fixture subsequent similar message') && x.data.text.includes('sent without asking under')));
         }
       });
@@ -99,6 +99,30 @@ export async function runDecisions(ctx) {
         assert.deepEqual(fs.readFileSync(heldPath(h.id)), before); assert.ok(!events.some(x => x.event === 'talk' && x.data.text === h.body));
       }
       await ctx.decide(h.id, '1'); await delivery(h);
+    });
+    await ctx.testcase('J412 message: ' + names[8], async () => {
+      await clearRules();
+      const r0 = await ctx.ask('sandbox', { op: 'talk', to: [peerName], mode: 'demand', text: '[Alpha, in world I] fixture yolo sent-back original' });
+      assert.equal(r0.ok, true, JSON.stringify(r0)); const original = ctx.holdFrom(r0);
+      ctx.writeWorld(w => ({ ...w, gateway: { ...w.gateway, mode: 'yolo' } }));
+      try {
+        await ctx.decide(original.id, '2', { note: 'YOLO-DENIAL-NOTE' }); await receipt(original, 'denied', 'YOLO-DENIAL-NOTE');
+        const returned = JSON.parse(fs.readFileSync(path.join(ctx.relayState, 'returned.json'), 'utf8'));
+        assert.ok(returned[ctx.rig.sandbox]?.open.some(x => x.id === original.id), 'a genuine send-back is open before the automatic message');
+        assert.ok(!events.some(x => x.event === 'talk' && x.data.text === original.body), 'the denied original is never delivered');
+        const marker = 'fixture yolo auto after send-back', r = await ask(marker);
+        assert.equal(r.pending.length, 1, JSON.stringify(r)); // an auto item: written like a held one and approved at once by the relay
+        assert.equal(r.ruled, undefined, 'no allow-similar rule involved');
+        const rec = ctx.pendingItems().find(x => x.id === r.pending[0]);
+        if (rec) assert.equal(rec.auto?.mode, 'yolo');
+        await ctx.waitFor('auto message delivered while a send-back is open', () => events.some(x => x.event === 'talk' && x.data.text.includes(marker)));
+        const auto = await ctx.waitFor('auto receipt', () => ctx.inbox('sandbox').find(x => x.type === 'decision' && x.id === r.pending[0]));
+        assert.equal(auto.decision, 'approved'); assert.match(auto.text, /Approved automatically \(mode yolo\)/);
+        await ctx.waitFor('durable yolo message auto log', () => ctx.logs().some(x => x.op === 'auto' && x.id === r.pending[0] && x.auto === 'yolo' && x.reviewed === false));
+        assert.ok(!ctx.pendingItems().some(x => x.id === r.pending[0]), 'no automatic message remains held');
+        assert.deepEqual(rules(), [], 'delivered by yolo, not by a rule');
+        assert.ok(!events.some(x => x.event === 'talk' && x.data.text === original.body));
+      } finally { ctx.writeWorld(w => ({ ...w, gateway: { ...w.gateway, mode: 'safe' } })); }
     });
     ctx.artifact('message-decisions', { peerId, scope: 'actual private daemon talk events; real guarded owner CLI; exact asker decision envelopes', deliveries: events.filter(x => x.event === 'talk') });
   } finally {

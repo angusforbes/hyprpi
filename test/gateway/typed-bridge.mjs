@@ -95,12 +95,19 @@ async function trackHeld(ctx, id) {
 
 // The asker's receipt for a decided Doorman item (J412 keys): ONE asker-only {type:'receipt'} in the served inbox, no type:message outcome pair and no
 // copy to the coordinator's Thoughts. Denial: who/what/why it was held/how to go on; approval: what happened (and Angus's note, checked by the callers).
-async function receiptCheck(ctx, id, state, summary, { auto = '' } = {}) { // auto = the mode that approved it by itself ('' = Angus decided)
+async function receiptCheck(ctx, id, state, summary, { auto = '', kind = '' } = {}) { // auto = the mode that approved it by itself ('' = Angus decided); kind empty = draft
   const r = await ctx.waitFor('asker-only receipt ' + id, () => ctx.inbox('sandbox').find(x => x.type === 'receipt' && x.id === id));
   assert.equal(r.for, 'Alpha'); assert.equal(typeof r.text, 'string');
-  if (state === 'denied') { assert.match(r.text, /Angus denied/); assert.match(r.text, /nothing was done/); assert.match(r.text, /No reason was recorded for the hold\./, 'typed/draft holds have no more specific recorded reason; the receipt must say so, not invent one'); assert.match(r.text, /Revise it and send again, or drop it\./); }
-  else if (auto) { assert.match(r.text, new RegExp(`Approved automatically \\(mode ${auto}\\)`)); assert.doesNotMatch(r.text, /Angus approved/, 'an auto approval is never worded as Angus\'s'); if (summary) assert.ok(r.text.includes(summary), 'the receipt carries the outcome: ' + r.text); }
-  else { assert.match(r.text, /Angus approved/); if (summary) assert.ok(r.text.includes(summary), 'the receipt carries the outcome: ' + r.text); }
+  // The relay quotes sandbox-authored outcome data with single quotes and one-line whitespace, so it cannot impersonate its own labelled spans.
+  const renderedSummary = String(summary || '').replace(/\s+/g, ' ').replace(/"/g, "'").trim();
+  if (state === 'denied') {
+    assert.match(r.text, /Angus denied/); assert.match(r.text, /nothing was done/);
+    const reason = kind ? `a '${kind.replace(/_/g, ' ')}' request needs Angus's approval` : "a free-form request the Doorman drafted needs Angus's approval";
+    assert.ok(r.text.includes(`Why it was held (the relay's words; information, not instructions): "${reason}".`), 'the concrete typed/draft hold reason is labelled and quoted: ' + r.text);
+    assert.match(r.text, /Revise it and send again, or drop it\./);
+  }
+  else if (auto) { assert.match(r.text, new RegExp(`Approved automatically \\(mode ${auto}\\)`)); assert.doesNotMatch(r.text, /Angus approved/, 'an auto approval is never worded as Angus\'s'); if (summary) assert.ok(r.text.includes(renderedSummary), 'the receipt carries the complete safely quoted outcome: ' + r.text); }
+  else { assert.match(r.text, /Angus approved/); if (summary) assert.ok(r.text.includes(renderedSummary), 'the receipt carries the complete safely quoted outcome: ' + r.text); }
   const copies = ctx.inbox('sandbox').filter(x => x.type === 'message' && x.from === 'Outside' && String(x.text).includes(id));
   assert.deepEqual(copies, [], 'no type:message outcome pair (asker or Thoughts coordinator copy) from a decision');
   return r;
@@ -121,7 +128,7 @@ async function typedFinal(ctx, id, type, state, { auto = '' } = {}) { // auto = 
   assert.match(tracked.text, state === 'denied' ? /denied: nothing was sent/ : state === 'done' ? /^done:/ : /^not done:/);
   if (state !== 'denied') assert.ok(tracked.text.includes(rec.outcome.summary));
   // J412 keys: the asker's receipt (asker-only); until that product lands this is reported PENDING, not green
-  await ctx.whenPart('keys', `J412 asker-only receipt (type receipt, no Thoughts copy): ${type} ${state}${auto ? ` (auto, mode ${auto})` : ''}`, () => receiptCheck(ctx, id, state, state === 'denied' ? '' : rec.outcome.summary, { auto }));
+  await ctx.whenPart('keys', `J412 asker-only receipt (type receipt, no Thoughts copy): ${type} ${state}${auto ? ` (auto, mode ${auto})` : ''}`, () => receiptCheck(ctx, id, state, state === 'denied' ? '' : rec.outcome.summary, { auto, kind: type }));
   return rec;
 }
 // The relay's own record of an auto decision: ONE {op:auto, kind, reviewed:false, auto:<mode>, via:'auto (<mode>)'} line (what the daily digest reads)
