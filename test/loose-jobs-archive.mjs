@@ -37,9 +37,10 @@ const jobs = [
 ok("A finishedLooseJobs", JSON.stringify(finishedLooseJobs({ items }, jobs, now)) === JSON.stringify(["N1", "N3", "N4", "N6"]), JSON.stringify(finishedLooseJobs({ items }, jobs, now)));
 
 // ---- daemon helpers
-async function daemon(state, label) {
+async function daemon(state, label, worlds = {}) {
   const sock = path.join(state, "d.sock"), cfg = path.join(state, "cfg");
-  fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
+  fs.mkdirSync(path.join(cfg, "hyprpi", "worlds"), { recursive: true });
+  for (const [n, w] of Object.entries(worlds)) fs.writeFileSync(path.join(cfg, "hyprpi", "worlds", `${n}.json`), JSON.stringify(w));
   fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false }));
   fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } } }));
   const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: state, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j413-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000" };
@@ -58,20 +59,27 @@ const card = async (api, room, name) => (await api.call("board.get", { room })).
   const S = fs.mkdtempSync(path.join(os.tmpdir(), "j413-")); fs.mkdirSync(path.join(S, "boards"));
   const mk = (h, sec = "next") => ({ h, sec, text: `⟦${h}⟧`, by: { id: "", name: "Thoughts-Z" }, ts: now - 5 * D, updated: now - 5 * D });
   const loose = { id: "p-lz", name: "inbox-z", title: "Loose jobs", icon: "📥", status: "active", members: [], writer: "thoughts:Z", created: now - 9 * D, updated: now - 5 * D, by: "Thoughts-Z", where: null, next_step: null, seq: { D: 0, N: 7, H: 0 }, items: ["N1", "N2", "N3", "N4", "N5", "N6", "N7"].map((h) => mk(h)) };
-  const proj = { id: "p-pz", name: "realproj", title: "a project", icon: "🔧", status: "active", members: [], writer: "hp-nobody", created: now - 9 * D, updated: now - 5 * D, by: "x", where: null, next_step: null, seq: { D: 0, N: 1, H: 0 }, items: [mk("N1")] };
+  const proj = { id: "p-pz", name: "realproj", title: "a project", icon: "🔧", status: "active", members: [], writer: "hp-nobody", created: now - 9 * D, updated: now - 5 * D, by: "x", where: null, next_step: null, seq: { D: 0, N: 2, H: 0 }, items: [mk("N1"), { ...mk("N2"), archived: now - D }] };
+  // World G runs in a sandbox (J267): its host board is history, so its Loose jobs card is left alone.
+  const lg = { ...loose, id: "p-lg", name: "inbox-g", writer: "thoughts:G", items: [mk("N1")] };
   fs.writeFileSync(path.join(S, "boards", "Z.json"), JSON.stringify({ room: "Z", projects: [loose, proj] }));
+  fs.writeFileSync(path.join(S, "boards", "G.json"), JSON.stringify({ room: "G", projects: [lg] }));
+  fs.mkdirSync(path.join(S, "rooms")); fs.writeFileSync(path.join(S, "rooms", "G.jsonl"), "");
   const brief = (id, item, state, updated, project = "p-lz") => [id, { id, version: 1, state, created: now - 9 * D, updated, project, projectName: project === "p-lz" ? "inbox-z" : "realproj", item, agent: "hp-x", agent_name: "Atlas", from: "Thoughts-Z", room: "Z", fields: { goal: id, angus: "x", done_when: ["W1 x"] }, history: [{ version: 1, state, ts: updated }] }];
   fs.writeFileSync(path.join(S, "briefs.json"), JSON.stringify({ next: 10, briefs: Object.fromEntries([
     brief("J1", "N1", "done", now - 2 * D), brief("J2", "N2", "done", now - 2 * H), brief("J3", "N3", "verified", now - 25 * H),
     brief("J4", "N4", "stopped", now - 2 * H), brief("J5", "N5", "stopped", now - 10 * 60e3), brief("J6", "N6", "cancelled", now - 3 * H),
-    brief("J7", "N7", "running", now - 9 * D), brief("J8", "N1", "stopped", now - 2 * D, "p-pz"),
+    brief("J7", "N7", "running", now - 9 * D), brief("J8", "N1", "stopped", now - 2 * D, "p-pz"), brief("J9", "N2", "done", now - 2 * D, "p-pz"),
+    [ "J10", { ...brief("J10", "N1", "done", now - 2 * D, "p-lg")[1], room: "G", projectName: "inbox-g" } ],
   ]) }));
-  const { p, api } = await daemon(S, "B");
+  const { p, api } = await daemon(S, "B", { "world-g": { world: "G", sandbox: "world-g", workspaces: [61, 69] } });
   await sleep(7000); // the start-up pass runs after 5 s
   const lz = await card(api, "Z", "inbox-z"), pz = await card(api, "Z", "realproj");
   const arch = lz.items.filter((it) => it.archived).map((it) => it.h).join(" ");
   ok("B start-up pass archives N1 N3 N4 N6 on the Loose jobs card", arch === "N1 N3 N4 N6", arch);
-  ok("B other cards untouched (a stopped job on a project card stays)", !pz.items.some((it) => it.archived));
+  ok("B other cards untouched (a stopped job on a project card stays)", !pz.items.find((it) => it.h === "N1").archived);
+  const lg2 = await card(api, "Z", "inbox-g").catch(() => null) || (await api.call("board.get", { room: "G" })).projects.find((x) => x.name === "inbox-g");
+  ok("B a sandboxed world's host Loose jobs card is left alone (J267)", lg2 && !lg2.items[0].archived);
   const stale = staleItems(lz).map((it) => it.h).join(" ");
   ok("B board care's stale list has no finished or stopped job", !/N1\b|N3|N4|N6/.test(stale), `stale now: ${stale || "none"} (N7 is running, N2/N5 within their grace)`);
   // A job that runs again (a verifier's FAIL reopens it) gets its line back.
@@ -79,6 +87,10 @@ const card = async (api, room, name) => (await api.call("board.get", { room })).
   await sleep(300);
   const n1 = (await card(api, "Z", "inbox-z")).items.find((it) => it.h === "N1");
   ok("B a reopened job's line is unarchived", n1 && !n1.archived && /running/.test(n1.text), n1 && n1.text);
+  // …but only on a Loose jobs card: a line someone archived by hand on a project card stays archived.
+  await api.call("thoughts.verify", { room: "Z", job: "J9", failed: true, by: "Checker", note: "test" });
+  await sleep(300);
+  ok("B a hand-archived job line on a project card stays archived when the job reopens", (await card(api, "Z", "realproj")).items.find((it) => it.h === "N2").archived);
   p.kill(); await new Promise((r) => p.once("exit", r)); fs.rmSync(S, { recursive: true, force: true });
 }
 
