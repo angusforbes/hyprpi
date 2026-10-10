@@ -345,7 +345,7 @@ async function relayBinding(ctx) {
         const b = await signed(ctx, 'FixtureBeta', 'RELAY-SECRET-BETA' + (choice === '1' ? 'T1' : 'T2'), seen);
         const a = await signed(ctx, 'FixtureAlpha', 'RELAY-SECRET-ALPHA' + (choice === '1' ? 'T1' : 'T2'), seen);
         await answer(ctx, b); await answer(ctx, a);
-        const draft = await ctx.ask('doorman', { op: 'request', type: 'note_to_owner', for: 'WrongModelName', about: b.request_id, params: { text: `J395 synthetic note (${decision}); no model or action runs.` } });
+        const draft = await ctx.ask('doorman', { op: 'request', type: 'share_project', for: 'WrongModelName', about: b.request_id, params: { project: 'fixture', mode: 'ro', why: `J395 synthetic (${decision}): a fixed type that is held in safe (J412: notes are auto)` } });
         assert.equal(draft.ok, true, JSON.stringify(draft));
         const h = ctx.holdFrom(draft); held.push(h); rec.hold = h;
         assert.equal(h.typed.for, 'FixtureBeta', 'typed request bound to the real asker');

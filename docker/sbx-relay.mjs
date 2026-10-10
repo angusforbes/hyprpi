@@ -669,7 +669,7 @@ function reshowAll(relay, why) {
     let r; try { r = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { continue; }
     const sb = relay.sandboxes.find((s) => s.name === r.sandbox); if (!sb || !Array.isArray(r.shown)) continue;
     if (r.notif) { acted.add(`${r.notif.owner}:${r.notif.id}`); closeNotif(r.notif); } // (closing it isn't a dismiss)
-    const nf = notifyHeld(sb, r, [process.execPath, fileURLToPath(import.meta.url), "review", r.id]);
+    const nf = notifyHeld(sb, r, [...REVIEW_CMD, r.id]);
     try { const cur = JSON.parse(fs.readFileSync(pf, "utf8")); cur.notif = nf; fs.writeFileSync(pf, JSON.stringify(cur, null, 2), { mode: 0o600 }); } catch { /* decided meanwhile */ }
     log({ note: `toast re-shown for ${r.id} (${why})` });
   }
@@ -798,7 +798,7 @@ class Relay {
     // shows a short preview of the text and two buttons, Deny / Review (J355). The relay sends it
     // itself over D-Bus with those actions and listens for the notification server's ActionInvoked
     // (watchActions below); clicking the card body still opens the review terminal (J262).
-    const review = [process.execPath, fileURLToPath(import.meta.url), "review", id];
+    const review = [...REVIEW_CMD, id];
     const notif = notifyHeld(sb, msg, review);
     if (notif) { try { const pf = path.join(PENDING, id + ".json"); const rec = JSON.parse(fs.readFileSync(pf, "utf8")); rec.notif = notif; fs.writeFileSync(pf, JSON.stringify(rec, null, 2), { mode: 0o600 }); } catch { /* decided already */ } }
     sb.conn?.call("room.post", { text: msg.research?.plan ? `🐳 [relay] research searches for ${sb.name} wait for Angus's OK before anything is sent (${id}).` : msg.research ? `🐳 [relay] research for ${sb.name} is ready; it waits for Angus's review (${id}).` : `🐳 [relay] sandbox ${sb.name} wants to message ${msg.shown.join(", ")}; it waits for Angus's OK (sbx-relay.mjs pending, then approve or deny ${id}).` }).catch(() => {});

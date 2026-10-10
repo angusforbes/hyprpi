@@ -126,6 +126,7 @@ export async function runTyped(ctx) {
     for (const type of TYPES) for (const choice of ['1', '2']) {
       const retired = type === 'open_for_owner'; // J402 (Angus '18 a'): opening a link or file is no longer a request; the relay refuses it at admission
       await ctx.testcase(retired ? `J402 ${type}: refused at admission (${choice === '1' ? 'first' : 'second'} try), nothing held or run`
+        : type === 'note_to_owner' ? `J412 ${type}: auto in safe (${choice === '1' ? 'first' : 'second'}): done with no decision, logged reviewed:false`
         : `J368 ${type}: ${choice === '1' ? 'approve' : 'deny'} routes asker + Thoughts-I + durable archive`, async () => {
         let id;
         const effectsBefore = ctx.effects(), copiesBefore = fileCopies(ctx), worldBefore = fs.readFileSync(ctx.worldFile, 'utf8');
@@ -139,6 +140,15 @@ export async function runTyped(ctx) {
             return;
           }
           assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.pending?.length, 1);
+          if (type === 'note_to_owner') { // J412 (spec 1.5): a note is auto from safe up: no decision, the relay's own "auto (safe)", logged reviewed:false
+            id = result.pending[0];
+            const rec = await typedFinal(ctx, id, type, 'done');
+            assert.match(rec.outcome.summary, /doesn't wait for him|don't wait for him/);
+            const al = await ctx.waitFor('auto log ' + id, () => ctx.logs().find(l => l.op === 'auto' && l.id === id));
+            assert.equal(al.reviewed, false); assert.equal(al.kind, 'note'); assert.match(al.via, /^auto \(/);
+            assert.deepEqual(ctx.effects(), effectsBefore, 'a note runs nothing on the host');
+            return;
+          }
           const held = ctx.holdFrom(result); id = held.id;
           assert.equal(held.sandbox, ctx.rig.doorman); assert.equal(held.draft, true);
           assert.equal(held.typed.type, type); assert.equal(held.typed.for, 'Alpha'); assert.equal(held.typed.sandbox, ctx.rig.sandbox);
