@@ -181,8 +181,9 @@ Run `hyprpi help` for the full text. Skipped as internal: `seen` (called by the 
 - `hyprpi name NAME [--fg #rrggbb]` — set this agent's name
 - `hyprpi whoami` — this agent (inside a hyprpi agent)
 - `hyprpi status STATE [--quiet]` — set this agent's status
+- `hyprpi status [FOCUS] [--world X] [--self] [--json]` — the /status facts: running jobs, recently done, waiting on you, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
 - `hyprpi finder [--list]` — find an agent or project (Omarchy only: the finder add-on, SUPER+SHIFT+SPACE)
-- `hyprpi integration [status|install|uninstall] [NAME…]` — hyprpi's home-folder wiring piece by piece: hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy, pi (installs the tested pi version), or `recommended` / `all`
+- `hyprpi integration [status|install|uninstall] [NAME…]` — hyprpi's home-folder wiring piece by piece: hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy, pi (installs the tested pi version), pi-packages (pi-twin, pi-jot and pi-doorman as pi packages), or `recommended` / `all`
 - `hyprpi mcp-gateway [install|status]` — the shared MCP gateway; `install` writes and starts its systemd user unit
 - `hyprpi remote [install|status]` — the phone app's systemd user unit, the same way
 - `hyprpi daemon` — run the daemon in the foreground
