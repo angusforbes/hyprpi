@@ -80,7 +80,7 @@ const V = {
     if (pp.stat.size > LIMITS.openFileBytes) return { error: "file: over 20 MB" };
     if (!projectRoots(ctx.cfgDir).some((r) => under(pp.path, r))) return { error: "file: not inside a project folder" };
     const html = ext === ".html" || ext === ".htm";
-    return { params: { what: pp.path, kind: "file" }, show: `Open in ${ctx.served.name}'s own Brave window: ${pp.path} (${Math.ceil(pp.stat.size / 1024)} KB${html ? "; a page the sandbox can write: its scripts run in that browser profile, which has none of your logins" : ""})` };
+    return { params: { what: pp.path, kind: "file" }, show: `Open in ${ctx.served.name}'s own Brave window: ${pp.path} (${Math.ceil(pp.stat.size / 1024)} KB${html ? "; a page the sandbox can write: its scripts run in that browser profile, which has none of your logins" : ""}; it opens only if the file is shared with the sandbox, which the link gate checks again)` }; // (review J368 LOW: the draft check is project folders; the run-time gate checks the actual shares)
   },
   // 2. a note for Angus: shown, nothing runs.
   note_to_owner(p) {
