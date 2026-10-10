@@ -45,6 +45,7 @@ The relay only knows a host agent exists if it registers. A host agent registers
 | ask ID TEXT              | ask_owner        | a question; the job waits |
 | report ID STATE          | report_job       | done, failed or partial |
 | release ID               | release_job      | give it back            |
+| wait [--timeout S]       | wait_for_job     | block until work comes  |
 | settings SANDBOX         | read_settings    | settings, read-only     |
 | propose SANDBOX k=v      | propose_settings | wait for the owner's OK |
 
@@ -55,6 +56,8 @@ The relay only knows a host agent exists if it registers. A host agent registers
 - propose: the change waits in the Doorman window. The owner approves it with 1, and the host applies it, only if nothing changed meanwhile.
 - `--json` gives machine output. `claim` prints a token. Pass it with `--token` to renew, ask, report or release. There is no shared token cache, so one agent can't pick up another's claim by accident. The MCP server keeps the tokens of its own claims in memory, and a per-job run gets its own token in `DOORMAN_BRIDGE_TOKEN`. The tokens do live in host-only state (the job records, the bridge's request files, a run's 0600 MCP config), so a hostile process running as the owner could still read them. The boundary is the user account, as for the decision files.
 - The job's action is stored as its own field (`approved.action_line`, taken from the Doorman's draft), never parsed out of the text, so a line inside the sandbox's "why" can't pose as the action.
+- wait (J431): blocks until a job in the agent's scope is waiting (event job), the owner answers a question on one of its own jobs (event answer; the CLI takes `--mine ID`), or the timeout passes (event none: call again). The timeout defaults to 240 s and is at most 290 s, below Claude Code's limits (a stdio MCP call may be idle 30 min; `MCP_TOOL_TIMEOUT` is the hard limit). Codex stops an MCP call after 60 s by default (`tool_timeout_sec`): pass `timeout_s` 50 there, or raise it. `DOORMAN_BRIDGE_WAIT_S` changes the default. The registration keeps heartbeating while it waits (CLI: with `--agent-token`). It only reads, like list and show, so it grants nothing. Jobs still being scoped (scoping, scope_held) aren't waiting, so they don't wake it.
+- wait and the per-job runner: first claim wins. When the runner is installed it usually wins: its path unit claims within about a second of the record appearing, while a waiting agent first gets the job back and then has its model call `claim_job`. That claim then fails cleanly, and the agent waits again. A waiting agent takes the jobs the runner doesn't (runner not installed, or the job out of the runner's reach).
 - `settings` shows no key file paths. Anything key-, token- or secret-like is shown only as "(set)" or "(not set)".
 
 ## Self-describing (J424): only the MCP config
@@ -67,11 +70,11 @@ A host agent needs only the MCP config; no long first prompt.
   - Optional: `DOORMAN_BRIDGE_SCOPE` (comma-separated sandboxes) and `DOORMAN_BRIDGE_CAPS` (one line).
   - These are cleaned to letters, digits and a few separators.
   - Without the variable nothing is automatic, and `register_agent` works as before.
-- The MCP prompt `check` does the next waiting job: list, claim, show, do it, report. In Claude Code it's the slash command `/mcp__doorman-bridge__check`.
+- The MCP prompt `check` does the waiting jobs (list, claim, show, do it, report), then keeps watching with `wait_for_job` until stopped (J431): one check, no more nudging. In Claude Code it's the slash command `/mcp__doorman-bridge__check`.
 - A per-job run (`DOORMAN_BRIDGE_JOB`) gets none of this: the runner registers and prompts it.
 - `skill/doorman-bridge/SKILL.md` holds the same rules as a skill, for clients that don't show MCP instructions; pi passes only one line of them. It works as a Claude Code skill or a pi project skill (`.pi/skills/`).
 - Registering still grants nothing new.
-- Tests: `docker/bridge/test-self-describing-steps.sh` (isolated); `test-claude-check-steps.sh` and `test-pi-check-steps.sh` (manual, real agents).
+- Tests: `docker/bridge/test-self-describing-steps.sh` (isolated); `test-claude-check-steps.sh`, `test-claude-wait-steps.sh` (J431: two jobs a minute apart after one check) and `test-pi-check-steps.sh` (manual, real agents); `test/bridge-wait.mjs` (isolated).
 
 ## From Claude Code
 
