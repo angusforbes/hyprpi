@@ -239,7 +239,8 @@ function draw() {
   // the cursor, the clicks (listRowAgent / projRowY) and the scroll counts (still per agent).
   boxArea = { y0: H - IR.rows.length, n: IR.rows.length, inTop: IR.inTop, pw: promptW };
   // J401 (StatusReview): the reported rows' space is taken FIRST (at most a third of the pane), so the projects and their click map stay right
-  const reported = showHelp ? [] : reportedRows(room, W).slice(0, Math.max(0, Math.floor((H - IR.rows.length) / 3)));
+  const allReported = showHelp ? [] : reportedRows(room, W), repCap = Math.max(0, Math.floor((H - IR.rows.length) / 3));
+  const reported = allReported.length <= repCap ? allReported : [...allReported.slice(0, Math.max(0, repCap - 1)), dim(clip(`   … ${allReported.length - Math.max(0, repCap - 1)} more reported (a taller pane shows them)`, W))];
   const contentRows = Math.max(1, H - 3 - IR.rows.length - reported.length); // the list + [blank + rule + projects]
   const nameW = Math.min(24, Math.max(6, ...here.map((a) => width(a.display))));
   // A fixed icon column (Angus: the names in the agent list and the project list line up): the
@@ -381,6 +382,8 @@ function draw() {
 
   while (rows.length < H - 2 - IR.rows.length) rows.push("");
   rows.length = Math.min(rows.length, H - 2 - IR.rows.length);
+  // J401 (StatusReview): whatever the cut hid can't be clicked: no click-map entry below the last visible content row
+  { const last = rows.length; for (const m of [listRowAgent, projRowY, projMemberX]) for (const k of Object.keys(m)) if (Number(k) > last) delete m[k]; }
   rows.push(IR.ruleOverride || fg(c, "─".repeat(W)));
   rows.push(...IR.rows);
 
