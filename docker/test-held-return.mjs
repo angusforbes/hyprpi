@@ -106,7 +106,7 @@ const ex2 = { ...ex, id: "world-t--e2e2e2", research: { ...ex.research, rid: "q2
 assert.equal(inbox.at(-1).status, "returned"); assert.equal(runs.at(-1).replanRid, "q2222bbbb"); assert.match(inbox.at(-1).reason, /^held because \(Doorman\)/);
 // no recorded reason: says so
 assert.equal(N.holdReason({ research: { plan: true } }), "held for review; no reason recorded");
-assert.equal(N.holdReason({ research: { plan: true, mode: "doorman-strict" } }).startsWith("held because (host): strict mode"), true);
+assert.equal(N.holdReason({ research: { plan: true, mode: "strict" } }).startsWith("held because (host): strict mode"), true);
 assert.ok(N.holdReason({ research: { plan: true, exception: "x".repeat(2000) } }).length <= N.REASON_MAX, "capped");
 assert.match(N.holdReason({ research: { plan: true, exception: "no task set for this sandbox" } }), /^held because \(host\)/);
 
@@ -121,7 +121,7 @@ const t5 = { ...talk, id: "world-t--b2b2b2" }; put(t5); await decideFile(t5.id, 
 // ---- W1 (research plan): research.mjs replan with a fake Doorman: the note reaches the Doorman, the revision is held, linked, and the old plan can't run
 const fd = path.join(T, "fake-doorman.sh"); fs.writeFileSync(fd, `#!/bin/sh\ncat > ${T}/doorman-in.json\necho '{"refuse":false,"reason":"","searches":["perovskite humidity stability"],"brief":"","public_terms":[],"on_task":true,"drift":false}'\n`, { mode: 0o700 });
 const plans = path.join(T, "rstate", "plans"); fs.mkdirSync(plans, { recursive: true }); fs.mkdirSync(path.join(T, "rstate", "deliverables"), { recursive: true });
-fs.writeFileSync(path.join(plans, "q0123abcd.json"), JSON.stringify({ created: Date.now(), base: { rid: "q0123abcd", sandbox: "world-t", mode: "doorman-safe", from: "Alpha" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: ["old search about perovskite"], brief: "" } }));
+fs.writeFileSync(path.join(plans, "q0123abcd.json"), JSON.stringify({ created: Date.now(), base: { rid: "q0123abcd", sandbox: "world-t", mode: "safe", from: "Alpha" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: ["old search about perovskite"], brief: "" } }));
 const RS = fileURLToPath(new URL("./research/research.mjs", import.meta.url));
 const run = (args, input) => JSON.parse(spawnSync(process.execPath, [RS, ...args], { input, encoding: "utf8", env: { ...process.env, HYPRPI_RESEARCH_FAKE_DOORMAN: fd } }).stdout.trim().split("\n").pop());
 let r = run(["replan", "--rid", "q0123abcd"], "use plainer words\u0007");

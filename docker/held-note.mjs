@@ -28,7 +28,7 @@ export function holdReason(m) {
   if (m?.research?.plan) {
     const ex = one(m.research.exception);
     if (ex) { src = /^no (research )?task/i.test(ex) ? "host" : "Doorman"; why = ex; }
-    else if (m.research.mode === "doorman-strict") { src = "host"; why = "strict mode: every research plan waits for Angus before any search goes out"; }
+    else if (m.research.mode === "strict") { src = "host"; why = "strict mode: every research plan waits for Angus before any search goes out"; }
   } else if (m && !m.research && !m.gpu && !m.taskChange && !m.draft && !m.typed && (m.mode === "talk" || m.mode === "demand")) {
     const to = (Array.isArray(m.shown) && m.shown.length ? m.shown : m.to || []).map((x) => one(x).replace(/ \(.*\)$/, "")).join(", ");
     src = "relay"; why = `a message from the sandbox to ${to || "a host agent"} waits for Angus's approval (no allow-similar rule covers it)`;

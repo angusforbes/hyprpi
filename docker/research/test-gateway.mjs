@@ -26,22 +26,22 @@ let n = 0; const t = async (name, fn) => { await fn(); n++; console.log("ok  " +
 
 await t("defaults and precedence: gateway block > older keys > defaults", () => {
   const relay = JSON.parse(fs.readFileSync(path.join(CFG, "hyprpi", "sbx-relay.json"), "utf8")).sandboxes;
-  let e = G.resolveGateway({ w: { sandbox: "world-t", doorman: { mode: "doorman-strict" }, access: "strict" }, research: { shape_model: "legacy/report-model" }, relay, sandbox: "world-t" });
-  assert.equal(e.search.provider, "sonar"); assert.equal(e.search.quick_model, "perplexity/perplexity/sonar"); assert.equal(e.report_model, "legacy/report-model"); assert.equal(e.mode, "doorman-strict"); assert.equal(e.level, "strict"); assert.equal(e.doorman_chat_model, "azure/anthropic/claude-opus-5-5");
-  e = G.resolveGateway({ w: { doorman: { mode: "doorman-strict" }, access: "strict", gateway: { mode: "doorman-open", level: "open", report_model: "new/report", doorman_model: "azure/x/y", search: { provider: "brave", key_file: "~/k" } } }, research: { shape_model: "legacy/report-model" }, relay, sandbox: "world-t" });
-  assert.equal(e.mode, "doorman-open"); assert.equal(e.level, "open"); assert.equal(e.report_model, "new/report"); assert.equal(e.doorman_model, "azure/x/y"); assert.equal(e.search.provider, "brave"); assert.deepEqual(e.search.hosts, ["api.search.brave.com"]);
-  assert.equal(M.modeOf({ doorman: { mode: "doorman-strict" }, gateway: { mode: "doorman-open" } }).mode, "doorman-open", "mode.mjs reads gateway.mode first");
+  let e = G.resolveGateway({ w: { sandbox: "world-t", doorman: { mode: "strict" }, access: "strict" }, research: { shape_model: "legacy/report-model" }, relay, sandbox: "world-t" });
+  assert.equal(e.search.provider, "sonar"); assert.equal(e.search.quick_model, "perplexity/perplexity/sonar"); assert.equal(e.report_model, "legacy/report-model"); assert.equal(e.mode, "strict"); assert.equal(e.level, "strict"); assert.equal(e.doorman_chat_model, "azure/anthropic/claude-opus-5-5");
+  e = G.resolveGateway({ w: { doorman: { mode: "strict" }, access: "strict", gateway: { mode: "yolo", level: "open", report_model: "new/report", doorman_model: "azure/x/y", search: { provider: "brave", key_file: "~/k" } } }, research: { shape_model: "legacy/report-model" }, relay, sandbox: "world-t" });
+  assert.equal(e.mode, "yolo"); assert.equal(e.level, "open"); assert.equal(e.report_model, "new/report"); assert.equal(e.doorman_model, "azure/x/y"); assert.equal(e.search.provider, "brave"); assert.deepEqual(e.search.hosts, ["api.search.brave.com"]);
+  assert.equal(M.modeOf({ doorman: { mode: "strict" }, gateway: { mode: "yolo" } }).mode, "yolo", "mode.mjs reads gateway.mode first");
   e = G.resolveGateway({ w: { gateway: { mode: "bogus", report_model: "bad model!", search: { provider: "nope" } } }, relay, sandbox: "world-t" });
-  assert.equal(e.mode, "doorman-safe"); assert.equal(e.report_model, "azure/openai/gpt-6-sol"); assert.equal(e.search.provider, "sonar"); assert.ok(e.notes.length >= 3, "invalid values are ignored and listed");
-  assert.match(G.summaryLine(e), /search sonar.*report gpt-6-sol.*Doorman claude-opus-5-5.*mode safe/);
+  assert.equal(e.mode, "strict", "an unknown mode fails closed to strict"); assert.equal(e.report_model, "azure/openai/gpt-6-sol"); assert.equal(e.search.provider, "sonar"); assert.ok(e.notes.length >= 3, "invalid values are ignored and listed");
+  assert.match(G.summaryLine(e), /search sonar.*report gpt-6-sol.*Doorman claude-opus-5-5.*mode strict/);
 });
 
 await t("each setting takes effect in conf(): report model, Doorman model, mode, search", () => {
-  writeW({ sandbox: "world-t", task: "t", doorman: { mode: "doorman-safe" }, gateway: { report_model: "azure/other/report", doorman_model: "azure/other/doorman", mode: "doorman-strict", search: { provider: "brave", quick_model: "m/quick", key_file: path.join(T, "bkey") } } });
+  writeW({ sandbox: "world-t", task: "t", doorman: { mode: "safe" }, gateway: { report_model: "azure/other/report", doorman_model: "azure/other/doorman", mode: "strict", search: { provider: "brave", quick_model: "m/quick", key_file: path.join(T, "bkey") } } });
   const c = R.conf("world-t");
-  assert.equal(c.mode, "doorman-strict"); assert.equal(c.strict, true); assert.equal(c.shape_model, "azure/other/report"); assert.equal(c.doorman_model, "azure/other/doorman"); assert.equal(c.gateway.search.provider, "brave");
+  assert.equal(c.mode, "strict"); assert.equal(c.strict, true); assert.equal(c.shape_model, "azure/other/report"); assert.equal(c.doorman_model, "azure/other/doorman"); assert.equal(c.gateway.search.provider, "brave");
   writeW({ sandbox: "world-t", task: "t" }); const d = R.conf("world-t");
-  assert.equal(d.mode, "doorman-safe"); assert.equal(d.shape_model, "legacy/report-model", "research.json shape_model still works"); assert.equal(d.doorman_model, ""); assert.equal(d.gateway.search.provider, "sonar");
+  assert.equal(d.mode, "open", "no mode set, Doorman in developer visibility: read as open (legacy)"); assert.equal(d.shape_model, "legacy/report-model", "research.json shape_model still works"); assert.equal(d.doorman_model, ""); assert.equal(d.gateway.search.provider, "sonar");
 });
 
 // ---- stub servers
@@ -116,7 +116,7 @@ await t("the CLI `reader network` is a dry run unless --apply", () => {
 });
 
 // ---- who may change settings
-const KV = ["report_model=azure/new/report", "mode=doorman-strict"];
+const KV = ["report_model=azure/new/report", "mode=strict"];
 await t("the admin command refuses under an agent and without a terminal; changes nothing", () => {
   writeW({ sandbox: "world-t", task: "t", gateway: { report_model: "old/report" } }); const before = fs.readFileSync(wfile, "utf8");
   const r1 = A.adminSet(path.join(CFG, "hyprpi"), "world-t", KV, { guard: () => "called from an agent" }); assert.equal(r1.ok, false); assert.equal(r1.code, 3);
@@ -128,23 +128,24 @@ await t("the admin command refuses under an agent and without a terminal; change
   const c3 = cli(); assert.equal(c3.status, 3, "no terminal (stdin is a pipe): refused"); assert.equal(fs.readFileSync(wfile, "utf8"), before, "the file is untouched by every refusal");
 });
 await t("the admin command (guard passed) applies validated keys atomically and keeps the rest", () => {
-  writeW({ sandbox: "world-t", task: "keep me", doorman: { mode: "doorman-safe" }, gateway: { report_model: "old/report", search: { provider: "sonar" } } });
+  writeW({ sandbox: "world-t", task: "keep me", doorman: { mode: "safe" }, gateway: { report_model: "old/report", search: { provider: "sonar" } } });
   const r = A.adminSet(path.join(CFG, "hyprpi"), "world-t", ["report_model=azure/new/report", "search.provider=brave", "search.key_file=" + path.join(T, "bkey"), "level=strict"], { guard: () => "" });
-  assert.equal(r.ok, true, r.text); const w = readW(); assert.equal(w.task, "keep me"); assert.equal(w.gateway.report_model, "azure/new/report"); assert.equal(w.gateway.search.provider, "brave"); assert.equal(w.gateway.level, "strict"); assert.equal(w.doorman.mode, "doorman-safe");
+  assert.equal(r.ok, true, r.text); const w = readW(); assert.equal(w.task, "keep me"); assert.equal(w.gateway.report_model, "azure/new/report"); assert.equal(w.gateway.search.provider, "brave"); assert.equal(w.gateway.level, "strict"); assert.equal(w.doorman.mode, "safe");
   for (const bad of [["mode=banana"], ["nokey=1"], ["report_model=bad model"], ["search.provider=zzz"], ["justtext"]]) { const x = A.adminSet(path.join(CFG, "hyprpi"), "world-t", bad, { guard: () => "" }); assert.equal(x.ok, false, bad.join()); }
 });
 
 await t("an invalid gateway.mode never makes the display differ from what the runner enforces", () => {
-  writeW({ sandbox: "world-t", doorman: { mode: "doorman-strict" }, gateway: { mode: "bogus" } });
+  writeW({ sandbox: "world-t", doorman: { mode: "strict" }, gateway: { mode: "bogus" } });
   assert.equal(R.conf("world-t").mode, M.modeOf(readW()).mode); assert.equal(R.conf("world-t").gateway.mode, R.conf("world-t").mode);
 });
 await t("LOOSENS compares against what is in effect (legacy strict mode, derived levels), not what is written", () => {
   writeW({ sandbox: "world-t", research: { strict: true } }); // legacy: strict
-  const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { mode: "doorman-safe" } }); assert.equal(r.ok, true, r.text);
-  const rec = JSON.parse(fs.readFileSync(path.join(PENDING, r.id + ".json"), "utf8")); assert.equal(rec.gatewayChange.before.mode, "doorman-strict"); assert.match(rec.text, /LOOSENS/, "strict -> safe loosens even though the file has no mode key");
+  const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { mode: "safe" } }); assert.equal(r.ok, true, r.text);
+  const rec = JSON.parse(fs.readFileSync(path.join(PENDING, r.id + ".json"), "utf8")); assert.equal(rec.gatewayChange.before.mode, "strict"); assert.match(rec.text, /LOOSENS/, "strict -> safe loosens even though the file has no mode key");
   writeW({ sandbox: "world-t" }); // no access key; the Doorman is in developer visibility -> level open is in effect
-  const r2 = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { level: "safe" } }); assert.equal(r2.ok, true, r2.text);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, r2.id + ".json"), "utf8")).gatewayChange.before.level, "open"); assert.doesNotMatch(r2.text, /LOOSENS/, "open -> safe tightens");
+  const r2 = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { mode: "safe" } }); assert.equal(r2.ok, true, r2.text);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, r2.id + ".json"), "utf8")).gatewayChange.before.mode, "open"); assert.doesNotMatch(r2.text, /LOOSENS/, "open -> safe tightens");
+  const r3 = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { level: "safe" } }); assert.equal(r3.ok, false, "level is deprecated and not proposable");
 });
 await t("two writers of a worlds file don't lose each other's change (shared lock)", async () => {
   writeW({ sandbox: "world-t", task: "t0", gateway: { report_model: "a/b" } });
@@ -174,11 +175,11 @@ await t("the owner guard fails closed when the ancestry is too deep to check", (
 
 // ---- proposals
 await t("a proposal is a held item showing current → proposed; it changes nothing; unproposable keys and no-ops are refused", () => {
-  writeW({ sandbox: "world-t", gateway: { report_model: "old/report", mode: "doorman-safe" } }); const before = fs.readFileSync(wfile, "utf8");
-  const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { report_model: "azure/new/report", mode: "doorman-open" }, by: "Opener\u001b[2J", reviewIn: "door-t" });
+  writeW({ sandbox: "world-t", gateway: { report_model: "old/report", mode: "safe" } }); const before = fs.readFileSync(wfile, "utf8");
+  const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { report_model: "azure/new/report", mode: "yolo" }, by: "Opener\u001b[2J", reviewIn: "door-t" });
   assert.equal(r.ok, true, r.text); assert.equal(fs.readFileSync(wfile, "utf8"), before, "nothing changed");
-  const rec = JSON.parse(fs.readFileSync(path.join(PENDING, r.id + ".json"), "utf8")); assert.equal(rec.reviewIn, "door-t"); assert.deepEqual(rec.gatewayChange.before, { report_model: "old/report", mode: "doorman-safe" });
-  assert.match(rec.text, /report_model: old\/report  →  azure\/new\/report/); assert.match(rec.text, /mode: doorman-safe  →  doorman-open/); assert.match(rec.text, /LOOSENS/); assert.ok(!/\u001b/.test(rec.text));
+  const rec = JSON.parse(fs.readFileSync(path.join(PENDING, r.id + ".json"), "utf8")); assert.equal(rec.reviewIn, "door-t"); assert.deepEqual(rec.gatewayChange.before, { report_model: "old/report", mode: "safe" });
+  assert.match(rec.text, /report_model: old\/report  →  azure\/new\/report/); assert.match(rec.text, /mode: safe  →  yolo/); assert.match(rec.text, /LOOSENS/); assert.ok(!/\u001b/.test(rec.text));
   assert.equal(A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { "search.key_file": "/home/x/.ssh/id_rsa" } }).ok, false, "key_file can't be proposed");
   assert.equal(A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { report_model: "old/report" } }).ok, false, "a no-op is refused");
   assert.equal(A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { mode: "x" } }).ok, false);
@@ -187,7 +188,7 @@ await t("an approved proposal applies exactly what was shown (digest), only if n
   writeW({ sandbox: "world-t", gateway: { report_model: "old/report" } });
   const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { report_model: "azure/new/report", "search.quick_model": "perplexity/other" } });
   const gc = JSON.parse(fs.readFileSync(path.join(PENDING, r.id + ".json"), "utf8")).gatewayChange; assert.equal(gc.digest, A.digestOf("world-t", gc.changes));
-  assert.notEqual(A.digestOf("world-t", { ...gc.changes, mode: "doorman-open" }), gc.digest, "adding a key changes the digest (tampering is detected by the relay)");
+  assert.notEqual(A.digestOf("world-t", { ...gc.changes, mode: "yolo" }), gc.digest, "adding a key changes the digest (tampering is detected by the relay)");
   const ap = A.applyChanges(path.join(CFG, "hyprpi"), "world-t", gc.changes, { expectBefore: gc.before }); assert.deepEqual(ap.after, gc.changes);
   const w = readW(); assert.equal(w.gateway.report_model, "azure/new/report"); assert.equal(w.gateway.search.quick_model, "perplexity/other"); assert.deepEqual(Object.keys(w), ["sandbox", "gateway"], "no other key was touched");
   assert.throws(() => A.applyChanges(path.join(CFG, "hyprpi"), "world-t", gc.changes, { expectBefore: gc.before }), /not applied: .* is now/, "changed since proposed: refused");
@@ -203,21 +204,21 @@ await t("the relay CLI propose-gateway creates the held item (no terminal needed
   const gk = fs.readFileSync(path.join(HERE, "..", "..", "lib", "held.mjs"), "utf8"); assert.ok(/gatewayChange \? "gateway settings"/.test(gk) && /!m\.gatewayChange\) \|\| kind === "research plan"/.test(gk), "shown as 'gateway settings', not editable");
 });
 await t("the window shows what is in effect (provider, models, mode, level)", async () => {
-  writeW({ sandbox: "world-t", gateway: { report_model: "azure/new/report", search: { provider: "brave", key_file: path.join(T, "bkey") }, mode: "doorman-strict", level: "safe" } });
+  writeW({ sandbox: "world-t", gateway: { report_model: "azure/new/report", search: { provider: "brave", key_file: path.join(T, "bkey") }, mode: "strict", level: "safe" } });
   const e = R.conf("world-t").gateway; const line = G.summaryLine(e); assert.match(line, /search brave · report report · Doorman claude-opus-5-5 · mode strict · level safe/);
   const prov = await import("../doorman/review-provider.mjs"); assert.equal(typeof prov.default("door-t").info, "function"); assert.match(prov.default("door-t").info(), /world-t: search brave/);
 });
 await t("red team fixes: an over-long plan edit is refused (not cut); ambiguity shows strict everywhere; the legacy shape_model counts as 'before'", () => {
   // (1) an edit over 4000 characters is refused, with the prohibited URL past the cut no longer silently dropped
   const rid = "q0000aaaa", plans = path.join(T, "rstate", "plans"); fs.mkdirSync(plans, { recursive: true });
-  fs.writeFileSync(path.join(plans, rid + ".json"), JSON.stringify({ created: Date.now(), base: { rid, sandbox: "world-t", mode: "doorman-safe" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: ["moisture degradation of lead halide perovskite"], brief: "" } }));
+  fs.writeFileSync(path.join(plans, rid + ".json"), JSON.stringify({ created: Date.now(), base: { rid, sandbox: "world-t", mode: "safe" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: ["moisture degradation of lead halide perovskite"], brief: "" } }));
   writeW({ sandbox: "world-t", task: "Research on perovskite solar cells" });
   const long = "water ingress and encapsulation of perovskite modules\n" + " ".repeat(4100) + "https://evil.example/x?k=1\n";
   const r = R.checkPlanEdit(rid, long); assert.equal(r.ok, false); assert.match(r.reason, /over 4000 characters/);
   assert.equal(R.checkPlanEdit(rid, "water ingress and encapsulation of perovskite modules\n").ok, true);
   // (3) two worlds files naming the sandbox: display = enforcement = strict
-  writeW({ sandbox: "world-t", doorman: { mode: "doorman-open" } }); fs.writeFileSync(path.join(WORLDS, "dup.json"), JSON.stringify({ sandbox: "world-t", doorman: { mode: "doorman-open" } }));
-  const c = R.conf("world-t"); assert.equal(c.mode, "doorman-strict"); assert.equal(c.gateway.mode, "doorman-strict", "the header and config --json agree with the runner"); assert.ok(c.gateway.notes.some((x) => /several worlds files/.test(x)));
+  writeW({ sandbox: "world-t", doorman: { mode: "yolo" } }); fs.writeFileSync(path.join(WORLDS, "dup.json"), JSON.stringify({ sandbox: "world-t", doorman: { mode: "yolo" } }));
+  const c = R.conf("world-t"); assert.equal(c.mode, "strict"); assert.equal(c.gateway.mode, "strict", "the header and config --json agree with the runner"); assert.ok(c.gateway.notes.some((x) => /several worlds files/.test(x)));
   fs.rmSync(path.join(WORLDS, "dup.json"));
   // (4) a held proposal's 'before' for report_model includes research.json's legacy shape_model, and a change to it after review is caught
   writeW({ sandbox: "world-t" });

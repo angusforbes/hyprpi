@@ -9,8 +9,8 @@
 //                       "key_file": "~/.config/<your-secrets>/<search-api-key>" }, // providers with their own API key (brave)
 //     "report_model": "azure/openai/gpt-6-sol",      // the model that writes the report from the search results
 //     "doorman_model": "azure/anthropic/claude-opus-5-5", // the model for the Doorman's research checks (plan, vet); same Inference Hub account
-//     "mode":  "doorman-safe",                       // doorman-strict | doorman-safe | doorman-open (how much Angus reviews)
-//     "level": "safe"                                // open | safe | strict (how much of the host the sandbox may see: the share level, J366)
+//     "mode":  "safe",                               // strict | safe | open | yolo (the one dial: how much Angus reviews; J412)
+//     (the share level now follows the mode: strict, safe, open; the old "level" key is deprecated)
 //   }
 // Every key is optional. Precedence for each setting: the "gateway" block, then the older key it replaces (doorman.mode, access, research.json
 // shape_model / key_file), then the built-in default. Nothing here changes any host check: cleaning, the J360 link rules, the number and copy checks and
@@ -18,7 +18,7 @@
 // Not covered: the Doorman's CHAT session model (set when the Doorman sandbox is created: "model" in sbx-relay.json) and its window visibility
 // (developer / observer / safe / strict: "visibility" in sbx-relay.json); they are shown in the summary.
 import fs from "node:fs";
-import { modeOf } from "./mode.mjs";
+import { modeOf, levelOf, MODES } from "./mode.mjs";
 import os from "node:os";
 import path from "node:path";
 
@@ -47,36 +47,28 @@ export function resolveGateway({ w, research = {}, relay = [], sandbox = "", lev
   const doormanChat = String(dm.model || "").replace(/^nv-claude\//, "");
   const doorman = g.doorman_model !== undefined ? model("doorman_model", [[g.doorman_model, "gateway.doorman_model"]], "") : (src.doorman_model = "the Doorman sandbox's own model", "");
   // The mode is whatever the runner resolves (mode.mjs modeOf: gateway.mode, else doorman.mode, else the deprecated research.strict), so the display can never differ from what is enforced.
-  let mo = modeOf(w), mode = mo.mode, valid = (x) => ["doorman-strict", "doorman-safe", "doorman-open"].includes(x);
-  let modeFrom = g.mode !== undefined ? (valid(g.mode) ? "gateway.mode" : "default (gateway.mode is invalid)") : w?.doorman?.mode !== undefined ? (valid(w.doorman.mode) ? "doorman.mode" : "default (doorman.mode is invalid)") : w?.research?.strict === true ? "research.strict (deprecated)" : "default";
+  let mo = modeOf(w, relay, sandbox), mode = mo.mode, valid = (x) => MODES.includes(x);
+  let modeFrom = g.mode !== undefined ? (valid(g.mode) ? "gateway.mode" : "strict (gateway.mode is invalid)") : w?.doorman?.mode !== undefined ? "doorman.mode (legacy)" : w?.research?.strict === true ? "research.strict (deprecated)" : mo.note.startsWith("legacy: Doorman") ? "developer visibility (legacy)" : "default";
   if (mo.note) notes.push(mo.note);
   src.mode = modeFrom;
   const searchKeyFile = s.key_file ? tilde(s.key_file) : "";
   if (SEARCH_PROVIDERS[provider].ownKey && !searchKeyFile) notes.push(`search provider ${provider} needs gateway.search.key_file (an API key file); research with it will fail until it is set`);
-  if (ambiguous) { mode = "doorman-strict"; notes.push("several worlds files name this sandbox: the runner and the card use doorman-strict and the strict level until only one does"); src.mode = "ambiguous worlds files (fail closed)"; }
+  if (ambiguous) { mode = "strict"; notes.push("several worlds files name this sandbox: the runner and the card use strict until only one does"); src.mode = "ambiguous worlds files (fail closed)"; }
   return {
     search: { provider, label: SEARCH_PROVIDERS[provider].label, quick_model: quick, deep_model: deep, key_file: searchKeyFile, hosts: SEARCH_PROVIDERS[provider].hosts.slice() },
     report_model: report, doorman_model: doorman, doorman_chat_model: doormanChat, doorman_visibility: dm.visibility || "",
     mode, ...(() => { const l = effectiveLevel({ w, relay, sandbox, mode }); return { level: l.level, levelWhy: l.why }; })(), sources: { ...src, level: null }, notes,
   };
 }
-// The share level in effect (J366 rule, kept in sync with docker/world/shares.mjs accessLevel): gateway.level, else "access", else open when the sandbox's
-// Doorman runs in developer visibility, else derived from the Doorman mode. → { level, why }
-export function effectiveLevel({ w, relay = [], sandbox = "", mode = "doorman-safe" }) {
-  const L = ["open", "safe", "strict"];
-  if (w?.gateway?.level !== undefined) return L.includes(w.gateway.level) ? { level: w.gateway.level, why: "gateway.level" } : { level: "strict", why: "gateway.level isn't open, safe or strict, so strict" };
-  if (w?.access !== undefined) return L.includes(w.access) ? { level: w.access, why: "access" } : { level: "strict", why: "access isn't open, safe or strict, so strict" };
-  const dm = relay.find((x) => x && x.doorman_for === sandbox);
-  if (dm && dm.visibility === "developer") return { level: "open", why: `Doorman ${dm.name} in developer visibility` };
-  return { level: mode === "doorman-open" ? "open" : mode === "doorman-strict" ? "strict" : "safe", why: `derived from mode ${mode}` };
-}
+// The share level in effect (J412: the mode decides; the old gateway.level / access still win, deprecated). → { level, why }
+export function effectiveLevel({ w, mode = "safe" }) { return levelOf(w, mode); }
 export const levelFromGateway = (w) => { const l = w?.gateway?.level; return ["open", "safe", "strict"].includes(l) ? l : null; };
 
 // One line for a window header or a log: what is in effect.
 export function summaryLine(e) {
   const short = (m) => String(m || "").split("/").pop();
   const srch = e.search.provider === "sonar" ? `search ${e.search.provider} (${short(e.search.quick_model)} / ${short(e.search.deep_model)})` : `search ${e.search.provider}`;
-  return `${srch} · report ${short(e.report_model)} · Doorman ${short(e.doorman_model || e.doorman_chat_model) || "?"}${e.doorman_model ? " (checks)" : ""} · mode ${e.mode.replace(/^doorman-/, "")}${e.level ? ` · level ${e.level}` : ""}`;
+  return `${srch} · report ${short(e.report_model)} · Doorman ${short(e.doorman_model || e.doorman_chat_model) || "?"}${e.doorman_model ? " (checks)" : ""} · mode ${e.mode}${e.level ? ` · level ${e.level}` : ""}`;
 }
 export function summaryText(e, sandbox) {
   const row = (k, v, from) => `  ${k.padEnd(22)} ${String(v).padEnd(48)} ${from ? `(${from})` : ""}`;

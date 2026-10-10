@@ -45,9 +45,9 @@ r = world({ access: "safe", projects: ["prot-x:rw"] });
 assert.equal(r.p("prot-x"), "ro"); ok("a protected project stays ro when listed rw");
 // level defaults: developer visibility → open; Doorman modes → their level; bad access → strict
 r = world({ projects: "all" }, { sandboxes: [{ name: "doorman-t", doorman_for: "world-t", visibility: "developer" }] }); assert.equal(r.level, "open");
-r = world({ projects: "all", doorman: { mode: "doorman-strict" } }); assert.equal(r.level, "strict"); assert.equal(r.mounts[work], undefined);
-r = world({ projects: "all", doorman: { mode: "doorman-open" } }); assert.equal(r.level, "open");
-r = world({ projects: "all" }); assert.equal(r.level, "safe", "no Doorman setting: the default mode doorman-safe");
+r = world({ projects: "all", doorman: { mode: "strict" } }); assert.equal(r.level, "strict"); assert.equal(r.mounts[work], undefined);
+r = world({ projects: "all", doorman: { mode: "yolo" } }); assert.equal(r.level, "open");
+r = world({ projects: "all" }); assert.equal(r.level, "safe", "no Doorman setting: the default mode safe");
 r = world({ access: "wide-open", projects: "all" }); assert.equal(r.level, "strict"); assert.match(r.out, /isn't open, safe or strict, so strict/);
 r = world({ access: "safe", projects: ["../x", "a/b", ".."] }); assert.match(r.out, /bad project entry/); assert.match(r.out, /projects \(0\)/);
 r = world({ access: null, projects: "all" }, { sandboxes: [{ name: "doorman-t", doorman_for: "world-t", visibility: "developer" }] }); assert.equal(r.level, "strict", "access: null is unknown → strict");

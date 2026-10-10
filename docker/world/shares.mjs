@@ -19,16 +19,15 @@
 //   "access": "open" | "safe" | "strict"         J366: how much of the project folders the world gets (default below)
 //
 // Access levels (J366, Angus: "if I was in a more normal mode … I would have an explicit list. For now developer =
-// open"). The level is "access" if set; else "open" when the world's Doorman runs in developer visibility
-// (sbx-relay.json "visibility": "developer", J327); else the Doorman research mode (J325): doorman-open → open,
-// doorman-safe → safe, doorman-strict → strict.
+// open"). J412: the level follows the one dial, "gateway": {"mode"}: strict → strict, safe → safe, open and yolo → open
+// (the old "gateway.level" / "access" still win, deprecated; a Doorman in developer visibility with no mode set reads as open).
 //   open    "projects" as given: "all" = every project folder writable, or the listed ones writable (unless ":ro")
 //   safe    ONLY the listed projects, read-only unless an entry says rw; "all" is not honoured
 //   strict  ONLY the listed projects, all read-only
 // Protected projects are read-only at every level. The host card lists every shared project by name and mode.
 //   "shares": [ { "path": "~/Music", "mode": "ro", "at": "/data/music" } ]
 //   "gitignored": { "hide": true, "show": ["kids-mazes", "nim-demos/.env.example"] }   (default: hide)
-//   "doorman": { "mode": "doorman-safe" }        J325 research mode: doorman-strict, doorman-safe (default) or doorman-open (docker/research/mode.mjs)
+//   "gateway": { "mode": "safe" }                J412 the one dial: strict, safe (default), open or yolo (docker/research/mode.mjs)
 //
 // Rules: every share is mounted at its host path unless "at" says otherwise; protected projects (and every
 // relay inbox, and other sandboxes' workspaces) are mounted read-only on top of a writable parent; sbx enforces
@@ -43,7 +42,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { modeForSandbox, MODE_TEXT, withWorldsLock } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
+import { modeForSandbox, levelOf, MODE_TEXT, withWorldsLock } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
 import { taskForSandbox } from "../research/task.mjs"; // J352: the host-set research task in the host card
 
 import { cardSection } from "../gpu/gpu.mjs";
@@ -83,14 +82,9 @@ function config() {
 
 // J366: the world's access level and why (see the header)
 export const LEVELS = ["open", "safe", "strict"];
-function accessLevel(w, relay, sandbox, world = WORLD) {
-  if (w.gateway?.level !== undefined) return LEVELS.includes(w.gateway.level) ? { level: w.gateway.level, why: `"gateway.level" in worlds/${world}.json` } : { level: "strict", why: `"gateway.level": ${JSON.stringify(w.gateway.level)} isn't open, safe or strict, so strict` }; // J372
-  if (w.access !== undefined) return LEVELS.includes(w.access) ? { level: w.access, why: `"access" in worlds/${world}.json` } : { level: "strict", why: `"access": ${JSON.stringify(w.access)} isn't open, safe or strict, so strict` };
-  const dm = (relay.sandboxes || []).find((x) => x.doorman_for === sandbox);
-  if (dm && dm.visibility === "developer") return { level: "open", why: `its Doorman ${dm.name} runs in developer visibility (developer = open)` };
-  const m = modeForSandbox(CFG, sandbox).mode;
-  const level = m === "doorman-open" ? "open" : m === "doorman-strict" ? "strict" : "safe";
-  return { level, why: `Doorman research mode ${m}` };
+function accessLevel(w, relay, sandbox, world = WORLD) { // J412: the mode decides (one resolver: research/mode.mjs); the old gateway.level / access still win, deprecated
+  const m = modeForSandbox(CFG, sandbox), l = levelOf(w, m.mode);
+  return { level: l.level, why: l.why.startsWith("mode") ? `mode ${m.mode} (worlds/${world}.json "gateway": {"mode"}${m.note ? `; ${m.note}` : ""})` : `${l.why} in worlds/${world}.json` };
 }
 // one "projects" entry → { name, rw } or null: "kev", "kev:rw", "kev:ro", { "name": "kev", "mode": "rw" }
 function projectEntry(e, level) {
@@ -399,10 +393,10 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
       : ["No ports are published to the host: a server in here can't be opened from the owner's laptop. Ask the Doorman if you need one.", ""]),
     "## Web research", "",
     ...(() => { const { mode, note } = modeForSandbox(CFG, p.sandbox); return [`Doorman mode: ${mode}${note ? ` (${note})` : ""}`, "", `Ask Outside "Research: <what you're looking for>" (or "Research (deep): …"): ${MODE_TEXT[mode]}`, ""]; })(),
-    // J352: task-bound research. The task is Angus's; research outside it waits for him (in every mode).
-    ...(() => { const { task, note } = taskForSandbox(CFG, p.sandbox); return task
-      ? [`Task (set by Angus): ${task}`, "", "The Doorman writes the searches toward this task. A request it doesn't serve, or a run of requests jumping between unrelated subjects, waits for Angus as an exception (a few an hour at most; more are refused). Your Doorman can draft a task change for Angus to approve.", ""]
-      : [`Task: none set${note ? ` (${note})` : ""}. Every research request waits for Angus until he sets one; your Doorman can draft a task for him to approve.`, ""]; })(),
+    // J352: task-bound research. The task is Angus's; research outside it waits for him in strict and safe; in open and yolo it goes out flagged (J412).
+    ...(() => { const { task, note } = taskForSandbox(CFG, p.sandbox); const waits = !["open", "yolo"].includes(modeForSandbox(CFG, p.sandbox).mode), ex = waits ? "waits for Angus as an exception" : "is sent but flagged for Angus"; return task
+      ? [`Task (set by Angus): ${task}`, "", `The Doorman writes the searches toward this task. A request it doesn't serve, or a run of requests jumping between unrelated subjects, ${ex} (a few an hour at most; more are refused). Your Doorman can draft a task change for Angus to approve.`, ""]
+      : [`Task: none set${note ? ` (${note})` : ""}. Every research request ${waits ? "waits for Angus" : "is sent but flagged"} until he sets one; your Doorman can draft a task for him to approve.`, ""]; })(),
     ...cardSection(p.sandbox),
     ...hostAgentsSection(p.sandbox), // J407
     "## How to ask", "",

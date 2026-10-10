@@ -45,8 +45,8 @@ log({ sb: "w", op: "research", decision: "approved", id: "w--aaaaab", rid: "q5",
 assert.match(trackHeld("w--999999").text, /couldn't deliver it: disk full/);
 log({ sb: "w", op: "research-plan", decision: "approved", id: "w--bbbbbc", rid: "q6", delivered: ["x"], searches: [] });
 log({ sb: "w", op: "research", token: "r6", status: "ready", rid: "q6" });
-log({ sb: "w", op: "research", mode: "doorman-open", delivered: ["w"], rid: "q6", file: "research-q6.md", reviewed: false });
-t = trackHeld("w--bbbbbc"); assert.ok(t.done); assert.match(t.text, /straight into w \(doorman-open/);
+log({ sb: "w", op: "research", mode: "yolo", delivered: ["w"], rid: "q6", file: "research-q6.md", reviewed: false });
+t = trackHeld("w--bbbbbc"); assert.ok(t.done); assert.match(t.text, /straight into w \(yolo/);
 // J370: sent back with a note, followed to its revision; a deny with a reason says so
 log({ sb: "w", op: "talk", decision: "returned", id: "w--c1c1c1", note: "shorter" });
 t = trackHeld("w--c1c1c1"); assert.equal(t.state, "returned"); assert.equal(t.done, false); assert.match(t.text, /sent back to w's asking agent with the reason and your note/);

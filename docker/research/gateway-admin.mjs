@@ -7,7 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { worldsFor, withWorldsLock, modeOf } from "./mode.mjs";
+import { worldsFor, withWorldsLock, modeOf, levelOf, MODES, LEGACY_MODES } from "./mode.mjs";
 import { SEARCH_PROVIDERS, DEFAULTS, resolveGateway } from "./gateway.mjs";
 import { ownerTtyProblem } from "../agent-guard.mjs";
 
@@ -20,11 +20,11 @@ export const KEYS = {
   "search.deep_model": { ok: (v) => MODEL_RE.test(v), why: "a model id", proposable: true },
   "report_model": { ok: (v) => MODEL_RE.test(v), why: "a model id", proposable: true },
   "doorman_model": { ok: (v) => MODEL_RE.test(v), why: "a model id", proposable: true },
-  "mode": { ok: (v) => ["doorman-strict", "doorman-safe", "doorman-open"].includes(v), why: "doorman-strict, doorman-safe or doorman-open", proposable: true },
-  "level": { ok: (v) => ["open", "safe", "strict"].includes(v), why: "open, safe or strict", proposable: true },
+  "mode": { ok: (v) => MODES.includes(v), why: "strict, safe, open or yolo", proposable: true },
+  "level": { ok: (v) => ["open", "safe", "strict"].includes(v), why: "open, safe or strict (deprecated: the mode decides the level)", proposable: false },
   "search.key_file": { ok: (v) => /^[~\/][^\0\n]{0,200}$/.test(v), why: "a path", proposable: false },
 };
-const RANK = { mode: { "doorman-strict": 0, "doorman-safe": 1, "doorman-open": 2 }, level: { strict: 0, safe: 1, open: 2 } };
+const RANK = { mode: { strict: 0, safe: 1, open: 2, yolo: 3 }, level: { strict: 0, safe: 1, open: 2 } };
 
 export function validateChanges(changes, { admin = false } = {}) {
   const out = {}, errors = [];
@@ -50,7 +50,7 @@ const get = (w, k) => {
 // The values IN EFFECT (mode and level as the rest of the system resolves them: legacy keys, derived levels), so "current → proposed" and the LOOSENS
 // warning compare against what really applies, not against what happens to be written in the file.
 function effective(cfgDir, w, sandbox, k) {
-  if (k === "mode") return modeOf(w).mode;
+  if (k === "mode") { let relay = []; try { relay = JSON.parse(fs.readFileSync(path.join(cfgDir, "sbx-relay.json"), "utf8")).sandboxes || []; } catch { /* */ } return modeOf(w, relay, sandbox).mode; }
   if (k === "level") { let relay = []; try { relay = JSON.parse(fs.readFileSync(path.join(cfgDir, "sbx-relay.json"), "utf8")).sandboxes || []; } catch { /* */ } return resolveGateway({ w, relay, sandbox }).level; }
   if (k === "report_model" && w?.gateway?.report_model === undefined) { // J372b (red team): the legacy research.json shape_model is part of what is in effect
     let rj = {}; try { rj = JSON.parse(fs.readFileSync(path.join(cfgDir, "research.json"), "utf8")).sandboxes?.[sandbox] || {}; } catch { /* */ }

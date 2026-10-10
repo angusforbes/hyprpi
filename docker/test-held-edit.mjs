@@ -22,7 +22,7 @@ const pend = (id) => JSON.parse(fs.readFileSync(path.join(PENDING, id + ".json")
 const rid = "q0123abcd", plans = path.join(T, "rstate", "plans"); fs.mkdirSync(plans, { recursive: true });
 const planFile = path.join(plans, rid + ".json");
 const origSearches = ["moisture degradation of lead halide perovskite", "humidity stability of perovskite solar films"];
-fs.writeFileSync(planFile, JSON.stringify({ created: Date.now(), base: { rid, sandbox: "world-t", mode: "doorman-safe" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: origSearches, brief: "" } }), { mode: 0o600 });
+fs.writeFileSync(planFile, JSON.stringify({ created: Date.now(), base: { rid, sandbox: "world-t", mode: "safe" }, q: "how does humidity degrade perovskite films?", depth: "quick", plan: { searches: origSearches, brief: "" } }), { mode: 0o600 });
 const planMsg = { id: "world-t--aaaaaa", sandbox: "world-t", mode: "talk", text: "Searches planned for world-t (quick)\n\n- " + origSearches.join("\n- "), research: { plan: true, rid, searches: origSearches } };
 fs.writeFileSync(path.join(PENDING, "world-t--aaaaaa.json"), JSON.stringify(planMsg));
 const planBefore = fs.readFileSync(planFile, "utf8"), pendBefore = fs.readFileSync(path.join(PENDING, "world-t--aaaaaa.json"), "utf8");

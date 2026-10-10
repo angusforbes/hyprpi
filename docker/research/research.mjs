@@ -39,7 +39,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { modeForSandbox, MODE_TEXT } from "./mode.mjs"; // J325: doorman-strict / doorman-safe (default) / doorman-open
+import { modeForSandbox, MODE_TEXT, POLICY } from "./mode.mjs"; // J412: the one dial: strict / safe (default) / open / yolo
 import { taskForSandbox, setTask, NO_TASK } from "./task.mjs"; // J352: task-bound research
 import { numberLeaks } from "./numbers.mjs"; // J352: numbers however they are written
 import { resolveGateway, summaryText, summaryLine, SEARCH_PROVIDERS } from "./gateway.mjs"; // J372: per-sandbox gateway settings in one place
@@ -74,7 +74,7 @@ export function conf(sandbox) {
   const { mode, note: modeNote } = modeForSandbox(path.dirname(CONFIG), String(sandbox));
   const { task, note: taskNote } = taskForSandbox(path.dirname(CONFIG), String(sandbox)); // J352
   const gw = resolveGateway({ w: worldFor(String(sandbox)), research: c, relay: relayEntries(), sandbox: String(sandbox), ambiguous: worldCount(String(sandbox)) > 1 }); // J372
-  return { mode, modeNote, strict: mode === "doorman-strict", task, taskNote, gateway: gw,
+  return { mode, modeNote, strict: mode === "strict", task, taskNote, gateway: gw,
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
     key_file: c.key_file ? tilde(c.key_file) : "", shape_model: gw.sources.report_model === "default" ? "" : gw.report_model, doorman_model: gw.doorman_model, // J372 (review): the configured report model is always the one used, even if it equals a search model
   };
@@ -522,8 +522,8 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
   }
   if (pc.length) { logEvent({ ev: "refused", stage: "paraphrase", ...base, reason: pc.join("; "), searches: plan.searches, brief: plan.brief }); return { status: "refused", rid, reason: `The Doorman's searches didn't pass the paraphrase check (${pc.join("; ")}); try asking in plainer words.` }; }
   const sent = depth === "deep" ? [plan.brief] : plan.searches;
-  // J352 task-bound research: off-task, drifting, or no task set → held for Angus as an exception, in EVERY mode (the
-  // code decides from the Doorman's verdict; a missing verdict counts as off-task). Beyond a few an hour: refused.
+  // J352 task-bound research: off-task, drifting, or no task set → held for Angus as an exception in strict and safe; in open and
+  // yolo (J412) it goes out FLAGGED (logged, in the digest) and the rate limit below still applies (the code decides from the Doorman's verdict; a missing verdict counts as off-task). Beyond a few an hour: refused.
   const exception = !cfg.task ? (cfg.taskNote ? `${NO_TASK} (${cfg.taskNote})` : NO_TASK)
     : plan.on_task !== true ? `unrelated to this sandbox's task: ${plan.on_task === false ? clean1(plan.task_reason || "(no reason given)", 200).replace(/[.\s]+$/, "") : "the Doorman gave no task verdict"}`
     : plan.drift !== false ? `topic drift across this sandbox's recent requests: ${plan.drift === true ? clean1(plan.drift_reason || "(no reason given)", 200).replace(/[.\s]+$/, "") : "the Doorman gave no drift verdict"}` : "";
@@ -531,7 +531,8 @@ export function ask({ sandbox, from = "", why = "", lookingFor, depth = "quick" 
     logEvent({ ev: "refused", stage: "task", ...base, reason: `${exception}; over ${LIMITS.exceptionsPerHour} held exceptions this hour`, searches: sent });
     return { status: "refused", rid, reason: `Not sent: ${exception}. ${LIMITS.exceptionsPerHour} such requests already wait for Angus this hour; ask again later, or stay on the task.` };
   }
-  if (cfg.strict || exception) { // J314: nothing goes out until Angus approves these exact searches (research.mjs run --rid)
+  if (exception && !POLICY[cfg.mode]?.exceptionHeld) { base.flag = exception; logEvent({ ev: "flagged", ...base, reason: exception }); } // J412: open / yolo send it, flagged
+  if (cfg.strict || (exception && POLICY[cfg.mode]?.exceptionHeld)) { // J314: nothing goes out until Angus approves these exact searches (research.mjs run --rid)
     mkState(); fs.mkdirSync(PLANS(), { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(PLANS(), `${rid}.json`), JSON.stringify({ created: Date.now(), base, q, depth, plan: { searches: plan.searches || [], brief: plan.brief || "" } }), { mode: 0o600 });
     const file = path.join(DELIVERABLES(), `${rid}.plan.md`);
@@ -633,7 +634,7 @@ function research({ cfg, base, q, depth, plan, sent }) {
   mkState();
   const file = path.join(DELIVERABLES(), `${rid}.md`), words = res.deliverable.split(/\s+/).filter(Boolean).length;
   // Angus (J309): the searches that actually went to Perplexity are part of what he reviews.
-  const open = cfg.mode === "doorman-open";
+  const open = cfg.mode === "yolo";
   const md = `# Research for ${sandbox}${base.from ? ` (asked by ${base.from})` : ""}\n\nDoorman mode: ${cfg.mode}${open ? " (no human review: external web data, vetted by the Doorman only)" : ""}\n\nTask: ${cfg.task || "(none set)"}\n\n## Request\n\n${q.split("\n").map((l) => `> ${l}`).join("\n")}\n\n## Searches sent (the Doorman's words; ${depth === "deep" ? "sonar-deep-research" : "sonar"})\n\n${sent.map((x) => `- ${clean1(x, 700)}`).join("\n")}\n\n## Deliverable\n\n${res.deliverable}\n\n## Sources\n\n${res.sources.map((u) => `- ${u}`).join("\n") || "(none listed)"}\n`;
   fs.writeFileSync(file, md, { mode: 0o600 });
   // J360: the reader's sources as it returned them stay on the host only (Angus may want them); never delivered
@@ -645,15 +646,16 @@ function research({ cfg, base, q, depth, plan, sent }) {
 // ---------- digest ----------
 export function digest({ sinceMs = 3600e3, now = Date.now() } = {}) {
   let lines = []; try { lines = fs.readFileSync(LOG(), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none */ }
-  const ev = lines.filter((e) => Date.parse(e.ts) > now - sinceMs && /^(ready|refused|error|approved|denied|planned|plan-denied|delivered-open)$/.test(e.ev));
+  const ev = lines.filter((e) => Date.parse(e.ts) > now - sinceMs && /^(ready|refused|error|approved|denied|planned|plan-denied|delivered-open|flagged)$/.test(e.ev));
   if (!ev.length) return { count: 0, text: "" };
   const by = (k) => ev.filter((e) => e.ev === k);
   const q = (e) => `"${String(e.looking_for || e.query || "").slice(0, 90)}"${e.from ? ` (${e.from}, ${e.depth || "quick"})` : ""}`;
   const modes = [...new Set(ev.map((e) => e.sandbox))].map((s) => `${s}: ${conf(s).mode}`).join(", ");
   const openRids = new Set(ev.filter((e) => e.ev === "delivered-open").map((e) => e.rid)), forReview = (e) => !openRids.has(e.rid); // (review #3: by what the relay did, not the runner's mode)
-  const out = [`🔎 Research digest (Doorman mode: ${modes}), last ${Math.round(sinceMs / 60e3)} min: ${by("ready").filter(forReview).length} deliverables ready for review, ${by("delivered-open").length} delivered without human review (doorman-open), ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
-  for (const e of by("delivered-open")) out.push(`⚠ ${q(e)} delivered WITHOUT human review (doorman-open): ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
+  const out = [`🔎 Research digest (Doorman mode: ${modes}), last ${Math.round(sinceMs / 60e3)} min: ${by("ready").filter(forReview).length} deliverables ready for review, ${by("delivered-open").length} delivered without human review (yolo), ${by("approved").length} approved, ${by("denied").length} denied, ${by("refused").length} refused, ${by("error").length} errors.`];
+  for (const e of by("delivered-open")) out.push(`⚠ ${q(e)} delivered WITHOUT human review (yolo): ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
   for (const e of by("ready").filter(forReview)) out.push(`✓ ${q(e)}: ${e.words} words, ${e.sources} sources${e.flags?.length ? `, ${e.flags.length} flagged phrases` : ""}`);
+  for (const e of by("flagged")) out.push(`⚑ ${q(e)} sent without a hold, flagged: ${String(e.reason).slice(0, 160)}`);
   for (const e of by("planned")) out.push(`⏸ ${q(e)}: searches held for Angus (strict mode): ${(e.searches || []).map((x) => `"${String(x).slice(0, 80)}"`).join(", ")}`);
   for (const e of by("plan-denied")) out.push(`✗ ${q(e)}: Angus denied the searches; nothing was sent`);
   for (const e of [...by("approved"), ...by("denied")]) out.push(`${e.ev === "approved" ? "→" : "✗"} ${q(e)} ${e.ev} by Angus${e.via ? ` (${e.via})` : ""}`);
