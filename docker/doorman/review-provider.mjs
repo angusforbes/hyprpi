@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { heldForSandboxes, parseChoice, actOnHeld, heldStatus } from "../../lib/held.mjs";
+import { heldForSandboxes, parseChoice, actOnHeld, heldStatus, trackHeld } from "../../lib/held.mjs";
 
 const HOME = os.homedir();
 const CONF = process.env.HYPRPI_RELAY_CONF || path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi", "sbx-relay.json");
@@ -51,6 +51,7 @@ export default function createReview(name) {
       if (!choice || !["approve", "deny", "allow"].includes(choice.verdict)) return { ok: false, text: "not a choice" };
       return actOnHeld(id, choice, "doorman window");
     },
+    track(id) { return trackHeld(id); }, // where the decided request is now (pinned under the conversation)
     suggest(line) {
       const m = RESEARCH_RE.exec(String(line ?? ""));
       if (!m) return null; // not a request: chat with the Doorman
