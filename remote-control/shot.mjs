@@ -110,9 +110,10 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
   }
   const head = (f, n) => { const fd = fs.openSync(f, "r"); try { const b = Buffer.alloc(n); return b.subarray(0, fs.readSync(fd, b, 0, n, 0)); } finally { fs.closeSync(fd); } };
   // the name he shared it under, if the Shortcut sends it (X-File-Name, optional): safe, no path, no dot first
-  const sharedName = (req) => {
-    let h = String(req.headers["x-file-name"] || "");
-    if (/%[0-9a-f]{2}/i.test(h)) { try { h = decodeURIComponent(h); } catch { /* raw */ } }
+  const sharedName = (req, url) => {
+    const q = url?.searchParams.get("name"); // &name= in the URL (no header needed; Pocket), already decoded
+    let h = q != null ? q : String(req.headers["x-file-name"] || "");
+    if (q != null) { /* as is */ } else if (/%[0-9a-f]{2}/i.test(h)) { try { h = decodeURIComponent(h); } catch { /* raw */ } }
     else { try { h = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(h, "latin1")); } catch { /* latin1 as is */ } } // iOS sends it raw UTF-8; Node reads header bytes as latin1 (Pocket)
     const n = path.basename(h).replace(/[\x00-\x1f/\\:*?"<>|]/g, "").replace(/^\.+/, "").trim().slice(0, 120);
     return n || "";
@@ -140,7 +141,7 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
     try { const st = fs.lstatSync(UPLOAD_DIR); if (!st.isDirectory() || st.isSymbolicLink()) throw 0; } catch { return json(res, 500, { error: "~/Phone is not a plain folder" }); }
     let body; try { body = await readBody(req); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
     const { tmp } = body;
-    try { return await deliver(req, res, r, caption, body); } finally { fs.rmSync(tmp, { force: true }); }
+    try { return await deliver(req, res, r, caption, body, url); } finally { fs.rmSync(tmp, { force: true }); }
   }
 
   const send = async (res, r, text, images, extra) => {
@@ -150,9 +151,9 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
   };
   const join = (caption, line) => caption ? `${caption}\n\n${line}` : line;
 
-  async function deliver(req, res, r, caption, { tmp, n }) {
+  async function deliver(req, res, r, caption, { tmp, n }, url) {
     if (!n) return json(res, 400, { error: "nothing was shared: run it from the Share sheet (▶ in the editor sends nothing)" });
-    const b = head(tmp, Math.min(n, TEXT_MAX + 1)), named = sharedName(req);
+    const b = head(tmp, Math.min(n, TEXT_MAX + 1)), named = sharedName(req, url);
     const k = kind(b);
     if (k) { // an image: as J250 (Thoughts sees it)
       const base = `screenshot-${stamp()}`;

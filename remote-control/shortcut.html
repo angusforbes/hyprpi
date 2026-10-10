@@ -42,7 +42,7 @@
 <h2>Options</h2>
 <ul>
   <li><b>A caption:</b> before Get Contents of URL add <b>Ask for Input</b> (Text, "Say something?"), then <b>URL Encode</b> (Provided Input), then add <code>&amp;caption=</code> to the end of the URL followed by <b>URL Encoded Text</b>.</li>
-  <li><b>Keep the file's name</b> (e.g. "Q3 report.pdf" instead of pdf-20261010-…): in Get Contents of URL's Headers add a header (type it by hand, no spaces), Key <code>X-File-Name</code>, Text = <b>Shortcut Input</b> → tap it → <b>Name</b>.</li>
+  <li><b>Keep the file's name</b> (e.g. "Q3 report.pdf" instead of pdf-20261010-…): before Get Contents of URL add <b>Get Details of Files</b> (Name, of Shortcut Input), then <b>URL Encode</b> it, then add <code>&amp;name=</code> to the end of the URL followed by <b>URL Encoded Text</b>. (No header needed.)</li>
   <li><b>Pick the world:</b> add <code>&amp;world=D</code> (or any letter) to the URL; or a <b>Choose from Menu</b> with A–E, each with its own Get Contents of URL.</li>
   <li><b>From inside π:</b> copy a screenshot, then long-press the message box → Paste: it's attached like 📎.</li>
 </ul>
