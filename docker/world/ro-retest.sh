@@ -2,6 +2,7 @@
 # Read-only mount re-test for Docker Sandboxes (J307, decision 7a). Checks that a folder mounted :ro INSIDE an rw
 # parent mount really stays read-only against the agent and sudo, after each sbx update.
 # Runs ONLY in the sbxprobe sandbox (never world-g), on a scratch folder ~/Work/sbx-rotest-auto.
+# J400: the sbxprobe sandbox was retired (2026-10-10); to run this again, create a scratch sandbox and set SB to it.
 #   ro-retest.sh            run now
 #   ro-retest.sh --if-new   run only if the recorded sbx version differs from the current one
 # Exit 0 = ro held, 1 = something got through (printed), 2 = the test could not run.
