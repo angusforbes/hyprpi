@@ -42,7 +42,7 @@ The host also decides which settings a world may use AT ALL, in `~/.config/hyprp
 | modes | the modes a world may be set to (strict, safe, open, yolo) |
 | max_share_level | the widest share level |
 | phone_decisions | whether decisions from the phone may be turned on |
-| runner_harnesses | the host agents the runner may start |
+| runner_harnesses | the host agents the runner may start (claude-code, codex, pi) |
 
 No file means everything is allowed, as before. A setting or a proposal from a sandbox or host agent outside the levels is refused (not held for review), a mode in a hand-edited worlds file is clamped to the widest allowed mode below it, and a broken levels file fails closed to the strictest. The sandbox's host card shows its current settings and the allowed range.
 

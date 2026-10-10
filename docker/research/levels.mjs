@@ -3,7 +3,7 @@
 //   { "modes": ["strict", "safe", "open"],      // modes a world may be set to (default: all four, yolo included; list only the ones you want)
 //     "max_share_level": "open",                // the widest share level (strict < safe < open)
 //     "phone_decisions": false,                 // may a world turn on decisions from the phone?
-//     "runner_harnesses": ["claude"] }          // host agents the per-job runner may start
+//     "runner_harnesses": ["claude-code"] }     // host agents the per-job runner may start
 // Absent file = these defaults. A world's settings are checked against it everywhere they are set (the admin command, a proposal from a
 // host agent or a sandbox: refused, not held) and the mode actually used is clamped to it (a hand-edited worlds file can't exceed it).
 import fs from "node:fs";
@@ -12,7 +12,7 @@ import path from "node:path";
 
 export const ALL_MODES = ["strict", "safe", "open", "yolo"], SHARE = ["strict", "safe", "open"];
 // No file = what the gateway allowed before this file existed: everything.
-export const DEFAULT_LEVELS = Object.freeze({ modes: ["strict", "safe", "open", "yolo"], max_share_level: "open", phone_decisions: true, runner_harnesses: ["claude", "codex", "pi"] });
+export const DEFAULT_LEVELS = Object.freeze({ modes: ["strict", "safe", "open", "yolo"], max_share_level: "open", phone_decisions: true, runner_harnesses: ["claude-code", "codex", "pi"] });
 export const levelsFile = (cfgDir) => path.join(cfgDir || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "hyprpi"), "gateway-levels.json");
 const NAME = /^[a-z0-9][a-z0-9_-]{0,29}$/;
 
@@ -36,12 +36,17 @@ export function validateLevels(j) {
 }
 const strictestMode = (levels) => ALL_MODES.find((m) => levels.modes.includes(m)) || "strict";
 // is this value allowed? -> "" or the reason (key: mode | level | phone_decisions | runner.harness)
+// the harness a host_runner value names: "claude-code" | "codex" | "pi", or { harness, command, model } (OpenRoute J425: gateway.host_runner)
+export const harnessOf = (v) => String(v && typeof v === "object" ? v.harness : v ?? "");
+// may the runner start this harness on this host? (the runner calls this and fails closed)
+export const allowedHarness = (levels, harness) => !!harness && levels.runner_harnesses.includes(String(harness));
 export function checkValue(levels, key, value) {
   const v = String(value);
   if (key === "mode") return levels.modes.includes(v) ? "" : `mode ${v} isn't allowed on this host (allowed: ${levels.modes.join(", ")})`;
   if (key === "level") return SHARE.indexOf(v) <= SHARE.indexOf(levels.max_share_level) ? "" : `share level ${v} is wider than this host allows (at most ${levels.max_share_level})`;
   if (key === "phone_decisions") return /^(on|true)$/i.test(v) && !levels.phone_decisions ? "decisions from the phone aren't allowed on this host" : "";
-  if (key === "runner.harness") return levels.runner_harnesses.includes(v) ? "" : `runner harness ${v} isn't allowed on this host (allowed: ${levels.runner_harnesses.join(", ") || "none"})`;
+  if (key === "host_runner") { const h = harnessOf(value); return levels.runner_harnesses.includes(h) ? "" : `host runner ${h || "?"} isn't allowed on this host (allowed: ${levels.runner_harnesses.join(", ") || "none"})`; }
+  if (false) return levels.runner_harnesses.includes(v) ? "" : `runner harness ${v} isn't allowed on this host (allowed: ${levels.runner_harnesses.join(", ") || "none"})`;
   return "";
 }
 // the mode actually used: the world's, or the widest allowed mode that is not wider than it (else the strictest allowed one)
@@ -52,7 +57,7 @@ export function clampMode(levels, mode) {
 }
 // everything a world has that is outside the levels -> [reason]
 export function violations(levels, eff) {
-  const out = []; for (const k of ["mode", "level", "phone_decisions", "runner.harness"]) if (eff[k] !== undefined && eff[k] !== "") { const r = checkValue(levels, k, eff[k]); if (r) out.push(r); } return out;
+  const out = []; for (const k of ["mode", "level", "phone_decisions", "host_runner"]) if (eff[k] !== undefined && eff[k] !== "") { const r = checkValue(levels, k, eff[k]); if (r) out.push(r); } return out;
 }
 export const describeLevels = (l) => [`modes a world may use: ${l.modes.join(", ")}`, `widest share level: ${l.max_share_level}`, `decisions from the phone: ${l.phone_decisions ? "may be turned on" : "not allowed"}`, `host agents the runner may start: ${l.runner_harnesses.join(", ") || "none"}`];
 

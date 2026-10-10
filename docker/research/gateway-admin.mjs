@@ -47,7 +47,7 @@ export function validateChanges(changes, { admin = false, levels = loadLevels().
 }
 const get = (w, k) => {
   const g = w?.gateway && typeof w.gateway === "object" ? w.gateway : {};
-  const v = k.startsWith("search.") ? g.search?.[k.slice(7)] : k.startsWith("runner.") ? g.runner?.[k.slice(7)] : g[k];
+  const v = k.startsWith("search.") ? g.search?.[k.slice(7)] : g[k];
   if (k === "phone_decisions" && typeof v === "boolean") return String(v);
   if (v !== undefined) return String(v);
   if (k === "mode" && w?.doorman?.mode !== undefined) return String(w.doorman.mode);

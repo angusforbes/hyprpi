@@ -167,7 +167,7 @@ import { loadLevels, writeLevels, checkValue, violations, describeLevels, levels
 import { SEARCH_PROVIDERS } from "../research/gateway.mjs";
 import { ownerTtyProblem } from "../agent-guard.mjs";
 
-const RANGE = (k, lv) => k === "mode" ? lv.modes.join(" | ") : k === "level" ? `strict..${lv.max_share_level}` : k === "phone_decisions" ? (lv.phone_decisions ? "true | false" : "false only (the host doesn't allow it)") : k === "runner.harness" ? (lv.runner_harnesses.join(" | ") || "none") : k === "search.provider" ? Object.keys(SEARCH_PROVIDERS).join(" | ") : /model$/.test(k) ? "a model id" : k === "search.key_file" ? "a path (owner only)" : "";
+const RANGE = (k, lv) => k === "mode" ? lv.modes.join(" | ") : k === "level" ? `strict..${lv.max_share_level}` : k === "phone_decisions" ? (lv.phone_decisions ? "true | false" : "false only (the host doesn't allow it)") : k === "host_runner" ? (lv.runner_harnesses.join(" | ") || "none") : k === "search.provider" ? Object.keys(SEARCH_PROVIDERS).join(" | ") : /model$/.test(k) ? "a model id" : k === "search.key_file" ? "a path (owner only)" : "";
 export function configRows(world, P = paths()) {
   const R = resolveWorld(world, P); if (R.error) return { error: R.error, rows: [] };
   const { sb, dm } = R, { levels, error } = loadLevels(P.cfg);
@@ -175,7 +175,7 @@ export function configRows(world, P = paths()) {
   const rows = Object.keys(KEYS).map((k) => ({ key: k, value: cur[k], range: RANGE(k, levels), where: "worlds/<world>.json gateway block", settable: true }));
   const ro = [["host_agents", dm?.host_agents === undefined ? "(not set: agent-free)" : String(dm.host_agents), "false | bridge", "sbx-relay.json, the Doorman's entry"], ["window", dm?.visibility || "(strict)", "strict | safe | observer | developer", "sbx-relay.json, the Doorman's entry"], ["bridge defaults", dm?.bridge ? JSON.stringify(dm.bridge).slice(0, 80) : "(none)", "tools, folders, time_limit_s", "sbx-relay.json, the Doorman's entry"], ["doorman model", dm?.model || "(default)", "a model id", "sbx-relay.json, the Doorman's entry"]];
   for (const [key, value, range, where] of ro) rows.push({ key, value, range, where, settable: false });
-  const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, "runner.harness": cur["runner.harness"] && !/default/.test(cur["runner.harness"]) ? cur["runner.harness"] : "" });
+  const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, host_runner: cur.host_runner && !/default/.test(cur.host_runner) ? cur.host_runner : "" });
   return { world: sb.name, rows, levels, levelsError: error, violations: viol, levelsFile: levelsFile(P.cfg) };
 }
 export function renderConfig(c) {
