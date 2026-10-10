@@ -890,7 +890,7 @@ class Relay {
         // (Thoughts-B: never report "opened" for a browser that crashed) the world's Brave must still be running a few seconds later
         return new Promise((res) => setTimeout(() => {
           const prof = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "worlds", served.name, "brave");
-          const alive = spawnSync("pgrep", ["-f", `--user-data-dir=${prof}`], { encoding: "utf8" }).stdout.split("\n").filter(Boolean).some((pid) => { try { return fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim() === "brave"; } catch { return false; } });
+          const alive = spawnSync("pgrep", ["-f", "--", `user-data-dir=${prof}`], { encoding: "utf8" }).stdout.split("\n").filter(Boolean).some((pid) => { try { return fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim() === "brave"; } catch { return false; } });
           res(alive ? { ok: true, text: "" } : { ok: false, text: `the browser started but wasn't running ${OPEN_SETTLE_MS / 1000} s later (it may have crashed)` });
         }, OPEN_SETTLE_MS));
       },
