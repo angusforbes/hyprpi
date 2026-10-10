@@ -35,7 +35,8 @@ import { userName } from "../lib/policy.mjs"; // J261
 import { buildStream, streamLine, DIRECT, parseStreamFilter, resolveFilterNames, filterStream } from "../lib/stream.mjs"; // the desktop Stream panel's own timeline (J49) and @Name filter
 import { worldHex, theme } from "../lib/tui/term.mjs";
 import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
-import * as session from "./session-read.mjs"; // an agent's session, tail-read (J161)
+import * as session from "./session-read.mjs";
+import * as gworld from "./gworld.mjs"; // J433: a sandboxed world's own agents (its inner daemon, via sbx exec) // an agent's session, tail-read (J161)
 import { shotRoutes } from "./shot.mjs"; // screenshots from the iPhone share sheet (J250)
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -296,9 +297,10 @@ async function agentsSummary(r) {
   ]);
   const size = Number(loadConfig()?.worldSize) || 10;
   const st = streams.get(r) || await buildStreamFor(r).catch(() => null);
+  const inner = await innerAgents(r).catch((e) => { log("sandboxed world", r, e.message); return []; });
   return {
     room: r,
-    agents: here.map((a) => {
+    agents: [...inner, ...here.map((a) => {
       const name = a.display || a.name || a.id;
       const job = [...(briefs.briefs || [])].reverse().find((b) => b.agent === name && /^(running|queued|stopped)$/.test(b.state || ""));
       return {
@@ -316,8 +318,33 @@ async function agentsSummary(r) {
         // Its last lines in the Stream, any kind (posts, did lines, topics, talk): every agent has some (room D #304).
         recent: st ? streamFor(st, name).slice(-5).map((it) => ({ ts: it.ts, kind: it.kind, text: String(it.text || "").slice(0, 400) })) : [],
       };
-    }),
+    })],
   };
+}
+// J433: a sandboxed world's agents, from its inner daemon (cached 5 s). Their ids here: "sbx:<sandbox>:<id>".
+const innerCache = new Map(); // sandbox -> { at, list }
+async function innerList(sb) {
+  const c = innerCache.get(sb); if (c && Date.now() - c.at < 5000) return c.list;
+  const list = await gworld.call(sb, "list"); innerCache.set(sb, { at: Date.now(), list }); return list;
+}
+async function innerAgents(r) {
+  const sb = gworld.sandboxOf(r); if (!sb) return [];
+  const l = await innerList(sb), size = Number(loadConfig()?.worldSize) || 10;
+  return (l.agents || []).filter((a) => a.room === r && !a.parked && a.session).map((a) => ({
+    id: `sbx:${sb}:${a.id}`, name: a.display || a.name || a.id, icon: a.icon || "", color: a.color || "", mark: agentMark(a),
+    status: a.status || "idle", helpers: [], compactions: a.compactions || 0, topic: a.topic || "",
+    ws: Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, size) : "", active: a.last_did?.ts || null,
+    did: a.last_did?.text || "", model: (a.model || "").replace(/^claude-/, ""), thinking: a.thinking || "", job: null, projects: [], posts: [], recent: [],
+    sandboxed: sb,
+  }));
+}
+// "sbx:<sandbox>:<id>" -> { sb, id, a } (the inner listing's agent) or null
+async function innerAgent(ref) {
+  const m = /^sbx:([\w.-]+):([\w.-]+)$/.exec(String(ref || "")); if (!m) return null;
+  const [, sb, id] = m;
+  if (!fs.existsSync(path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi", "worlds")) || !Object.values("ABCDEFGHI").some((w) => gworld.sandboxOf(w) === sb)) return null;
+  const a = (await innerList(sb)).agents?.find((x) => x.id === id && !x.parked);
+  return a ? { sb, id, a } : null;
 }
 
 // ---- the Strm tab (J49): the world's Stream, as the desktop Stream panel (room-tui) builds it ---
@@ -555,6 +582,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/thoughts") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      { const sb = gworld.sandboxOf(r); if (sb) return json(res, 200, await gworld.call(sb, "thoughts.get", { room: r, limit: 300 }).catch((e) => ({ room: r, entries: [], error: e.message }))); } // J433: its real Thoughts
       return json(res, 200, await api.call("thoughts.get", { room: r, limit: 300 }));
     }
     if (req.method === "GET" && url.pathname === "/api/board") {
@@ -567,7 +595,8 @@ const server = http.createServer(async (req, res) => {
     // what came after BYTE), read from the tail of its session file only. Only a listed agent's own
     // session file, and only under ~/.pi/agent/sessions.
     if (req.method === "GET" && (url.pathname === "/api/session" || url.pathname === "/api/session/img")) {
-      const file = sessionFile(String(url.searchParams.get("agent") || ""));
+      const ref = String(url.searchParams.get("agent") || ""), ia = ref.startsWith("sbx:") ? await innerAgent(ref).catch(() => null) : null;
+      const file = ia ? await gworld.sessionCopy(ia.sb, ia.a.session).catch(() => null) : sessionFile(ref);
       if (!file) return json(res, 404, { error: "no such agent or session" });
       if (url.pathname === "/api/session/img") {
         const im = session.image(file, url.searchParams.get("at"), url.searchParams.get("i"));
@@ -585,6 +614,18 @@ const server = http.createServer(async (req, res) => {
     // POST /api/agent/stop {agent}: stop its turn (like Esc).
     if (req.method === "POST" && /^\/api\/agent\/(send|interrupt|stop)$/.test(url.pathname)) {
       const b = await body(req), id = String(b.agent || ""), what = url.pathname.split("/").pop();
+      // J433: an agent of a sandboxed world goes to its inner daemon, as typed at its window (owner input).
+      if (id.startsWith("sbx:")) {
+        const ia = await innerAgent(id).catch(() => null); if (!ia) return json(res, 404, { error: "no such live agent" });
+        const text = String(b.text || "").trim().slice(0, 8000), slash = text.startsWith("/");
+        const msg = !text ? "" : slash ? text : `[Angus, from his phone]\n${text}`;
+        try {
+          if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → sandboxed agent", ia.sb, ia.a.name); innerCache.delete(ia.sb); return json(res, 200, { ...(await gworld.call(ia.sb, "agent.prompt", { agent: ia.id, text: msg, via: "phone" })), queued: ia.a.status === "working" }); }
+          if (what === "interrupt" && !text) return json(res, 400, { error: "empty" });
+          log("phone", what, "sandboxed", ia.a.name); innerCache.delete(ia.sb);
+          return json(res, 200, await gworld.call(ia.sb, "agent.interrupt", { agent: ia.id, text: what === "interrupt" ? msg : "", via: "phone" }));
+        } catch (e) { return json(res, 409, { error: e.message }); }
+      }
       const a = (listing?.agents || []).find((x) => x.id === id && !x.parked);
       if (!a) return json(res, 404, { error: "no such live agent" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
@@ -647,6 +688,10 @@ const server = http.createServer(async (req, res) => {
       log("send", r, JSON.stringify(text.slice(0, 80))); shots.sawWorld(r); // J250: a Shortcut screenshot with no world goes here
       // "/ignore …": a signpost in the thread, given to Thoughts with his next message; no reply now (N52).
       if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 200, { ...(await api.call("thoughts.ignore", { room: r, text })), ignored: true });
+      { const sb = gworld.sandboxOf(r); if (sb) { // J433: Thoughts-G itself, inside its sandbox (host photos aren't visible there)
+        if (images.length) return json(res, 400, { error: `world ${r} is sandboxed: photos can't go in from the phone yet (text only)` });
+        if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 400, { error: "/ignore isn't supported for a sandboxed world yet" });
+        return json(res, 200, await gworld.call(sb, "thoughts.send", { room: r, text, via: "phone" })); } }
       return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone", ...(images.length ? { images } : {}) }));
     }
     // J219 (b): answer a decide item from the phone, as the desktop panel does (board.item decide; this
