@@ -10,7 +10,7 @@
 // matching turns, oldest first, numbered; "+N older" when more matched. Each line keeps a
 // reference to its turn (agent, session, entry id) for a future jump. Results go to the Thoughts
 // agent with your next message, so "tell me more about the second one" works.
-// Whose history: @Names in the words ("/keyword @Sankey kafka"), else everyone's; the evidence
+// Whose history: @Names in the words ("/keyword @Atlas kafka"), else everyone's; the evidence
 // header says so. (The ▸ marks are retired, Angus 2026-09-30.)
 // Keys: ⏎ send · Tab completes @names and /commands · Ctrl+Tab world · Ctrl+↑↓ PgUp PgDn wheel
 // scroll · Ctrl+V / SUPER+V paste text, or a screenshot's path at the cursor · Ctrl+click an agent's name (or an evidence line)
@@ -601,7 +601,7 @@ function helpLines() {
     k("/keyword WORDS", "exact-word search of the history: the 10 newest matching turns, oldest first (+N older · /more)"),
     k("/ask QUESTION", "an answer from the history, with the turns it cites; the answer prints last"),
     k("/digest [filter]", "a summary by project (done · decided · waiting on you) of the Stream; the Stream's filters (@Name @project 3h today since 9am words); alone: since you last looked here"),
-    k("@Name in the words", "only those agents' history (\"/keyword @Sankey poetry\"); else everyone's"),
+    k("@Name in the words", "only those agents' history (\"/keyword @Atlas poetry\"); else everyone's"),
     k("follow-ups", "results go to Thoughts with your next message: \"tell me more about the second one\""),
     k("Tab · Ctrl+Tab", "complete an @name or a /command · next world"),
     k("^↑↓ PgUp PgDn wheel", "scroll back through the thread (plain ↑↓ are the box's: your earlier messages)"),

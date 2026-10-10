@@ -43,7 +43,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi whoami               this agent (inside a hyprpi agent)
   hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
   hyprpi status [FOCUS] [--world X] [--self] [--json]   the /status facts: running jobs, recently done, waiting on
-                              Angus, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
+                              you, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
   hyprpi daemon               run the daemon in the foreground
   hyprpi ensure               start the daemon if it is not running
   hyprpi daemon restart [--reason R] [--ttl MIN]   restart the daemon once everyone is idle (returns at once; never poll for idle) · --status · --cancel
