@@ -45,6 +45,25 @@ const SUMMON = process.argv.includes("--summon");
 let S = null; // --summon: { room, workspace } (room.current)
 // The hyprpi panels by their title's kind (lib/daemon.mjs PANEL_TITLE).
 // Short names (Angus, J24: "Agents D", not "agents panel D").
+// J404 (Angus "3 yes"): a sandboxed world's placeholder agent (sbx-world-g "world-g", sbx-doorman-g "Doorman-G") has no
+// window: it is not listed (summoning it brought nothing). Its real windows are listed instead (summon only), marked 🐳
+// (Linkpath's format): the world's agents and panels from its helper's host-only windows.json (trusted only when the live
+// window at that address has the same pid), and a Doorman's window (class hyprpi-doorman-<name>) in place of its app row.
+const sbxPlaceholder = (a) => /^sbx-/.test(a.id || "") && a.model === "sandboxed" && !a.address;
+const safeText = (s, n = 40) => { const t = String(s || "").replace(/[\u0000-\u001f\u007f-\u009f]|\p{Cf}/gu, "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; }; // (untrusted: set inside the sandbox)
+function sandboxWindows(clients) { // address -> { kind, name } for windows a sandboxed world's helper launched (pid-checked)
+  const base = path.join(stateDir(), "worlds"), out = {};
+  let names = []; try { names = fs.readdirSync(base); } catch { return out; }
+  for (const n of names) {
+    let j; try { j = JSON.parse(fs.readFileSync(path.join(base, n, "windows.json"), "utf8")); } catch { continue; }
+    for (const [addr, w] of Object.entries(j?.windows || {})) {
+      const c = clients.find((x) => x.address === addr);
+      if (!c || !Number.isInteger(w?.pid) || w.pid !== c.pid || !/^hyprpi\.[a-z]-/.test(c.class || "")) continue;
+      out[addr] = { kind: String(w.kind || ""), name: safeText(w.name || "") };
+    }
+  }
+  return out;
+}
 const PANEL_KIND = { router: ["👥", "Agents"], room: ["💬", "Stream"], search: ["💭", "Thoughts"], thoughts: ["💭", "Thoughts"], board: ["📋", "Projects"] };
 const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
@@ -162,6 +181,7 @@ async function rows() {
   const out = [];
   for (const a of l.agents || []) {
     if (SUMMON && (a.room !== S.room || a.parked)) continue; // summon: this world's, not parked
+    if (sbxPlaceholder(a)) continue; // J404: no window to summon or jump to
     const where = a.parked ? `parked${a.parked_from ? " (from " + a.parked_from + ")" : ""}`
       : Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, WORLD_SIZE) : a.room || "";
     const sub = [where, a.parked ? "" : STATUS[a.status] || a.status, a.topic].map(clean).filter(Boolean).join(" · ");
@@ -227,6 +247,19 @@ async function rows() {
       rich: esc(icon) + " " + font(worldColor(m[2][0]), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""), sub: "",
       worlds: [...new Set([wsWorld, m[2][0]])].join(""), ws, subtitle: [SUMMON && ws === S.workspace ? "already here" : "", info.sub].filter(Boolean).join(" · ") });
   }
+  // J404: a sandboxed world's own agents and panels (summon, that world only): 🐳 before the name, as Linkpath's rows.
+  if (SUMMON) {
+    const sw = sandboxWindows(clients);
+    for (const c of clients) {
+      const w = sw[c.address], ws = c.workspace?.id;
+      if (!w || !(ws > 0) || WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] !== S.room) continue;
+      const loc = wsLabel(ws, WORLD_SIZE), agent = w.kind === "agent";
+      const nm = agent ? w.name || safeText(String(c.title || "").replace(/^π - /, "").split(" - ")[0]) || "agent" : `${S.room}: ${(PANEL_KIND[w.kind] || ["", w.kind || "panel"])[1]}`;
+      out.push({ kind: "panel", id: c.address, room: S.room, sort: (agent ? "0" : "1") + nm, recent: 0, mark: "▫", glyph: agent ? "○" : "▫", sandboxed: true, // (one category: agents first by their sort key)
+        label: `🐳 ${nm} · ${loc}`, rich: "🐳 " + font(worldColor(S.room), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
+        worlds: S.room, ws, subtitle: [agent ? "sandboxed agent" : "sandboxed world's panel", ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
+    }
+  }
   // Summon: this world's app windows (Angus, J28: "apply this summon logic to all apps"), two lines each:
   // app + a stable tag (profile, vault, folder, cwd) · workspace · last used; below, what it shows now.
   if (SUMMON) {
@@ -235,7 +268,10 @@ async function rows() {
     for (const c of clients) {
       const ws = c.workspace?.id;
       if (!isAppWindow(c, { agentAt: (addr) => agentAddr.has(addr) }) || WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] !== S.room) continue;
-      const L = appLabel(c), loc = wsLabel(ws, WORLD_SIZE), nm = [L.app, L.tag].filter(Boolean).join(" "), t = used[c.address] || 0, age = t ? since(t, "") : "";
+      const L = appLabel(c), loc = wsLabel(ws, WORLD_SIZE), t = used[c.address] || 0, age = t ? since(t, "") : "";
+      const dm = /^hyprpi-doorman-([a-z0-9-]+)$/.exec(c.class || ""); // J404: a Doorman's window: "🐳 Doorman-G", its title's rest below
+      if (dm) { const [n0, ...rest] = String(c.title || "").split(" · "); L.icon = "🐳"; L.app = safeText(n0) || `Doorman-${dm[1].replace(/^doorman-/, "").toUpperCase()}`; L.tag = ""; L.line2 = safeText(rest.join(" · "), 60); }
+      const nm = [L.app, L.tag].filter(Boolean).join(" ");
       out.push({ kind: "app", id: c.address, room: S.room, sort: nm, recent: t, mark: "▫", glyph: "▫", label: `${L.icon} ${nm} · ${loc}${age ? " · " + age : ""}`,
         rich: esc(L.icon) + " " + esc(L.app) + (L.tag ? " " + font("dim", L.tag) : "") + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""),
         sub: "", worlds: S.room, ws, subtitle: [L.line2, stateNote(c), ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
