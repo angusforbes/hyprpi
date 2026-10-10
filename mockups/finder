@@ -72,6 +72,26 @@ function sandboxRanges() {
   for (const n of names) { try { const j = JSON.parse(fs.readFileSync(path.join(base, n, "windows.json"), "utf8")); if (Number.isInteger(j.lo) && Number.isInteger(j.hi)) out.push([j.lo, j.hi]); } catch { /* none */ } }
   return out;
 }
+// J410 (Angus: G's panel rows like the host's): what a sandboxed world's panel row can say, from host-only, validated data
+// only: worlds/<w>/agents.json (world-helper keeps just what g-status validateStatus passes; "at" is a heartbeat, so it is
+// used for staleness only, never as an age). G's board and stream live inside the sandbox: a neutral line for those.
+const SBX_STATUS = { blocked: "needs you", working: "working", background: "working", done: "done", idle: "idle" };
+function sandboxReport(room) {
+  const base = path.join(stateDir(), "worlds");
+  let names = []; try { names = fs.readdirSync(base); } catch { return null; }
+  for (const n of names) {
+    try { const j = JSON.parse(fs.readFileSync(path.join(base, n, "agents.json"), "utf8")); if (j && j.room === room && Array.isArray(j.agents)) return j; } catch { /* none */ }
+  }
+  return null;
+}
+function sandboxPanelLine(room, kind) {
+  if (kind === "room" || kind === "board") return "inside the sandbox";
+  const j = sandboxReport(room);
+  if (!j || !(Date.now() - Number(j.at || 0) < 90000)) return "not reporting";
+  if (kind === "search" || kind === "thoughts") return ["running", "idle", "off"].includes(j.thoughts) ? `Thoughts-${room} ${j.thoughts}` : "inside the sandbox";
+  const c = {}; for (const a of j.agents.slice(0, 12)) { const w = SBX_STATUS[a?.status]; if (w) c[w] = (c[w] || 0) + 1; }
+  return ["needs you", "working", "done", "idle"].filter((w) => c[w]).map((w) => `${c[w]} ${w}`).join(" · ") || "no live agents";
+}
 const PANEL_KIND = { router: ["👥", "Agents"], room: ["💬", "Stream"], search: ["💭", "Thoughts"], thoughts: ["💭", "Thoughts"], board: ["📋", "Projects"] };
 const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
@@ -265,11 +285,20 @@ async function rows() {
       const w = sw[c.address], ws = c.workspace?.id;
       const wsWorld = ws > 0 ? WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] : "";
       if (!w || !wsWorld || (SUMMON && wsWorld !== S.room)) continue;
-      const loc = wsLabel(ws, WORLD_SIZE), agent = w.kind === "agent";
-      const nm = agent ? w.name || safeText(String(c.title || "").replace(/^(🐳 [A-Z]: )?π - /u, "").split(" - ")[0]) || "agent" : `${wsWorld}: ${(PANEL_KIND[w.kind] || ["", w.kind || "panel"])[1]}`;
-      out.push({ kind: SUMMON ? "panel" : agent ? "sbxagent" : "panel", id: c.address, room: wsWorld, sort: SUMMON ? (agent ? "0" : "1") + nm : (agent ? "" : ">") + nm, recent: 0, mark: SUMMON ? "▫" : "○", glyph: agent ? "○" : "▫", sandboxed: true, // (summon: one category, agents first by their sort key)
-        label: `🐳 ${nm} · ${loc}`, rich: "🐳 " + font(worldColor(wsWorld), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
-        worlds: wsWorld, ws, subtitle: [agent ? "sandboxed agent" : "sandboxed world's panel", SUMMON && ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
+      const loc = wsLabel(ws, WORLD_SIZE), agent = w.kind === "agent", here = SUMMON && ws === S.workspace ? "already here" : "";
+      if (agent) {
+        const nm = w.name || safeText(String(c.title || "").replace(/^(🐳 [A-Z]: )?π - /u, "").split(" - ")[0]) || "agent";
+        out.push({ kind: SUMMON ? "panel" : "sbxagent", id: c.address, room: wsWorld, sort: SUMMON ? "0" + nm : nm, recent: 0, mark: SUMMON ? "▫" : "○", glyph: "○", sandboxed: true, // (summon: one category, agents first by their sort key)
+          label: `🐳 ${nm} · ${loc}`, rich: "🐳 " + font(worldColor(wsWorld), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
+          worlds: wsWorld, ws, subtitle: ["sandboxed agent", here].filter(Boolean).join(" · ") });
+        continue;
+      }
+      // J410: a panel row like the host's ("👥 >Agents A · A2 · 5 mins / 3 done · 2 idle"): its kind's icon, ">Kind G", the
+      // world's colour, then 🐳; no age (nothing host-side and trustworthy dates G's activity), a line from validated data.
+      const [icon, what] = PANEL_KIND[w.kind === "router" ? "router" : w.kind] || ["▫", "Panel"], nm = `>${what} ${wsWorld}`;
+      out.push({ kind: "panel", id: c.address, room: wsWorld, sort: SUMMON ? "1" + nm : nm, recent: 0, mark: "▫", glyph: "▫", sandboxed: true,
+        label: `${icon} ${nm} 🐳 · ${loc}`, rich: esc(icon) + " " + font(worldColor(wsWorld), nm) + " 🐳" + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
+        worlds: wsWorld, ws, subtitle: [here, sandboxPanelLine(wsWorld, w.kind)].filter(Boolean).join(" · ") });
     }
   }
   // Summon: this world's app windows (Angus, J28: "apply this summon logic to all apps"), two lines each:
