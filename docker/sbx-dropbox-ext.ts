@@ -124,6 +124,9 @@ export default function (pi: ExtensionAPI) {
     if (type === "prompt") {
       return { customType: "hyprpi-sbx-prompt", display: true, content: `[hyprpi · ${field(j.from) || "hyprpi"} → you, via the drop-box]\n${quote(clean(j.text))}` };
     }
+    if (type === "typed") { // J368: Angus's decision on a fixed-type request this Doorman drafted, and what host code did
+      return { customType: "hyprpi-sbx-note", display: true, quiet: true, content: `[hyprpi] request ${field(j.id, 40)} (${field(j.kind, 30)}): ${field(j.status, 20)}. ${quote(clean(String(j.outcome || "")).slice(0, 400))}` };
+    }
     if (type === "task_change") { // J352: Angus's decision on a task change this Doorman drafted (host-origin outcome)
       const st = j.status === "applied" ? "approved it; the task is changed" : j.status === "denied" ? "denied it; the task is unchanged" : "approved it, but it wasn't applied";
       return { customType: "hyprpi-sbx-note", display: true, quiet: true, content: `[hyprpi] Angus ${st} (${field(j.id, 40)}): ${quote(clean(String(j.outcome || "")).slice(0, 400))}` }; // quiet: never lost to the turn budget
@@ -300,12 +303,20 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({ for: Type.String({ minLength: 1, maxLength: 120 }), why: Type.String({ minLength: 1, maxLength: 1500 }), tried: Type.Optional(Type.String({ maxLength: 1500 })), action: Type.String({ minLength: 1, maxLength: 1500 }) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => out(await request({ op: "draft", for: p.for, why: p.why, tried: p.tried || "", action: p.action })),
   });
+  // J368: the agent-free gateway's fixed request types (docker/gateway/types.mjs): code-checked by the relay, held for Angus in the
+  // Doorman window, carried out by host code on his approval. One request per call; the asker hears the outcome from the relay.
+  if (process.env.HYPRPI_DOORMAN === "1") pi.registerTool({
+    name: "hyprpi_request", label: "Draft a fixed-type request for Angus",
+    description: "Draft one of these for Angus when an agent in your sandbox needs it: open_for_owner (open an https link or a file from a shared project for Angus to look at: what), note_to_owner (a note Angus reads; nothing runs: text), share_project (project: a folder name in the host's project folders; mode: ro or rw), send_file (path: a host file to copy read-only into the sandbox's inbox), allow_host (host: a domain the sandbox should reach). Give why (except for a note) and for (the asking agent's exact name). The relay checks the parameters and holds it; you can't approve it, and nothing happens until Angus does. Anything else isn't supported: say so and suggest a note.",
+    parameters: Type.Object({ type: Type.Union(["open_for_owner", "note_to_owner", "share_project", "send_file", "allow_host"].map((x) => Type.Literal(x))), for: Type.String({ minLength: 1, maxLength: 60 }), why: Type.Optional(Type.String({ maxLength: 1500 })), what: Type.Optional(Type.String({ maxLength: 2048 })), text: Type.Optional(Type.String({ maxLength: 1500 })), project: Type.Optional(Type.String({ maxLength: 64 })), mode: Type.Optional(Type.Union([Type.Literal("ro"), Type.Literal("rw")])), path: Type.Optional(Type.String({ maxLength: 1024 })), host: Type.Optional(Type.String({ maxLength: 100 })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => out(await request({ op: "request", type: p.type, for: p.for, params: { why: p.why, what: p.what, text: p.text, project: p.project, mode: p.mode, path: p.path, host: p.host } })),
+  });
   // J352: a research task change (the host-set "task" that research is bound to): held for Angus; only his approval writes it.
   if (process.env.HYPRPI_DOORMAN === "1") pi.registerTool({
     name: "hyprpi_task_change", label: "Draft a research task change for Angus",
     description: "Draft a change to your sandbox's research task (the host card's Web research section shows the current one) when the agents' work has really moved on, or no task is set. One plain sentence, at most 300 characters, and why. It waits for Angus's approval; you can't set the task yourself. Never draft one just to get an off-task search through.",
-    parameters: Type.Object({ task: Type.String({ minLength: 1, maxLength: 300 }), why: Type.String({ minLength: 1, maxLength: 1500 }) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => out(await request({ op: "task_change", task: p.task, why: p.why })),
+    parameters: Type.Object({ task: Type.String({ minLength: 1, maxLength: 300 }), why: Type.String({ minLength: 1, maxLength: 1500 }), for: Type.Optional(Type.String({ maxLength: 60 })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => out(await request({ op: "task_change", task: p.task, why: p.why, for: p.for || "" })),
   });
   // J328: GPU lease (DEVELOPER MODE, not an approved route for work data). The relay refuses it when the sandbox's gpu setting is
   // off, checks the limits, snapshots the files from the sandbox's workspace and holds the lease for Angus.
