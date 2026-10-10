@@ -84,7 +84,7 @@ start)
   systemctl --user is-active --quiet "$UNIT" && { echo "doorman: $UNIT already runs"; exit 0; }
   sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true # a Pi left from an earlier run would answer too (its process is named "pi")
   mounts
-  # Refresh the extension and prompt from this checkout (fixes reach it), then a headless Pi kept fed by tail.
+  # Refresh the extension and prompt from this checkout (fixes reach it), then a headless Pi under doorman-rpc.mjs (J373: a fresh session per message).
   sbx cp "$H/docker/sbx-dropbox-ext.ts" "$NAME:/home/agent/.pi/agent/extensions/hyprpi-dropbox.ts" >/dev/null
   sbx cp "$H/docker/doorman/doorman-prompt.md" "$NAME:/home/agent/doorman-prompt.md" >/dev/null
   PIRUN="sbx exec -i -w /home/agent -e HYPRPI_DROPBOX=$BOX/.hyprpi-dropbox -e HYPRPI_INBOX=$INBOX -e HYPRPI_DOORMAN=1 $NAME sh -c 'exec /home/agent/.local/bin/pi --mode rpc --no-skills --no-context-files --no-prompt-templates --tools read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request,hyprpi_gpu_lease,hyprpi_task_change,hyprpi_request --system-prompt \"\$(cat /home/agent/doorman-prompt.md)\"'"

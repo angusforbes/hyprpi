@@ -28,8 +28,13 @@ const server = http.createServer((req, res) => {
     const text = (m) => typeof m?.content === "string" ? m.content : Array.isArray(m?.content) ? m.content.map((x) => x.text || "").join("") : "";
     res.writeHead(200, { "content-type": "text/event-stream" });
     const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
-    const rid = (/· id ([^,\s]+),/.exec(text(last)) || [])[1];
-    if (last?.role !== "tool" && rid) {
+    const first = msgs.find((m) => m.role === "user"), rid = (/· id ([^,\s]+),/.exec(text(first)) || [])[1], tools = msgs.filter((m) => m.role === "tool").length;
+    const want = ([...text(first).matchAll(/TOOL:([a-z_]+)/g)].at(-1) || [])[1]; // (the last: earlier ones are in the relay-supplied history) // W3: the question asks for one of the Doorman's tools first
+    const ARGS = { hyprpi_talk: { to: ["Alpha"], text: "your draft is waiting" }, hyprpi_draft_request: { for: "Alpha", why: "needs pypi", action: "allow pypi.org" }, hyprpi_task_change: { task: "perovskite research", why: "the work moved on" }, hyprpi_gpu_lease: { for: "Alpha", job: "matmul", why: "speed", script: "a.py" } };
+    if (want && ARGS[want] && tools === 0) {
+      chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: want, arguments: JSON.stringify(ARGS[want]) } }] });
+      chunk({}, "tool_calls");
+    } else if (rid && tools === (want && ARGS[want] ? 1 : 0)) {
       const secret = (/SECRET-[A-Z0-9]+/.exec(text(last)) || [])[0] || "none";
       chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: "hyprpi_reply", arguments: JSON.stringify({ request_id: rid, text: `answer about ${secret}` }) } }] });
       chunk({}, "tool_calls");
@@ -49,13 +54,14 @@ fs.writeFileSync(path.join(T, "prompt.md"), "You are a test Doorman.");
 const store = openStore(path.join(T, "doorman-history.json"));
 let seq = 0;
 const inboxWrite = (obj) => { obj = forDoorman(store, "doorman-t", obj); const name = `${String(Date.now() * 10 + (++seq % 10)).padStart(13, "0")}-${(seq).toString(16).padStart(8, "0")}.json`; fs.writeFileSync(path.join(INBOX, name), JSON.stringify({ v: 1, ...obj })); };
-const replies = [];
+const replies = [], ops = [];
 const relayTick = setInterval(() => {
   for (const n of fs.readdirSync(OUTBOX).filter((x) => x.endsWith(".json") && !x.startsWith("."))) {
     let req; try { req = JSON.parse(fs.readFileSync(path.join(OUTBOX, n), "utf8")); } catch { continue; } fs.unlinkSync(path.join(OUTBOX, n));
     if (req.op === "reply") { replies.push(req); store.answered("doorman-t", req.request_id, req.text); }
-    if (req.op === "task_change" && req.about) store.link("doorman-t", "doorman-t--abc123", req.about);
-    if (req.op !== "status") inboxWrite({ type: "result", for: n, op: req.op, ok: true, ...(req.op === "task_change" ? { pending: ["doorman-t--abc123"] } : {}) });
+    if (req.op !== "status" && req.op !== "reply") ops.push(req);
+    if (["task_change", "draft", "gpu_lease"].includes(req.op) && req.about) store.link("doorman-t", `doorman-t--${req.op}`, req.about); // as the relay's scan() does with result.pending
+    if (req.op !== "status") inboxWrite({ type: "result", for: n, op: req.op, ok: true, ...(["task_change", "draft", "gpu_lease"].includes(req.op) ? { pending: [`doorman-t--${req.op}`] } : {}) });
   }
 }, 100);
 
@@ -106,6 +112,12 @@ try {
   const files = sessions().filter((f) => fs.statSync(f).size > 0);
   const perFile = files.map((f) => fs.readFileSync(f, "utf8").split("\n").filter((l) => /"role":"user"/.test(l) && /via the drop-box/.test(l)).length).filter((c) => c > 0);
   ok(perFile.length >= N + 3 && perFile.every((c) => c === 1), `one session file per message, each holding exactly one incoming message (${perFile.length} files: ${perFile.join(",")})`);
+  // W3: each of the Doorman's tools still works from a fresh session, and what it sends carries the asked message's id (about)
+  for (const [i, tool, op] of [[1, "hyprpi_talk", "talk"], [2, "hyprpi_draft_request", "draft"], [3, "hyprpi_task_change", "task_change"], [4, "hyprpi_gpu_lease", "gpu_lease"]]) {
+    ask("world-g", "Alpha", `rid-t${i}`, `please TOOL:${tool}`);
+    await waitFor(() => replies.some((r) => r.request_id === `rid-t${i}`), 30000, `answer t${i}`);
+    ok(ops.some((o) => o.op === op && o.about === `rid-t${i}`) && replies.some((r) => r.request_id === `rid-t${i}`), `${tool} works in a fresh session and its ${op} request names the message it answers (about=rid-t${i}), then the reply goes out`);
+  }
   // W3: a receipt for a task change drafted while answering Alpha comes back with Alpha's next message, not Beta's
   store.asked("doorman-t", "rid-tc", "world-g", "[Alpha, in world G] please change the task"); store.link("doorman-t", "doorman-t--tc1", "rid-tc");
   inboxWrite({ type: "task_change", status: "applied", id: "doorman-t--tc1", outcome: "the task of world-t is now: SECRET-TASK" });
