@@ -22,6 +22,7 @@ import * as hypr from "../lib/hypr.mjs";
 import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib/paths.mjs";
 import { worldHex, unnamed } from "../lib/tui/term.mjs";
 import { isAppWindow, appLabel, stateNote } from "../lib/apps.mjs";
+import { heldForSandboxes } from "../lib/held.mjs";
 
 // Which pop-up (Angus, @hyprpi D8): "plugin" (default) is our own copy of the Omarchy menu, the
 // omarchy-shell plugin agf.hyprpi-finder (shell-plugin/; the same look, plus colour: names in the
@@ -91,6 +92,23 @@ function sandboxPanelLine(room, kind) {
   if (kind === "search" || kind === "thoughts") return ["running", "idle", "off"].includes(j.thoughts) ? `Thoughts-${room} ${j.thoughts}` : "inside the sandbox";
   const c = {}; for (const a of j.agents.slice(0, 12)) { const w = SBX_STATUS[a?.status]; if (w) c[w] = (c[w] || 0) + 1; }
   return ["needs you", "working", "done", "idle"].filter((w) => c[w]).map((w) => `${c[w]} ${w}`).join(" · ") || "no live agents";
+}
+// J411 (Angus: "the Doorman should also look similar to the other TUIs and have the > before it"): a Doorman's window
+// (class hyprpi-doorman-<name>, host-launched) as a panel row: "🚪 >Doorman G 🐳 · G3", no age. Its line: how many items
+// wait for Angus in it (the relay's own pending records for that Doorman and the sandbox it serves, as its window counts
+// them: lib/held.mjs heldForSandboxes; a count only, no text), else "archive + decisions".
+const DOORMAN_CLASS = /^hyprpi-doorman-([a-z0-9-]+)$/;
+function doormanLine(name) {
+  let c = {}; try { c = JSON.parse(fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config"), "hyprpi", "sbx-relay.json"), "utf8")); } catch { /* none */ }
+  const me = (Array.isArray(c.sandboxes) ? c.sandboxes : []).find((x) => x?.name === name) || {};
+  let n = 0; try { n = heldForSandboxes([name, typeof me.doorman_for === "string" ? me.doorman_for : ""].filter(Boolean)).length; } catch { /* none */ }
+  return n ? `${n} waiting for you` : "archive + decisions";
+}
+function doormanRow(c, wsWorld, kind) {
+  const ws = c.workspace.id, loc = wsLabel(ws, WORLD_SIZE), nm = `>Doorman ${wsWorld}`, here = SUMMON && ws === S.workspace ? "already here" : "";
+  return { kind, sortKind: "panel", id: c.address, room: wsWorld, sort: SUMMON ? "1" + nm : nm, recent: 0, mark: "▫", glyph: "▫", sandboxed: true,
+    label: `🚪 ${nm} 🐳 · ${loc}`, rich: "🚪 " + font(worldColor(wsWorld), nm) + " 🐳" + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
+    worlds: wsWorld, ws, subtitle: [here, doormanLine(DOORMAN_CLASS.exec(c.class)[1]), SUMMON ? stateNote(c) : ""].filter(Boolean).join(" · ") };
 }
 const PANEL_KIND = { router: ["👥", "Agents"], room: ["💬", "Stream"], search: ["💭", "Thoughts"], thoughts: ["💭", "Thoughts"], board: ["📋", "Projects"] };
 const WORLD_SIZE = loadConfig().worldSize || 10;
@@ -281,6 +299,10 @@ async function rows() {
   // every world's, its agents with the agents and its panels with the panels (⏎ jumps to the window).
   {
     const sw = sandboxWindows(clients);
+    if (!SUMMON) for (const c of clients) { // J411: the finder lists a Doorman's window with the panels (⏎ jumps to it)
+      const ws = c.workspace?.id;
+      if (DOORMAN_CLASS.test(c.class || "") && ws > 0 && c.mapped !== false) out.push(doormanRow(c, WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)], "panel"));
+    }
     for (const c of clients) {
       const w = sw[c.address], ws = c.workspace?.id;
       const wsWorld = ws > 0 ? WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] : "";
@@ -310,8 +332,7 @@ async function rows() {
       const ws = c.workspace?.id;
       if (!isAppWindow(c, { agentAt: (addr) => agentAddr.has(addr) }) || WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] !== S.room) continue;
       const L = appLabel(c), loc = wsLabel(ws, WORLD_SIZE), t = used[c.address] || 0, age = t ? since(t, "") : "";
-      const dm = /^hyprpi-doorman-([a-z0-9-]+)$/.exec(c.class || ""); // J404: a Doorman's window: "🐳 Doorman-G", its title's rest below
-      if (dm) { const [n0, ...rest] = String(c.title || "").split(" · "); L.icon = "🐳"; L.app = safeText(n0) || `Doorman-${dm[1].replace(/^doorman-/, "").toUpperCase()}`; L.tag = ""; L.line2 = safeText(rest.join(" · "), 60); }
+      if (DOORMAN_CLASS.test(c.class || "")) { out.push(doormanRow(c, S.room, "app")); continue; } // J411: still summoned as an app window, listed with the panels
       const nm = [L.app, L.tag].filter(Boolean).join(" ");
       out.push({ kind: "app", id: c.address, room: S.room, sort: nm, recent: t, mark: "▫", glyph: "▫", label: `${L.icon} ${nm} · ${loc}${age ? " · " + age : ""}`,
         rich: esc(L.icon) + " " + esc(L.app) + (L.tag ? " " + font("dim", L.tag) : "") + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""),
@@ -327,7 +348,7 @@ async function rows() {
   const CAT = { "×": 0, "●": 1, "◐": 2, "✓": 3, "○": 4, "◌": 5 }; // ◐ background (J93): its turn ended, subagents still running
   const cat = (r) => CAT[r.mark] ?? 3;
   const KIND = SUMMON ? { agent: 0, panel: 1, app: 2, project: 3 } : { agent: 0, sbxagent: 0, project: 1, panel: 2 }; // finder: panels last (J195)
-  out.sort((x, y) => KIND[x.kind] - KIND[y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
+  out.sort((x, y) => KIND[x.sortKind || x.kind] - KIND[y.sortKind || y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
   const seen = new Set();

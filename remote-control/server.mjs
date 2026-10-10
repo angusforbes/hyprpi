@@ -201,8 +201,14 @@ function directory() {
   for (const [room, list] of projectNames) for (const p of list) projects.push({ ...p, display: p.name, room, kind: "project" });
   return { agents, projects };
 }
+// J417 follow-up (Angus's 📎 still showed only images at 13:26): the Home Screen app keeps its page in
+// memory for days, so a new app.js never reaches it. build = the page files' mtimes; the page reloads
+// itself when it changes (app.js applyState).
+const BUILD_FILES = ["index.html", "app.js", "style.css", "md.mjs", "share.mjs", "fileview.mjs"];
+const build = () => BUILD_FILES.map((f) => { try { return Math.round(fs.statSync(path.join(HERE, f)).mtimeMs).toString(36); } catch { return "-"; } }).join(".");
 function state() {
   return {
+    build: build(),
     home: HOME, // J190: the web pages show paths as ~/… with this (was hard-coded)
     directory: directory(),
     worlds: worlds(),
@@ -526,7 +532,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST") {
     const origin = req.headers.origin;
     let oh = null; try { oh = origin ? new URL(origin).host : null; } catch { oh = ""; } // "null" or junk: refused, not a crash
-    if (origin && oh !== req.headers.host) return json(res, 403, { error: "bad origin" });
+    if (origin && oh !== req.headers.host) { log("refused origin", origin, url.pathname); return json(res, 403, { error: "bad origin" }); }
     // The POSTs that act on agents or Thoughts (J161, Pocket's review) must PROVE they come from this page:
     // a same-host Origin, or Sec-Fetch-Site: same-origin. (Browsers always send Origin on cross-site POSTs,
     // so this mostly shuts out non-browser requests that carry no Origin at all.)
@@ -614,17 +620,30 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { room: r, agent, items: streamFor(st, agent) });
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
-      const b = await body(req), r = room(b.world), text = String(b.text || "").trim();
+      const b = await body(req), r = room(b.world); let text = String(b.text || "").trim();
       // J219 (a): photos from the phone (already uploaded to ~/Phone by /api/upload) go with the message;
       // each must be a readable image under the allowed folders (fileAllowed, the J47 guard).
-      const asked = Array.isArray(b.images) ? b.images.slice(0, 8) : [], images = [];
+      // J417: 📎 now uploads to ~/Phone/.pending and takes any file: each pending one is checked here,
+      // moved into ~/Phone only once the message is going (below), and an image goes as an image while any
+      // other file is named in the text ("📎 PDF saved: ~/Phone/…"), as a Shortcut share is.
+      const asked = Array.isArray(b.images) ? b.images.slice(0, 8) : [], images = [], pend = [];
+      for (const p of asked) if (typeof p === "string" && filesHandle.isPending(p)) { try { if (fs.statSync(p).isFile()) { pend.push(p); continue; } } catch { /* gone */ } return json(res, 404, { error: "a photo is not found or not allowed", bad: p }); }
       for (const p of asked) {
+        if (pend.includes(p)) continue;
         const real = typeof p === "string" ? fileAllowed(p) : null; let ok = false;
         if (real && /\.(png|jpe?g|gif|webp)$/i.test(real)) { try { const st = fs.statSync(real); if (st.isFile()) { if (st.size > 10e6) return json(res, 413, { error: `${path.basename(real)} is over 10 MB`, bad: p }); images.push(real); ok = true; } } catch { /* gone */ } }
         if (!ok) return json(res, 404, { error: "a photo is not found or not allowed", bad: typeof p === "string" ? p : "" }); // bad: which tile (the page marks it ✗)
       }
-      if (!r || (!text && !images.length)) return json(res, 400, { error: "world and text needed" });
+      if (!r || (!text && !images.length && !pend.length)) return json(res, 400, { error: "world and text needed" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      const lines = [];
+      for (const p of pend) {
+        const fin = filesHandle.adoptPending(p); if (!fin) return json(res, 404, { error: "a photo is not found or not allowed", bad: p });
+        let size = 0; try { size = fs.statSync(fin).size; } catch { /* gone */ }
+        if (/\.(png|jpe?g|gif|webp)$/i.test(fin) && size <= 10e6) images.push(fin);
+        else lines.push(`📎 ${/\.pdf$/i.test(fin) ? "PDF" : /\.(mov|mp4|m4v|3gp|avi|mkv)$/i.test(fin) ? "video" : /\.(m4a|mp3|wav|aac)$/i.test(fin) ? "audio" : "file"} saved: ~/${path.relative(HOME, fin)} (${size >= 1e6 ? (size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(size / 1024)) + " KB"}).`);
+      }
+      if (lines.length) text = text ? `${text}\n\n${lines.join("\n")}` : lines.join("\n");
       log("send", r, JSON.stringify(text.slice(0, 80))); shots.sawWorld(r); // J250: a Shortcut screenshot with no world goes here
       // "/ignore …": a signpost in the thread, given to Thoughts with his next message; no reply now (N52).
       if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 200, { ...(await api.call("thoughts.ignore", { room: r, text })), ignored: true });
@@ -672,4 +691,5 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: "not found" });
   } catch (e) { json(res, 500, { error: e.message }); }
 });
+server.requestTimeout = 30 * 60 * 1000; // J415: a big video shared from the phone can take more than Node's 5 minutes to arrive
 server.listen(PORT, "127.0.0.1", () => log(`hyprpi remote control on http://127.0.0.1:${PORT}/`));

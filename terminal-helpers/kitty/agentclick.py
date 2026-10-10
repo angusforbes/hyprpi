@@ -1,7 +1,7 @@
 # hyprpi: Ctrl+click in a pi agent window (kitty), @hyprpi N56.
 #   1. a link under the pointer (OSC 8, or detected URL / file://): opened, exactly as before
-#   2. else the word under the pointer, if it names a hyprpi agent ("pi·wpzt", "@Blink",
-#      "Sankey[e]", any world): jump to that agent's window (mockups/agent-at does the matching
+#   2. else the word under the pointer, if it names a hyprpi agent ("pi·ab12", "@Atlas",
+#      "Atlas[e]", any world): jump to that agent's window (mockups/agent-at does the matching
 #      and the jump, the same rules as the panels' Ctrl+click)
 # Wired in pi.conf: mouse_map ctrl+left release grabbed,ungrabbed kitten <this file>
 import os
