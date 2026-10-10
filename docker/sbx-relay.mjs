@@ -42,7 +42,7 @@ import { fileURLToPath } from "node:url";
 import { connect } from "../lib/client.mjs";
 import { logTurn } from "../lib/held.mjs"; // J289: decision notes as highlighted turns in the Thoughts panel
 import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
-import { logEvent as researchLog, conf as researchConf } from "./research/research.mjs"; // J309
+import { logEvent as researchLog, conf as researchConf, dropPlan as researchDropPlan } from "./research/research.mjs"; // J309
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
 import { ownerNote, returnable, senderLabel, returnKey, holdReason } from "./held-note.mjs"; // J370
@@ -1205,7 +1205,8 @@ class Relay {
       // (off-task, drift, no task, strict mode); with a note, it goes to the Doorman to re-plan, as before.
       const rs = msg.research, rid = String(rs.rid || "");
       log({ sb: sb.name, op: "research-plan", decision: "returned", to: "asker", id, rid, token: rs.token, sent: false, reason });
-      spawn(process.execPath, [RESEARCH, "drop", "--rid", rid], { stdio: "ignore" }).on("error", () => {});
+      let dropped = false; try { dropped = researchDropPlan(rid, "denied"); } catch (e) { log({ sb: sb.name, error: `drop plan ${rid}: ${e.message}` }); } // synchronous (J386Review): the plan is gone before anyone is told
+      if (!dropped) log({ sb: sb.name, note: `plan ${rid} was not on disk to drop (already run, dropped or expired)` });
       heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Sent back to the asker", `nothing was sent; ${reason}`);
       try { inboxWrite(sb, { type: "research", token: rs.token, status: "returned-asker", id, reason }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
       return;

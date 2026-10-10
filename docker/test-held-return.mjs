@@ -29,11 +29,11 @@ const src = fs.readFileSync(new URL("./sbx-relay.mjs", import.meta.url), "utf8")
 const method = (name, next) => src.slice(src.indexOf(`  ${name}(`), src.indexOf(next, src.indexOf(`  ${name}(`))).trim();
 const cls = `(class R { ${method("hold", "  // J309: run one research")}\n${method("async decide", "  // J370 (Angus: \"shouldn't another option")}\n${method("sendBack", "  // J308 (design §9")}\n breakerNote() {} })`;
 const PENDING = path.join(T, "pending"), DECISIONS = path.join(T, "dec"); fs.mkdirSync(PENDING, { recursive: true }); fs.mkdirSync(DECISIONS, { recursive: true });
-const logs = [], notes = [], inbox = [], runs = [], spawned = [];
+const logs = [], notes = [], inbox = [], runs = [], spawned = [], dropCalls = [];
 const ctx = { fs, path, crypto: await import("node:crypto"), PENDING, DECISIONS, STATE: T, RESEARCH: "research.mjs", LIMITS: { pendingPerSandbox: 20 }, process, Buffer, Date, JSON, Map, String, Array, Number, Object, Math, RegExp, Promise, console,
   log: (o) => logs.push(o), heldNote: (sb, msg, via, what, outcome) => notes.push({ what, outcome }), inboxWrite: (sb, o) => inbox.push(o), closeNotif() {}, notifyHeld() { return null; },
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: (...a) => { spawned.push(a); return { on() { return this; } }; }, textMeta: () => ({}), now: () => new Date().toISOString(), fileURLToPath, import: { meta: { url: "file:///x" } },
-  ownerNote: N.ownerNote, holdReason: N.holdReason, returnable: N.returnable, senderLabel: N.senderLabel, returnKey: N.returnKey, researchLog() {}, gpuTell() {} };
+  ownerNote: N.ownerNote, holdReason: N.holdReason, returnable: N.returnable, senderLabel: N.senderLabel, returnKey: N.returnKey, researchLog() {}, researchDropPlan: (rid) => { dropCalls.push(rid); return true; }, gpuTell() {} };
 const R = vm.runInNewContext(cls.replace(/import\.meta\.url/g, '"file:///x"'), ctx);
 const relay = new R(); const RR = vm.runInNewContext(`(class { ${method("returnedAll", "  // J370 (ReturnReview)")}\n${method("replansAll", "  sendBack(")} })`, ctx); for (const k of ["returnedAll", "returnedFor", "setReturned", "replansAll", "setReplan", "reconcileReplans"]) relay[k] = RR.prototype[k]; const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
 relay.sandboxes = [sb]; relay.runResearch = (s, token, opts) => runs.push({ token, ...opts }); relay.pumpPlans = () => {}; relay.saveQueue = () => {};
@@ -94,7 +94,7 @@ const ex = { id: "world-t--e1e1e1", sandbox: "world-t", mode: "talk", to: ["x"],
 const runsBefore = runs.length; spawned.length = 0; put(ex); await decideFile(ex.id, "return");
 assert.equal(inbox.at(-1).status, "returned-asker"); assert.equal(runs.length, runsBefore, "no re-plan");
 assert.equal(inbox.at(-1).reason, "held because (Doorman): unrelated to this sandbox's task: it asks about [31mfootball", "verbatim, labelled, cleaned");
-assert.ok(spawned.some((a) => a[1]?.includes("drop")), "the plan is dropped");
+assert.ok(dropCalls.includes("q1111aaaa"), "the plan is dropped synchronously");
 // r <note> on a plan still re-plans via the Doorman, and carries the reason too
 const ex2 = { ...ex, id: "world-t--e2e2e2", research: { ...ex.research, rid: "q2222bbbb", token: "r22222222" } }; put(ex2); await decideFile(ex2.id, "return", "keep it on perovskites");
 assert.equal(inbox.at(-1).status, "returned"); assert.equal(runs.at(-1).replanRid, "q2222bbbb"); assert.match(inbox.at(-1).reason, /^held because \(Doorman\)/);
