@@ -62,6 +62,19 @@ async function gatewayDecision(ctx, held, choice) {
   assert.ok(!ctx.pendingItems().some(p => p.id === held.id), 'decided proposal removed from the review queue');
   assert.equal(fs.existsSync(path.join(ctx.relayState, 'decisions', held.id + (choice === '2' ? '.deny' : '.approve'))), false, 'decision file consumed');
   proof(ctx, 'j372-' + held.id, { held, log, config: await effective(ctx), archive: 'durable gateway_change log; no separate proposal archive file exists' });
+  await ctx.whenPart('keys', 'J412 gateway proposer receipt: ' + held.id + ' ' + log.decision, async () => {
+    const by = held.gatewayChange.by, before = bytes(ctx);
+    const read = async who => {
+      const r = await ctx.cli('docker/bridge/doorman-bridge', ['--json', 'receipts', '--by', who]); succeeded(r, 'read proposer receipts');
+      const result = JSON.parse(r.stdout); assert.equal(result.ok, true); assert.ok(Array.isArray(result.receipts)); return result.receipts;
+    };
+    const receipt = await ctx.waitFor('gateway receipt for its proposer', async () => (await read(by)).find(x => x.id === held.id));
+    assert.equal(receipt.by, by); assert.ok(Number.isFinite(Date.parse(receipt.at))); assert.match(receipt.text, new RegExp('Angus ' + log.decision));
+    if (log.applied) assert.ok(receipt.text.includes(log.outcome), 'the proposing host agent is told what actually applied');
+    assert.ok(!(await read('fixture-not-the-proposer')).some(x => x.id === held.id), 'the other host label is not given this receipt');
+    assert.ok(!ctx.inbox('sandbox').some(x => x.type === 'receipt' && x.id === held.id), 'a host proposal is not addressed to a sandbox agent');
+    unchanged(ctx, before, 'reading receipts is read-only');
+  });
   return log;
 }
 

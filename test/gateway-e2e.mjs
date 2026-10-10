@@ -188,10 +188,14 @@ try {
       return waitFor('dropbox result ' + filename, () => inbox(role).find(x => x.type === 'result' && x.for === filename));
     },
     holdFrom: r => JSON.parse(fs.readFileSync(path.join(relayState, 'pending', r.pending[0] + '.json'), 'utf8')),
-    decide: async (id, choice, { note, duration = '1h' } = {}) => {
+    decide: async (id, choice, { note, duration } = {}) => {
       assert.ok(['1', '1+', '2'].includes(choice), 'removed or unknown decision key: ' + choice);
       const cmd = choice === '2' ? 'deny' : 'approve', argv = [cmd, id];
-      if (choice === '1+') { assert.equal(parts.keys, true, 'new key support must land first'); argv.push('--allow-similar', duration); }
+      if (choice === '1+') {
+        assert.equal(parts.keys, true, 'new key support must land first'); argv.push('--allow-similar');
+        // The bare flag at the end exercises the real CLI default. With a note, give its 1h duration explicitly so --note cannot be parsed as a duration.
+        if (duration !== undefined || note) argv.push(duration ?? '1h');
+      }
       if (note) { assert.ok(parts.keys || choice === '2', 'approval notes require J412 keys'); argv.push(cmd === 'deny' ? '--reason' : '--note', note); }
       const result = await rig.owner(argv);
       assert.equal(result.status, 0, result.stdout + result.stderr);

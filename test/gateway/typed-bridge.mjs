@@ -98,7 +98,7 @@ async function trackHeld(ctx, id) {
 async function receiptCheck(ctx, id, state, summary, { auto = '' } = {}) { // auto = the mode that approved it by itself ('' = Angus decided)
   const r = await ctx.waitFor('asker-only receipt ' + id, () => ctx.inbox('sandbox').find(x => x.type === 'receipt' && x.id === id));
   assert.equal(r.for, 'Alpha'); assert.equal(typeof r.text, 'string');
-  if (state === 'denied') { assert.match(r.text, /Angus denied/); assert.match(r.text, /nothing was done/); assert.match(r.text, /Why it was held/); assert.match(r.text, /Revise it and send again, or drop it\./); }
+  if (state === 'denied') { assert.match(r.text, /Angus denied/); assert.match(r.text, /nothing was done/); assert.match(r.text, /No reason was recorded for the hold\./, 'typed/draft holds have no more specific recorded reason; the receipt must say so, not invent one'); assert.match(r.text, /Revise it and send again, or drop it\./); }
   else if (auto) { assert.match(r.text, new RegExp(`Approved automatically \\(mode ${auto}\\)`)); assert.doesNotMatch(r.text, /Angus approved/, 'an auto approval is never worded as Angus\'s'); if (summary) assert.ok(r.text.includes(summary), 'the receipt carries the outcome: ' + r.text); }
   else { assert.match(r.text, /Angus approved/); if (summary) assert.ok(r.text.includes(summary), 'the receipt carries the outcome: ' + r.text); }
   const copies = ctx.inbox('sandbox').filter(x => x.type === 'message' && x.from === 'Outside' && String(x.text).includes(id));
@@ -468,7 +468,7 @@ async function followup(ctx, id, ask, show, { choice = '2', note = '', guards = 
 }
 
 // A settings proposal for the dial (`mode`; the old gateway.level can't be proposed any more): held for Angus, applied only after his approval.
-async function proposal(ctx, submit, target, loosens) {
+async function proposal(ctx, submit, target, loosens, readReceipts = () => cli(ctx, ['receipts'])) {
   let id;
   const beforeWorld = ctx.readWorld(), beforeConfig = snapshot(ctx, ['config']);
   try {
@@ -482,6 +482,12 @@ async function proposal(ctx, submit, target, loosens) {
     const expected = { ...beforeWorld, gateway: { ...(beforeWorld.gateway || {}), mode: target } };
     assert.deepEqual(ctx.readWorld(), expected, 'owner approval applies exactly the intended setting');
     assert.ok(ctx.logs().some(x => x.op === 'gateway_change' && x.id === id && x.applied === true));
+    await ctx.whenPart('keys', 'J412 bridge CLI/MCP: proposer reads its gateway decision receipt ' + id, async () => {
+      const protectedBefore = snapshot(ctx), value = await readReceipts(); assert.equal(value.ok, true); assert.ok(Array.isArray(value.receipts));
+      const receipt = value.receipts.find(x => x.id === id); assert.ok(receipt, 'the actual CLI/MCP reads the proposing session’s receipt');
+      assert.equal(receipt.by, held.gatewayChange.by); assert.match(receipt.text, /Angus approved/); assert.ok(Number.isFinite(Date.parse(receipt.at)));
+      assert.equal(snapshot(ctx), protectedBefore, 'reading receipts changes no config, decision or pending bytes');
+    });
   } finally { await cleanHeld(ctx, id); }
 }
 
@@ -604,12 +610,12 @@ export async function runBridge(ctx) {
     let mcp;
     try {
       mcp = startMcp(ctx);
-      await ctx.testcase('J371/J407 MCP initialize/tools/list: all twelve tools (jobs, settings, registry), no owner decision/config-write capability', async () => {
+      await ctx.testcase('J371/J407/J412 MCP initialize/tools/list: exact job/settings/registry tools plus proposer receipts when landed, no owner decision/config-write capability', async () => {
         const initialized = await mcp.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gateway-fixture', version: '1' } });
         assert.equal(initialized.error, undefined); assert.equal(initialized.result.serverInfo.name, 'doorman-bridge'); assert.equal(initialized.result.protocolVersion, '2025-06-18');
         mcp.notify();
         const list = await mcp.rpc('tools/list'); assert.equal(list.error, undefined);
-        assert.deepEqual(list.result.tools.map(x => x.name).sort(), [...MCP_TOOLS].sort());
+        assert.deepEqual(list.result.tools.map(x => x.name).sort(), [...MCP_TOOLS, ...(ctx.parts.keys ? ['read_receipts'] : [])].sort());
         assert.ok(list.result.tools.every(x => x.inputSchema.additionalProperties === false));
       });
       await ctx.testcase('J371/J407 MCP register_agent/list_agents/claim/renew/release/ask/report/unregister_agent: registered claims, owner follow-up and routed partial outcome', async () => {
@@ -694,7 +700,7 @@ export async function runBridge(ctx) {
             const before = snapshot(ctx);
             const viewed = await mcp.tool('read_settings', { sandbox: ctx.rig.sandbox }); assert.equal(viewed.sandbox, ctx.rig.sandbox); assert.equal(typeof viewed.settings, 'object');
             assert.equal(snapshot(ctx), before); assert.equal(viewed.settings.mode, 'strict', 'the previous approval is what is in effect');
-            await proposal(ctx, () => mcp.tool('propose_settings', { sandbox: ctx.rig.sandbox, changes: { mode: 'safe' } }), 'safe', true);
+            await proposal(ctx, () => mcp.tool('propose_settings', { sandbox: ctx.rig.sandbox, changes: { mode: 'safe' } }), 'safe', true, () => mcp.tool('read_receipts'));
           });
           await ctx.testcase('J412 a proposal to move from safe to yolo is held and flagged LOOSENS; the old gateway.level can no longer be proposed', async () => {
             const before = snapshot(ctx, ['config']); let id;
@@ -850,7 +856,7 @@ async function modeMatrix(ctx) {
           const h = await held('note_to_owner', { window: false }); id = h.id; await ctx.decide(id, '1', { note: 'Thanks, noted.' });
           const rec = await typedFinal(ctx, id, 'note_to_owner', 'done');
           const r = await ctx.waitFor('receipt ' + id, () => ctx.inbox('sandbox').find(x => x.type === 'receipt' && x.id === id));
-          assert.match(r.text, /Angus approved/); assert.match(r.text, /Note from Angus: Thanks, noted\./); assert.ok(r.text.includes(rec.outcome.summary));
+          assert.match(r.text, /Angus approved/); assert.match(r.text, /Note from Angus: "Thanks, noted\."/); assert.ok(r.text.includes(rec.outcome.summary));
           assert.ok(!JSON.stringify(ctx.inbox('doorman').filter(x => x.id === id)).includes('Thanks, noted.'), 'the text goes only to the asking agent, not to the Doorman or a coordinator copy');
         } finally { await cleanHeld(ctx, id); }
       });
@@ -860,7 +866,7 @@ async function modeMatrix(ctx) {
           const h = await held('send_file', { window: false }); id = h.id; await ctx.decide(id, '2', { note: 'Not this file, please.' });
           await typedFinal(ctx, id, 'send_file', 'denied');
           const r = await ctx.waitFor('receipt ' + id, () => ctx.inbox('sandbox').find(x => x.type === 'receipt' && x.id === id));
-          assert.match(r.text, /Note from Angus: Not this file, please\./);
+          assert.match(r.text, /Note from Angus: "Not this file, please\."/);
         } finally { await cleanHeld(ctx, id); }
       });
       await ctx.whenPart('keys', 'J412 keys: refused approvals leave the item held and nothing done (over 500, control character, 1+ on a typed request, bad duration)', async () => {

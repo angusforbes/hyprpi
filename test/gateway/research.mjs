@@ -55,7 +55,7 @@ export async function runResearch(ctx) {
     assert.doesNotMatch(md, /NOT reviewed/, 'a reviewed summary is never labelled unreviewed');
     cleanBody(md);
     assert.ok(ctx.logs().some(x => x.op === 'research' && x.id === held.id && x.delivered), 'approval and delivery archived');
-    if (note) assert.match(JSON.stringify(receipt), new RegExp('Note from Angus[\\s\\S]*' + note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'the note reaches the asking agent inside the approval receipt');
+    if (note) assert.equal(receipt.note, note, 'the approved-result envelope carries the exact owner note to the asking gate; the gate renders its label');
     return receipt;
   };
   // a held summary the test does not want delivered: deny it and prove nothing was delivered
