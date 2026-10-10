@@ -146,7 +146,9 @@ function plan() {
     if (old) { old.ro = old.ro || !!opts.ro; return; }
     mounts.push({ host: h, at, ro: !!opts.ro, why: opts.why });
   };
-  const pf = (g.projectFolders || []).map(exp), access = accessLevel(w, relay, sandbox);
+  // (LevelReview) canonical paths, so a project folder reached through a symlink can't dodge protection
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  const pf = (g.projectFolders || []).map(exp).map(real), access = accessLevel(w, relay, sandbox);
   // (LevelReview) at safe and strict, projects come ONLY from the list: no role folder or general share may be,
   // hold or sit inside a project folder (that would get around it)
   const pfr = pf.map((f) => { try { return fs.realpathSync(f); } catch { return f; } });
@@ -197,9 +199,10 @@ function plan() {
   for (const f of fs.existsSync(path.join(CFG, "worlds")) ? fs.readdirSync(path.join(CFG, "worlds")) : []) {
     const o = readJson(path.join(CFG, "worlds", f)); if (o.inbox) prot.add(exp(o.inbox)); if (o.workspace && exp(o.workspace) !== own) prot.add(exp(o.workspace));
   }
+  for (const p of [...prot]) { const r = real(p); if (r !== p) { prot.delete(p); prot.add(r); } } // canonical too
   for (const p of prot) if (mounts.some((m) => !m.ro && under(p, m.host)) || [ROOT].includes(p)) add(p, { ro: true, why: "protected" });
   // (LevelReview) a writable mount INSIDE a protected path (e.g. a listed subfolder of a protected repo) is read-only too
-  for (const m of mounts) if (!m.ro && [...prot].some((p) => under(m.host, p) && m.host !== p)) { m.ro = true; m.why += ", in a protected project"; }
+  for (const m of mounts) if (!m.ro && [...prot].some((p) => under(real(m.host), p) && real(m.host) !== p)) { m.ro = true; m.why += ", in a protected project"; }
   // 5. hide gitignored files in shared git projects (not build output), except where "show" says so
   const gi = w.gitignored || {};
   if (gi.hide !== false) {
@@ -304,7 +307,11 @@ function apply() {
   // `sbx umount host:path` would remove the NEW mount (it doesn't take the mode)
   const wantAt = new Set(want.map((m) => m.at));
   for (const m of managed) if (!wantKeys.has(key(m)) && haveKeys.has(key(m)) && !wantAt.has(m.at)) { const r = sbx(["umount", p.sandbox, `${m.host}:${m.at}`]); log(`${r.ok ? "removed" : "couldn't remove"} ${m.at}`); }
-  fs.writeFileSync(path.join(STATE, WORLD, "managed.json"), JSON.stringify(want), { mode: 0o600 });
+  // (LevelReview) remember what is REALLY there: an earlier managed mount that a failed replace or removal left in
+  // place stays on the list, so a later apply still removes it
+  const after = new Set(current(p.sandbox).map(key));
+  const keep = managed.filter((m) => !wantKeys.has(key(m)) && after.has(key(m)));
+  fs.writeFileSync(path.join(STATE, WORLD, "managed.json"), JSON.stringify([...want, ...keep]), { mode: 0o600 });
   log(`${p.mounts.length} shares, ${p.hidden.length} gitignored paths hidden; mounted ${done} new${failed ? `, ${failed} failed` : ""}`);
   for (const s of p.skipped) log(`skipped: ${s}`);
   return failed ? 1 : 0;

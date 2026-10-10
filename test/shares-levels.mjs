@@ -75,8 +75,12 @@ gcfg({ projectFolders: [mono], protected: [mono] });
 r = world({ access: "safe", projects: ["src:rw"] }); assert.equal(r.mounts[path.join(mono, "src")], "ro"); assert.match(r.out, /projects \(1\): src ro/);
 gcfg({ projectFolders: [mono], protected: [] });
 r = world({ access: "open", projects: "all" }); assert.match(r.out, /projects \(2\): docs rw, src rw/, "a repo project folder: its children, each with its real mode");
+// (LevelReview) a project folder reached through a symlink doesn't dodge protection
+const link = path.join(base, "WorkLink"); fs.symlinkSync(work, link);
+gcfg({ projectFolders: [link], protected: [path.join(work, "prot-x")] });
+r = world({ access: "safe", projects: ["prot-x:rw"] }); assert.equal(r.mounts[path.join(work, "prot-x")], "ro", "canonical: still protected");
 gcfg({});
-ok("a listed child of a protected folder is ro; the card's list follows the real mounts");
+ok("a listed child of a protected folder is ro; the card's list follows the real mounts; symlinked folders canonical");
 // the card lists every shared project by name and mode
 world({ access: "safe", projects: ["alpha", "beta:rw"] });
 execFileSync(process.execPath, [SH, "card", "world-t"], { env, encoding: "utf8" });
