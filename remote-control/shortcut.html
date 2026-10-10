@@ -26,30 +26,30 @@
 </ul>
 <h2>What you'll paste into the Shortcut</h2>
 <p class="small">Open this page on the iPhone (in Safari, over Tailscale), so the URL below is the one the phone can reach.</p>
-<div class="small">URL</div><div class="box"><code id="url">…</code><button data-c="url">Copy</button></div>
-<div class="small">Header name</div><div class="box"><code id="hdr">X-Shot-Token</code><button data-c="hdr">Copy</button></div>
-<div class="small">Header value (a secret, keep it to yourself)</div><div class="box"><code id="tok">…</code><button data-c="tok">Copy</button></div>
+<div class="small">URL (it carries the secret key: keep it to yourself)</div><div class="box"><code id="url">…</code><button data-c="url">Copy</button></div>
 <h2>Set it up (once, in the Shortcuts app)</h2>
 <ol>
   <li>Shortcuts → <b>+</b> → name it <b>Send to π</b>.</li>
   <li>Tap <b>ⓘ</b> (Details) → turn on <b>Show in Share Sheet</b>. Back in the editor, tap the types at the top (<b>Images and 18 more</b>) and turn on <b>Images, Media, PDFs, Files, URLs, Safari web pages, Text</b> and <b>Rich text</b>; or simply leave all of them on.</li>
   <li>Add the action <b>Get Contents of URL</b>. Tap its URL and paste the URL above.</li>
-  <li>Tap <b>›</b> on that action (Show More): Method <b>POST</b>; Headers → <b>Add new header</b>: Key = the header name, Text = the header value; Request Body <b>File</b> → tap File and pick <b>Shortcut Input</b>.</li>
+  <li>Tap <b>›</b> on that action (Show More): Method <b>POST</b>; no headers; Request Body <b>File</b> → tap File and pick <b>Shortcut Input</b>.</li>
   <li>Optional: add <b>Show Notification</b> after it, so you see "Sent to Thoughts-D".</li>
 </ol>
+<h2>Set up with the X-Shot-Token header and got "The network connection was lost"?</h2>
+<p>Replace the Shortcut's URL with the one above, and delete every header row under Headers (swipe left on it). The key is now in the URL, so no header is needed.</p>
 <h2>Already set it up for images only?</h2>
 <p>It keeps working as it is. To send everything else too, one change: open the Shortcut, tap the types at the top (<b>Images</b>) and turn on <b>Media, PDFs, Files, URLs, Safari web pages, Text</b> and <b>Rich text</b> as well. Nothing else changes: the Request Body stays <b>File → Shortcut Input</b>.</p>
 <h2>Options</h2>
 <ul>
-  <li><b>A caption:</b> before Get Contents of URL add <b>Ask for Input</b> (Text, "Say something?"), then <b>URL Encode</b> (Provided Input), then add <code>?caption=</code> to the end of the URL followed by <b>URL Encoded Text</b>.</li>
-  <li><b>Keep the file's name</b> (e.g. "Q3 report.pdf" instead of pdf-20261010-…): in Get Contents of URL's Headers add a second header, Key <code>X-File-Name</code>, Text = <b>Shortcut Input</b> → tap it → <b>Name</b>.</li>
-  <li><b>Pick the world:</b> add <code>?world=D</code> (or any letter) to the URL; or a <b>Choose from Menu</b> with A–E, each with its own Get Contents of URL.</li>
+  <li><b>A caption:</b> before Get Contents of URL add <b>Ask for Input</b> (Text, "Say something?"), then <b>URL Encode</b> (Provided Input), then add <code>&amp;caption=</code> to the end of the URL followed by <b>URL Encoded Text</b>.</li>
+  <li><b>Keep the file's name</b> (e.g. "Q3 report.pdf" instead of pdf-20261010-…): in Get Contents of URL's Headers add a header (type it by hand, no spaces), Key <code>X-File-Name</code>, Text = <b>Shortcut Input</b> → tap it → <b>Name</b>.</li>
+  <li><b>Pick the world:</b> add <code>&amp;world=D</code> (or any letter) to the URL; or a <b>Choose from Menu</b> with A–E, each with its own Get Contents of URL.</li>
   <li><b>From inside π:</b> copy a screenshot, then long-press the message box → Paste: it's attached like 📎.</li>
 </ul>
 <p class="small">The phone must be on Tailscale, as for π itself. Photos (HEIC) work too: they're turned into a JPEG on the laptop and saved in ~/Phone. One item per share: for several at once, wrap Get Contents of URL in <b>Repeat with Each</b> (Shortcut Input) and send <b>Repeat Item</b>.</p>
 <script>
 fetch("/api/shot/setup", { cache: "no-store" }).then((r) => r.json()).then((s) => {
-  document.getElementById("url").textContent = s.url; document.getElementById("hdr").textContent = s.header; document.getElementById("tok").textContent = s.token;
+  document.getElementById("url").textContent = s.keyUrl;
 }).catch((e) => { document.getElementById("url").textContent = "✗ " + e.message; });
 for (const b of document.querySelectorAll("button[data-c]")) b.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(document.getElementById(b.dataset.c).textContent); b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); } catch { b.textContent = "✗"; }

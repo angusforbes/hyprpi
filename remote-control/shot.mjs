@@ -42,8 +42,11 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
     log("shot: made a new Shortcut token in", TOKEN_FILE);
     return token;
   }
-  const tokenOk = (req) => {
-    const t = Buffer.from(String(req.headers["x-shot-token"] || "")), k = Buffer.from(getToken());
+  // J415 follow-up 3: the token may also come as ?key= in the URL, so the Shortcut needs no header at all
+  // (Angus's tries died in tailscale serve's HTTP/2 server with PROTOCOL_ERROR before reaching us; a
+  // header pasted with a stray space or newline, or an empty header row, does that).
+  const tokenOk = (req, url) => {
+    const t = Buffer.from(String(req.headers["x-shot-token"] || url?.searchParams.get("key") || "").trim()), k = Buffer.from(getToken());
     return t.length === k.length && timingSafeEqual(t, k);
   };
   let lastWorld = ""; // the world he last wrote to from the phone (server.mjs tells us)
@@ -128,7 +131,7 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
     log("shot: request from", req.headers["tailscale-user-login"] || req.socket.remoteAddress, "length", req.headers["content-length"] ?? "(chunked)", req.headers["content-type"] || "", String(req.headers["user-agent"] || "").slice(0, 60));
     res.on("finish", () => log("shot: answered", res.statusCode, `${Date.now() - t0} ms`));
     req.on("aborted", () => log("shot: the phone dropped the connection mid-upload"));
-    if (!tokenOk(req)) { log("shot: refused (token)", req.headers["tailscale-user-login"] || req.socket.remoteAddress); return refuse(req, res, 403, "bad token: copy the header value again from /shortcut"); }
+    if (!tokenOk(req, url)) { log("shot: refused (token)", req.headers["tailscale-user-login"] || req.socket.remoteAddress); return refuse(req, res, 403, "bad key: copy the URL again from /shortcut"); }
     const api = getApi(); if (!api) return refuse(req, res, 503, "hyprpi daemon not reachable");
     const asked = String(url.searchParams.get("world") || "").trim().toUpperCase();
     const r = asked && asked !== "AUTO" ? room(asked) : room(lastWorld) || room(getActive());
@@ -206,7 +209,7 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
       if (req.method === "GET" && url.pathname === "/api/shot/setup") {
         res.setHeader("cache-control", "no-store");
         const host = req.headers.host; // the address the phone reached us at (its tailnet name)
-        json(res, 200, { url: `https://${host}/api/shot`, header: "X-Shot-Token", token: getToken(), world: lastWorld || getActive() || "" });
+        json(res, 200, { url: `https://${host}/api/shot`, keyUrl: `https://${host}/api/shot?key=${getToken()}`, header: "X-Shot-Token", token: getToken(), world: lastWorld || getActive() || "" });
         return true;
       }
       return false;
