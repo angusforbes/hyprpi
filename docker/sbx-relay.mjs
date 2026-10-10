@@ -703,7 +703,8 @@ function openReview(id) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(id)) return false;
   let m; try { m = JSON.parse(fs.readFileSync(path.join(PENDING, id + ".json"), "utf8")); } catch { return false; }
   if (typeof m.reviewIn === "string" && /^[A-Za-z0-9._-]{1,40}$/.test(m.reviewIn)) { // J363: reviewed in that Doorman's window, not in a Thoughts panel
-    try { spawn("bash", [fileURLToPath(new URL("./doorman/doorman.sh", import.meta.url)), "raise", m.reviewIn], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* */ }
+    const asker = (senderLabel(m.text) || String(m.typed?.for || m.research?.from || "")).replace(/[^A-Za-z0-9 ._-]/g, "").trim().slice(0, 40); // (Angus: the window jumps to the asker's G workspace)
+    try { spawn("bash", [fileURLToPath(new URL("./doorman/doorman.sh", import.meta.url)), "raise", m.reviewIn, asker], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* */ }
     log({ note: `review ${id} → Doorman window (${m.reviewIn})` });
     return true;
   }

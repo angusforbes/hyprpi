@@ -114,8 +114,9 @@ window)
   echo "opened $CLS on workspace $WS"
   ;;
 raise)
-  # J363: a toast's Review for a held item of this Doorman's sandbox: bring its window to where Angus is (his workspace stays; the
-  # window comes to him) and focus it so he can type his choice. The window is opened first if it isn't there.
+  # J363 / Angus 2026-10-10: a toast's Review for a held item: the window stays IN WORLD G, never on Angus's own workspaces. It moves to the G
+  # workspace of the agent that asked (its "π - <name> - world-g" window), else its home workspace ($WS), and is focused there (he clicked Review).
+  #   doorman.sh raise NAME [ASKER]
   [[ "$VIS" == developer || "$VIS" == observer ]] || { echo "doorman: $NAME's visibility is $VIS: no window"; exit 0; }
   CLS="hyprpi-doorman-$NAME"
   addr="$(hyprctl -j clients | jq -r --arg c "$CLS" '[.[] | select(.class == $c)][0].address // empty')"
@@ -124,10 +125,14 @@ raise)
     for _ in $(seq 1 20); do addr="$(hyprctl -j clients | jq -r --arg c "$CLS" '[.[] | select(.class == $c)][0].address // empty')"; [[ -n "$addr" ]] && break; sleep 0.3; done
   fi
   [[ -n "$addr" ]] || { echo "doorman: no window for $NAME"; exit 1; }
-  here="$(hyprctl -j activeworkspace | jq -r .id)"
-  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$here\", follow = false })" >/dev/null
+  to="$WS"; ASKER="${3:-}"
+  if [[ "$ASKER" =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,39}$ ]]; then
+    aw="$(hyprctl -j clients | jq -r --arg t "π - $ASKER - " '[.[] | select((.class | startswith("hyprpi.g-agent")) and (.title | startswith($t)))][0].workspace.id // empty')"
+    [[ "$aw" =~ ^[0-9]+$ ]] && to="$aw"
+  fi
+  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$to\", follow = false })" >/dev/null
   hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null
-  echo "raised $CLS to workspace $here"
+  echo "raised $CLS on G workspace $to"
   ;;
 stop) systemctl --user stop "$UNIT"; sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true ;;
 status) systemctl --user --no-pager status "$UNIT" || true ;;
