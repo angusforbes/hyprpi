@@ -16,6 +16,7 @@ const agentId = /^[A-Za-z0-9._-]{1,80}$/.test(String(spec.env?.HYPRPI_AGENT_ID |
 // (GrunReview) an agent-scoped KERNEL lock held for this g-run's whole life makes the check atomic: two g-runs started
 // at the same moment can't both pass, and the kernel drops it when this g-run dies (even SIGKILL), so no stale lock.
 const locked = agentId ? await lockAgent(agentId) : "free";
+if (agentId && locked === "none") console.error(`g-run: couldn't take the lock for ${agentId} (flock); only the running-pi check guards against a second pi`);
 const running = locked === "held" ? ["its window's g-run"] : agentId ? otherPiFor(agentId) : [];
 if (running.length) {
   process.stdout.write(`g-run: ${agentId} is already running in this sandbox (${running.map((x) => typeof x === "number" ? `pid ${x}` : x).join(", ")}), so a second pi isn't started on its session.\r\nClose the other window, or end that pi, then reopen. Press Enter to close this window.\r\n`);
