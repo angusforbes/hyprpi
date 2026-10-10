@@ -338,21 +338,41 @@ export function cleanSources(list) {
 // to 3 spaces, an unclosed fence runs to the end), indented code blocks (4+ spaces or a tab after a blank line, not a list item) and inline code
 // spans. Each becomes a marker; the same rules are in reader.py strip_code (the reader cleans first, the host again).
 export function stripCode(text) {
-  const t0 = String(text ?? "").replace(/\r\n?/g, "\n").replace(/<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "[code omitted]"); // HTML code elements (an unclosed one runs to the end)
+  // normalised first, the same way as reader.py: CR/LF, C1 controls out, Unicode spaces to plain spaces; capped so parsing stays fast
+  const t0 = String(text ?? "").slice(0, 200000).replace(/\r\n?/g, "\n").replace(/[\u0080-\u009f]/g, "").replace(/[\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\f\v]/g, " ")
+    .replace(/<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:<\/\1[ \t]*>|$)/gi, "[code omitted]"); // HTML code elements (an unclosed one runs to the end)
   // A line's content after any blockquote markers ("> > ") and list markers ("- ", "1. "): a fence or code block inside a quote or a list counts too.
-  const inner = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, "").replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
+  const unquote = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, ""), inner = (l) => unquote(l).replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
   const out = []; let fence = null, prevBlank = true, inInd = false;
   for (const line of t0.split("\n")) {
-    const c = inner(line);
-    if (fence) { const m = /^\s*(`{3,}|~{3,})\s*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null; continue; }
-    const f = /^\s*(`{3,}|~{3,})/.exec(c);
+    const c = inner(line), q = unquote(line);
+    if (fence) { const m = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null; continue; }
+    const f = /^[ \t]*(`{3,}|~{3,})/.exec(c);
     if (f) { fence = { ch: f[1][0], n: f[1].length }; out.push("[code omitted]"); prevBlank = false; inInd = false; continue; }
-    if (!c.trim()) { prevBlank = true; out.push(line.trim() === "" ? "" : line.trim()); continue; }
-    if (/^( {4,}|\t)/.test(line.replace(/^(?:[ \t]*>)+[ \t]?/, "")) && (inInd || prevBlank) && !/^\s*([-*+]|\d{1,9}[.)])\s/.test(line.replace(/^(?:[ \t]*>)+[ \t]?/, ""))) { if (!inInd) out.push("[code omitted]"); inInd = true; prevBlank = false; continue; }
+    if (!/[^ \t]/.test(c)) { prevBlank = true; out.push(line.replace(/^[ \t]+|[ \t]+$/g, "")); continue; }
+    if (/^( {4,}|\t)/.test(q) && (inInd || prevBlank) && !/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/.test(q)) { if (!inInd) out.push("[code omitted]"); inInd = true; prevBlank = false; continue; }
     inInd = false; prevBlank = false; out.push(line);
   }
-  // inline code spans, also across lines within a paragraph (never across a blank line), bounded so a stray backtick can't make this slow
-  return out.join("\n").replace(/(?<!`)(`+)(?!`)(?:[^\n`]|`+(?!\1(?!`))|\n(?![ \t]*\n)){1,2000}?(?<!`)\1(?!`)/g, "[code]").replace(/`/g, "");
+  return inlineCode(out.join("\n")).replace(/`/g, "");
+}
+// Inline code spans by a linear scan (no backtracking regex, GapReview): a run of N backticks opens a span that the next run of exactly N backticks
+// in the same paragraph (no blank line between) closes; the whole span becomes "[code]". An unmatched run is left (its backticks are dropped later).
+export function inlineCode(t) {
+  const runs = [], para = []; let p = 0;
+  for (let i = 0; i < t.length;) {
+    if (t[i] === "\n") { let k = i + 1; while (t[k] === " " || t[k] === "\t") k++; if (t[k] === "\n") p++; i++; continue; }
+    if (t[i] !== "`") { i++; continue; }
+    let k = i; while (t[k] === "`") k++; runs.push([i, k - i]); para.push(p); i = k;
+  }
+  const next = new Array(runs.length).fill(-1), last = new Map();
+  for (let r = runs.length - 1; r >= 0; r--) { next[r] = last.get(runs[r][1]) ?? -1; last.set(runs[r][1], r); }
+  let res = "", cur = 0;
+  for (let r = 0; r < runs.length; r++) {
+    if (runs[r][0] < cur) continue;
+    const j = next[r]; if (j < 0 || para[j] !== para[r]) continue;
+    res += t.slice(cur, runs[r][0]) + "[code]"; cur = runs[j][0] + runs[j][1]; r = j;
+  }
+  return res + t.slice(cur);
 }
 export function cleanDeliverable(res) {
   let t = String(res?.deliverable ?? "");

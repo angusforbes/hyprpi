@@ -65,36 +65,73 @@ def call(key, model, system, user, max_tokens, timeout):
         out({"ok": False, "error": f"{model}: no answer"})
 
 
+def _unquote(line):
+    return re.sub(r"^(?:[ \t]*>)+[ \t]?", "", line)
+
+
 def _inner(line):
-    return re.sub(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+", "", re.sub(r"^(?:[ \t]*>)+[ \t]?", "", line))
+    return re.sub(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+", "", _unquote(line))
 
 
 def strip_code(s):
-    # J378: same rules as research.mjs stripCode: HTML code elements, ``` and ~~~ fences (also inside quotes and lists; unclosed runs to the end),
-    # indented code blocks, inline code spans (also across lines within a paragraph)
+    # J378: same rules as research.mjs stripCode: normalised the same way (CR/LF, C1 controls, Unicode spaces), HTML code elements, ``` and ~~~
+    # fences (also inside quotes and lists; unclosed runs to the end), indented code blocks, inline code spans (also across lines in a paragraph)
+    s = s[:200000]
     s = re.sub(r"\r\n?", "\n", s)
-    s = re.sub(r"<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:</\1\s*>|$)", "[code omitted]", s, flags=re.I)
+    s = re.sub(r"[\u0080-\u009f]", "", s)
+    s = re.sub(r"[\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\f\v]", " ", s)
+    s = re.sub(r"<(pre|code|samp|kbd|script|style)\b[^>]*>[\s\S]*?(?:</\1[ \t]*>|$)", "[code omitted]", s, flags=re.I)
     out, fence, prev_blank, in_ind = [], None, True, False
     for line in s.split("\n"):
-        c = _inner(line)
+        c, q = _inner(line), _unquote(line)
         if fence:
-            m = re.match(r"^\s*(`{3,}|~{3,})\s*$", c)
+            m = re.match(r"^[ \t]*(`{3,}|~{3,})[ \t]*$", c)
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
                 fence = None
             continue
-        f = re.match(r"^\s*(`{3,}|~{3,})", c)
+        f = re.match(r"^[ \t]*(`{3,}|~{3,})", c)
         if f:
             fence = (f.group(1)[0], len(f.group(1))); out.append("[code omitted]"); prev_blank = False; in_ind = False; continue
-        if not c.strip():
-            prev_blank = True; out.append(line.strip()); continue
-        q = re.sub(r"^(?:[ \t]*>)+[ \t]?", "", line)
-        if re.match(r"^( {4,}|\t)", q) and (in_ind or prev_blank) and not re.match(r"^\s*([-*+]|\d{1,9}[.)])\s", q):
+        if not re.search(r"[^ \t]", c):
+            prev_blank = True; out.append(re.sub(r"^[ \t]+|[ \t]+$", "", line)); continue
+        if re.match(r"^( {4,}|\t)", q) and (in_ind or prev_blank) and not re.match(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]", q):
             if not in_ind:
                 out.append("[code omitted]")
             in_ind = True; prev_blank = False; continue
         in_ind = False; prev_blank = False; out.append(line)
-    t = re.sub(r"(?<!`)(`+)(?!`)(?:[^\n`]|`+(?!\1(?!`))|\n(?![ \t]*\n)){1,2000}?(?<!`)\1(?!`)", "[code]", "\n".join(out))
-    return t.replace("`", "")
+    return inline_code("\n".join(out)).replace("`", "")
+
+
+def inline_code(t):
+    # linear scan, same as research.mjs inlineCode: a run of N backticks is closed by the next run of exactly N in the same paragraph
+    runs, para, p, i, n = [], [], 0, 0, len(t)
+    while i < n:
+        if t[i] == "\n":
+            k = i + 1
+            while k < n and t[k] in " \t":
+                k += 1
+            if k < n and t[k] == "\n":
+                p += 1
+            i += 1
+            continue
+        if t[i] != "`":
+            i += 1
+            continue
+        k = i
+        while k < n and t[k] == "`":
+            k += 1
+        runs.append((i, k - i)); para.append(p); i = k
+    nxt, last = [-1] * len(runs), {}
+    for r in range(len(runs) - 1, -1, -1):
+        nxt[r] = last.get(runs[r][1], -1); last[runs[r][1]] = r
+    res, cur, r = [], 0, 0
+    while r < len(runs):
+        j = nxt[r]
+        if runs[r][0] >= cur and j >= 0 and para[j] == para[r]:
+            res.append(t[cur:runs[r][0]]); res.append("[code]"); cur = runs[j][0] + runs[j][1]; r = j + 1; continue
+        r += 1
+    res.append(t[cur:])
+    return "".join(res)
 
 
 def clean_md(s):
