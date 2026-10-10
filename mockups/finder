@@ -64,6 +64,14 @@ function sandboxWindows(clients) { // address -> { kind, name } for windows a sa
   }
   return out;
 }
+// J404 (Linkpath, J403): a HOST agent sitting on a sandboxed world's workspace is shown "⚠ host Name" (its window title
+// says "⚠ host · …"). The ranges come from the helpers' windows.json (lo..hi).
+function sandboxRanges() {
+  const base = path.join(stateDir(), "worlds"), out = [];
+  let names = []; try { names = fs.readdirSync(base); } catch { return out; }
+  for (const n of names) { try { const j = JSON.parse(fs.readFileSync(path.join(base, n, "windows.json"), "utf8")); if (Number.isInteger(j.lo) && Number.isInteger(j.hi)) out.push([j.lo, j.hi]); } catch { /* none */ } }
+  return out;
+}
 const PANEL_KIND = { router: ["👥", "Agents"], room: ["💬", "Stream"], search: ["💭", "Thoughts"], thoughts: ["💭", "Thoughts"], board: ["📋", "Projects"] };
 const WORLD_SIZE = loadConfig().worldSize || 10;
 const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
@@ -178,7 +186,7 @@ const worldColor = (room) => { const h = room && worldHex(room); return h ? "#" 
 async function rows() {
   const turns = lastTurns();
   const l = await request("list");
-  const out = [];
+  const out = [], sbxWs = sandboxRanges(), onSbx = (a) => !a.parked && Number.isInteger(a.workspace) && sbxWs.some(([lo, hi]) => a.workspace >= lo && a.workspace <= hi);
   for (const a of l.agents || []) {
     if (SUMMON && (a.room !== S.room || a.parked)) continue; // summon: this world's, not parked
     if (sbxPlaceholder(a)) continue; // J404: no window to summon or jump to
@@ -190,8 +198,9 @@ async function rows() {
     // The mark first (in the menu's icon column), then the agent's own icon in the name (Angus).
     const mk = markOf(a), recent = turns[a.id] || a.since || 0;
     const wsRoom = a.parked ? "" : Number.isInteger(a.workspace) && a.workspace > 0 ? (a.workspace_label || "")[0] || a.room : a.room;
-    const rich = esc(a.icon || "🤖") + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (since(recent, mk) ? font("dim", " · " + since(recent, mk)) : "") + (a.compactions >= 1 ? font("dim", " · ⟳" + a.compactions) : ""); // J117
-    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: (a.icon || "🤖") + " " + clean(a.display) + (loc ? " · " + loc : "") + (since(recent, mk) ? " · " + since(recent, mk) : "") + (a.compactions >= 1 ? " · ⟳" + a.compactions : ""), rich, sub, parked: !!a.parked, world: a.room || "",
+    const ic = onSbx(a) ? "⚠ host" : a.icon || "🤖"; // J404: a host agent on a sandboxed world's workspace (Linkpath's "⚠ host Name")
+    const rich = esc(ic) + " " + (unnamed(a.display) ? esc(clean(a.display)) : font(a.color, clean(a.display))) + (loc ? font("dim", " · ") + (a.parked ? font("dim", "parked") : font(worldColor(wsRoom), loc)) : "") + (since(recent, mk) ? font("dim", " · " + since(recent, mk)) : "") + (a.compactions >= 1 ? font("dim", " · ⟳" + a.compactions) : ""); // J117
+    out.push({ kind: "agent", id: a.id, sort: a.display, recent, mark: mk, glyph: mk, label: ic + " " + clean(a.display) + (loc ? " · " + loc : "") + (since(recent, mk) ? " · " + since(recent, mk) : "") + (a.compactions >= 1 ? " · ⟳" + a.compactions : ""), rich, sub, parked: !!a.parked, world: a.room || "",
       // J17: where it is, for "D" (one world letter) in the plugin: its workspace's world; parked: none.
       subtitle: activeLine(a), // J23: the topic; the time is on the top line
       worlds: a.parked ? "" : String(loc || "")[0] || "", ws: !a.parked && Number.isInteger(a.workspace) && a.workspace > 0 ? a.workspace : 0 });
@@ -257,7 +266,7 @@ async function rows() {
       const wsWorld = ws > 0 ? WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] : "";
       if (!w || !wsWorld || (SUMMON && wsWorld !== S.room)) continue;
       const loc = wsLabel(ws, WORLD_SIZE), agent = w.kind === "agent";
-      const nm = agent ? w.name || safeText(String(c.title || "").replace(/^π - /, "").split(" - ")[0]) || "agent" : `${wsWorld}: ${(PANEL_KIND[w.kind] || ["", w.kind || "panel"])[1]}`;
+      const nm = agent ? w.name || safeText(String(c.title || "").replace(/^(🐳 [A-Z]: )?π - /u, "").split(" - ")[0]) || "agent" : `${wsWorld}: ${(PANEL_KIND[w.kind] || ["", w.kind || "panel"])[1]}`;
       out.push({ kind: SUMMON ? "panel" : agent ? "sbxagent" : "panel", id: c.address, room: wsWorld, sort: SUMMON ? (agent ? "0" : "1") + nm : (agent ? "" : ">") + nm, recent: 0, mark: SUMMON ? "▫" : "○", glyph: agent ? "○" : "▫", sandboxed: true, // (summon: one category, agents first by their sort key)
         label: `🐳 ${nm} · ${loc}`, rich: "🐳 " + font(worldColor(wsWorld), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
         worlds: wsWorld, ws, subtitle: [agent ? "sandboxed agent" : "sandboxed world's panel", SUMMON && ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
