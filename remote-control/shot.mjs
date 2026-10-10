@@ -151,7 +151,33 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
   };
   const join = (caption, line) => caption ? `${caption}\n\n${line}` : line;
 
+  // J415 follow-up 5 (Thoughts-D, for Angus): a Shortcut with Request Body "Form" (a file field, any name;
+  // optional text fields caption / name) works too: the first part with a filename (else one called
+  // file) becomes the shared item, written back over the part file.
+  function unform(req, tmp) {
+    const m = String(req.headers["content-type"] || "").match(/^multipart\/form-data;.*boundary="?([^";]+)"?/i);
+    if (!m) return null;
+    const all = fs.readFileSync(tmp), sep = Buffer.from("--" + m[1]), parts = [];
+    let i = all.indexOf(sep);
+    while (i >= 0) {
+      const start = i + sep.length; if (all.toString("latin1", start, start + 2) === "--") break;
+      const next = all.indexOf(sep, start); if (next < 0) break;
+      const hEnd = all.indexOf("\r\n\r\n", start); if (hEnd < 0 || hEnd > next) { i = next; continue; }
+      const hdr = all.toString("utf8", start, hEnd);
+      const name = (hdr.match(/name="([^"]*)"/i) || [])[1] || "", file = (hdr.match(/filename="([^"]*)"/i) || [])[1];
+      parts.push({ name, file, body: all.subarray(hEnd + 4, next - 2) }); // -2: the CRLF before the boundary
+      i = next;
+    }
+    const f = parts.find((p) => p.file != null && p.body.length) || parts.find((p) => p.name === "file");
+    const text = (k) => { const p = parts.find((q) => q.name === k && q.file == null); return p ? p.body.toString("utf8").trim() : ""; };
+    const body = f ? f.body : Buffer.alloc(0);
+    fs.writeFileSync(tmp, body);
+    return { n: body.length, name: text("name") || f?.file || "", caption: text("caption") };
+  }
+
   async function deliver(req, res, r, caption, { tmp, n }, url) {
+    const form = unform(req, tmp);
+    if (form) { n = form.n; if (form.caption && !caption) caption = form.caption.slice(0, 4000); if (form.name && !url.searchParams.get("name")) url.searchParams.set("name", form.name); }
     if (!n) return json(res, 400, { error: "nothing was shared: run it from the Share sheet (▶ in the editor sends nothing)" });
     const b = head(tmp, Math.min(n, TEXT_MAX + 1)), named = sharedName(req, url);
     const k = kind(b);
