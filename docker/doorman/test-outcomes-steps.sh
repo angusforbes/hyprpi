@@ -23,7 +23,8 @@ chk "Gamma hears the task change outcome" "G | grep -q 'Gamma: \[Outside\] Angus
 echo "== typed request for Alpha (J368 route)"; D o4 '{"op":"request","type":"note_to_owner","for":"Alpha","params":{"text":"render done"}}'; ID4=$(ls $P/pending/ | sed -n 's/\.json$//p' | head -1); printf 'terminal\n' > $P/decisions/$ID4.deny; sleep 4
 # (J412: in mode safe a note doesn't wait for Angus: it is approved automatically, and the receipt says so, never "Angus …")
 if [ -n "$ID4" ]; then chk "Alpha hears the typed request outcome" "G | grep -q 'Alpha: \[Outside\] Angus denied the request.*($ID4)'"
-else chk "Alpha hears the automatic outcome of its note (mode safe)" "G | grep -q 'Alpha: \[Outside\] Approved automatically (mode [a-z]*): the request .a note for Angus.'"; fi
+else for _ in $(seq 15); do G | grep -q 'Approved automatically (mode [a-z]*): the request .a note for Angus.' && break; sleep 1; done # (an automatic decision can take a few seconds)
+  chk "Alpha hears the automatic outcome of its note (mode safe)" "G | grep -q 'Alpha: \[Outside\] Approved automatically (mode [a-z]*): the request .a note for Angus.'"; fi
 echo "== the Doorman's own inbox: two questions from different agents carry nothing earlier"
 W o5 '{"op":"talk","to":["Doorman-T"],"mode":"demand","text":"[Alpha, in world G] is pypi.org allowed? SECRET-A"}'
 W o6 '{"op":"talk","to":["Doorman-T"],"mode":"demand","text":"[Alpha, in world G] and npm? SECRET-A2"}'

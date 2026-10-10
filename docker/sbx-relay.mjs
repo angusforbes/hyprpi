@@ -809,7 +809,7 @@ class Relay {
     if (pol === "refused") throw new Error(this.refusalFor(sb, kind));
     // J412 red team #6: while a J370b send-back is open, a new message of that sandbox is its possible revision and goes to Angus with the link,
     // even where the dial says "message auto" (yolo): the send-back wins
-    const sentBack = pol === "auto" && !msg.revises && returnable(msg) && !msg.research && (() => { const r = this.returnedFor(sb.name); return !!(r && !r.broken && r.open?.length); })();
+    const sentBack = pol === "auto" && !msg.revises && linkable(msg) && !msg.research && (() => { const r = this.returnedFor(sb.name, "message"); return !!(r && !r.broken && r.open?.length); })();
     if (pol === "auto" && !sentBack) return this.holdAuto(sb, msg, kind);
     // J363 (Angus: approvals happen in the Doorman window): a sandbox configured with "review_in": "<doorman entry>" has its held items
     // reviewed in THAT Doorman's host window; its rooms become the sandbox's own world letter ("review_room", default G) so no other world's
