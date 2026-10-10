@@ -115,12 +115,24 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
     return n || "";
   };
 
+  // J415 follow-up (Angus's first tries: "The network connection was lost"): an answer sent before the
+  // body is read lets the connection close under iOS, which then shows "connection lost" instead of
+  // our error. So a refusal reads (and drops) the body first, unless it is over the cap anyway.
+  async function refuse(req, res, status, error) {
+    if (Number(req.headers["content-length"] || 0) <= MAX) { let n = 0; try { for await (const c of req) { n += c.length; if (n > MAX) break; } } catch { /* gone */ } }
+    return json(res, status, { error });
+  }
+
   async function shot(req, res, url) {
-    if (!tokenOk(req)) { log("shot: refused (token)", req.headers["tailscale-user-login"] || req.socket.remoteAddress); return json(res, 403, { error: "bad token" }); }
-    const api = getApi(); if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+    const t0 = Date.now(); // every Shortcut request is logged, with its outcome (Angus's tries left no trace)
+    log("shot: request from", req.headers["tailscale-user-login"] || req.socket.remoteAddress, "length", req.headers["content-length"] ?? "(chunked)", req.headers["content-type"] || "", String(req.headers["user-agent"] || "").slice(0, 60));
+    res.on("finish", () => log("shot: answered", res.statusCode, `${Date.now() - t0} ms`));
+    req.on("aborted", () => log("shot: the phone dropped the connection mid-upload"));
+    if (!tokenOk(req)) { log("shot: refused (token)", req.headers["tailscale-user-login"] || req.socket.remoteAddress); return refuse(req, res, 403, "bad token: copy the header value again from /shortcut"); }
+    const api = getApi(); if (!api) return refuse(req, res, 503, "hyprpi daemon not reachable");
     const asked = String(url.searchParams.get("world") || "").trim().toUpperCase();
     const r = asked && asked !== "AUTO" ? room(asked) : room(lastWorld) || room(getActive());
-    if (!r) return json(res, 400, { error: `no world ${asked}` });
+    if (!r) return refuse(req, res, 400, `no world ${asked}`);
     const caption = String(url.searchParams.get("caption") ?? (() => { const h = String(req.headers["x-caption"] || ""); try { return decodeURIComponent(h); } catch { return h; } })()).trim().slice(0, 4000);
     try { const st = fs.lstatSync(UPLOAD_DIR); if (!st.isDirectory() || st.isSymbolicLink()) throw 0; } catch { return json(res, 500, { error: "~/Phone is not a plain folder" }); }
     let body; try { body = await readBody(req); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
@@ -136,7 +148,7 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
   const join = (caption, line) => caption ? `${caption}\n\n${line}` : line;
 
   async function deliver(req, res, r, caption, { tmp, n }) {
-    if (!n) return json(res, 400, { error: "nothing was shared" });
+    if (!n) return json(res, 400, { error: "nothing was shared: run it from the Share sheet (▶ in the editor sends nothing)" });
     const b = head(tmp, Math.min(n, TEXT_MAX + 1)), named = sharedName(req);
     const k = kind(b);
     if (k) { // an image: as J250 (Thoughts sees it)
