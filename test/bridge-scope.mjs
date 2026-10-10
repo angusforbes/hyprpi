@@ -66,3 +66,26 @@ console.log("bridge-scope: all pass");
   fs.rmSync(T, { recursive: true, force: true });
   console.log("bridge-scope runner: all pass");
 }
+// J428Review: rule metacharacters; scope_held / scoping never stuck; a write folder from scoping brings Write/Edit when no tools were named
+{
+  const H2 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "scope-meta-")));
+  for (const d of ["notes) free", "ok", "rw/secret[abc]", "rw/plain"]) fs.mkdirSync(path.join(H2, d), { recursive: true });
+  const r1 = checkScope({ folders: [{ path: path.join(H2, "notes) free"), access: "read" }] }, { home: H2, shares: { mounts: [] } });
+  assert.equal(r1.ok, false); assert.match(r1.text, /permission rules can't hold/);
+  const { plan } = await import("../docker/bridge/runner.mjs");
+  const job = { id: "world-t--abc429", approved: { action: "x", tools: ["Read", "Edit"], folders: [path.join(H2, "ok"), path.join(H2, "notes) free"), path.join(H2, "rw")], read_only: [path.join(H2, "notes) free")], hidden: [path.join(H2, "rw/secret[abc]")], time_limit_s: 600 }, questions: [] };
+  const a = plan(job, { mcpConfig: "/tmp/m.json" }).argv, dirs = a.filter((x, i) => a[i - 1] === "--add-dir");
+  assert.deepEqual(dirs, [path.join(H2, "ok")], "a read-only folder with ')' and a share holding an unfenceable hidden path are left out entirely");
+  assert.ok(!a.some((x) => x.includes("notes) free") || x.includes("[abc]")), "no unsafe path reaches a rule");
+  const { sweep, scopeDecision, newJob } = await import("../docker/bridge/core.mjs");
+  const now = Date.parse("2026-10-10T12:00:00Z"), iso = (ms) => new Date(ms).toISOString();
+  let s = sweep({ type: "host_job", state: "scope_held", proposal: { at: iso(now - 25 * 3600e3), folders: [] }, approved: { time_limit_s: 600 } }, now); assert.equal(s.patch.state, "declined", "an unanswered proposal expires");
+  s = sweep({ type: "host_job", state: "scoping", created_at: iso(now - 2 * 3600e3), history: [], approved: { time_limit_s: 600 } }, now); assert.equal(s.patch.state, "needs_wider", "nobody scoped it within an hour");
+  assert.equal(sweep({ type: "host_job", state: "scoping", created_at: iso(now - 60e3), history: [], approved: { time_limit_s: 600 } }, now), null);
+  const j = newJob({ id: "world-t--abc430", sandbox: "world-t", asker: "A", action: "x", tools: ["Read", "Glob", "Grep"], folders: [path.join(H2, "ok")], readOnly: [path.join(H2, "ok")], needs: "y", nowMs: now });
+  const d = scopeDecision({ ...j, state: "scope_held", proposal: { held_id: "h1", folders: [] } }, true, "h1", [{ path: path.join(H2, "rw/plain"), access: "write", id: "1:2" }], now);
+  assert.ok(d.patch.approved.tools.includes("Write") && d.patch.approved.tools.includes("Edit"), "a write folder from scoping brings Write/Edit (no tools named)");
+  assert.equal(d.patch.approved.folder_ids[path.join(H2, "rw/plain")], "1:2");
+  fs.rmSync(H2, { recursive: true, force: true });
+  console.log("bridge-scope review cases: all pass");
+}

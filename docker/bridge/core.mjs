@@ -37,10 +37,10 @@ const cleanList = (a) => {
 };
 
 // A new job, made by the relay when the owner approves a free-form draft on a host in bridge mode.
-export function newJob({ id, auto = "", sandbox, asker, action, actionLine = "", tools = [], folders = [], readOnly = [], hidden = [], beyond = [], needs = "", timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
+export function newJob({ id, auto = "", sandbox, asker, action, actionLine = "", tools = [], toolsNamed = false, folders = [], readOnly = [], hidden = [], beyond = [], needs = "", timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
   return {
     id, type: "host_job", sandbox: String(sandbox), for: String(asker || ""), created_at: iso(nowMs), state: String(cleanText(needs, 1e6) || "").slice(0, 600) ? "scoping" : "waiting", widenings: 0, proposal: null,
-    approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), read_only: [...readOnly].map(String).filter((f) => folders.map(String).includes(f)), hidden: [...hidden].map(String), beyond: [...beyond].map(String), ...(String(cleanText(needs, 1e6) || "").slice(0, 600) ? { needs: String(cleanText(needs, 1e6)).slice(0, 600) } : {}), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
+    approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), read_only: [...readOnly].map(String).filter((f) => folders.map(String).includes(f)), hidden: [...hidden].map(String), beyond: [...beyond].map(String), tools_named: !!toolsNamed, ...(String(cleanText(needs, 1e6) || "").slice(0, 600) ? { needs: String(cleanText(needs, 1e6)).slice(0, 600) } : {}), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
     claim: null, claimed_at: null, questions: [], outcome: null,
     ...(auto ? { auto: String(auto) } : {}), // J412 red team #7: approved by the mode dial, not reviewed by the owner
     history: [auto ? { at: iso(nowMs), ev: `approved automatically (mode ${auto}), not reviewed by the owner; waiting for a host agent`, by: "relay" } : { at: iso(nowMs), ev: "approved by the owner; waiting for a host agent", by: "owner" }],
@@ -67,6 +67,20 @@ export function sweep(rec, nowMs = Date.now()) {
   if (rec?.type === "host_job" && rec.state === "asked") {
     const open = (rec.questions || []).find((q) => q.answer == null);
     if (open && nowMs - Date.parse(open.at) > LIMITS.questionTtlS * 1000) { const a = answer(rec, open.n, "(no answer: the question expired unanswered)", nowMs); if (a) return { patch: a.patch, history: [{ at: iso(nowMs), ev: `question ${open.n} expired unanswered (no answer from the owner)`, by: "relay" }], effects: [] }; }
+    return null;
+  }
+  // (J428Review) a scope proposal nobody answered expires with its held item (24 h): declined; a job nobody scoped within an hour
+  // (no runner installed, the run died) ends needs_wider. Never stuck.
+  if (rec?.type === "host_job" && rec.state === "scope_held" && rec.proposal && nowMs - Date.parse(rec.proposal.at) > LIMITS.questionTtlS * 1000) {
+    const summary = "the proposed extra folders were never answered (the proposal expired)";
+    return { patch: { state: "declined", proposal: null, outcome: { state: "declined", summary, ran: [], changed: [], at: iso(nowMs), by: "relay" } }, history: [{ at: iso(nowMs), ev: "scope proposal expired unanswered", by: "relay" }], effects: [{ kind: "outcome", state: "declined", summary, ran: [], changed: [] }] };
+  }
+  if (rec?.type === "host_job" && rec.state === "scoping") {
+    const since = Date.parse((rec.history || []).slice(-1)[0]?.at || rec.created_at);
+    if (nowMs - since > 3600 * 1000) {
+      const summary = "nobody on the host looked for the extra folders within an hour (is the per-job runner installed?)";
+      return { patch: { state: "needs_wider", outcome: { state: "needs_wider", summary, ran: [], changed: [], at: iso(nowMs), by: "relay" } }, history: [{ at: iso(nowMs), ev: "scoping timed out", by: "relay" }], effects: [{ kind: "outcome", state: "needs_wider", summary, ran: [], changed: [] }] };
+    }
     return null;
   }
   // (FixReview) a waiting job whose time limit (from its first claim) is used up can't be claimed again: it ends as no_report
@@ -161,7 +175,7 @@ export function scopeResult(rec, { beyond = [], why = "" }, nowMs = Date.now()) 
     const summary = `the host couldn't find what it needs beyond the sandbox's shares${w ? `: ${w}` : ""}`;
     return { patch: { state: "needs_wider", outcome: { state: "needs_wider", summary, ran: [], changed: [], at: iso(nowMs), by: "host scoping" } }, history: [{ at: iso(nowMs), ev: "scoping found nothing", by: "host scoping" }], effects: [{ kind: "outcome", state: "needs_wider", summary, ran: [], changed: [] }] };
   }
-  const proposal = { folders: beyond.map((f) => ({ path: String(f.path), access: f.access === "write" ? "write" : "read" })), why: w, at: iso(nowMs), held_id: null };
+  const proposal = { folders: beyond.map((f) => ({ path: String(f.path), access: f.access === "write" ? "write" : "read", id: String(f.id || "") })), why: w, at: iso(nowMs), held_id: null };
   return { patch: { state: "scope_held", proposal }, history: [{ at: iso(nowMs), ev: `scoping proposes ${proposal.folders.map((f) => `${f.path} (${f.access})`).join(", ")}`, by: "host scoping" }], effects: [{ kind: "hold_scope", proposal }] };
 }
 
@@ -176,6 +190,8 @@ export function scopeDecision(rec, approve, heldId, folders, nowMs = Date.now())
   const a = rec.approved, add = folders.filter((f) => !(a.folders || []).includes(f.path));
   const ro = new Set(a.read_only || []);
   for (const f of folders) { if (f.access === "read" && !(a.folders || []).includes(f.path)) ro.add(f.path); if (f.access === "write") ro.delete(f.path); }
-  const approved = { ...a, folders: [...(a.folders || []), ...add.map((f) => f.path)], read_only: [...ro], beyond: [...(a.beyond || []), ...folders.map((f) => `${f.path} (${f.access})`)] };
+  const ids = { ...(a.folder_ids || {}) }; for (const f of folders) if (f.id) ids[f.path] = String(f.id); // (J428Review) checked again by the runner
+  const tools = !a.tools_named && folders.some((f) => f.access === "write") ? [...new Set([...(a.tools || []), "Read", "Glob", "Grep", "Write", "Edit"])] : a.tools; // (J428Review: a write folder from scoping, no tools named)
+  const approved = { ...a, tools, folders: [...(a.folders || []), ...add.map((f) => f.path)], read_only: [...ro], beyond: [...(a.beyond || []), ...folders.map((f) => `${f.path} (${f.access})`)], folder_ids: ids };
   return { patch: { state: "waiting", proposal: null, approved }, history: [{ at: iso(nowMs), ev: `the owner approved the extra folders: ${folders.map((f) => `${f.path} (${f.access})`).join(", ")}`, by: "owner" }], effects: [] };
 }

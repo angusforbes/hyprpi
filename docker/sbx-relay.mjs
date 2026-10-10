@@ -452,7 +452,7 @@ class Sandbox {
         // goes straight back to the Doorman; the scope is worked out again at approval.
         const named = { folders: Array.isArray(req.folders) ? req.folders : req.folders == null ? [] : req.folders, tools: Array.isArray(req.tools) ? req.tools : req.tools == null ? [] : req.tools };
         const ctx = this.relay.scopeCtx(this.doormanFor);
-        const sc = checkScope({ ...named, world: ctx.world }, ctx);
+        const sc = checkScope({ ...named, world: ctx.world, pending: !!clean(req.needs_beyond || "") }, ctx);
         if (!sc.ok) throw new Error(`the job's folders or tools were refused: ${sc.text}`);
         // J428 v3: the sandbox can't see host paths beyond its shares, so it DESCRIBES what it needs there; the host finds the folder
         // after Angus's 1 (a read-only scoping run) and asks him again with 1 / 2 before the job may use it
@@ -1289,7 +1289,7 @@ class Relay {
       // J428 v2: the sandbox's shares as they are now, plus the draft's named folders beyond them, checked again (a folder swapped
       // since the draft fails here). A held item from before J428 (no draftScope) gets the shares and the default tools.
       const ds = msg.draftScope && typeof msg.draftScope === "object" ? msg.draftScope : {};
-      const sctx = this.scopeCtx(sb.doormanFor), sc = checkScope({ folders: ds.folders || [], tools: ds.tools || [], world: sctx.world }, sctx);
+      const sctx = this.scopeCtx(sb.doormanFor), sc = checkScope({ folders: ds.folders || [], tools: ds.tools || [], world: sctx.world, pending: !!ds.needs }, sctx);
       if (!sc.ok) {
         const why3 = `its folders or tools no longer pass the checks: ${sc.text}`;
         log({ sb: sb.name, op: "host_job", decision: "denied", id, reason: why3 });
@@ -1299,7 +1299,7 @@ class Relay {
         return;
       }
       const b = sb.cfg.bridge || {}, job = newHostJob({ id, auto: autoMode, sandbox: sb.doormanFor, asker: forWho, action: String(msg.text || ""), actionLine,
-        tools: sc.tools, folders: sc.folders.map((x) => x.path), readOnly: sc.folders.filter((x) => x.access === "read").map((x) => x.path),
+        tools: sc.tools, toolsNamed: Array.isArray(ds.tools) && ds.tools.length > 0, folders: sc.folders.map((x) => x.path), readOnly: sc.folders.filter((x) => x.access === "read").map((x) => x.path),
         hidden: sc.hidden, beyond: sc.beyond.map((x) => `${x.path} (${x.access})`), needs: typeof ds.needs === "string" ? ds.needs : "", timeLimitS: b.time_limit_s });
       this.jobRecord(id, { ...job, history: job.history, decided_at: now(), via });
       log({ sb: sb.name, op: "host_job", decision: "approved", id, sandbox: sb.doormanFor, state: "waiting" });

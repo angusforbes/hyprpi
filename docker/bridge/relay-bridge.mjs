@@ -131,7 +131,16 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
     decideScope(id, approve, heldId) {
       const rec = readJob(id); if (!rec || rec.state !== "scope_held" || rec.proposal?.held_id !== heldId) return { ok: false, text: "the job no longer waits for this decision" };
       let folders = rec.proposal.folders || [], ok = approve, why = "";
-      if (approve) { const c = scopeCheck(rec.sandbox, folders); if (!c.ok) { ok = false; why = c.text; } else folders = (c.beyond || []).map((b) => ({ path: b.path, access: b.access })); } // (what's within the shares by now needs no adding)
+      // (J428Review HIGH) a 1 approves exactly the folders shown: the same real path AND the same folder (device:inode) as when they
+      // were proposed; a folder replaced since (a symlink swapped in, renamed, recreated) turns the 1 into a decline
+      if (approve) {
+        const c = scopeCheck(rec.sandbox, folders.map((f) => ({ path: f.path, access: f.access })));
+        if (!c.ok) { ok = false; why = c.text; }
+        else {
+          const bad = folders.find((f) => { const x = (c.beyond || []).find((y) => y.path === f.path); return !x || !f.id || x.id !== f.id || x.access !== f.access; });
+          if (bad) { ok = false; why = `${bad.path} isn't the folder that was proposed any more (or is within the shares now)`; }
+        }
+      }
       const d = scopeDecision(rec, ok, heldId, folders, Date.now()); if (!d) return { ok: false, text: "not applied" };
       commit(rec, d); log({ op: "host_job_scope_decision", id, approve, applied: ok, why: why || undefined });
       return { ok: true, text: ok ? `approved: ${folders.map((f) => `${f.path} (${f.access})`).join(", ")}; the job waits for its run` : `declined${why ? ` (the folders no longer pass the checks: ${why})` : ""}` };

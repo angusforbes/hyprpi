@@ -52,6 +52,16 @@ DOORMAN_RUNNER_CMD="[\"$STUB\"]" $BR --json scope-job $J3 >/dev/null; sleep 3
 P3=$(held | grep "needs, beyond" | grep "$J3" | awk '{print $1}'); decide $P3 deny
 st=$(python3 -c "import json;print(json.load(open('$P/requests/$J3.json'))['state'])"); [ "$st" = declined ] && ok "after 2: declined" || fail "state $st"
 o=$(grep -rh "declined the extra folders" $R/x/inbox 2>/dev/null | head -1); [ -n "$o" ] && ok "the asker hears it was declined" || fail "no outcome to the asker"
+echo "== 4b a folder swapped after the proposal: Angus's 1 doesn't approve the new one (J428Review)"
+mkdir -p $X/extra2; printf '#!/bin/sh\ncat >/dev/null\necho %s\n' "'{\"folders\":[{\"path\":\"$X/extra2\",\"access\":\"read\"}],\"why\":\"x\"}'" > $R/x/stub2.sh; chmod +x $R/x/stub2.sh
+D b3 '{"op":"draft","for":"Alpha","why":"x","action":"z","needs_beyond":"extra2"}'
+J4=$(held | grep -v "$J1\|$J2\|$J3\|needs, beyond" | awk '{print $1}' | head -1); decide $J4 approve
+DOORMAN_RUNNER_CMD="[\"$R/x/stub2.sh\"]" $BR --json scope-job $J4 >/dev/null; sleep 3
+P4=$(held | grep "needs, beyond" | grep "$J4" | awk '{print $1}')
+mv $X/extra2 $X/extra2.old && mkdir -p $X/other && ln -s $X/other $X/extra2.tmp && mkdir $X/extra2 && rmdir $X/extra2 && mv $X/extra2.old /tmp/j428-swapped-$$ && mkdir $X/extra2
+decide $P4 approve
+st=$(python3 -c "import json;print(json.load(open('$P/requests/$J4.json'))['state'])"); [ "$st" = declined ] && ok "a recreated folder (new inode) at the proposed path: the 1 became a decline" || fail "state $st: $(job $J4)"
+rm -rf /tmp/j428-swapped-$$
 echo "== 5 an answer can't widen; needs_wider goes to scoping (W2)"
 CT=$($BR --json claim $J1 --agent-token $T | python3 -c "import json,sys;print(json.load(sys.stdin)['token'])")
 $BR --json ask $J1 --token $CT "may I also write in $X/extra?" >/dev/null; sleep 4

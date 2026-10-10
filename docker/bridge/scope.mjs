@@ -23,6 +23,9 @@ export const MAX_EXTRA = 4;
 export const ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash"];
 const WRITERS = new Set(["Write", "Edit"]);
 const CRED = /^(\.?ssh|\.?gnupg|\.?gpg|keys?|secrets?|credentials?|\.?password-store|\.?aws|\.?azure|\.?kube|\.?docker|tokens?|keyrings?|\.?pki|vault)$/i;
+// (J428Review HIGH) characters Claude Code's permission-rule parser or its globs treat specially: a path holding one can't be put in a
+// deny rule safely, so such a folder is refused here and dropped by the runner (with whatever share it would weaken)
+export const UNSAFE = /[()[\]{}*?,\\"'`]/;
 const under = (p, root) => p === root || p.startsWith(root.endsWith("/") ? root : root + "/");
 const realOr = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 
@@ -49,10 +52,13 @@ export function checkScope(raw = {}, { home = os.homedir(), shares = null } = {}
     if (!access) return no(`folder access must be "read" or "write" (${JSON.stringify(String(f.access ?? "")).slice(0, 40)})`);
     let p = String(f.path ?? "");
     if (!p || p.length > 300 || /[\x00-\x1f\x7f]/.test(p)) return no("a folder path is empty, too long or has control characters");
+    if (UNSAFE.test(p)) return no(`${p.slice(0, 120)}: has a character the agent's permission rules can't hold safely ( ) [ ] { } * ? , \\ or quotes: rename the folder, or use its parent`);
     if (p === "~" || p.startsWith("~/")) p = path.join(H, p.slice(1));
     if (!path.isAbsolute(p)) return no(`${p.slice(0, 120)}: not an absolute host path`);
     let r; try { r = fs.realpathSync(p); } catch { return no(`${p.slice(0, 120)}: no such folder on the host`); }
     if (!fs.statSync(r).isDirectory()) return no(`${p.slice(0, 120)}: not a folder`);
+    if (UNSAFE.test(r)) return no(`${r.slice(0, 120)}: its real path has a character the agent's permission rules can't hold safely`);
+    if (r !== path.resolve(p)) { /* a symlink (or ..) on the way: judged by where it really leads (r); the owner is shown r */ }
     if (!under(r, H) || r === H) return no(`${p.slice(0, 120)}: only folders inside the home folder, never the home folder itself or above it`);
     const parts = path.relative(H, r).split(path.sep);
     if (parts.some((c) => c.startsWith("."))) return no(`${p.slice(0, 120)}: hidden (dot) folders aren't allowed (settings, keys, caches)`);
@@ -64,7 +70,7 @@ export function checkScope(raw = {}, { home = os.homedir(), shares = null } = {}
     if (access === "read" ? readable(r) : writable(r)) continue; // already within the shares with those rights
     const seen = beyond.find((x) => x.path === r);
     if (seen) { if (access === "write") seen.access = "write"; continue; }
-    beyond.push({ path: r, access, share: false });
+    const st = fs.statSync(r); beyond.push({ path: r, access, share: false, id: `${st.dev}:${st.ino}` }); // (J428Review) its identity: what Angus approves is THIS folder
   }
   // a beyond folder inside a hidden path would un-hide it: refused (the sandbox can't see it either)
   for (const b of beyond) { const h = hidden.find((x) => under(b.path, x) || under(x, b.path)); if (h) return no(`${b.path}: it is or holds a hidden (gitignored) path the sandbox can't see (${h})`); }
@@ -77,7 +83,7 @@ export function checkScope(raw = {}, { home = os.homedir(), shares = null } = {}
     if (!tools.includes(s)) tools.push(s);
   }
   if (!inT.length) tools = all.length ? ["Read", "Glob", "Grep", ...(anyWrite ? ["Write", "Edit"] : [])] : []; // (no folders at all: no file tools)
-  if (tools.some((t) => WRITERS.has(t)) && !anyWrite) return no("Write or Edit needs a folder with write access");
+  if (tools.some((t) => WRITERS.has(t)) && !anyWrite && !raw.pending) return no("Write or Edit needs a folder with write access"); // (pending: a folder beyond the shares is still to be found)
   if (tools.some((t) => t !== "Bash") && !all.length) return no("file tools need at least one folder");
   return { ok: true, folders: all, hidden, tools, beyond, bash: tools.includes("Bash"), text: describe({ shares: folders, beyond, tools, world: raw.world, known }) };
 }

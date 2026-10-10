@@ -34,7 +34,14 @@ const home = (p) => String(p).replace(/^~(?=\/|$)/, os.homedir());
 export function plan(job, { mcpConfig, model = process.env.DOORMAN_RUNNER_MODEL || "", cwd = "" } = {}) {
   const tools = (job.approved.tools || []).filter(toolOk);
   const dropped = (job.approved.tools || []).filter((t) => !toolOk(t));
-  const folders = (job.approved.folders || []).map(home).filter((d) => path.isAbsolute(d) && fs.existsSync(d) && fs.statSync(d).isDirectory());
+  // (J428Review) a folder approved by identity (beyond the shares) must still be that folder, at that real path: else it's left out
+  const ids = job.approved.folder_ids || {};
+  const same = (d) => { if (!ids[d]) return true; try { const st = fs.statSync(d); return fs.realpathSync(d) === d && `${st.dev}:${st.ino}` === ids[d]; } catch { return false; } };
+  // (J428Review HIGH) a path the permission-rule parser can't hold ( ) [ ] { } * ? , \ quotes): a read-only folder or hidden path like
+  // that can't be fenced by a deny rule, so the folder itself, or the writable folder holding it, is left out entirely (fail closed)
+  const UNSAFE = /[()[\]{}*?,\\"'`]/, under = (p, r) => p === r || p.startsWith(r + "/");
+  const unsafeInside = [...(job.approved.read_only || []), ...(job.approved.hidden || [])].map(String).filter((d) => UNSAFE.test(d));
+  const folders = (job.approved.folders || []).map(home).filter((d) => path.isAbsolute(d) && !UNSAFE.test(d) && !unsafeInside.some((u) => under(u, d)) && fs.existsSync(d) && fs.statSync(d).isDirectory() && same(d));
   // J428: folders approved read-only: Write/Edit denied there (Claude Code permission rules; "//" = an absolute path). A job with
   // no writable folder gets no Write/Edit at all.
   const ro = new Set((job.approved.read_only || []).map(home));
@@ -44,8 +51,8 @@ export function plan(job, { mcpConfig, model = process.env.DOORMAN_RUNNER_MODEL 
   const builtin = [...new Set(tools.filter(keep).map((t) => t.replace(/\(.*$/, "")))];
   // writes denied in the read-only folders (also read-only ones nested inside a writable share: protected projects), and the
   // sandbox's hidden (gitignored) paths stay unreadable (J428 v2: the same rights as the sandbox)
-  const roAll = [...new Set((job.approved.read_only || []).map(home).filter((d) => path.isAbsolute(d)))];
-  const hidden = [...new Set((job.approved.hidden || []).map(String).filter((d) => path.isAbsolute(d)))];
+  const roAll = [...new Set((job.approved.read_only || []).map(home).filter((d) => path.isAbsolute(d) && !UNSAFE.test(d)))];
+  const hidden = [...new Set((job.approved.hidden || []).map(String).filter((d) => path.isAbsolute(d) && !UNSAFE.test(d)))];
   const deny = [...roAll.flatMap((d) => ["Write", "Edit", "MultiEdit", "NotebookEdit"].map((t) => `${t}(/${d}/**)`)), ...hidden.flatMap((d) => [`Read(/${d})`, `Read(/${d}/**)`])];
   const argv = [...agentCmd(), "-p", "--output-format", "text", "--no-session-persistence", "--restricted",
     "--strict-mcp-config", "--mcp-config", mcpConfig,
