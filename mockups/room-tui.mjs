@@ -6,7 +6,8 @@
 // agent-to-agent talk, Angus's prompts, board changes and project moves, Thoughts' 💭 lines; each
 // with its project when known. Ctrl+F cycles the views: full text → compact (one line each) →
 // topics (topic changes only, drawn as before the Stream: the agent's name, its topics under it; no times) →
-// all activity (J147: full text plus upkeep, Thoughts' automatic notices, ✓ / ×, board bookkeeping).
+// all activity (J147: full text plus upkeep, Thoughts' automatic notices, ✓ / ×, board bookkeeping) →
+// highlights (J420: only what matters to Angus; the rules are in lib/stream.mjs highlight()).
 // Filters (combinable): /stream @Atlas @Forge @hyprpi (a union of agents and projects) · 3h ·
 // today · since 9am · words (narrow) · raw (also tool lines); the header shows it, Esc or /stream clears.
 //
@@ -31,7 +32,7 @@ import { connect } from "../lib/client.mjs";
 import { parseAt, onlyAt, resolveAt, completeAt } from "../lib/at-names.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands } from "../lib/tui/command-line.mjs";
-import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT } from "../lib/stream.mjs";
+import { buildStream, parseStreamFilter, resolveFilterNames, filterStream, streamLine, DIRECT, highlights, HIGHLIGHTS_HELP } from "../lib/stream.mjs";
 // Panel 2 has no search: SUPER+ALT+/ opens the search panel (panel 3).
 // Commands: the room's own (below, in `command`) plus the ones every panel has (/help, /tinker,
 // /quit), all through lib/tui/command-line.mjs.
@@ -50,10 +51,11 @@ const helpRows = () => {
     "",
     `   ${bold("//text".padEnd(w))}  ${dim("only needed to SAY something starting with \"/\": //stream is down → posts \"/stream is down\"")}`,
     `   ${bold("/stream FILTER".padEnd(w))}  ${dim("@Atlas @Forge @hyprpi (agents or projects, any of them) · 3h · today · since 9am · words (all of them) · raw (tool lines too); combinable")}`,
-    `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F cycles full → compact → topics → all activity")}`,
+    `   ${bold("".padEnd(w))}  ${dim("e.g. /stream @hyprpi 3h commit · /stream alone or Esc clears · ^F cycles full → compact → topics → all activity → highlights")}`,
     `   ${bold("@Name text".padEnd(w))}  ${dim("just to them, this once · Tab cycles @projects, Shift+Tab @agents · copy @names into the search box to search their history")}`,
     `   ${dim("mouse: drag = text · Shift+drag = whole messages · double-click = word · triple-click = whole message · each copies")}`,
-    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F views: full → compact (one line each) → topics (topic changes only) → all activity (also upkeep, notices, ✓ / ×)")}`,
+    `   ${dim("stream: ^↑↓ scroll a line · PgUp PgDn page · ^Home/End oldest/newest · ⌥↑↓ pick a row · ^F views: full → compact (one line each) → topics (topic changes only) → all activity (also upkeep, notices, ✓ / ×) → highlights")}`,
+    `   ${dim(HIGHLIGHTS_HELP + "; not board bookkeeping, upkeep, routine ↩ answered, ⏰ 🌱 🍂 📨 ⛽ notes, tool / did lines, topics")}`,
     `   ${dim("message box: ↑↓ lines, then the start / end, then your earlier messages · ←→ move · ⇧←→↑↓ select · ⇧⏎ new line · ^C copy · ^X cut · ^V paste · ⏎ send")}`,
     `   ${dim("agents: SUPER+ALT+A · projects: SUPER+ALT+P · thoughts: SUPER+ALT+/")}`,
     `   ${dim("the projects panel (the board) is its own panel: SUPER+ALT+P")}`,
@@ -120,15 +122,17 @@ let agents = [], rooms = [], room = (process.argv[2] || "").toUpperCase(), messa
 let activity = {}, changes = {}; // room -> activity events · board changes
 // Ctrl+F cycles the views: full text, compact (one line per item), topics (topic changes only), all activity
 // (J147: full text plus what the others hide: upkeep, Thoughts' automatic notices, ✓ / ×, board bookkeeping).
-const SVIEWS = ["full", "compact", "topics", "all"];
-const SVIEW_LABEL = { full: "full", compact: "compact", topics: "topics", all: "all activity" };
+// J420 (Angus: "1 for now"): a fifth view, highlights: only what matters to Angus (lib/stream.mjs highlight()),
+// picked from the all-activity items and drawn like full text.
+const SVIEWS = ["full", "compact", "topics", "all", "highlights"];
+const SVIEW_LABEL = { full: "full", compact: "compact", topics: "topics", all: "all activity", highlights: "highlights" };
 let sview = "full";
 let streamArg = "";    // the /stream filter as typed ("" = everything)
 let sfCache = { k: null, f: null };
 const streamFilter = (a, minute) => { const k = a + "|" + minute; if (sfCache.k !== k) sfCache = { k, f: parseStreamFilter(a) }; return sfCache.f; }; // (re-parsed each minute: "3h" slides)
 // The timeline, rebuilt only when something arrived (typing must stay fast).
 let streamCache = { key: "", items: [] };
-function streamItems(raw, all = sview === "all") {
+function streamItems(raw, all = sview === "all" || sview === "highlights") {
   const msgs = messages[room] || [], acts = activity[room] || [], ch = changes[room] || [], ps = board.room === room ? board.projects : [];
   const key = `${room}|${msgs.length}|${acts.length}|${ch.length}|${raw}|${all}|${ps.map((p) => p.id + p.status + p.members.join()).join()}`;
   if (streamCache.key !== key) streamCache = { key, items: buildStream({ msgs, events: acts, changes: ch, projects: ps, raw, all, user: userName() }) };
@@ -340,7 +344,7 @@ function draw() {
   const all = streamItems(sf.raw);
   const res = sf.names.length ? resolveFilterNames(sf.names, { agents: [...hereAgents(), ...dormant.filter((a) => a.room === room)], projects: projAll, items: all }) : null;
   const filtered = filterStream(all, sf, res); // the /stream filters apply in every view
-  const items = sview === "topics" ? filtered.filter((it) => it.kind === "topic") : filtered;
+  const items = sview === "topics" ? filtered.filter((it) => it.kind === "topic") : sview === "highlights" ? highlights(filtered, userName()) : filtered;
   const compact = sview === "compact";
   const topicsView = sview === "topics"; // drawn like the pre-Stream topics view (Angus, N46): name, then its topics; no times
   const pname = (id) => projAll.find((p) => p.id === id)?.name || "";
@@ -472,7 +476,7 @@ function draw() {
   rows[ruleAt] = rule(`stream ${room} · ${SVIEW_LABEL[sview] || sview} (^F)` + (selIdx >= 0 ? ` · ${selIdx + 1}/${sItems.length} (^↑↓, Esc)` : "")
     + (sf.text ? ` · ${sf.text} (Esc clears)` : "") + (res?.unknown.length ? ` · ✗ no ${res.unknown.map((n) => "@" + n).join(" ")}` : "") + (scroll > 0 ? ` · ↓ ${scroll} more line${scroll === 1 ? "" : "s"} below (^End)` : ""));
   const shown = convo.slice(Math.max(0, convo.length - avail - scroll), convo.length - scroll);
-  if (!convo.length) shown.push({ line: dim(sf.text ? `  (nothing matches "${sf.text}" · Esc or /stream alone clears)` : sview === "topics" ? "  (no topic changes yet)" : "  (nothing yet)"), msg: null });
+  if (!convo.length) shown.push({ line: dim(sf.text ? `  (nothing matches "${sf.text}" · Esc or /stream alone clears)` : sview === "topics" ? "  (no topic changes yet)" : sview === "highlights" ? "  (nothing to highlight yet · ^F: full text)" : "  (nothing yet)"), msg: null });
   while (shown.length < avail) shown.unshift({ line: "", msg: null });
   rowMeta = {}; convoMsgs = sItems;
   shown.forEach((r, i) => { rowMeta[rows.length + 1 + i] = r; });
@@ -857,7 +861,7 @@ function onKey(d) {
   }
   if (d === "\x0e") return newAgent(); // Ctrl+N
   if (d === "\x06") { if (view !== "stream") setView("stream"); sview = SVIEWS[(SVIEWS.indexOf(sview) + 1) % SVIEWS.length]; scroll = 0; lastConvoLen = 0; streamSel = null;
-    note = { full: "full text (^F: compact)", compact: "compact: one line each (^F: topics)", topics: "topics: topic changes only (^F: all activity)", all: "all activity: also upkeep, Thoughts' notices, ✓ / ×, board bookkeeping (^F: full text)" }[sview]; return render(); } // Ctrl+F
+    note = { full: "full text (^F: compact)", compact: "compact: one line each (^F: topics)", topics: "topics: topic changes only (^F: all activity)", all: "all activity: also upkeep, Thoughts' notices, ✓ / ×, board bookkeeping (^F: highlights)", highlights: HIGHLIGHTS_HELP + " (^F: full text)" }[sview]; return render(); } // Ctrl+F
   // Scrolling: mouse wheel (SGR mouse reports), ↑/↓ line, PgUp/PgDn page, Home/End.
   if (d.startsWith("\x1b[<")) {
     for (const m of d.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)) {
