@@ -1385,6 +1385,15 @@ if (cmd === "run") {
   const entry = (readConfig().sandboxes || []).find((x) => x.name === arg) || {};
   const r = proposeChange({ cfgDir: path.dirname(CONFIG), PENDING, sandbox: arg, changes, by: o("--by") || "a host agent", reviewIn: entry.review_in || "", room: entry.review_room || "G" });
   console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1);
+} else if (cmd === "answer" && arg) { // J385: "answer ID --note TEXT": Angus's answer to a host agent's question (the Doorman bridge), from his own terminal or the Doorman window
+  if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
+  let rec = null; try { rec = JSON.parse(fs.readFileSync(path.join(PENDING, arg + ".json"), "utf8")); } catch { /* */ }
+  if (!rec?.hostJob) { console.error("sbx-relay: an answer only fits a host agent's question; approve or deny this one"); process.exit(4); }
+  const fi = process.argv.indexOf("--note"), note = ownerNote(fi > 0 ? String(process.argv[fi + 1] ?? "") : "");
+  if (!note.ok) { console.error(`sbx-relay: answer refused: ${note.reason}`); process.exit(4); }
+  if (!note.text) { console.error("sbx-relay: answer needs --note TEXT (your answer)"); process.exit(4); }
+  decideAsAngus(arg, "answer", "", note.text);
+  console.log(`answered ${arg}`);
 } else if ((cmd === "approve" || cmd === "deny" || cmd === "return") && arg) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
   const ef = process.argv.indexOf("--edit-file"), editFile = ef > 0 ? String(process.argv[ef + 1] || "") : "";
@@ -1401,6 +1410,6 @@ if (cmd === "run") {
   decideAsAngus(arg, cmd, editFile, note.text);
   console.log(`${cmd === "deny" ? "denied" : cmd === "return" ? "sent back with your note" : "approved"}${editFile ? " (edited)" : ""}${note.text && cmd === "deny" ? " (with your reason)" : ""} ${arg}`);
 } else {
-  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|clear SANDBOX|propose-gateway SANDBOX --changes JSON [--by NAME]");
+  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|answer ID --note TEXT|allow ID [DURATION]|review ID|rules|revoke N|all|clear SANDBOX|propose-gateway SANDBOX --changes JSON [--by NAME]");
   process.exit(cmd ? 1 : 0);
 }

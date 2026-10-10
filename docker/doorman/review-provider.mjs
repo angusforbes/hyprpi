@@ -26,13 +26,19 @@ export default function createReview(name) {
   const own = names(name); let infoCache = { t: 0, v: "" };
   const first = () => heldForSandboxes(own)[0] || null;
   return {
-    current() { const h = first(); return h ? { id: h.id, text: h.text, choices: h.choices, reason: h.reason === true } : null; },
+    current() { const h = first(); return h ? { id: h.id, text: h.text, choices: h.choices, reason: h.reason === true, answer: h.answer === true } : null; },
     edit(id) { const h = first(); if (!h || h.id !== id || !h.editable) return null; return { text: h.editText, hint: h.editHint }; },
     decide(id, k, edited, note) { // J370: note = Angus's note for r (send it back) or his reason for 2 (deny)
       const h = first();
       if (!h || h.id !== id) return { ok: false, text: "that request is no longer the one waiting; nothing was decided" };
       if (!h.choices.includes(k) || k === "e") return { ok: false, text: `${k} isn't a decision for this request` };
-      if (note !== undefined && k !== "r" && k !== "2") return { ok: false, text: "only r (send back) or 2 (deny) carries a note" };
+      if (note !== undefined && k !== "r" && k !== "2" && k !== "a") return { ok: false, text: "only r (send back), 2 (deny) or a (answer) carries a note" };
+      if (k === "a") { // J385: Angus's answer to a host agent's question (the Doorman bridge): his words, through the guarded CLI
+        if (!h.answer) return { ok: false, text: "a (answer) only fits a host agent's question" };
+        if (!note || !String(note).trim()) return { ok: false, text: "a needs your answer" };
+        if (heldStatus(id, Date.now(), { fresh: true }).state !== "pending") return { ok: false, text: "that request was already decided" };
+        return actOnHeld(id, { verdict: "answer" }, "doorman window", undefined, String(note));
+      }
       if (k === "r") { if (!note || !String(note).trim()) return { ok: false, text: "r needs your note" }; if (heldStatus(id, Date.now(), { fresh: true }).state !== "pending") return { ok: false, text: "that request was already decided" }; return actOnHeld(id, { verdict: "return" }, "doorman window", undefined, String(note)); }
       if (edited !== undefined && (!h.editable || k !== "1")) return { ok: false, text: "only approve can carry an edit, and only for an editable request" };
       if (heldStatus(id, Date.now(), { fresh: true }).state !== "pending") return { ok: false, text: "that request was already decided" };
