@@ -642,6 +642,11 @@ function onActionLine(line) {
 function openReview(id) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(id)) return false;
   let m; try { m = JSON.parse(fs.readFileSync(path.join(PENDING, id + ".json"), "utf8")); } catch { return false; }
+  if (typeof m.reviewIn === "string" && /^[A-Za-z0-9._-]{1,40}$/.test(m.reviewIn)) { // J363: reviewed in that Doorman's window, not in a Thoughts panel
+    try { spawn("bash", [fileURLToPath(new URL("./doorman/doorman.sh", import.meta.url)), "raise", m.reviewIn], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* */ }
+    log({ note: `review ${id} → Doorman window (${m.reviewIn})` });
+    return true;
+  }
   const world = String((Array.isArray(m.rooms) && m.rooms[0]) || "").toUpperCase();
   if (!/^[A-I]$/.test(world)) { log({ note: `review ${id}: no receiving world` }); return false; }
   fs.mkdirSync(REVIEWS, { recursive: true, mode: 0o700 });
@@ -681,6 +686,11 @@ class Relay {
     }
   }
   hold(sb, msg) {
+    // J363 (Angus: approvals happen in the Doorman window): a sandbox configured with "review_in": "<doorman entry>" has its held items
+    // reviewed in THAT Doorman's host window; its rooms become the sandbox's own world letter ("review_room", default G) so no other world's
+    // Thoughts panel claims them, and the toast's Review raises the window (openReview).
+    const ri = typeof sb.cfg?.review_in === "string" && /^[A-Za-z0-9._-]{1,40}$/.test(sb.cfg.review_in) ? sb.cfg.review_in : "";
+    if (ri) msg = { ...msg, rooms: [/^[A-I]$/.test(String(sb.cfg.review_room || "")) ? sb.cfg.review_room : "G"], reviewIn: ri };
     fs.mkdirSync(PENDING, { recursive: true, mode: 0o700 });
     const mine = fs.readdirSync(PENDING).filter((n) => n.startsWith(sb.name + "--"));
     if (mine.length >= LIMITS.pendingPerSandbox) throw new Error(`too many messages waiting for approval (${LIMITS.pendingPerSandbox})`);
@@ -1027,7 +1037,7 @@ function replyNote(sb, d) {
 // context, whatever the route: the toast, the room panel's y/n, the terminal, a rule. Not for a decision taken in the
 // Thoughts panel's review: that panel already shows its own ✓ turn (J280). The sandbox text is only quoted (one line).
 function heldNote(sb, msg, via, what, outcome) {
-  if (via === "panel" || !sb?.conn) return;
+  if (via === "panel" || via === "doorman window" || !sb?.conn) return; // (those draw their own result)
   const rooms = (Array.isArray(msg.rooms) ? msg.rooms : []).map((r) => String(r).toUpperCase()).filter((r) => /^[A-I]$/.test(r));
   if (!rooms.length) return;
   const to = (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")).join(", ");
@@ -1060,10 +1070,10 @@ function decideAsAngus(id, verdict) {
   if (verdict !== "deny") { // approve and allow (J274) are Angus's only
     const why = agentAncestor();
     if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
-    console.error("sbx-relay: note: the normal route is the Thoughts review (Review on the toast, then type 1 after the full request); this terminal command is the admin tool."); // J355
+    console.error("sbx-relay: note: the normal route is the review in the Doorman window or the Thoughts panel (Review on the toast, then type 1 after the full request); this terminal command is the admin tool."); // J355
   }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
-  const via = /^(panel|room panel)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";
+  const via = /^(panel|room panel|doorman window)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";
   writeDecision(id, verdict, via); // J284: the route, for the Thoughts note
 }
 // J284 (NoteReview #2): written under a temporary name and renamed into place, so the relay never reads a decision

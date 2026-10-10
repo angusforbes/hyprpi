@@ -7,6 +7,7 @@
 #   docker/doorman/doorman.sh start NAME      run it (systemd user unit hyprpi-doorman-NAME, headless Pi in RPC mode)
 #   docker/doorman/doorman.sh stop NAME | status NAME | rm NAME
 #   docker/doorman/doorman.sh window NAME     (J327) open its live window now (developer / observer visibility only)
+#   docker/doorman/doorman.sh raise NAME      (J363) bring its window to Angus's workspace and focus it (a toast's Review for a held item)
 #
 # "visibility" in its relay entry (J327; distinct from OpenRoute's "doorman": {"mode": ...} research key):
 #   strict     headless, nothing recorded outside the journal (the DEFAULT)
@@ -28,7 +29,7 @@ set -euo pipefail
 H="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 CONF="${HYPRPI_RELAY_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/sbx-relay.json}"
 cmd="${1:-}"; NAME="${2:-}"
-[[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{1,39}$ ]] || { echo "usage: doorman.sh create|start|stop|status|rm NAME" >&2; exit 2; }
+[[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{1,39}$ ]] || { echo "usage: doorman.sh create|start|stop|status|rm|window|raise NAME" >&2; exit 2; }
 ENTRY="$(jq -c --arg n "$NAME" '.sandboxes[] | select(.name == $n)' "$CONF")"
 [[ -n "$ENTRY" ]] || { echo "doorman: no sandbox '$NAME' in $CONF" >&2; exit 2; }
 get() { jq -r --arg k "$1" '.[$k] // empty' <<<"$ENTRY" | sed "s#^~#$HOME#"; }
@@ -112,8 +113,24 @@ window)
   hyprctl dispatch "hl.dsp.exec_cmd(\"env DOORMAN_LABEL='$LABEL' kitty --class $CLS --title '$LABEL · $MODETXT' $(command -v node) $VIEW view $NAME$ARG\", { workspace = \"$WS silent\" })" >/dev/null
   echo "opened $CLS on workspace $WS"
   ;;
+raise)
+  # J363: a toast's Review for a held item of this Doorman's sandbox: bring its window to where Angus is (his workspace stays; the
+  # window comes to him) and focus it so he can type his choice. The window is opened first if it isn't there.
+  [[ "$VIS" == developer || "$VIS" == observer ]] || { echo "doorman: $NAME's visibility is $VIS: no window"; exit 0; }
+  CLS="hyprpi-doorman-$NAME"
+  addr="$(hyprctl -j clients | jq -r --arg c "$CLS" '[.[] | select(.class == $c)][0].address // empty')"
+  if [[ -z "$addr" ]]; then
+    DOORMAN_FORCE_WINDOW=1 "$0" window "$NAME" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do addr="$(hyprctl -j clients | jq -r --arg c "$CLS" '[.[] | select(.class == $c)][0].address // empty')"; [[ -n "$addr" ]] && break; sleep 0.3; done
+  fi
+  [[ -n "$addr" ]] || { echo "doorman: no window for $NAME"; exit 1; }
+  here="$(hyprctl -j activeworkspace | jq -r .id)"
+  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$here\", follow = false })" >/dev/null
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null
+  echo "raised $CLS to workspace $here"
+  ;;
 stop) systemctl --user stop "$UNIT"; sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true ;;
 status) systemctl --user --no-pager status "$UNIT" || true ;;
 rm) systemctl --user stop "$UNIT" 2>/dev/null || true; sbx rm -f "$NAME" ;;
-*) echo "usage: doorman.sh create|start|stop|status|rm NAME" >&2; exit 2 ;;
+*) echo "usage: doorman.sh create|start|stop|status|rm|window|raise NAME" >&2; exit 2 ;;
 esac
