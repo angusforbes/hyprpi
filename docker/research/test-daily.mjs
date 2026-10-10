@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { dailyLine } from "./daily.mjs";
+const T = fs.mkdtempSync(path.join(os.tmpdir(), "daily-")), rl = path.join(T, "relay.jsonl"), rs = path.join(T, "research.jsonl"), now = Date.parse("2026-10-11T12:00:00Z");
+const w = (f, a) => fs.writeFileSync(f, a.map((x) => JSON.stringify(x)).join("\n") + "\n");
+const iso = (h) => new Date(now - h * 3600e3).toISOString();
+w(rl, [{ t: iso(1), sb: "world-t", op: "request", kind: "send_file", reviewed: false, auto: "yolo" }, { t: iso(2), sb: "world-t", op: "gpu", kind: "gpu", reviewed: false, auto: "yolo" }, { t: iso(30), sb: "world-t", kind: "send_file", reviewed: false, auto: "yolo" }, { t: iso(1), sb: "world-t", kind: "talk", reviewed: true }]);
+w(rs, [{ ts: iso(1), ev: "delivered-open", sandbox: "world-t" }, { ts: iso(3), ev: "flagged", sandbox: "world-t" }, { ts: iso(40), ev: "flagged", sandbox: "world-t" }]);
+let d = dailyLine({ researchLog: rs, relayLog: rl, now });
+assert.equal(d.count, 4); assert.ok(!d.text.includes("\n"), "one line"); assert.match(d.text, /1 research result delivered without review/); assert.match(d.text, /1 research plan sent flagged/); assert.match(d.text, /1 send_file/); assert.match(d.text, /1 gpu/);
+d = dailyLine({ researchLog: path.join(T, "none"), relayLog: path.join(T, "none"), now }); assert.deepEqual(d, { count: 0, text: "" });
+console.log("daily: all pass");

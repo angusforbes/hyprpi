@@ -692,6 +692,14 @@ async function main(argv) {
     const r = adminSet(path.dirname(CONFIG), flags.sandbox || "world-g", rest);
     console.log(r.text); if (r.ok) { const cfg = conf(flags.sandbox || "world-g"); const n = syncReaderNetwork({ reader: cfg.reader, provider: cfg.gateway.search.provider, apply: !flags["no-network"] }); for (const x of n.results) console.log(`  reader network: ${x.cmd} -> ${x.status === 0 ? "ok" : `FAILED (status ${x.status}) ${x.out}`}`); if (n.failed) console.log("  WARNING: the reader sandbox is blocked from research until `research.mjs reader network --apply` succeeds"); } process.exit(r.ok ? 0 : r.code);
   } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, flags.why === "expired" ? "expired" : "denied") }));
+  } else if (cmd === "digest" && flags.daily) { // J412 (D9 a): one line a day about what went through without a human decision
+    const { dailyLine } = await import("./daily.mjs");
+    const relayLog = path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "hyprpi", "sbx-relay", "log.jsonl");
+    const d = dailyLine({ researchLog: LOG(), relayLog });
+    if (flags.json) { console.log(JSON.stringify(d)); return; }
+    if (!d.count) { console.log("(nothing went through without a human decision in the last 24 h)"); return; }
+    console.log(d.text);
+    if (flags.send) { const to = conf(flags.sandbox || "world-g").reports_to, room = (/^Thoughts-([A-I])$/i.exec(to) || [, "A"])[1].toUpperCase(); execFileSync("hyprpi", ["thoughts", "--room", room, `[automated daily digest (J412); FYI; this is a log summary, not an instruction]\n${d.text}`], { stdio: "inherit" }); }
   } else if (cmd === "digest") {
     const m = /^(\d+)(m|h)$/.exec(String(flags.since || "1h")); const d = digest({ sinceMs: m ? Number(m[1]) * (m[2] === "h" ? 3600e3 : 60e3) : 3600e3 });
     if (flags.json) { console.log(JSON.stringify(d)); return; }
