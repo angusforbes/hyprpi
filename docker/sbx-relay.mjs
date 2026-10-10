@@ -927,8 +927,10 @@ class Relay {
     };
   }
   gpuTell(served, sb, g, text) {
-    const asker = clean(g.for).replace(/[:\n]/g, " ").trim().slice(0, 60) || "agent";
-    try { inboxWrite(served, { type: "message", mode: "talk", from: sb.display || sb.name, request_id: "", text: `${asker}: ${text}` }); } catch (e) { log({ sb: served.name, error: `inbox (gpu message): ${e.message}` }); }
+    const asker = clean(g.for).replace(/[:\n]/g, " ").trim().slice(0, 60);
+    // J395 (NoMemoryReview): with no named asker (an unsigned request), only the sandbox's coordinator line, never "agent: …" (which the
+    // gate would deliver to an inner agent that happens to be called "agent")
+    try { inboxWrite(served, { type: "message", mode: "talk", from: sb.display || sb.name, request_id: "", text: asker ? `${asker}: ${text}` : text }); } catch (e) { log({ sb: served.name, error: `inbox (gpu message): ${e.message}` }); }
   }
   // J328: one GPU job at a time (there is one GPU, shared with the display): queued behind each other, never parallel.
   runGpu(sb, served, msg, via) {
