@@ -8,7 +8,7 @@
 #   docker/doorman/doorman.sh start NAME      run it (systemd user unit hyprpi-doorman-NAME, headless Pi in RPC mode)
 #   docker/doorman/doorman.sh stop NAME | status NAME | rm NAME
 #   docker/doorman/doorman.sh window NAME     (J327) open its live window now (mode open only)
-#   docker/doorman/doorman.sh raise NAME      (J363) bring its window to Angus's workspace and focus it (a toast's Review for a held item)
+#   docker/doorman/doorman.sh raise NAME      (J363, J427) take Angus to its window where it is (switch workspace, focus; the window doesn't move)
 #
 # What it shows follows the served sandbox's mode (J412, one dial: worlds/<w>.json "gateway": {"mode"}; the old "visibility" key is ignored):
 #   strict     headless, nothing recorded outside the journal
@@ -119,9 +119,10 @@ window)
   echo "opened $CLS on workspace $WS"
   ;;
 raise)
-  # J363 / Angus 2026-10-10: a toast's Review for a held item: the window stays IN WORLD G, never on Angus's own workspaces. It moves to the G
-  # workspace of the agent that asked (its "π - <name> - world-g" window), else its home workspace ($WS), and is focused there (he clicked Review).
-  #   doorman.sh raise NAME [ASKER]
+  # J427 (Angus 2026-10-11: "take me there, not summon it to me"): a toast's Review takes ANGUS to the Doorman window where it is. The window
+  # doesn't move: his view switches to its workspace and it is focused. Only if it isn't open is it opened on its home G workspace ($WS) first;
+  # one found outside world G's workspace range (or on a special workspace) goes home first, since it never lives on Angus's own workspaces (J363).
+  #   doorman.sh raise NAME [ASKER]   (ASKER is accepted and ignored since J427)
   [[ "$VIS" == developer || "$VIS" == observer ]] || { echo "doorman: $NAME's visibility is $VIS: no window"; exit 0; }
   CLS="hyprpi-doorman-$NAME"
   addr="$(hyprctl -j clients | jq -r --arg c "$CLS" '[.[] | select(.class == $c)][0].address // empty')"
@@ -129,15 +130,17 @@ raise)
     DOORMAN_FORCE_WINDOW=1 "$0" window "$NAME" >/dev/null 2>&1 || true
     for _ in $(seq 1 20); do addr="$(hyprctl -j clients | jq -r --arg c "$CLS" '[.[] | select(.class == $c)][0].address // empty')"; [[ -n "$addr" ]] && break; sleep 0.3; done
   fi
-  [[ -n "$addr" ]] || { echo "doorman: no window for $NAME"; exit 1; }
-  to="$WS"; ASKER="${3:-}"
-  if [[ "$ASKER" =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,39}$ ]]; then
-    aw="$(hyprctl -j clients | jq -r --arg t "π - $ASKER - " '[.[] | select((.class | startswith("hyprpi.g-agent")) and (.title | startswith($t)))][0].workspace.id // empty')"
-    [[ "$aw" =~ ^[0-9]+$ ]] && to="$aw"
+  [[ "$addr" =~ ^0x[0-9A-Fa-f]+$ ]] || { echo "doorman: no window for $NAME"; exit 1; } # (an address goes into a dispatch string: hex only)
+  ws="$(hyprctl -j clients | jq -r --arg a "$addr" '[.[] | select(.address == $a)][0].workspace.id // empty')"
+  WF="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/worlds/$FOR.json"
+  lo="$(jq -r '.workspaces[0] // empty' "$WF" 2>/dev/null || true)"; hi="$(jq -r '.workspaces[1] // empty' "$WF" 2>/dev/null || true)" # (no or bad world file: home only)
+  [[ "$lo" =~ ^[0-9]+$ && "$hi" =~ ^[0-9]+$ ]] || { lo="$WS"; hi="$WS"; }
+  if ! [[ "$ws" =~ ^[0-9]+$ ]] || (( ws < lo || ws > hi )); then
+    hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$WS\", follow = false })" >/dev/null; ws="$WS"
   fi
-  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$to\", follow = false })" >/dev/null
+  hyprctl dispatch "hl.dsp.focus({ workspace = \"$ws\" })" >/dev/null
   hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null
-  echo "raised $CLS on G workspace $to"
+  echo "took you to $CLS on G workspace $ws"
   ;;
 stop) systemctl --user stop "$UNIT"; sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true ;;
 status) systemctl --user --no-pager status "$UNIT" || true ;;
