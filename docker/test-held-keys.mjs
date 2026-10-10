@@ -72,7 +72,7 @@ assert.equal(rules.at(-1).dur.ms, 120 * 60000); assert.match(last((o) => o.id ==
 put(talk("world-t--a00004")); await decideFile("world-t--a00004", "allow-9999"); assert.equal(rules.at(-1).dur.ms, 8 * 3600e3, "cut to the 8 h cap");
 const nRules = rules.length;
 put({ id: "doorman-t--d00001", sandbox: "doorman-t", mode: "talk", to: ["Thoughts-A"], targets: [{ kind: "thoughts", id: "Thoughts-A" }], text: "draft", body: "x", draft: true, draftFor: "Alpha" }); await decideFile("doorman-t--d00001", "allow-60");
-assert.equal(rules.length, nRules, "a draft never gets a rule");
+assert.equal(rules.length, nRules, "a draft never gets a rule"); assert.ok(fs.existsSync(path.join(PENDING, "doorman-t--d00001.json")), "and nothing is decided"); fs.unlinkSync(path.join(PENDING, "doorman-t--d00001.json"));
 ok("1+: a rule only for a plain message, minutes, cut to 8 h; a draft gets none");
 
 // 2: back to the asker with why it was held (quoted, labelled) + the text; nothing sent; a message stays open (revision linked, rules paused)
@@ -86,6 +86,7 @@ assert.ok(relay.returnedFor("world-t", "message"), "rules paused while the send-
 const revId = relay.hold(sb, { ...talk(undefined), text: "[Alpha, in world G] Lens: hello again" }), rev = JSON.parse(fs.readFileSync(path.join(PENDING, revId + ".json"), "utf8"));
 assert.equal(rev.revises, "world-t--b00001", "the revision is linked");
 put({ id: revId, ...rev }); await decideFile(revId, "allow-60"); assert.equal(rules.length, nRules, "a revision never gets a rule");
+assert.ok(fs.existsSync(path.join(PENDING, revId + ".json")), "a raw allow on a revision decides nothing"); await decideFile(revId, "approve");
 assert.equal(relay.returnedFor("world-t", "message"), null, "deciding the revision closes the send-back");
 put(talk("world-t--b00002")); await decideFile("world-t--b00002", "deny"); assert.match(last((o) => o.id === "world-t--b00002").text, /Why it was held[\s\S]*Revise it/); assert.ok(!/Note from Angus/.test(last((o) => o.id === "world-t--b00002").text));
 relay.closeReturn("world-t", "world-t--b00002");
@@ -111,6 +112,13 @@ assert.match(r.text, /the Doorman's words[\s\S]*unrelated to this sandbox's task
 assert.equal(relay.returnedFor("world-t", "message"), null, "a denied plan doesn't pause message rules");
 const rp = relay.hold(sb, { to: ["x"], targets: [], text: "Searches planned", research: { plan: true, rid: "q0123abcf", from: "Alpha" } });
 assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, rp + ".json"), "utf8")).revises, "world-t--r00001", "a resubmitted plan is linked");
+// (Paperwright #4, #5) a held RESULT of the same asker is linked too (its plan ran without a hold); with two open, the newest is used
+relay.openReturn("world-t", { id: "world-t--r00009", kind: "research", from: "Alpha", note: "", reason: "x", at: Date.now() });
+const rr = relay.hold(sb, { to: ["x"], targets: [], text: "Research result", research: { rid: "q0123abd0", from: "Alpha", want: "otters" } });
+assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, rr + ".json"), "utf8")).revises, "world-t--r00009", "a held result links to the newest open plan of its asker");
+const rr2 = relay.hold(sb, { to: ["x"], targets: [], text: "Research result", research: { rid: "q0123abd1", from: "Zeta", want: "x" } });
+assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, rr2 + ".json"), "utf8")).revises, undefined, "another asker's result isn't linked");
+await decideFile(rr, "approve"); assert.ok(!relay.returnedFor("world-t", "research").open.some((x) => x.id === "world-t--r00009"), "deciding the result closes that send-back");
 ok("2 on a research plan: dropped, back to the asker with the reason and a checked suggestion; a resubmission is linked; message rules untouched");
 
 // host agent's question: 1 text answers; a bare 1 or 1+ leaves it held; 2 declines (with text)
@@ -120,6 +128,15 @@ await decideFile("doorman-t--q00001", "allow-60", "x"); assert.ok(fs.existsSync(
 await decideFile("doorman-t--q00001", "approve", "use G's profile"); assert.deepEqual(answers.at(-1), { id: "doorman-t--j00001", n: 1, text: "use G's profile" });
 put({ id: "doorman-t--q00002", sandbox: "doorman-t", mode: "talk", to: ["Angus"], text: "Q", hostJob: { id: "doorman-t--j00001", n: 2 } }); await decideFile("doorman-t--q00002", "deny", "not needed");
 assert.equal(answers.at(-1).text, "(the owner declined to answer: not needed)");
+// (Paperwright #1, #3) a raw "allow-60" file on anything but a plain message, or a note that fails its checks: nothing decided, still held
+for (const rec of [{ id: "doorman-t--x00001", sandbox: "doorman-t", mode: "talk", text: "d", draft: true, to: ["x"], targets: [{ kind: "agent", id: "x" }] }, { ...talk("world-t--x00002"), revises: "world-t--a00001" }, { id: "world-t--x00003", sandbox: "world-t", mode: "talk", to: ["x"], text: "p", research: { plan: true, rid: "q1", from: "A" } }]) {
+  put(rec); const nRules = rules.length; await decideFile(rec.id, "allow-60");
+  assert.ok(fs.existsSync(path.join(PENDING, rec.id + ".json")), `${rec.id}: a raw allow on an ineligible item decides nothing`); assert.equal(rules.length, nRules); fs.unlinkSync(path.join(PENDING, rec.id + ".json")); }
+put(talk("world-t--x00004")); const nCalls4 = calls.length; await decideFile("world-t--x00004", "approve", "y".repeat(501));
+assert.ok(fs.existsSync(path.join(PENDING, "world-t--x00004.json")), "a 501-character note: nothing decided"); assert.equal(calls.length, nCalls4); fs.unlinkSync(path.join(PENDING, "world-t--x00004.json"));
+assert.match(N.holdReason({ hostJob: { id: "j" }, mode: "talk" }), /host agent's question/, "(#7) a declined question has a hold reason");
+assert.match(relay.askerText({ gatewayChange: {} }, "g--1", { verdict: "deny" }), /gateway settings change/, "(#7) not called a message");
+ok("a raw 1+ on a draft, revision or plan, or an over-long note: nothing decided; question and gateway receipts are named");
 ok("a host agent's question: 1 text answers, a bare 1 / 1+ stay held, 2 declines with the text");
 
 // the old verbs decide nothing

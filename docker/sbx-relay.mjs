@@ -751,7 +751,7 @@ export const said = (v, thing, { byDial = false, autoMode = "" } = {}) => byDial
 const untrusted = (t) => clean(t).replace(/\s+/g, " ").replace(/"/g, "'").replace(/note from angus|why it was held|reason \(the mode dial|a suggested plan from the doorman/gi, (m) => `«${m.toLowerCase()}»`);
 export function askerText(msg, id, { verdict, note = "", outcome = "", suggestion = "", byDial = false, autoMode = "" } = {}) {
   const what = msg.research ? (msg.research.plan ? `the research searches for "${untrusted(msg.research.want).slice(0, 120)}"` : `your research request ("${untrusted(msg.research.want).slice(0, 120)}")`)
-    : msg.typed ? `the request "${REQ_TYPES[msg.typed.type] || msg.typed.type}"` : msg.taskChange ? "the research task change" : msg.gpu ? `the GPU lease ${msg.gpu.lease}` : msg.draft ? "the request drafted for you" : `your message to ${(msg.shown || msg.to || []).map((x) => untrusted(String(x).replace(/ \(.*\)$/, "")).slice(0, 60)).join(", ")}`;
+    : msg.typed ? `the request "${REQ_TYPES[msg.typed.type] || msg.typed.type}"` : msg.taskChange ? "the research task change" : msg.gatewayChange ? "the proposed research gateway settings change" : msg.hostJob ? "the host agent's question" : msg.gpu ? `the GPU lease ${msg.gpu.lease}` : msg.draft ? "the request drafted for you" : `your message to ${(msg.shown || msg.to || []).map((x) => untrusted(String(x).replace(/ \(.*\)$/, "")).slice(0, 60)).join(", ")}`;
   const q = (t) => String(t).replace(/"/g, "'");
   if (verdict === "deny") {
     if (byDial) return `${said("denied", `${what} (${id})`, { byDial })}: nothing was done. Reason (the mode dial, not Angus): "${q(note)}". Revise it and send again, or drop it.`;
@@ -821,13 +821,14 @@ class Relay {
     const mine = fs.readdirSync(PENDING).filter((n) => n.startsWith(sb.name + "--"));
     if (mine.length >= LIMITS.pendingPerSandbox) throw new Error(`too many messages waiting for approval (${LIMITS.pendingPerSandbox})`);
     const id = `${sb.name}--${crypto.randomBytes(3).toString("hex")}`;
-    if (!msg.revises && msg.research?.plan) { // J412: a plan resubmitted after a "2" on an earlier plan is linked to it (the newest open one, the same asker preferred)
-      const r = this.returnedFor(sb.name, "research");
-      if (r && !r.broken && r.open?.length) { const o = r.open.find((x) => x.from && x.from === msg.research.from) || r.open[r.open.length - 1]; msg = { ...msg, revises: o.id, revisesNote: o.note || o.reason || "" }; }
+    if (!msg.revises && msg.research) { // J412: a plan resubmitted after a "2" on an earlier plan is linked to it (the newest open one, the same asker preferred);
+      const r = this.returnedFor(sb.name, "research"); // (Paperwright #4) so is a held RESULT of the same asker (its plan ran without a hold), so deciding it closes the send-back
+      if (r && !r.broken && r.open?.length) { const mineO = r.open.filter((x) => x.from && x.from === msg.research.from), o = mineO.at(-1) || (msg.research.plan ? r.open.at(-1) : null); // (#5: the newest)
+        if (o) msg = { ...msg, revises: o.id, revisesNote: o.note || o.reason || "" }; }
     }
     if (!msg.revises && linkable(msg)) { // J370b: while a send-back is open, every held message of that sandbox is shown as its possible revision
       const r = this.returnedFor(sb.name, "message");                       // (the one with the same label and recipients if any, else the latest); the link is never used up
-      if (r && !r.broken && r.open?.length) { const k = returnKey(sb.name, msg), o = r.open.find((x) => x.key === k) || r.open[r.open.length - 1]; msg = { ...msg, revises: o.id, revisesNote: o.note || o.reason || "" }; }
+      if (r && !r.broken && r.open?.length) { const k = returnKey(sb.name, msg), o = r.open.findLast((x) => x.key === k) || r.open[r.open.length - 1]; msg = { ...msg, revises: o.id, revisesNote: o.note || o.reason || "" }; }
     }
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
     if (msg.revises) log({ sb: sb.name, op: "revision", id, revises: msg.revises });
@@ -1070,10 +1071,16 @@ class Relay {
     const m = /^(.+)\.(approve|deny|allow-\d{1,5})$/.exec(file); if (!m) return;
     let [, id, verdict] = m;
     if (this.deciding?.has(id)) return; // (KeysReview) a decision on this item is being made right now; this file stays, nothing is decided twice
-    let via = "", note = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (n) { const c = ownerNote(Buffer.from(n[1], "base64").toString("utf8")); if (c.ok) note = c.text; } } } catch { /* raced */ } // line "note:" = Angus's text after the key, cleaned again here
+    let via = "", note = "", badNote = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (n) { const c = ownerNote(Buffer.from(n[1], "base64").toString("utf8")); if (c.ok) note = c.text; else badNote = c.reason; } else if (/^note:/.test(l)) badNote = "not readable"; } } catch { /* raced */ } // line "note:" = Angus's text after the key, cleaned again here
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
+    // (Paperwright #3) his text failed its checks (over 500 characters, unreadable): nothing is decided without it; the item stays held
+    if (badNote) { log({ op: "decision", id, error: `the note ${badNote}; nothing decided, it stays held` }); return; }
+    // (Paperwright #1) "1+" (allow-<minutes>) fits only a plain message to a peer, never a revision, as the window and CLI say; a raw decision file
+    // asking it for anything else decides nothing (fail closed; Angus decides again with 1 or 2)
+    if (/^allow-/.test(verdict) && !(linkable(msg) && msg.mode === "talk" && Array.isArray(msg.targets) && msg.targets.length && !msg.revises && !msg.hostJob)) {
+      log({ op: "decision", id, error: "1+ (allow similar) fits only a plain message to a peer; nothing decided, it stays held" }); return; }
     // J412 (spec 2.4): a host agent's question is answered by "1 text" (a bare 1 says nothing) and declined by 2; "1+" never fits it. Not decided: stays held
     if (msg.hostJob && verdict !== "deny" && (!note || verdict !== "approve")) { log({ op: "decision", id, error: verdict === "approve" ? "a host agent's question needs your answer (1 text); it stays held" : "1+ doesn't fit a host agent's question; it stays held" }); return; }
     let byDial = false, autoMode = ""; // J412: a denial the dial made (not Angus): its reason is labelled as the dial's everywhere

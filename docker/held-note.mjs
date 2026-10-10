@@ -32,6 +32,7 @@ export function holdReason(m) {
   } else if (m?.research) { src = "relay"; why = "a research result waits for Angus's review before it reaches the sandbox";
   } else if (m?.gpu) { src = "relay"; why = "a GPU lease needs Angus's approval";
   } else if (m?.taskChange) { src = "relay"; why = "a change of the research task needs Angus's approval";
+  } else if (m?.hostJob) { src = "relay"; why = "a host agent's question waits for Angus's answer"; // (Paperwright #7)
   } else if (m?.gatewayChange) { src = "relay"; why = "a change of the research gateway's settings needs Angus's approval";
   } else if (m?.typed) { src = "relay"; why = `a "${one(m.typed.type).replace(/_/g, " ")}" request needs Angus's approval`;
   } else if (m?.draft) { src = "relay"; why = "a free-form request the Doorman drafted needs Angus's approval";
