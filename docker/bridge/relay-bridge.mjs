@@ -14,7 +14,7 @@ const RID_RE = /^[0-9a-f]{24}\.json$/, MAX_REQ = 16384;
 // called when a sandbox's mode (who would do a free-form job) changes, so the relay can refresh its host card.
 // J428 v3: scopeCheck(sandbox, folders) → { ok, beyond, text } (scope.mjs against that sandbox's shares, run by the relay); holdScope(rec,
 // proposal) → the held item id of "job X needs, beyond the shares: … 1 approve, 2 decline".
-export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestion, scopeCheck = () => ({ ok: false, text: "no scope check" }), holdScope = () => null, archive = () => {}, sandboxes = () => [], runnerOn = () => false, onMode = () => {} }) {
+export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestion, scopeCheck = () => ({ ok: false, text: "no scope check" }), holdScope = () => null, archive = () => {}, sandboxes = () => [], runnerOn = () => false, runnerLabel = () => undefined, onMode = () => {} }) {
   const IN = path.join(stateDir, "bridge", "in"), OUT = path.join(stateDir, "bridge", "out"), REQ = path.join(stateDir, "requests");
   const AGENTS = path.join(stateDir, "bridge", "agents.json"), MODE = path.join(stateDir, "bridge", "mode.json");
   // (RegReview) a missing, corrupt or malformed registry reads as nobody registered (agent-free: the fail-closed direction); bad entries are dropped
@@ -22,7 +22,7 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
   const writeAtomic = (f, v) => { fs.writeFileSync(f + ".tmp", JSON.stringify(v, null, 1), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); };
   let lastMode = ""; try { lastMode = JSON.stringify(JSON.parse(fs.readFileSync(MODE, "utf8")).sandboxes || {}); } catch { /* none yet */ }
   const refreshMode = () => { // the mode per sandbox, written for the card (mode.json, readable by the card writer) and told on change
-    const reg = readReg(), all = {}; for (const sb of sandboxes()) all[sb] = modeFor(reg, sb, { runnerOn: !!runnerOn() });
+    const reg = readReg(), all = {}; for (const sb of sandboxes()) all[sb] = modeFor(reg, sb, { runnerOn: !!runnerOn(), runnerLabel: runnerLabel(sb) });
     const j = JSON.stringify(all); if (j === lastMode) return all;
     let prev = {}; try { prev = JSON.parse(lastMode || "{}"); } catch { /* */ }
     try { writeAtomic(MODE, { at: new Date().toISOString(), sandboxes: all }); lastMode = j; } catch (e) { log({ error: `bridge mode: ${e.message}` }); return all; } // (RegReview) retried next time if the write failed
@@ -140,7 +140,7 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
   return {
     scan, sweepAll, expire,
     // J407: who would do a free-form job for this sandbox right now → { mode, agents }
-    mode(sandbox) { return modeFor(readReg(), sandbox, { runnerOn: !!runnerOn() }); },
+    mode(sandbox) { return modeFor(readReg(), sandbox, { runnerOn: !!runnerOn(), runnerLabel: runnerLabel(sandbox) }); },
     // the owner's typed answer to a held question (the relay's decide() calls this) → true when applied
     answer(id, n, text, heldId) { const rec = readJob(id); const a = rec && answerRule(rec, n, text, Date.now(), heldId); if (a) { jobRecord(id, { ...a.patch, history: a.history }); log({ op: "host_job_answer", id, n }); } return !!a; },
     // J428 v3: the owner's 1 / 2 on a held scope proposal (bound to that held item); the folders are checked again now, and a folder

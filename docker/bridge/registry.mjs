@@ -67,9 +67,10 @@ export function applyReg(reg, op, nowMs = Date.now()) {
 
 // The mode for a sandbox whose Doorman uses the bridge: who would do a free-form job now. runnerOn = the per-job runner is installed
 // (an on-demand agent that starts when a job is approved).
-export function modeFor(reg, sandbox, { runnerOn = false, nowMs = Date.now() } = {}) {
+export function modeFor(reg, sandbox, { runnerOn = false, runnerLabel, nowMs = Date.now() } = {}) {
   const live = liveFor(reg, sandbox, nowMs).map(label);
-  if (runnerOn) live.push("the per-job runner (on demand)");
+  // J425: runnerLabel = the world's harness and whether its limits are enforced; null = its host_runner setting is invalid (not counted, fail closed)
+  if (runnerOn && runnerLabel !== null) live.push(runnerLabel || "the per-job runner (on demand)");
   return { mode: live.length ? "host agent available" : "agent-free", agents: live };
 }
 // The host card's line for it (J407 (3)): what a sandbox agent and its Doorman should know before asking.

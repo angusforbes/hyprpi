@@ -22,6 +22,7 @@ export const KEYS = {
   "doorman_model": { ok: (v) => MODEL_RE.test(v), why: "a model id", proposable: true },
   "mode": { ok: (v) => MODES.includes(v), why: "strict, safe, open or yolo", proposable: true },
   "level": { ok: (v) => ["open", "safe", "strict"].includes(v), why: "open, safe or strict (deprecated: the mode decides the level)", proposable: false },
+  "host_runner": { ok: (v) => ["claude-code", "codex", "pi"].includes(v), why: "claude-code, codex or pi (J425; a custom command only in the file)", proposable: false },
   "search.key_file": { ok: (v) => /^[~\/][^\0\n]{0,200}$/.test(v), why: "a path", proposable: false },
   // J434 (Angus: "We can add the choice to doorman config file"): may Angus decide this sandbox's held items from the phone app? Default false. Angus
   // only (config-set at his terminal, or editing the file); never proposable, so no agent or sandbox can turn it on, in any mode.

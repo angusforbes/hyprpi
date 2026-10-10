@@ -93,7 +93,7 @@ with `bridge-mcp.json`:
 
 Give the agent only the tools and folders the job names (`show` lists them). For anything that writes, a throwaway sandbox or a separate user is stronger than tool flags.
 
-## The per-job runner (a fresh Claude Code run for each job)
+## The per-job runner (a fresh agent run for each job)
 
 Instead of a long-running agent, the bridge can start one fresh, narrowly scoped run per approved job:
 
@@ -115,7 +115,32 @@ claude -p --output-format text --no-session-persistence --restricted --strict-mc
   - A run that ends without a report is reported failed, with its last output.
   - A run that reaches 15 s before the job's time limit is stopped and reported failed.
   - If the runner itself dies, its unit ends and systemd stops the agent. The claim lapses, and the relay records the job as abandoned, or as no_report once the time limit is used up.
-- Another agent: `DOORMAN_RUNNER_CMD` (a JSON argv prefix, default `["claude"]`) and `DOORMAN_RUNNER_MODEL`. The runner logs each run (the exact command, its exit and the job's state) to `STATE/bridge/runner.jsonl`.
+- Which agent: per world, see "Harness per world" below. `DOORMAN_RUNNER_CMD` (a JSON argv prefix) still overrides the claude-code command, and `DOORMAN_RUNNER_MODEL` is the default model. The runner logs each run (the harness, the exact command, the limits it can't enforce, its exit and the job's state) to `STATE/bridge/runner.jsonl`.
+
+### Harness per world (J425)
+
+The runner can start Claude Code, Codex or pi. Each world chooses in `~/.config/hyprpi/worlds/<w>.json`: `"gateway": { "host_runner": "codex" }`, or `{ "harness": "pi", "command": ["/path/to/pi"], "model": "provider/id" }`. The default is claude-code. Only Angus sets it: in the file, or with `research.mjs config-set host_runner=pi`. A sandbox can't propose it. An unknown harness or a bad command makes the runner unavailable for that world (fail closed): a free-form request is refused at once, and a job already waiting is reported failed.
+
+| Limit           | claude-code | codex    | pi        |
+| --------------- | ----------- | -------- | --------- |
+| Tool list       | enforced    | advisory | enforced  |
+| Writes, folders | if no Bash  | enforced | advisory  |
+| Reads, folders  | if no Bash  | advisory | advisory  |
+| Read-only dirs  | if no Bash  | enforced | advisory  |
+| Hidden paths    | if no Bash  | advisory | advisory  |
+| Network         | per tools   | off      | per tools |
+| Only bridge MCP | yes         | yes      | yes       |
+| No session kept | yes         | yes      | yes       |
+
+- claude-code: `claude -p --restricted --strict-mcp-config --tools … --add-dir … --permission-mode dontAsk`, as before. `--restricted` and `--add-dir` confine its file tools only: a granted Bash (even a rule like `Bash(git status)`) runs outside them, so a job with Bash is labelled "limits advisory" (J425Review, confirmed with a forced Bash call).
+- codex: `codex exec --ephemeral --ignore-user-config --ignore-rules --disable apps` with its OS sandbox: `read-only`, or `workspace-write` only when the job grants a writing tool and names folders. Writes are limited to those folders (`/tmp` excluded), and the network is off for its commands; its own web search tool is disabled too. The bridge is its only MCP server, with just the five job tools, pre-approved. Codex always has a shell, so the tool list is only read-only versus writing, and reads aren't limited.
+- pi: `pi -p --no-session --no-skills --no-context-files --no-approve` with a private agent dir (`PI_CODING_AGENT_DIR`) whose only MCP server is the bridge. Your auth.json and models.json are symlinked in, so a token refresh writes through. `--tools` lists the bridge tools plus the job's tools mapped to pi's (Read→read, Write→write, Edit→edit, Bash→bash, Grep→grep, Glob→find, LS→ls). That is enforced: tested, bash is absent unless granted. pi has no sandbox, though, so once a file or shell tool is granted it reaches anything you can.
+- J428's job scope (read-only folders, the sandbox's hidden paths) is worked out once (harness.mjs jobScope) and each adapter enforces what it can. claude-code: deny rules, as J428. codex: only read-and-write folders are writable, and a read-and-write folder that holds a read-only one becomes read-only for codex; hidden paths can't be hidden from it. pi: neither. The held item's runner line is judged with that draft's own tools and folders.
+- A tool an adapter can't express is dropped, never widened: a rule-scoped tool such as `Bash(git status)` on codex or pi, or a tool pi lacks (WebFetch).
+- Where limits are advisory, the prompt tells the agent to keep to them. The held item and the host card say so: "the per-job runner (on demand): pi (limits advisory: …)". `runner --install` and `--status` list each world's harness, with WARNING for advisory and ERROR for invalid settings.
+- The token reaches only the bridge MCP server, through a private 0700 wrapper script (codex, pi) or a 0600 config (claude-code): not the agent's own environment, argv or the log (anything the agent prints is redacted before it's logged or reported).
+- A harness that isn't installed, or a worlds file that can't be read, makes the runner unavailable for that world, like an invalid setting.
+- Tests: `node test/bridge-harness.mjs` (offline: settings, limits, argv, and a real `run-job` per harness with a stub agent); `node test/bridge-harness-live.mjs` (manual: the real binaries do a job, plus a probe that asks for a write outside the job's folder).
 
 ## From anything else
 

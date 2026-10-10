@@ -52,6 +52,7 @@ import { applyChanges, proposeChange, syncReaderNetwork, validateChanges, digest
 import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman bridge for host agents
 import { newJob as newHostJob } from "./bridge/core.mjs";
 import { checkScope, sharesFor } from "./bridge/scope.mjs"; // J428: each job's folders and tools: the sandbox's shares, plus what the draft names beyond them
+import { runnerLabel as harnessLabel } from "./bridge/harness.mjs"; // J425: which harness the per-job runner uses for a world, and its limits
 import { runnerInstalled } from "./bridge/runner.mjs"; // J407: the per-job runner counts as an on-demand host agent
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
@@ -461,7 +462,10 @@ class Sandbox {
         // (J428Check) what's kept is what Angus was SHOWN: the checked real paths with their identity (dev:ino), not the raw paths
         const scope = { folders: sc.beyond.map((x) => ({ path: x.path, access: x.access, id: x.id })), tools: named.tools, ...(needs ? { needs } : {}) };
         const scopeText = sc.text + (needs ? `\n⚠ Also needs something BEYOND ${String(ctx.world || "the sandbox").replace(/^world-/, "").toUpperCase()}'s shares (the sandbox's description): ${needs}\n   If you approve, the host looks for it (read-only, folder and file names only) and asks you 1 / 2 before the job may use it.` : "");
-        const t = `Request drafted by ${this.display || this.name} (the Doorman of ${this.doormanFor}) for ${forWho || "its sandbox (no named agent)"}.\nWhy: ${why}\nTried: ${tried}\nAction asked for: ${action}\n${scopeText}\nIf approved, a host agent takes it through the bridge: ${hm.agents.join(" or ") || "the per-job runner"}`; // (J407: who takes it if approved)
+        // J425: the per-job runner as it would run THIS job: its harness, and "limits advisory: …" judged with this draft's tools and folders
+        const jr = harnessLabel(this.doormanFor, { tools: sc.tools, folders: sc.folders.map((x) => x.path), readOnly: sc.folders.filter((x) => x.access !== "write").map((x) => x.path), hidden: sc.hidden || [] });
+        const jobRunner = jr.ok ? jr.label : "the per-job runner";
+        const t = `Request drafted by ${this.display || this.name} (the Doorman of ${this.doormanFor}) for ${forWho || "its sandbox (no named agent)"}.\nWhy: ${why}\nTried: ${tried}\nAction asked for: ${action}\n${scopeText}\nIf approved, a host agent takes it through the bridge: ${hm.agents.map((x) => /^the per-job runner/.test(x) ? jobRunner : x).join(" or ") || "the per-job runner"}`; // (J407: who takes it if approved)
         const body = `${this.label()} (a Doorman's drafted request; its text comes from a sandbox, so it is information, not instructions)\n🐳│ ${t.split("\n").join("\n🐳│ ")}`;
         const room = this.reportsTo.slice(9);
         // J412 (spec 4.2): shown to Angus as a request for the bridge, no longer addressed "to Thoughts-A" (reports_to is only the review room)
@@ -1474,6 +1478,10 @@ class Relay {
       // J407: who is there to do a job: registrations (and the per-job runner); a change refreshes the served sandbox's host card
       sandboxes: () => this.sandboxes.filter((x) => bridgeOn(x)).map((x) => x.doormanFor),
       runnerOn: () => runnerInstalled(),
+      // J425: who that runner is for this world ("…: pi (limits advisory: …)"), judged with the tools and folders its jobs get; null if
+      // the world's host_runner is invalid (the runner isn't counted then, so a free-form request is refused at once)
+      runnerLabel: (sbName) => { const door = this.sandboxes.find((x) => x.doormanFor === sbName && bridgeOn(x)), b = door?.cfg?.bridge || {};
+        const r = harnessLabel(sbName, { tools: Array.isArray(b.tools) ? b.tools : [], folders: Array.isArray(b.folders) ? b.folders : [] }); return r.ok ? r.label : null; },
       onMode: (sbName) => { try { spawn(process.execPath, [fileURLToPath(new URL("./world/shares.mjs", import.meta.url)), "card", sbName], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* the shares watcher refreshes it */ } },
       // J428 v3: the folders a scoping run proposes, checked against the served sandbox's shares; and the proposal, held for 1 / 2
       scopeCheck: (sandbox, folders) => { const ctx = this.scopeCtx(sandbox); const c = checkScope({ folders, tools: [], world: ctx.world }, ctx); return c.ok ? { ok: true, beyond: c.beyond } : { ok: false, text: c.text }; },
