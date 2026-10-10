@@ -35,7 +35,7 @@ const ctx = { fs, path, crypto: await import("node:crypto"), PENDING, DECISIONS,
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: (...a) => { spawned.push(a); return { on() { return this; } }; }, textMeta: () => ({}), now: () => new Date().toISOString(), fileURLToPath, import: { meta: { url: "file:///x" } },
   ownerNote: N.ownerNote, returnable: N.returnable, senderLabel: N.senderLabel, returnKey: N.returnKey, researchLog() {}, gpuTell() {} };
 const R = vm.runInNewContext(cls.replace(/import\.meta\.url/g, '"file:///x"'), ctx);
-const relay = new R(); const RR = vm.runInNewContext(`(class { ${method("returnedAll", "  sendBack(")} })`, ctx); for (const k of ["returnedAll", "returnedFor", "setReturned"]) relay[k] = RR.prototype[k]; const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
+const relay = new R(); const RR = vm.runInNewContext(`(class { ${method("returnedAll", "  // J370 (ReturnReview)")}\n${method("replansAll", "  sendBack(")} })`, ctx); for (const k of ["returnedAll", "returnedFor", "setReturned", "replansAll", "setReplan", "reconcileReplans"]) relay[k] = RR.prototype[k]; const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
 relay.sandboxes = [sb]; relay.runResearch = (s, token, opts) => runs.push({ token, ...opts }); relay.pumpPlans = () => {}; relay.saveQueue = () => {};
 const put = (rec) => fs.writeFileSync(path.join(PENDING, rec.id + ".json"), JSON.stringify(rec));
 const decideFile = (id, verdict, note) => { fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "doorman window" + (note !== undefined ? `\nnote:${Buffer.from(note).toString("base64")}` : "")); return relay.decide(`${id}.${verdict}`); };
@@ -65,6 +65,10 @@ assert.deepEqual(runs.at(-1), { token: "r01234567", want: "humidity and perovski
 assert.equal(inbox.at(-1).status, "returned"); assert.equal(inbox.at(-1).note, "use plainer words");
 assert.ok(logs.some((l) => l.op === "research-plan" && l.decision === "returned" && l.token === "r01234567"));
 assert.equal(spawned.length, 0, "the plan is not run or dropped by the relay (replan claims it)");
+assert.equal(relay.replansAll()["r01234567"].id, plan.id, "the rewrite in flight is kept on disk");
+relay.reconcileReplans(); // as at a relay start: the rewrite was cut off
+assert.equal(inbox.at(-1).status, "error"); assert.match(inbox.at(-1).reason, /relay restarted while the Doorman was rewriting/);
+assert.ok(logs.some((l) => l.token === "r01234567" && l.status === "error" && l.end)); assert.deepEqual(relay.replansAll(), {}, "reconciled once");
 
 // a send-back for a kind that can't be returned, or without a note, is a deny (fail closed)
 const gpu = { id: "world-t--cccccc", sandbox: "world-t", mode: "talk", to: ["x"], text: "draft", draft: true }; put(gpu); calls = 0;

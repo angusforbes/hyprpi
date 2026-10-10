@@ -742,6 +742,7 @@ class Relay {
   }
   runResearch(sb, token, { want, depth, from, why, runRid = "", heldId = "", room = "", replanRid = "", note = "", revisesId = "" }) {
     const done = (o) => {
+      if (replanRid) this.setReplan(token, null); // J370: the rewrite ended (here: without a revision)
       // every way this request ends without a deliverable is in the log too, with the plan's rid (the Doorman window follows a plan to its end)
       if (o.status !== "held" && o.status !== "ready" && o.status !== "planned") log({ sb: sb.name, op: "research", token, status: o.status, rid: runRid || o.rid || undefined, reason: o.reason, end: true });
       // J314 review #4: an approved plan that then fails shows up where Angus approved it
@@ -769,7 +770,7 @@ class Relay {
           const text = `${rev}${exc}Searches planned for ${sb.name}${from ? `, asked by ${from}` : ""} (${depth}): ${want.replace(/\s+/g, " ")}\n\n${(r.searches || []).map((x) => `- ${x}`).join("\n")}`;
           const id = this.hold(sb, { to: [sb.agentId], targets: [], shown: [`${sb.name} (research searches)`], rooms: [room0], mode: "talk", text, body: "",
             research: { token, mode: r.mode || researchConf(sb.name).mode, rid: r.rid, file: r.file, depth, from, want, plan: true, searches: r.searches, ...(r.exception ? { exception: clean(r.exception).slice(0, 300) } : {}) }, ...(revisesId ? { revises: revisesId, revisesNote: note } : {}) });
-          sb.research?.delete(token); this.pumpPlans(sb);
+          sb.research?.delete(token); this.pumpPlans(sb); if (replanRid) this.setReplan(token, null);
           // J354: the sandbox hears WHY it waits: a strict-mode plan, or an exception (only its kind and the host-set task, never
           // the Doorman's own words)
           const ek = !r.exception ? "" : /^no task/.test(r.exception) ? "no-task" : /^topic drift/.test(r.exception) ? "drift" : "off-task";
@@ -983,6 +984,22 @@ class Relay {
     if (v) a[k] = v; else delete a[k];
     try { const f = path.join(STATE, "returned.json"), tmp = f + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(a), { mode: 0o600 }); fs.renameSync(tmp, f); } catch (e) { log({ error: `returned.json: ${e.message}` }); }
   }
+  // J370 (ReturnReview): a send-back's re-plan in flight, kept on disk; a relay restart can't resume it, so at start each leftover ends as an error
+  // the window and the asker see ("the rewrite was interrupted; nothing was sent"), never a silent "still rewriting".
+  replansAll() { try { const a = JSON.parse(fs.readFileSync(path.join(STATE, "replans.json"), "utf8")); return a && typeof a === "object" && !Array.isArray(a) ? a : {}; } catch { return {}; } }
+  setReplan(token, v) {
+    const a = this.replansAll(); if (v) a[token] = v; else delete a[token];
+    try { const f = path.join(STATE, "replans.json"), tmp = f + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(a), { mode: 0o600 }); fs.renameSync(tmp, f); } catch (e) { log({ error: `replans.json: ${e.message}` }); }
+  }
+  reconcileReplans() {
+    for (const [token, r] of Object.entries(this.replansAll())) {
+      const reason = "the relay restarted while the Doorman was rewriting the searches; nothing was sent. Ask again if it's still needed.";
+      log({ sb: r?.sb, op: "research", token, status: "error", reason, end: true, revises: r?.id });
+      const sb = this.sandboxes.find((x) => x.name === r?.sb);
+      if (sb) try { inboxWrite(sb, { type: "research", token, status: "error", reason }); } catch { /* the log has it */ }
+      this.setReplan(token, null);
+    }
+  }
   sendBack(sb, msg, id, via, note) {
     try { takeEdit(id, "", msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) }); } catch { /* a stale edit is just dropped */ }
     if (msg.research?.plan) {
@@ -990,7 +1007,7 @@ class Relay {
       log({ sb: sb.name, op: "research-plan", decision: "returned", id, rid, token: rs.token, sent: false, note });
       heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Sent back to the Doorman with your note", `nothing was sent; the revised searches come back for your review. Your note: ${note}`);
       try { inboxWrite(sb, { type: "research", token: rs.token, status: "returned", id, note }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
-      (sb.research ||= new Map()).set(rs.token, { at: Date.now() });
+      (sb.research ||= new Map()).set(rs.token, { at: Date.now() }); this.setReplan(rs.token, { sb: sb.name, id, at: Date.now() });
       this.runResearch(sb, rs.token, { want: rs.want, depth: rs.depth, from: rs.from, replanRid: rid, note, revisesId: id });
       return;
     }
@@ -1052,6 +1069,7 @@ class Relay {
       } catch (e) { log({ sb: sb.name, error: `watch: ${e.message}` }); }
     }
     this.loadQueue(); for (const sb of this.sandboxes) this.pumpPlans(sb); // J314: approved plans survive a restart
+    this.reconcileReplans(); // J370: a rewrite cut off by a restart ends honestly (nothing sent, the asker told)
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
     watchActions();
     // J291: re-show every held message's toast now, and again when the shell (notification server) restarts
