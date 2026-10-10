@@ -36,6 +36,20 @@ function plainTree(base, { sockets = false } = {}) {
   visit(base);
 }
 
+// Testable transport-race policy: an empty inspection does not settle an uncertain create.
+export function settleLateCreates(names, { inspect, remove, timeout = 60000, now = Date.now,
+  wait = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }) {
+  const deadline = now() + timeout;
+  for (const name of [...names]) {
+    for (;;) {
+      const info = inspect(name);
+      if (info) { remove(info, name); names.delete(name); break; }
+      if (now() >= deadline) fail('cleanup unconfirmed: Docker creation may still finish for ' + name);
+      wait(100);
+    }
+  }
+}
+
 export async function createRig(options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(k => !['repoRoot', 'image'].includes(k))) fail('only repoRoot and cached image may configure a rig');
   const { repoRoot, image = 'pi-sandbox' } = options;
@@ -53,7 +67,7 @@ export async function createRig(options = {}) {
   fs.chmodSync(root, 0o700);
   const rootStat = fs.lstatSync(root), nonce = crypto.randomBytes(8).toString('hex');
   const sandbox = `j376-sandbox-${nonce}`, doorman = `j376-doorman-${nonce}`, reader = `j376-reader-${nonce}`;
-  const workerName = `j376-worker-${nonce}`, owners = new Map();
+  const workerName = `j376-worker-${nonce}`, owners = new Map(), windows = new Map(), uncertainCreates = new Set();
   let closed = false, workerId = '', workerAttempted = false, imageId = '';
   const marker = JSON.stringify({ root, nonce, uid: process.getuid(), ino: rootStat.ino });
   fs.writeFileSync(path.join(root, '.j376-owned'), marker, { flag: 'wx', mode: 0o600 });
@@ -193,18 +207,26 @@ export async function createRig(options = {}) {
     if ((info.Config?.Env || []).some(v => /^(?:.*(?:TOKEN|SECRET|PASSWORD|API_KEY)|DOCKER_HOST)=/i.test(v))) fail('fixture image declares secret-looking environment');
     imageId = info.Id;
   };
+  const ownedStart = (args, name, what) => {
+    const result = docker(args);
+    // A killed client does not cancel Docker's POST. A missing name is NOT cleanup proof until this creation is observed.
+    if (result.error || result.status !== 0) uncertainCreates.add(name);
+    return must(result, what);
+  };
   const removeContainer = (target, expectedName) => {
     if (!NAME.test(expectedName) || !(/^[a-f0-9]{64}$/.test(target) || target === expectedName)) fail('unsafe cleanup target');
     const deadline = Date.now() + 60000;
+    let observed = false;
     for (;;) {
       const r = docker(['container', 'inspect', target], { timeout: 5000 });
       if (r.error?.code === 'ETIMEDOUT' && Date.now() < deadline) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); continue; }
-      if (r.status !== 0 && !r.error && /No such (?:object|container)/i.test(r.stderr)) return;
+      if (r.status !== 0 && !r.error && /No such (?:object|container)/i.test(r.stderr)) { if (observed) uncertainCreates.delete(expectedName); return; }
       const info = JSON.parse(must(r, 'cleanup ownership inspection').stdout)[0];
-      if (!/^[a-f0-9]{64}$/.test(info?.Id) || info.Name !== '/' + expectedName || info.Config?.Labels?.['hyprpi.j376'] !== nonce) fail('refusing to remove container without this rig ownership label/name');
+      if (!/^[a-f0-9]{64}$/.test(info?.Id) || info.Name !== '/' + expectedName || info.Config?.Labels?.[windows.has(expectedName) ? 'hyprpi.gateway-e2e.owner' : 'hyprpi.j376'] !== (windows.get(expectedName) || nonce)) fail('refusing to remove container without this rig ownership label/name');
       if (/^[a-f0-9]{64}$/.test(target) && info.Id !== target) fail('cleanup container ID mismatch');
+      observed = true;
       const removed = docker(['rm', '-f', '-v', info.Id], { timeout: 5000 });
-      if (!removed.error && removed.status === 0) return;
+      if (!removed.error && removed.status === 0) { uncertainCreates.delete(expectedName); return; }
       if (Date.now() >= deadline || (removed.error?.code !== 'ETIMEDOUT' && !/already in progress|No such (?:object|container)/i.test(removed.stderr))) must(removed, 'exact owned container cleanup');
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
     }
@@ -241,8 +263,8 @@ export async function createRig(options = {}) {
     if (workerId) fail('worker already started');
     const mounts = workerMounts().flatMap(m => mount(m.path, !m.rw));
     workerAttempted = true;
-    const r = must(docker(['run', '-d', ...hardened(workerName), ...mounts, '--env', 'HOME=/tmp', '--env', 'PATH=/usr/local/bin:/usr/bin:/bin',
-      '--entrypoint', NODE, imageId, path.join(repo, 'test/gateway/worker.mjs'), 'idle', root]), 'worker start');
+    const r = ownedStart(['run', '-d', ...hardened(workerName), ...mounts, '--env', 'HOME=/tmp', '--env', 'PATH=/usr/local/bin:/usr/bin:/bin',
+      '--entrypoint', NODE, imageId, path.join(repo, 'test/gateway/worker.mjs'), 'idle', root], workerName, 'worker start');
     workerId = r.stdout.trim();
     if (!/^[a-f0-9]{64}$/.test(workerId)) fail('worker did not return an exact container ID');
     await proof();
@@ -297,9 +319,9 @@ export async function createRig(options = {}) {
       .concat(['bin', 'home'].map(d => ({ path: P(d), rw: false })), { path: repo, rw: false });
     owners.set(name, '');
     try {
-      const r = must(docker(['create', ...hardened(name), ...expected.flatMap(m => mount(m.path, !m.rw)),
+      const r = ownedStart(['create', ...hardened(name), ...expected.flatMap(m => mount(m.path, !m.rw)),
         '--env', 'PATH=/usr/local/bin:/usr/bin:/bin', '--env', 'HOME=/tmp', '--entrypoint', '/usr/bin/python3',
-        imageId, path.join(repo, 'test/gateway/owner-pty.py'), JSON.stringify({ root, repo, args, agent, pipe })]), 'decision container creation');
+        imageId, path.join(repo, 'test/gateway/owner-pty.py'), JSON.stringify({ root, repo, args, agent, pipe })], name, 'decision container creation');
       const cid = r.stdout.trim();
       if (!/^[a-f0-9]{64}$/.test(cid)) fail('decision container did not return an exact ID');
       owners.set(name, cid);
@@ -337,9 +359,23 @@ export async function createRig(options = {}) {
     if (workerAttempted) {
       try { removeContainer(workerId || workerName, workerName); workerId = ''; workerAttempted = false; } catch (e) { errors.push(e.message); }
     }
+    for (const name of windows.keys()) try { removeContainer(name, name); } catch (error) { errors.push(error.message); }
     if (errors.length) fail('cleanup refused scratch removal: ' + errors.join('; '));
+    settleLateCreates(uncertainCreates, {
+      inspect: name => {
+        const result = docker(['container', 'inspect', name], { timeout: 5000 });
+        if (result.error?.code === 'ETIMEDOUT' || (result.status !== 0 && /No such (?:object|container)/i.test(result.stderr))) return null;
+        const info = JSON.parse(must(result, 'late-create ownership inspection').stdout)[0];
+        if (!/^[a-f0-9]{64}$/.test(info?.Id) || info.Name !== '/' + name || info.Config?.Labels?.[windows.has(name) ? 'hyprpi.gateway-e2e.owner' : 'hyprpi.j376'] !== (windows.get(name) || nonce)) fail('late-create container ownership mismatch');
+        return info;
+      },
+      remove: (info, name) => removeContainer(info.Id, name),
+    });
     const remaining = must(docker(['ps', '-aq', '--filter', `label=hyprpi.j376=${nonce}`]), 'exact-label cleanup verification').stdout.trim();
     if (remaining) fail('cleanup still has containers with this exact ownership label');
+    for (const value of windows.values()) {
+      if (must(docker(['ps', '-aq', '--filter', `label=hyprpi.gateway-e2e.owner=${value}`]), 'window cleanup verification').stdout.trim()) fail('window container remains with exact ownership label');
+    }
     // Parent stops its isolated daemon/relay children first. No broad prune.
     const st = fs.lstatSync(root);
     if (fs.realpathSync(root) !== root || st.ino !== rootStat.ino || st.dev !== rootStat.dev || fs.readFileSync(P('.j376-owned'), 'utf8') !== marker) fail('cleanup ownership mismatch');
@@ -347,6 +383,9 @@ export async function createRig(options = {}) {
   };
   const rig = { root, env, sandbox, doorman, reader, P, start, proof, request, owner, cli, close,
     validate: (extra = {}) => { assertRoot(); validateConfig(); return safeEnv(extra); },
+    registerWindow: (name, value) => { if (!/^[0-9a-f]{24}$/.test(value) || name !== 'j376-view-' + value) fail('invalid window ownership'); windows.set(name, value); },
+    windowCreateUncertain: name => { if (!windows.has(name)) fail('unregistered window'); uncertainCreates.add(name); },
+    cleanupWindow: name => { if (!windows.has(name)) fail('unregistered window'); removeContainer(name, name); },
     get imageId() { prerequisites(); return imageId; }, dockerEnv: Object.freeze({ ...baseline }) };
   return rig;
 }

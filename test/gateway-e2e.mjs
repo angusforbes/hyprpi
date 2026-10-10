@@ -39,7 +39,7 @@ const suiteHash = crypto.createHash('sha256');
 for (const file of testFiles) suiteHash.update(path.relative(repoRoot, file) + '\0').update(fs.readFileSync(file));
 const dirty = !!spawnSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).stdout.trim();
 const report = { schema: 1, job: 'J376', commit: sha, dirty, suiteSha256: suiteHash.digest('hex'), started: new Date().toISOString(), cases: [], scope: 'private world I only; no live daemon/relay/world G', providers: 'synthetic offline fixtures', prerequisites: 'cached pi-sandbox image, Docker, Node, Python; pi for J373', cleanup: null };
-const kids = new Set();
+const kids = new Set(), ownedRigs = new Set();
 let rig, relay, daemon, ctx, finishPromise;
 const pause = ms => new Promise(r => setTimeout(r, ms));
 async function stop(child) {
@@ -99,9 +99,10 @@ async function cleanup() {
       // Copy only synthetic diagnostics into a requested report. Scratch state is still destroyed on failure.
       report.diagnostics = {};
       for (const f of ['relay.log', 'daemon.log']) try { report.diagnostics[f] = fs.readFileSync(rig.P(f), 'utf8').slice(-20000); } catch { /* startup may not have reached the log */ }
-      if (!errors.length) try { await rig.close(); } catch (e) { errors.push(e.message); }
+      if (!errors.length) for (const owned of [...ownedRigs].reverse()) try { await owned.close(); } catch (e) { errors.push(e.message); }
       else errors.push('scratch retained because a subprocess did not stop');
-      report.scratchRemoved = !fs.existsSync(rig.root);
+      report.ownedScratch = [...ownedRigs].map(owned => ({ root: owned.root, removed: !fs.existsSync(owned.root) }));
+      report.scratchRemoved = report.ownedScratch.every(item => item.removed);
     }
     report.cleanup = { ok: errors.length === 0 && (!rig || report.scratchRemoved), errors };
   })();
@@ -125,7 +126,7 @@ function emit() {
 }
 
 try {
-  rig = await createRig({ repoRoot });
+  rig = await createRig({ repoRoot }); ownedRigs.add(rig);
   const fixture = installFixtures(rig);
   // Helpers can import product modules which capture HOME/XDG paths at import time. Load them only after isolation.
   for (const key of Object.keys(process.env)) delete process.env[key];
@@ -175,13 +176,13 @@ try {
       await pause(500);
     },
   };
-  await testcase('W1 negative isolation and owner guards: all 23 rig safety checks', async () => {
+  await testcase('W1 negative isolation and owner guards: all 25 rig safety checks', async () => {
     rig.validate();
     const { safety } = await import('./gateway/rig-safety.mjs');
     const attempts = [];
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const result = await safety({ repoRoot }); assert.equal(result.ok, true); assert.equal(result.checks, 23);
+        const result = await safety({ repoRoot, onRig: nested => ownedRigs.add(nested) }); assert.equal(result.ok, true); assert.equal(result.checks, 25);
         attempts.push({ status: 'PASS', result }); ctx.artifact('rig-safety', { attempts }); break;
       } catch (error) {
         attempts.push({ status: 'FAIL', error: error.stack, cleanupVerified: error.cleanupVerified === true });

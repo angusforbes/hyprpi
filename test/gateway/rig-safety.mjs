@@ -6,13 +6,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { createRig } from './rig.mjs';
+import { createRig, settleLateCreates } from './rig.mjs';
 
-export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..') } = {}) {
+export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'), onRig = () => {} } = {}) {
   const rig = await createRig({ repoRoot });
   let checks = 0, failure;
   const rejects = async (fn, re) => { await assert.rejects(fn, re); checks++; };
   try {
+    onRig(rig);
+    let clock = 0, inspected = 0, removed = [];
+    const late = new Set(['j376-owner-unit-fixture']);
+    settleLateCreates(late, { now: () => clock, wait: ms => { clock += ms; }, timeout: 500,
+      inspect: () => ++inspected < 3 ? null : { Id: 'a'.repeat(64) }, remove: (info, name) => removed.push([info.Id, name]) });
+    assert.equal(inspected, 3); assert.equal(late.size, 0); assert.deepEqual(removed, [['a'.repeat(64), 'j376-owner-unit-fixture']]); checks++;
+    clock = 0;
+    const unknown = new Set(['j376-owner-unit-unknown']);
+    assert.throws(() => settleLateCreates(unknown, { now: () => clock, wait: ms => { clock += ms; }, timeout: 200,
+      inspect: () => null, remove: () => assert.fail('must not remove an unobserved creation') }), /cleanup unconfirmed/);
+    assert.equal(unknown.size, 1, 'an empty sweep cannot settle an unknown creation'); checks++;
     await rejects(() => createRig({ repoRoot, root: '/home/agf/.local/state/hyprpi' }), /only repoRoot/);
     await rejects(() => createRig({ repoRoot: '/home/agf' }), /inside .*Harness/);
     assert.throws(() => rig.P('..', 'live-state'), /escapes/); checks++;
