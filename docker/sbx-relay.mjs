@@ -30,7 +30,7 @@
 //   sbx-relay.mjs pending                     list messages waiting for Angus's approval
 //   sbx-relay.mjs approve ID | deny ID        decide one of them
 // Config: ~/.config/hyprpi/sbx-relay.json
-//   { "sandboxes": [ { "name": "sbxprobe", "workspace": "~/Work/sbx-probe",
+//   { "sandboxes": [ { "name": "my-box", "workspace": "~/Work/my-box",
 //                      "workspace_num": 61, "container": "pi-sbx:developer" } ] }
 
 import fs from "node:fs";
