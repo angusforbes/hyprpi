@@ -774,6 +774,12 @@ export function askerRoute(msg, sb, sandboxes, id, opts = {}) {
   return { to: sb, item: { type: "decision", id, decision, to: msg.to, text, ...(opts.note ? { note: opts.note } : {}), ...(opts.extra || {}) } };
 }
 
+export function strictNote(b64) {
+  const b = Buffer.from(String(b64), "base64");
+  if (!b.length || b.toString("base64") !== String(b64)) return { ok: false, reason: "is not valid base64" };
+  const t = b.toString("utf8"); if (!Buffer.from(t, "utf8").equals(b)) return { ok: false, reason: "is not valid UTF-8" }; // (round-trips only if valid)
+  const c = ownerNote(t); return c.ok && !c.text ? { ok: false, reason: "is empty" } : c;
+}
 // J412: a Doorman entry runs the host-agent bridge unless "host_agents": false (spec 4.1: "bridge" is the default when unset)
 const bridgeOn = (x) => !!x.doormanFor && x.cfg?.host_agents !== false && !x.relay?.agentFree?.(x);
 class Relay {
@@ -1067,11 +1073,12 @@ class Relay {
     });
   }
   async decide(file) {
-    // J412: approve (1, "1 text"), allow-<minutes> (1+), deny (2, "2 text"); the old return / answer / edit verbs are gone
+    // (Paperwright #11) a "note:" line is strict base64 (it must round-trip) of valid UTF-8 that isn't empty; anything else decides nothing
+  // J412: approve (1, "1 text"), allow-<minutes> (1+), deny (2, "2 text"); the old return / answer / edit verbs are gone
     const m = /^(.+)\.(approve|deny|allow-\d{1,5})$/.exec(file); if (!m) return;
     let [, id, verdict] = m;
     if (this.deciding?.has(id)) return; // (KeysReview) a decision on this item is being made right now; this file stays, nothing is decided twice
-    let via = "", note = "", badNote = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (n) { const c = ownerNote(Buffer.from(n[1], "base64").toString("utf8")); if (c.ok) note = c.text; else badNote = c.reason; } else if (/^note:/.test(l)) badNote = "not readable"; } } catch { /* raced */ } // line "note:" = Angus's text after the key, cleaned again here
+    let via = "", note = "", badNote = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (n) { const c = strictNote(n[1]); if (c.ok) note = c.text; else badNote = c.reason; } else if (/^note:/.test(l)) badNote = "not readable"; } } catch { /* raced */ } // line "note:" = Angus's text after the key, cleaned again here
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
@@ -1117,7 +1124,7 @@ class Relay {
     if (!sb) return;
     const deny = verdict === "deny";
     if (msg.hostJob) { // J371: Angus's answer to a question a host agent asked while working a bridge job (J412: "1 text" answers, "2 [text]" declines)
-      const hj = msg.hostJob, text = deny ? `(the owner declined to answer${note ? `: ${note}` : ""})` : note;
+      const hj = msg.hostJob, text = deny ? `(the owner declined to answer. ${holdReason(msg).replace(/^held because \(relay\): /, "Why it was held (the relay's words): ")}${note ? `. Note from Angus: ${note}` : ""})` : note; // (Paperwright LOW: the hold reason too)
       const ok = !!this.bridge?.answer(hj.id, Number(hj.n), text, id); // bound to this held item
       log({ sb: sb.name, op: "host_job_answer", id, job: hj.id, n: hj.n, decision: deny ? "deny" : "approve", applied: ok });
       heldNote(sb, msg, via, deny ? "Declined" : "Answered", ok ? `the host agent's job ${hj.id} gets the answer` : "the job no longer waits for it");

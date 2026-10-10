@@ -127,13 +127,16 @@ await decideFile("doorman-t--q00001", "approve"); assert.ok(fs.existsSync(path.j
 await decideFile("doorman-t--q00001", "allow-60", "x"); assert.ok(fs.existsSync(path.join(PENDING, "doorman-t--q00001.json")), "1+ decides nothing");
 await decideFile("doorman-t--q00001", "approve", "use G's profile"); assert.deepEqual(answers.at(-1), { id: "doorman-t--j00001", n: 1, text: "use G's profile" });
 put({ id: "doorman-t--q00002", sandbox: "doorman-t", mode: "talk", to: ["Angus"], text: "Q", hostJob: { id: "doorman-t--j00001", n: 2 } }); await decideFile("doorman-t--q00002", "deny", "not needed");
-assert.equal(answers.at(-1).text, "(the owner declined to answer: not needed)");
+assert.equal(answers.at(-1).text, "(the owner declined to answer. Why it was held (the relay's words): a host agent's question waits for Angus's answer. Note from Angus: not needed)");
 // (Paperwright #1, #3) a raw "allow-60" file on anything but a plain message, or a note that fails its checks: nothing decided, still held
 for (const rec of [{ id: "doorman-t--x00001", sandbox: "doorman-t", mode: "talk", text: "d", draft: true, to: ["x"], targets: [{ kind: "agent", id: "x" }] }, { ...talk("world-t--x00002"), revises: "world-t--a00001" }, { id: "world-t--x00003", sandbox: "world-t", mode: "talk", to: ["x"], text: "p", research: { plan: true, rid: "q1", from: "A" } }]) {
   put(rec); const nRules = rules.length; await decideFile(rec.id, "allow-60");
   assert.ok(fs.existsSync(path.join(PENDING, rec.id + ".json")), `${rec.id}: a raw allow on an ineligible item decides nothing`); assert.equal(rules.length, nRules); fs.unlinkSync(path.join(PENDING, rec.id + ".json")); }
 put(talk("world-t--x00004")); const nCalls4 = calls.length; await decideFile("world-t--x00004", "approve", "y".repeat(501));
 assert.ok(fs.existsSync(path.join(PENDING, "world-t--x00004.json")), "a 501-character note: nothing decided"); assert.equal(calls.length, nCalls4); fs.unlinkSync(path.join(PENDING, "world-t--x00004.json"));
+for (const bad of ["====", "a", "a===", "/w==", "", Buffer.from("   ").toString("base64")]) { put(talk("world-t--x00005")); const nc = calls.length;
+  fs.writeFileSync(path.join(DECISIONS, "world-t--x00005.approve"), `doorman window\nnote:${bad}`); await relay.decide("world-t--x00005.approve");
+  assert.ok(fs.existsSync(path.join(PENDING, "world-t--x00005.json")), `note:${bad}: nothing decided`); assert.equal(calls.length, nc); fs.unlinkSync(path.join(PENDING, "world-t--x00005.json")); }
 assert.match(N.holdReason({ hostJob: { id: "j" }, mode: "talk" }), /host agent's question/, "(#7) a declined question has a hold reason");
 assert.match(relay.askerText({ gatewayChange: {} }, "g--1", { verdict: "deny" }), /gateway settings change/, "(#7) not called a message");
 ok("a raw 1+ on a draft, revision or plan, or an over-long note: nothing decided; question and gateway receipts are named");
