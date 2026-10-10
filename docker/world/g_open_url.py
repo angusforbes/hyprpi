@@ -4,14 +4,16 @@
 Two callers, both ON THE HOST:
   - Angus's Ctrl+click in a sandboxed world's window: kitty (sandbox-kitty.conf: open_url_with) runs
       g_open_url.py URL [WORLD]
-    and an allowed link opens through hyprpi's per-world handler (~/.local/bin/hyprpi-open-url → the Brave
-    window of the world he is in, which is that sandbox's world since he clicked there).
+    and (J406, Angus "19 a") an allowed link opens in that world's OWN Brave, the same separate profile as below, never
+    his own Brave: a link the sandbox wrote shouldn't land next to his logins. Since he clicked, the world's Brave is
+    then focused (on its home workspace, inside the world he is in) so he sees the page.
   - An agent in the sandbox opening a link itself (xdg-open, $BROWSER, or sbx's /_sbx/browser-open): sbx's daemon
     runs the host's xdg-open → hyprpi-open-url, which sees the `sbx daemon` caller and runs
       g_open_url.py --agent URL [WORLD]
     An allowed link opens in that world's OWN Brave (a separate profile with none of Angus's logins, class
     hyprpi.g-brave; hypr/hyprpi.lua maps it on G's workspace without focus and ignores its activation requests),
-    never in the world Angus is in, at most RATE links a minute.
+    never in the world Angus is in, at most RATE links a minute; it isn't focused (an agent's open never moves him).
+  Either way a parked or stray window of that Brave is first brought back to its home workspace (J402).
 
 The text came from the sandbox, so only these are opened:
   - http and https URLs;
@@ -27,7 +29,7 @@ import fcntl, json, os, secrets, shutil, stat, subprocess, sys, time, unicodedat
 HOME = os.path.expanduser("~")
 STATE_ROOT = os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state")
 STATE = os.path.join(STATE_ROOT, "hyprpi", "sandboxes")
-OPENER = os.environ.get("HYPRPI_G_OPENER") or os.path.join(HOME, ".local", "bin", "hyprpi-open-url")
+OPENER = os.environ.get("HYPRPI_G_OPENER") or os.path.join(HOME, ".local", "bin", "hyprpi-open-url")  # (J406: no longer used: every sandbox link opens in the world's own Brave; kept so tests can assert it is never called)
 # Testing: HYPRPI_G_AGENT_OPENER=/path/stub replaces the world's Brave in --agent mode.
 # (or an executable file STATE/agent-open-stub, for tests through sbx's daemon, whose env can't be set).
 AGENT_OPENER = os.environ.get("HYPRPI_G_AGENT_OPENER") or next((f for f in [os.path.join(STATE, "agent-open-stub")] if os.access(f, os.X_OK)), None)
@@ -292,6 +294,26 @@ def bring_brave_home(world):
         pass
 
 
+def focus_brave(world, wait_s=6.0):
+    """J406: after Angus's own click, focus the world's Brave window (on its home workspace, in his world), waiting a few
+    seconds for a newly started one to map. Only for his clicks; never for an agent's open. Never raises."""
+    try:
+        import re
+        letter = world.removeprefix("world-")
+        end = time.time() + wait_s
+        while time.time() < end:
+            out = subprocess.run([HYPRCTL, "clients", "-j"], capture_output=True, text=True, timeout=5).stdout
+            wins = [c for c in json.loads(out or "[]") if c.get("class") == f"hyprpi.{letter}-brave" and not str((c.get("workspace") or {}).get("name", "")).startswith("special:")]
+            if wins:
+                addr = str(max(wins, key=lambda c: c.get("focusHistoryID", 0) * -1).get("address", ""))
+                if re.fullmatch(r"0x[0-9a-f]+", addr):
+                    subprocess.run([HYPRCTL, "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'], capture_output=True, timeout=5)
+                return
+            time.sleep(0.3)
+    except Exception:
+        pass
+
+
 def tell(title, msg):
     try:
         subprocess.run(["notify-send", "-a", "hyprpi", "-u", "low", title, msg], timeout=5)
@@ -321,14 +343,16 @@ def main(argv):
             tell(f"Link from {who} not opened", out + (" (further refusals this minute are not shown)" if agent else ""))
         print(f"g_open_url: refused: {out}", file=sys.stderr)
         return 1
-    if agent:
-        bring_brave_home(world)  # J402: a parked or stray world Brave comes home first, so the new tab is visible there
-    cmd = (world_brave(world) + ["--", out]) if agent else [OPENER, out]
+    # J406 (Angus "19 a"): every link from a sandbox window, his click or an agent's, opens in the world's own Brave
+    bring_brave_home(world)  # J402: a parked or stray world Brave comes home first, so the new tab is visible there
+    cmd = world_brave(world) + ["--", out]
     try:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception as e:
         tell(f"Link from {who} not opened", f"couldn't start the browser ({e.__class__.__name__})")
         return 1
+    if not agent:
+        focus_brave(world)  # he clicked: show him the page (the window rule suppresses Brave's own activation)
     return 0
 
 
