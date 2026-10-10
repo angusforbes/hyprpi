@@ -144,10 +144,10 @@ export async function check(sandbox) {
 // The line for the host card's GPU section (the Doorman checks a request against it).
 export function cardSection(sandbox) {
   const c = gpuConf(sandbox);
-  if (c.mode === "off") return ["## GPU", "", `GPU leases are off for this sandbox (gpu: off). Nothing you can ask for here will run on the host's GPU.`, ""];
+  if (c.mode === "off") return ["## GPU", "", `GPU leases are off for this sandbox (gpu: off, the owner's per-sandbox kill switch; it holds in every mode, yolo too). Nothing you can ask for here will run on the host's GPU.`, ""];
   const g = gpuStateSync(), L = c.limits;
   return ["## GPU", "",
-    `Mode: ${c.mode}. This is ${LABEL}. There is no GPU inside your sandbox; a job can only run as a lease the owner approves one at a time.`,
+    `Mode: ${c.mode}. This is ${LABEL}. There is no GPU inside your sandbox; a job can only run as a lease, one at a time: the owner approves it (in yolo it is approved automatically; in strict it is refused). The owner can turn leases off for this sandbox with gpu: off, whatever the mode.`,
     g ? `The host's GPU: ${g.name}, ${g.totalMib} MiB of VRAM, shared with the owner's display (it already uses part of it).` : "The host's GPU state is not known right now.",
     `Limits per job: up to ${L.maxSeconds} s (default ${HARD.defaultSeconds}), up to ${L.maxVramMib} MiB of VRAM (default ${HARD.defaultVramMib}), at most ${HARD.files} small files (${HARD.fileBytes >> 10} KiB each) copied from your workspace, no network, a plain ${L.image} image (Python 3 or sh; no pip installs).`,
     `Outputs: files the job writes into /out (up to ${HARD.outFiles} files) and its log come back to your read-only inbox as gpu-<id>-*.`, ""];

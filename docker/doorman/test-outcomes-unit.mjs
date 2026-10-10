@@ -20,13 +20,14 @@ const PENDING = path.join(T, "pending"), DECISIONS = path.join(T, "dec"); fs.mkd
 const inbox = [], logs = [], notes = [];
 const clean = (s) => String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
 const ctx = { fs, path, PENDING, DECISIONS, STATE: T, GPUDIR: path.join(T, "gpu"), RESEARCH: "r.mjs", LIMITS: { pendingTtlMs: 24 * 3600e3, pendingPerSandbox: 20 }, process, Buffer, Date, JSON, Map, Set, String, Array, Number, Object, Math, RegExp, Promise, console,
-  log: (o) => logs.push(o), heldNote: (sb, msg, via, what, outcome) => notes.push({ what, outcome }), inboxWrite: (sb, o) => inbox.push({ to: sb.name, ...o }), closeNotif() {}, clean,
+  log: (o) => logs.push(o), heldNote: (sb, msg, via, what, outcome) => notes.push({ what, outcome, text: msg.text }), inboxWrite: (sb, o) => inbox.push({ to: sb.name, ...o }), closeNotif() {}, clean,
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: () => ({ on() { return this; } }), textMeta: () => ({}), now: () => new Date().toISOString(), watchReply() {}, replyNote() {},
   ownerNote: (t) => ({ ok: true, text: String(t) }), returnable: () => false, senderLabel: () => "", returnKey: () => "", researchLog() {}, logTurn() {}, REQ_TYPES: { note_to_owner: "note to the owner" },
   kindAction, researchConf: () => ({ mode: MODE.now }), notifyHeld: () => null, REVIEW_CMD: ["node", "relay", "review"],
+  reqRun: async (type) => ({ ok: true, outcome: "Angus has read the note" }),
   newHostJob: (o) => ({ ...o, state: "waiting", history: [{ ev: "created" }] }) };
 const MODE = { now: "safe" }; // J412: the dial the test relay sees
-const R = vm.runInNewContext(`${fnAsker}\n(class R { constructor() { } ${between("  // J412 (spec 1.5): which request kind", "  hold(sb, msg) {")}\n${method("tellOutcome", "  // J368: what the typed-request")}\n${method("async decide", "  // J370 (Angus: \"shouldn't another option")}\n${method("sweepPending", "  async run()")}\n jobRecord(id, p) { this.jobs = { ...(this.jobs || {}), [id]: p }; } breakerNote() {} agentFree() { return false; } })`, ctx);
+const R = vm.runInNewContext(`${fnAsker}\n(class R { constructor() { } ${between("  // J412 (spec 1.5): which request kind", "  hold(sb, msg) {")}\n${method("tellOutcome", "  // J368: what the typed-request")}\n${method("async decide", "  // J370 (Angus: \"shouldn't another option")}\n${method("sweepPending", "  async run()")}\n typedCtx() { return {}; } jobRecord(id, p) { this.jobs = { ...(this.jobs || {}), [id]: p }; return true; } breakerNote() {} agentFree() { return false; } })`, ctx);
 const S = vm.runInNewContext(`${fnAsker}\n(class S { constructor(n, df, relay) { this.name = n; this.doormanFor = df; this.relay = relay; this.delivered = new Map(); this.reportsTo = "Thoughts-B"; }\n${method("boundAsker", "  async handle(")}\n${method("onEvent", "  rateOk(")}\n doormanHears() { return true; } })`, ctx);
 const askerOf = vm.runInNewContext(`${fnAsker}\naskerOfDelivered`, ctx);
 const relay = new R(), world = new S("world-t", "", relay), door = new S("doorman-t", "world-t", relay);
@@ -70,6 +71,17 @@ MODE.now = "strict"; put(draft("doorman-t--a00005")); await decide("doorman-t--a
 assert.equal(relay.jobs["doorman-t--a00005"], undefined); assert.match(toAsker("Alpha").at(-1), /The mode dial denied the request drafted for you \(doorman-t--a00005\)\. Reason \(the mode dial, not Angus\): mode strict doesn't allow free-form requests/);
 MODE.now = "safe";
 ok("a draft held before the mode became strict is denied on approval, with the mode's reason");
+// HostReview412 #1: an automatic approval never says "Angus approved"; #3: an auto note reaches his panel whole
+const autoDecide = (id, mode) => { fs.writeFileSync(path.join(DECISIONS, `${id}.approve`), `auto (${mode})\n`); return relay.decide(`${id}.approve`); };
+MODE.now = "yolo"; put({ ...draft("doorman-t--a00006"), auto: { mode: "yolo", kind: "draft" } }); await autoDecide("doorman-t--a00006", "yolo");
+assert.match(toAsker("Alpha").at(-1), /Approved automatically \(mode yolo\): the request \(doorman-t--a00006\); a host agent will take it/);
+assert.doesNotMatch(toAsker("Alpha").at(-1), /Angus approved/);
+MODE.now = "safe"; const long = "Synthetic note. " + "word ".repeat(260);
+put({ id: "doorman-t--a00007", sandbox: "doorman-t", draft: true, mode: "talk", rooms: ["I"], text: "note to the owner\n" + long.slice(0, 100), shown: ["x"], to: ["x"], typed: { type: "note_to_owner", for: "Zeta", sandbox: "world-t", params: { text: long } }, auto: { mode: "safe", kind: "note" } });
+await autoDecide("doorman-t--a00007", "safe");
+assert.match(toAsker("Zeta").at(-1), /^Zeta: .*Approved automatically \(mode safe\): the request "note to the owner" \(doorman-t--a00007\): the note is in Angus's log and panel/s);
+assert.ok(notes.at(-1).text.includes(long.trim()), "the panel line carries the whole note (was cut at 200 chars)");
+ok("automatic approvals say 'Approved automatically (mode m)', never 'Angus approved'; an auto note's whole text goes to his panel");
 
 // #3: an expired draft, task change, typed request or GPU lease: the asker hears so
 const old = (rec) => { put(rec); const f = path.join(PENDING, rec.id + ".json"), t = new Date(Date.now() - 25 * 3600e3); fs.utimesSync(f, t, t); };

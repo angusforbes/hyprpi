@@ -31,7 +31,7 @@ const R = vm.runInNewContext(`(class R {
   returnedFor() { return null; }
   ${body}
   // the part of decide() that applies the dial (verbatim), wrapped: returns { verdict, note, held } for an id and a decision file
-  async dialCheck(id, verdict, via) { const pf = path.join(PENDING, id + ".json"); let note = "", byDial = false; const msg = JSON.parse(fs.readFileSync(pf, "utf8"));
+  async dialCheck(id, verdict, via) { const pf = path.join(PENDING, id + ".json"); let note = "", byDial = false, autoMode = ""; const msg = JSON.parse(fs.readFileSync(pf, "utf8"));
     ${decideHead}
     return { verdict, note, msg, byDial }; }
 })`, ctx);
@@ -95,6 +95,14 @@ clear(); MODE.now = "safe"; const idB = relay.hold(door, structuredClone(MSG.all
 // a forged "auto" decision for an item that wasn't auto is ignored
 clear(); MODE.now = "safe"; const idC = relay.hold(door, structuredClone(MSG.send_file));
 { const r = await relay.dialCheck(idC, "approve", "auto (safe)"); assert.equal(r, undefined); assert.ok(fs.existsSync(path.join(PENDING, idC + ".json")), "still held"); }
+// HostReview412 #2 (Doorview's repro): an auto send_file made in yolo, the mode switched to open before decide: the fallback hold goes through
+// the normal routing (review_in / review_room → rooms [H], reviewIn), not the op's rooms [A]
+clear(); door.cfg = { review_in: "doorman-t", review_room: "H", doorman_for: "world-t" }; MODE.now = "yolo";
+const idD = relay.hold(door, { ...structuredClone(MSG.send_file), rooms: ["A"] }); assert.ok(fs.existsSync(path.join(DECISIONS, `${idD}.approve`)), "auto in yolo");
+MODE.now = "open"; shown.length = 0;
+{ const r = await relay.dialCheck(idD, "approve", "auto (yolo)"); assert.equal(r, undefined); const rec = JSON.parse(fs.readFileSync(path.join(PENDING, idD + ".json"), "utf8"));
+  assert.deepEqual(rec.rooms, ["H"]); assert.equal(rec.reviewIn, "doorman-t"); assert.equal(rec.auto, undefined); assert.equal(shown.length, 1); assert.equal(shown[0].reviewIn, "doorman-t", "the toast is routed too"); }
+door.cfg = {};
 console.log("PASS  decision-time re-check: a stale auto is held, a now-refused kind is denied with the dial's reason, a forged auto is ignored");
 fs.rmSync(T, { recursive: true, force: true });
 console.log("j412-policy: all pass");
