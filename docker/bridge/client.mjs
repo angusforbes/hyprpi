@@ -78,13 +78,16 @@ export function receipts(by) {
 // scoping, scope_held) aren't waiting yet, so they never wake it.
 export const WAIT_MAX_S = 290, WAIT_DEFAULT_S = 240; // below Claude Code's limits (stdio idle 30 min, hard MCP_TOOL_TIMEOUT); a harness with a shorter one passes timeout_s
 export function waitSeconds(t) { const d = Number(process.env.DOORMAN_BRIDGE_WAIT_S) || WAIT_DEFAULT_S, n = t === undefined || t === null || t === "" ? d : Number(t); return Math.min(WAIT_MAX_S, Math.max(1, Number.isFinite(n) ? Math.round(n) : d)); }
-// owner: the agent's registered name; an answer counts only while that agent still holds the job's claim (a lapsed claim taken by another agent
+// mine: job ids, or a Map id -> the caller's claim token (then an answer counts only while that exact claim stands, so a later session with
+// the same name and a new claim isn't "you"). owner: the agent's registered name; an answer counts only while that agent still holds the job's claim (a lapsed claim taken by another agent
 // isn't "yours"). asked: "id#n" of questions the caller asked (when given, only those answers count). skip: job ids not to offer.
 export async function waitForJob({ scope = [], mine = [], owner = "", asked = null, seen = new Set(), skip = new Set(), timeoutS, pollMs = 1000, signal } = {}) {
   const sc = new Set((scope || []).map(String)), inScope = (j) => !sc.size || sc.has(String(j.sandbox));
   const end = Date.now() + waitSeconds(timeoutS) * 1000;
   for (;;) {
-    for (const id of mine) { const j = show(id); if (!j || j.state === "asked" || (owner && j.claimed_by !== owner)) continue; // (WaitReview HIGH 2: still mine)
+    for (const [id, tk] of mine instanceof Map ? mine : (mine || []).map((x) => [x, ""])) { // (WaitReview HIGH 2: still mine: by claim token when known, else by name)
+      const rec = readRec(id); if (tk && rec?.claim?.token !== tk) continue;
+      const j = show(id); if (!j || j.state === "asked" || (owner && j.claimed_by !== owner)) continue;
       const q = (j.questions || []).find((x) => x.answer !== null && x.answer !== undefined && !seen.has(`${id}#${x.n}`) && (!asked || asked.has(`${id}#${x.n}`)));
       if (q) { seen.add(`${id}#${q.n}`); return { ok: true, event: "answer", text: `the owner answered your question ${q.n} on ${id}`, job: j }; } }
     const w = list({ quiet: true }).find((j) => inScope(j) && !skip.has(j.id));

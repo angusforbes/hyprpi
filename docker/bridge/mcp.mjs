@@ -75,7 +75,7 @@ const call = async (name, a = {}) => {
     case "show_job": { const j = show(String(a.id || "")); if (!j) return { ok: false, text: "no such host job" }; if (MINE.has(j.id)) for (const q of j.questions || []) if (q.answer !== null && q.answer !== undefined) SEEN.add(`${j.id}#${q.n}`); return j; } // (J431: an answer read here won't wake wait_for_job again)
     case "wait_for_job": { if (autoReg) await autoReg;
       if (!REG) return { ok: false, text: "not registered as a host agent (register_agent, or start the server with DOORMAN_BRIDGE_AGENT): stop and tell the user" };
-      return waitForJob({ scope: REG.scope || [], mine: [...MINE.keys()], owner: REG.name, asked: ASKED, seen: SEEN, skip: SKIP, timeoutS: a.timeout_s }); }
+      return waitForJob({ scope: REG.scope || [], mine: MINE, owner: REG.name, asked: ASKED, seen: SEEN, skip: SKIP, timeoutS: a.timeout_s }); }
     case "register_agent": {
       if (autoReg) await autoReg;
       if (REG) return { ok: false, text: `already registered as ${REG.name}` };

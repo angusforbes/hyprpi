@@ -89,7 +89,15 @@ ok("a wait doesn't block a request sent after it in the same chunk");
   const oa = await new Promise((res) => execFile(CLI, ["--json", "ask", "doorman-t--b00006", "--by", "Runner", "--token", oc2.token, "Runner's question"], { env }, (e, o) => res(JSON.parse(o)))); assert.equal(oa.ok, true);
   assert.equal(bridge.answer("doorman-t--b00006", 1, "for the runner", held.at(-1).hid), true);
   r = await tool("wait_for_job", { timeout_s: 2 }); assert.equal(r.event, "none", "another agent's answer on a job we lost doesn't wake us"); }
-ok("an answer on a job whose claim this session lost (now another agent's) doesn't wake it");
+// the same name, a new claim: a new session registered as "Waiter" after ours expired, claims and gets an answer: not ours either
+{ const { waitForJob } = await import("../docker/bridge/client.mjs");
+  const rec = JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--b00006.json"), "utf8"));
+  jobRecord("doorman-t--b00006", { state: "claimed", claim: { ...rec.claim, by: "Waiter", token: "new-session-token" } });
+  const rr = await waitForJob({ mine: new Map([["doorman-t--b00006", "old-session-token"]]), owner: "Waiter", asked: new Set(["doorman-t--b00006#1"]), timeoutS: 1, scope: ["none"] });
+  assert.equal(rr.event, "none", "same name, different claim token: not ours");
+  const r2 = await waitForJob({ mine: new Map([["doorman-t--b00006", "new-session-token"]]), owner: "Waiter", asked: new Set(["doorman-t--b00006#1"]), timeoutS: 1, scope: ["none"] });
+  assert.equal(r2.event, "answer", "the holder of that claim token does get it"); }
+ok("an answer on a job whose claim this session lost (now another agent's) (nor one a later session with our name took) doesn't wake it");
 // 4d. (WaitReview MEDIUM 3) a claim refused for a reason other than a lost race: told to stop, and that job isn't offered again
 { mk("doorman-t--b00007"); r = await tool("wait_for_job", { timeout_s: 3 }); assert.equal(r.job.id, "doorman-t--b00007");
   const regs = JSON.parse(fs.readFileSync(path.join(st, "bridge", "agents.json"), "utf8")); for (const k of Object.keys(regs.agents)) if (regs.agents[k].name === "Waiter") delete regs.agents[k];
