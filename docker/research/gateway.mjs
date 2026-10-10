@@ -18,6 +18,7 @@
 // Not covered: the Doorman's CHAT session model (set when the Doorman sandbox is created: "model" in sbx-relay.json) and its window visibility
 // (developer / observer / safe / strict: "visibility" in sbx-relay.json); they are shown in the summary.
 import fs from "node:fs";
+import { modeOf } from "./mode.mjs";
 import os from "node:os";
 import path from "node:path";
 
@@ -48,6 +49,7 @@ export function resolveGateway({ w, research = {}, relay = [], sandbox = "", lev
   let mode = DEFAULTS.mode, modeFrom = "default";
   if (g.mode !== undefined) { if (["doorman-strict", "doorman-safe", "doorman-open"].includes(g.mode)) { mode = g.mode; modeFrom = "gateway.mode"; } else { notes.push(`gateway.mode ${JSON.stringify(g.mode).slice(0, 30)} isn't a Doorman mode: ignored`); } }
   if (modeFrom === "default" && w?.doorman?.mode !== undefined && ["doorman-strict", "doorman-safe", "doorman-open"].includes(w.doorman.mode)) { mode = w.doorman.mode; modeFrom = "doorman.mode"; }
+  { const mo = modeOf(w); if (modeFrom === "default" && mo.mode !== DEFAULTS.mode) { mode = mo.mode; modeFrom = "research.strict (deprecated)"; } if (mo.note) notes.push(mo.note); }
   src.mode = modeFrom;
   const searchKeyFile = s.key_file ? tilde(s.key_file) : "";
   if (SEARCH_PROVIDERS[provider].ownKey && !searchKeyFile) notes.push(`search provider ${provider} needs gateway.search.key_file (an API key file); research with it will fail until it is set`);

@@ -6,7 +6,7 @@
 // every mode, and refuses beyond a few such holds an hour.
 import fs from "node:fs";
 import path from "node:path";
-import { worldsFor } from "./mode.mjs";
+import { worldsFor, withWorldsLock } from "./mode.mjs";
 
 export const TASK_MAX = 300;
 export const NO_TASK = "no task is set for this sandbox, so every search waits for Angus";
@@ -27,6 +27,9 @@ export function taskForSandbox(cfgDir, sandbox) {
 // Set (or clear, with "") the sandbox's task in its one worlds file: atomic, other keys kept. Host-side only (the
 // research CLI, or the relay after Angus approves a task change). → { file, before, task }
 export function setTask(cfgDir, sandbox, text) {
+  return withWorldsLock(cfgDir, () => setTaskLocked(cfgDir, sandbox, text));
+}
+function setTaskLocked(cfgDir, sandbox, text) {
   const hits = worldsFor(cfgDir, sandbox);
   if (hits.length !== 1) throw new Error(hits.length ? `${hits.length} worlds files name ${sandbox} (${hits.map((h) => h.f).join(", ")}); fix that first` : `no worlds file names ${sandbox}`);
   const task = clean(text);

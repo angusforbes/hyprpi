@@ -14,6 +14,7 @@ export function agentAncestor() {
     if (/(^|\0)(HYPRPI_AGENT_ID|PI_CODING_AGENT|PI_SESSION_FILE|HYPRPI_THOUGHTS_ROOM)=/.test(env) || comm === "pi" || comm === "script") return `under an agent (pid ${pid})`;
     pid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
   }
+  if (pid > 1) return "its ancestry is too deep to check (J372 review: running out of levels must refuse, not pass)"; // fail closed
   return "";
 }
 

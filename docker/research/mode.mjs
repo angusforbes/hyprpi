@@ -33,6 +33,19 @@ export function modeOf(w) {
 // → its mode. None → the default. More than one (a stale copy, a backup) → ambiguous: fail closed to doorman-strict,
 // never to whichever file sorts first.
 // Every worlds/*.json naming the sandbox, as { f, w } (J352: shared with the task, docker/research/task.mjs).
+// J372 (review): every writer of a worlds/<name>.json (setTask, applyChanges) takes this lock for its read-modify-write, so one can't overwrite the other's change.
+export function withWorldsLock(cfgDir, fn) {
+  const lock = path.join(cfgDir, "worlds", ".write.lock"), wait = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; ; i++) {
+    try { fs.mkdirSync(lock); break; } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > 30000) fs.rmdirSync(lock); } catch { /* raced */ }
+      if (i > 200) throw new Error("the worlds files are locked by another writer; try again");
+      Atomics.wait(wait, 0, 0, 25);
+    }
+  }
+  try { return fn(); } finally { try { fs.rmdirSync(lock); } catch { /* */ } }
+}
 export function worldsFor(cfgDir, sandbox) {
   const hits = [];
   let names = []; try { names = fs.readdirSync(path.join(cfgDir, "worlds")).filter((f) => f.endsWith(".json")).sort(); } catch { /* no folder */ }

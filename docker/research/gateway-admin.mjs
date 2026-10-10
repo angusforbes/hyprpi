@@ -6,8 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { worldsFor } from "./mode.mjs";
-import { SEARCH_PROVIDERS, DEFAULTS } from "./gateway.mjs";
+import { worldsFor, withWorldsLock, modeOf } from "./mode.mjs";
+import { SEARCH_PROVIDERS, DEFAULTS, resolveGateway } from "./gateway.mjs";
 import { ownerTtyProblem } from "../agent-guard.mjs";
 
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\/:+-]{0,99}$/;
@@ -47,9 +47,16 @@ const get = (w, k) => {
   if (k === "report_model" && w?.research?.shape_model) return String(w.research.shape_model);
   return DEFAULTS[k.replace("search.", "")] && !["level"].includes(k) ? `${DEFAULTS[k.replace("search.", "")]} (default)` : "(default)";
 };
+// The values IN EFFECT (mode and level as the rest of the system resolves them: legacy keys, derived levels), so "current → proposed" and the LOOSENS
+// warning compare against what really applies, not against what happens to be written in the file.
+function effective(cfgDir, w, sandbox, k) {
+  if (k === "mode") return modeOf(w).mode;
+  if (k === "level") { let relay = []; try { relay = JSON.parse(fs.readFileSync(path.join(cfgDir, "sbx-relay.json"), "utf8")).sandboxes || []; } catch { /* */ } return resolveGateway({ w, relay, sandbox }).level; }
+  return get(w, k);
+}
 export function currentValues(cfgDir, sandbox, keys = Object.keys(KEYS)) {
   const hits = worldsFor(cfgDir, sandbox); if (hits.length !== 1) throw new Error(hits.length ? `${hits.length} worlds files name ${sandbox}; fix that first` : `no worlds file names ${sandbox}`);
-  return Object.fromEntries(keys.map((k) => [k, get(hits[0].w, k)]));
+  return Object.fromEntries(keys.map((k) => [k, effective(cfgDir, hits[0].w, sandbox, k)]));
 }
 // The text Angus reads in the held item; the SAME object is what gets applied (digest below), so what he sees is what is applied.
 export function describeChange(sandbox, before, changes) {
@@ -63,10 +70,11 @@ export const digestOf = (sandbox, changes) => crypto.createHash("sha256").update
 
 // Write the changes into the sandbox's one worlds file (atomic, other keys kept). `expectBefore`: refuse if any changed key no longer has the value that
 // was shown ("not applied: changed since proposed"). Returns { file, before, after }.
-export function applyChanges(cfgDir, sandbox, changes, { expectBefore } = {}) {
+export function applyChanges(cfgDir, sandbox, changes, opts = {}) { return withWorldsLock(cfgDir, () => applyChangesLocked(cfgDir, sandbox, changes, opts)); }
+function applyChangesLocked(cfgDir, sandbox, changes, { expectBefore } = {}) {
   const v = validateChanges(changes, { admin: true }); if (!v.ok) throw new Error(v.errors.join("; "));
   const hits = worldsFor(cfgDir, sandbox); if (hits.length !== 1) throw new Error(hits.length ? `${hits.length} worlds files name ${sandbox}; fix that first` : `no worlds file names ${sandbox}`);
-  const f = path.join(cfgDir, "worlds", hits[0].f), w = JSON.parse(fs.readFileSync(f, "utf8")), before = Object.fromEntries(Object.keys(v.changes).map((k) => [k, get(w, k)]));
+  const f = path.join(cfgDir, "worlds", hits[0].f), w = JSON.parse(fs.readFileSync(f, "utf8")), before = Object.fromEntries(Object.keys(v.changes).map((k) => [k, effective(cfgDir, w, sandbox, k)]));
   if (expectBefore) for (const k of Object.keys(v.changes)) if (before[k] !== expectBefore[k]) throw new Error(`not applied: ${k} is now ${before[k]}, it was ${expectBefore[k]} when proposed`);
   w.gateway = w.gateway && typeof w.gateway === "object" && !Array.isArray(w.gateway) ? w.gateway : {};
   for (const [k, val] of Object.entries(v.changes)) { if (k.startsWith("search.")) { w.gateway.search = w.gateway.search && typeof w.gateway.search === "object" ? w.gateway.search : {}; w.gateway.search[k.slice(7)] = val; } else w.gateway[k] = val; }

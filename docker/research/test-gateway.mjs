@@ -11,7 +11,7 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), "j372-"));
 const CFG = path.join(T, "cfg"), STATE = path.join(T, "state"), WORLDS = path.join(CFG, "hyprpi", "worlds");
 fs.mkdirSync(WORLDS, { recursive: true });
 process.env.XDG_CONFIG_HOME = CFG; process.env.XDG_STATE_HOME = STATE; process.env.HYPRPI_RESEARCH_STATE = path.join(T, "rstate");
-const wfile = path.join(WORLDS, "world-t.json");
+const wfile = path.join(WORLDS, "world-t.json"), PENDING = path.join(T, "pending");
 const writeW = (o) => fs.writeFileSync(wfile, JSON.stringify(o, null, 2));
 const readW = () => JSON.parse(fs.readFileSync(wfile, "utf8"));
 fs.writeFileSync(path.join(CFG, "hyprpi", "sbx-relay.json"), JSON.stringify({ sandboxes: [{ name: "world-t", workspace: path.join(T, "ws"), review_in: "door-t", review_room: "G" }, { name: "door-t", doorman_for: "world-t", model: "nv-claude/azure/anthropic/claude-opus-5-5", visibility: "developer" }] }));
@@ -108,6 +108,12 @@ await t("the reader may reach a provider's host only while that provider is sele
   assert.deepEqual(A.syncReaderNetwork({ reader: "reader-t", provider: "brave", apply: false }).results, [], "dry run runs nothing");
 });
 
+await t("the CLI `reader network` is a dry run unless --apply", () => {
+  writeW({ sandbox: "world-t", gateway: { search: { provider: "brave", key_file: path.join(T, "bkey") } } });
+  const r = spawnSync(process.execPath, [path.join(HERE, "research.mjs"), "reader", "network", "--sandbox", "world-t"], { encoding: "utf8" });
+  assert.match(r.stdout, /sbx policy allow network --sandbox reader-t api\.search\.brave\.com/); assert.match(r.stdout, /dry run/);
+});
+
 // ---- who may change settings
 const KV = ["report_model=azure/new/report", "mode=doorman-strict"];
 await t("the admin command refuses under an agent and without a terminal; changes nothing", () => {
@@ -127,8 +133,32 @@ await t("the admin command (guard passed) applies validated keys atomically and 
   for (const bad of [["mode=banana"], ["nokey=1"], ["report_model=bad model"], ["search.provider=zzz"], ["justtext"]]) { const x = A.adminSet(path.join(CFG, "hyprpi"), "world-t", bad, { guard: () => "" }); assert.equal(x.ok, false, bad.join()); }
 });
 
+await t("LOOSENS compares against what is in effect (legacy strict mode, derived levels), not what is written", () => {
+  writeW({ sandbox: "world-t", research: { strict: true } }); // legacy: strict
+  const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { mode: "doorman-safe" } }); assert.equal(r.ok, true, r.text);
+  const rec = JSON.parse(fs.readFileSync(path.join(PENDING, r.id + ".json"), "utf8")); assert.equal(rec.gatewayChange.before.mode, "doorman-strict"); assert.match(rec.text, /LOOSENS/, "strict -> safe loosens even though the file has no mode key");
+  writeW({ sandbox: "world-t" }); // no access key; the Doorman is in developer visibility -> level open is in effect
+  const r2 = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { level: "safe" } }); assert.equal(r2.ok, true, r2.text);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, r2.id + ".json"), "utf8")).gatewayChange.before.level, "open"); assert.doesNotMatch(r2.text, /LOOSENS/, "open -> safe tightens");
+});
+await t("two writers of a worlds file don't lose each other's change (shared lock)", async () => {
+  writeW({ sandbox: "world-t", task: "t0", gateway: { report_model: "a/b" } });
+  const Tk = await import("./task.mjs"); const w = [];
+  for (let i = 0; i < 12; i++) { Tk.setTask(path.join(CFG, "hyprpi"), "world-t", `task ${i}`); A.applyChanges(path.join(CFG, "hyprpi"), "world-t", { report_model: `m/${i}` }); }
+  const x = readW(); assert.equal(x.task, "task 11"); assert.equal(x.gateway.report_model, "m/11"); assert.ok(!fs.existsSync(path.join(WORLDS, ".write.lock")), "the lock is released");
+});
+await t("the owner guard fails closed when the ancestry is too deep to check", () => {
+  const sh = path.join(T, "pi"); fs.symlinkSync("/bin/sh", sh); // a process whose name is pi, 45 levels above the caller
+  const probe = path.join(T, "probe.mjs"); fs.writeFileSync(probe, `import(${JSON.stringify(path.join(HERE, "..", "agent-guard.mjs"))}).then((m)=>console.log("GUARD:"+m.agentAncestor()))`);
+  const lvl = (k) => path.join(T, `lvl${k}.sh`); fs.writeFileSync(lvl(0), `#!/bin/sh\nnode ${probe}\n`, { mode: 0o755 });
+  for (let i = 1; i <= 45; i++) fs.writeFileSync(lvl(i), `#!/bin/sh\n/bin/sh ${lvl(i - 1)}\ntrue\n`, { mode: 0o755 }); // each level forks the next (not exec), so the depth really grows
+  const cmd = `/bin/sh ${lvl(45)}`;
+  const env = { ...process.env }; for (const k of ["HYPRPI_AGENT_ID", "PI_CODING_AGENT", "PI_SESSION_FILE", "HYPRPI_THOUGHTS_ROOM"]) delete env[k];
+  const r = spawnSync(sh, ["-c", cmd], { encoding: "utf8", env, timeout: 60000 }); const g = (/GUARD:(.*)/.exec(r.stdout) || [])[1];
+  assert.ok(g && g.length, "the guard must refuse (not return empty) when it can't see the whole ancestry: got " + JSON.stringify(g) + r.stderr.slice(0, 200));
+});
+
 // ---- proposals
-const PENDING = path.join(T, "pending");
 await t("a proposal is a held item showing current → proposed; it changes nothing; unproposable keys and no-ops are refused", () => {
   writeW({ sandbox: "world-t", gateway: { report_model: "old/report", mode: "doorman-safe" } }); const before = fs.readFileSync(wfile, "utf8");
   const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { report_model: "azure/new/report", mode: "doorman-open" }, by: "Opener\u001b[2J", reviewIn: "door-t" });
