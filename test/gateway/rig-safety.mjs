@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createRig, settleLateCreates } from './rig.mjs';
 
-const HOME = os.homedir();
+const HOME = os.userInfo().homedir;
 
 export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'), onRig = () => {} } = {}) {
   const rig = await createRig({ repoRoot });
