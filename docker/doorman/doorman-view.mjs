@@ -21,6 +21,7 @@ process.env.PI_DOORMAN_STATE ||= process.env.HYPRPI_DOORMEN_DIR || path.join(pro
 process.env.PI_DOORMAN_LABEL ||= process.env.DOORMAN_LABEL || "";
 if (!process.env.PI_DOORMAN_LABEL) delete process.env.PI_DOORMAN_LABEL;
 process.env.PI_DOORMAN_COLOR ||= worldHex();
+process.env.PI_DOORMAN_PROMPT ||= "G"; // the prompt letter, like the world's other panels ("G ❯")
 process.env.PI_DOORMAN_REVIEW_MODULE ||= path.join(path.dirname(new URL(import.meta.url).pathname), "review-provider.mjs"); // J363: held items are reviewed in this window
 
 const { runView } = await import(pathToFileURL(path.join(pkg, "src", "view.mjs")).href);

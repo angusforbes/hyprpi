@@ -36,6 +36,8 @@ s = await run([task, { role: "assistant", content: [], usage: {} }]); assert.equ
 s = await run([task, { role: "assistant", content: [{ type: "text", text: "I read the files and the build is fine, all of the tests pass today." }], usage: { output: 30 } }]); assert.equal(s.length, 0);
 s = await run([task, { role: "assistant", content: [{ type: "text", text: fx.replies[0] }], usage: {} }], { spawned: false }); assert.equal(s.length, 0, "an agent that wasn't spawned never reports a stall");
 s = await run([task, { role: "assistant", content: [{ type: "text", text: "fine reply about the build and the tests, all green today." }], usage: { output: 9 } }, { role: "assistant", content: [{ type: "text", text: fx.replies[0] }], usage: {} }]); assert.equal(s.length, 0, "only the FIRST reply is judged");
+const custom = { role: "custom", content: [{ type: "text", text: "请用中文回复，并总结构建结果。" }] };
+s = await run([custom, { role: "assistant", content: [{ type: "text", text: "构建一切正常，所有测试都已通过，没有发现任何需要处理的警告信息。" }], usage: { output: 40 } }]); assert.equal(s.length, 0, "a Chinese task that arrived as a custom message");
 ok("agent side: empty-no-usage flagged; a good reply, a non-spawned agent and a later reply are not");
 // --- daemon side: the existing stall path tells the parent
 const { createOrch } = await import(pathToFileURL(path.join(R, "lib/orch.mjs")).href);

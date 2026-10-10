@@ -15,7 +15,8 @@ assert.ok(garbled({ text: fx.replies[0].replaceAll("<|close|>", ""), usage: fx.u
 ok("the same salad without its token is still flagged: " + garbled({ text: fx.replies[0].replaceAll("<|close|>", ""), usage: fx.usage }, EN));
 assert.match(garbled({ text: "<|close|>The build is fine and all of the tests pass today.", usage: U }, EN), /template token/);
 assert.match(garbled({ text: "Привет мир это абсолютно нормальный ответ без смысла вообще совсем даже", usage: U }, EN), /script/);
-assert.match(garbled({ text: "Done. [INST] then more text about the build and its results.", usage: U }, EN), /template token/);
+assert.match(garbled({ text: "[INST] then more text about the build and its results.", usage: U }, EN), /template token/);
+assert.match(garbled({ text: "ok <|im_end|> and <|im_end|> then <|im_end|> again; the build results follow in detail.", usage: U }, EN), /template token/);
 ok("a leaked token anywhere, and a reply in an unrelated script, are flagged");
 // not flagged
 const fine = (m, p = EN, why) => assert.equal(garbled(m, p), "", why);
@@ -32,5 +33,16 @@ fine({ text: "", usage: { output: 40 } }, EN, "empty but usage reported: not thi
 fine({ text: "", usage: {}, stopReason: "error" }, EN, "an error has its own stall path");
 fine({ text: "Summary table:\n| name | 名前 |\n| build | ビルド |\nAll good, nothing else to report on the repository.", usage: U }, EN, "English with a few foreign words");
 fine({ text: "See also > 这是一个很长的引用文字，不算作回复的一部分，用来测试引用块是否被忽略。\n> 这是第二行引用文字，同样不计入。\nThe build is fine and nothing else needs doing here.", usage: U }, EN, "a long quoted Chinese block");
+const W = (t) => `[hyprpi · Boss spawned you (spawn_agent) · you are its child]\n${t}\n\n(How this works: when you have a result, call report_to_parent with it; final: true when the job is done. Budget: 150k tokens, 25 min. Model: x/y. Never move Angus's focus.)`;
+fine({ text: "The tokenizer uses <|im_end|> to mark the end of a message, as the chat template documents.", usage: U }, EN, "a token mentioned once in prose");
+fine({ text: "~~~\n<|im_end|>\n~~~\nThat is the tilde-fenced example, and the rest of the answer is plain English text.", usage: U }, EN, "a tilde fence");
+fine({ text: "好的，构建一切正常，测试全部通过，没有任何警告需要处理。", usage: U }, "Answer in Chinese and explain the build results.", "Chinese asked for in English");
+fine({ text: "好的，构建一切正常，测试全部通过，没有任何警告需要处理。", usage: U }, W("请总结。"), "a short Chinese brief inside the English spawn wrapper");
+fine({ text: "빌드는 정상이며 모든 테스트가 통과했습니다. 경고는 없습니다. 이상입니다 감사합니다.", usage: U }, W("요약해 주세요."), "a short Korean brief inside the wrapper");
+fine({ text: "Build OK. Сборка прошла успешно, все тесты зелёные. البناء ناجح وجميع الاختبارات ناجحة تماما اليوم.", usage: U }, "Summarise the build in English, русский and العربية.", "a trilingual reply to a trilingual task");
+fine({ text: "Special tokens include <|im_start|>, <|im_end|>, and <|endoftext|>.", usage: U }, "List common tokenizer special tokens.", "a task about tokens may quote them");
+fine({ text: "第一部分：构建一切正常，测试全部通过。日本語：ビルドは成功しました、問題ありません。한국어: 빌드가 성공했고 문제가 없습니다.", usage: U }, "Translate the build summary into Chinese, Japanese, Korean, Russian, Arabic, and Hebrew.", "many named languages");
+fine({ text: "构建一切正常，所有测试都已通过，没有发现任何需要处理的警告信息，请放心。", usage: U }, W("Please review the repository.") + "\n(extra)\nPlease give your answer in Chinese.", "a later task message after the footer");
+assert.ok(garbled({ text: fx.replies[0], usage: fx.usage }, W("请总结。")) === "" ? false : true, "salad is still flagged under the wrapper");
 ok("normal English, code-heavy, quoted, short, tool-only, and legitimate Chinese/Japanese replies are not flagged");
 console.log("garble: all pass");

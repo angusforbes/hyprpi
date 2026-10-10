@@ -6,10 +6,10 @@ set -u
 H="$(cd "$(dirname "$0")/../.." && pwd)"; R="$(mktemp -d)"; S="$(cd "$(dirname "$0")" && pwd)"
 rm -rf $R/x; mkdir -p $R/x/{state,run,cfg/hyprpi/worlds,xstate,ws,dws,inbox,dinbox,card,Work/proj}
 export PATH="$S/e2e-docker-stub:$PATH" E2E_DIR=$R/x HYPRPI_TEST=1 HYPRLAND_INSTANCE_SIGNATURE=bogus-j368 HYPRPI_STATE=$R/x/state HYPRPI_SOCKET=$R/x/s.sock XDG_RUNTIME_DIR=$R/x/run
-export XDG_CONFIG_HOME=$R/x/cfg XDG_STATE_HOME=$R/x/xstate DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent HYPRPI_NO_ENSURE=1 HYPRPI_G_AGENT_OPENER=$S/e2e-opener.sh HYPRPI_SBX=$S/e2e-sbx-stub.sh
+export XDG_CONFIG_HOME=$R/x/cfg XDG_STATE_HOME=$R/x/xstate DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent HYPRPI_NO_ENSURE=1 HYPRPI_G_AGENT_OPENER=$S/e2e-opener.sh HYPRPI_SBX=$S/e2e-sbx-stub.sh HYPRPI_OPEN_VIA=$S/e2e-systemd-run.sh
 HA=${HOSTAGENTS:-true}
 cat > $R/x/cfg/hyprpi/sbx-relay.json <<J
-{ "sandboxes": [ { "name": "world-t", "agent_id": "sbx-world-t", "workspace": "$R/x/ws", "inbox": "$R/x/inbox", "workspace_num": 99 },
+{ "sandboxes": [ { "name": "world-t", "agent_id": "sbx-world-t", "host_agents": ${SERVED_HOSTAGENTS:-true}, "workspace": "$R/x/ws", "inbox": "$R/x/inbox", "workspace_num": 99 },
   { "name": "doorman-t", "display": "Doorman-T", "doorman_for": "world-t", "reports_to": "Thoughts-B", "host_agents": $HA, "workspace": "$R/x/dws", "inbox": "$R/x/dinbox", "card": "$R/x/card", "workspace_num": 98 } ] }
 J
 echo '{ "projectFolders": ["'$R'/x/Work"] }' > $R/x/cfg/hyprpi/config.json
@@ -29,6 +29,7 @@ for f in sorted(glob.glob('$1/*.json')):
   if d.get('type')=='result' and d.get('for')=='$2.json': print('  result:', d.get('ok'), d.get('error') or '')"; }
 pend() { for f in $P/pending/*.json; do [ -f $f ] && python3 -c "import json;d=json.load(open('$f'));print(d['id'], (d.get('typed') or {}).get('type'), (d.get('taskChange') or {}).get('for'))"; done; }
 decide() { touch $P/decisions/$1.$2; sleep 4; }
-. "$S/e2e-steps.sh"
+. "${E2E_STEPS:-$S/e2e-steps.sh}" # (J395: another steps file, e.g. docker/doorman/test-outcomes-steps.sh)
 for p in $(pgrep -f "bin/hyprpi daemon|sbx-relay.mjs run"); do grep -q bogus-j368 /proc/$p/environ 2>/dev/null && kill $p; done; sleep 1
 rm -rf "$R"
+exit ${E2E_RC:-0} # (J395: a steps file sets E2E_RC=1 when an assertion failed)

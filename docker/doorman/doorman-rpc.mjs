@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// J373 (Angus chose a stateless Doorman): runs the Doorman's pi (RPC mode) and starts a NEW pi session after every turn, so each
-// message the drop-box extension hands it is answered in a fresh session that holds only that message and what the relay sent
-// with it (docker/doorman/history.mjs). Nothing carries over from one message to the next inside pi.
+// J373/J395 (Angus chose a Doorman with no memory): runs the Doorman's pi (RPC mode) and starts a NEW pi session after every turn, so
+// each message the drop-box extension hands it is answered in a fresh session that holds only its rules, the host card and that one
+// message. Nothing carries over from one message to the next.
 //
 //   DOORMAN_PIRUN='sbx exec -i … pi --mode rpc …' doorman-rpc.mjs     (doorman.sh sets it; stdout = pi's RPC events, unchanged)
 //

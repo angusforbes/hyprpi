@@ -1,5 +1,5 @@
 echo "== 1 open (approve)"; D 1-open '{"op":"request","type":"open_for_owner","for":"Alpha","params":{"what":"https://example.org/cube?trk=1","why":"see the result"}}'; res $R/x/dinbox 1-open; ID=$(pend | awk '$2=="open_for_owner"{print $1}'); echo "  held $ID"; decide $ID approve
-echo "  opened: $(cat $R/x/opened 2>/dev/null)"; echo "  record: $(python3 -c "import json;d=json.load(open('$P/requests/$ID.json'));print(d['state'],'|',d['outcome']['summary'])")"
+echo "  opened: $(cat $R/x/opened 2>/dev/null)"; echo "  handed off via: $(cat $R/x/handoffs 2>/dev/null | cut -c1-120)"; echo "  relay's process tree now: $(pstree -p $(pgrep -f 'sbx-relay.mjs run' | while read p; do grep -q bogus-j368 /proc/$p/environ 2>/dev/null && echo $p; done | head -1) 2>/dev/null | tr -d '\n' | cut -c1-200)"; echo "  record: $(python3 -c "import json;d=json.load(open('$P/requests/$ID.json'));print(d['state'],'|',d['outcome']['summary'])")"
 echo "  log: $(grep -h "\"op\":\"typed\"" $P/log.jsonl | tail -1 | cut -c1-200)"
 echo "  G inbox:"; grep -h '"text"' $R/x/inbox/*.json | tail -2 | cut -c1-220
 echo "  doorman note: $(grep -h '"typed"' $R/x/dinbox/*.json -l | wc -l)"
@@ -16,3 +16,7 @@ echo "== 6 agent-free refusals (HOSTAGENTS=$HA)"; D 9-draft '{"op":"draft","for"
 W 10-talk '{"op":"talk","to":["Thoughts-B"],"text":"hi"}'; res $R/x/inbox 10-talk
 echo "== 7 allow_host (approve, stub sbx)"; D 11-allow '{"op":"request","type":"allow_host","for":"Alpha","params":{"host":"unpkg.com","why":"three.js"}}'; ID=$(pend | awk '$2=="allow_host"{print $1}'); decide $ID approve; echo "  sbx: $(cat $R/x/sbx-calls)"; echo "  record: $(python3 -c "import json;d=json.load(open('$P/requests/$ID.json'));print(d['state'],'|',d['outcome']['summary'])")"
 echo "== 8 share_project (approve)"; D 12-share '{"op":"request","type":"share_project","for":"Alpha","params":{"project":"proj","mode":"ro","why":"read it"}}'; ID=$(pend | awk '$2=="share_project"{print $1}'); decide $ID approve; echo "  record: $(python3 -c "import json;d=json.load(open('$P/requests/$ID.json'));print(d['state'],'|',d['outcome']['summary'])")"
+echo "== 9 a relay restart while a typed request was executing: recorded and told as interrupted, never replayed"
+mkdir -p $P/requests; echo '{"id":"doorman-t--abc123","type":"open_for_owner","label":"open a link or file for Angus","sandbox":"world-t","doorman":"doorman-t","for":"Alpha","state":"executing"}' > $P/requests/doorman-t--abc123.json
+for p in $(pgrep -f "sbx-relay.mjs run"); do grep -q bogus-j368 /proc/$p/environ 2>/dev/null && kill $p; done; sleep 1; setsid -f node $H/docker/sbx-relay.mjs run >> $R/x/relay.out 2>&1; sleep 4
+echo "  record: $(python3 -c "import json;d=json.load(open('$P/requests/doorman-t--abc123.json'));print(d['state'],'|',d['outcome']['summary'])")"; grep -h 'abc123' $R/x/inbox/*.json | head -1 | cut -c1-160

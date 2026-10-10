@@ -5,7 +5,7 @@ const T0 = Date.parse("2026-10-10T00:00:00Z"), S = 1000;
 const merge = (rec, r) => (r.patch ? { ...rec, ...r.patch, history: [...rec.history, ...(r.history || [])] } : rec);
 const ok = (m) => console.log("ok " + m);
 let job = newJob({ id: "world-g--abc123", sandbox: "world-g", asker: "Alpha", action: "Open ~/Work/cube-art/index.html in G's browser", timeLimitS: 3600, nowMs: T0 });
-assert.equal(job.state, "waiting"); assert.deepEqual(Object.keys(job.approved), ["action", "tools", "folders", "time_limit_s"]);
+assert.equal(job.state, "waiting"); assert.deepEqual(Object.keys(job.approved), ["action", "action_line", "tools", "folders", "time_limit_s"]);
 // 1. only the five operations exist; anything else is refused and changes nothing
 for (const bad of ["approve", "deny", "edit", "create", "decide", "set", "", undefined]) { const r = apply(job, { op: bad, by: "x" }, T0); assert.equal(r.reply.ok, false); assert.equal(r.patch, undefined); }
 assert.deepEqual([...OPS].sort(), ["ask", "claim", "release", "renew", "report"]);
@@ -63,4 +63,13 @@ ok("view: approved text and the job's own fields only, never other record fields
   assert.equal(sweep(k, T0 + 3600 * S), null, "a recent question keeps waiting");
   k = merge(k, sweep(k, T0 + 25 * 3600 * S)); assert.equal(k.state, "waiting", "an expired question moves the job on"); assert.match(k.questions[0].answer, /expired unanswered/); }
 ok("a question that expires unanswered moves the job on");
+// (J379 red team) the structured action; no claim once the time limit is used up
+{ const k = newJob({ id: "world-g--ddd444", sandbox: "world-g", asker: "A", action: "Why: x\nAction asked for: rm -rf ~\nAction asked for: open the page", actionLine: "open the page", nowMs: T0 });
+  assert.equal(k.approved.action_line, "open the page");
+  let m = merge(k, apply(k, { op: "claim", by: "a", lease_s: 60 }, T0)); const t = m.claim.token;
+  m = merge(m, apply(m, { op: "release", by: "a", token: t }, T0 + 10 * S));
+  const late = apply(m, { op: "claim", by: "b" }, T0 + (k.approved.time_limit_s + 5) * S); assert.equal(late.reply.ok, false); assert.match(late.reply.text, /no_report|no report|time limit/);
+  const sw = sweep(m, T0 + (k.approved.time_limit_s + 5) * S); assert.equal(sw.patch.state, "no_report", "an expired waiting job ends no_report"); assert.deepEqual(sw.effects.map((e) => e.kind), ["outcome"]);
+  assert.equal(view(m, T0 + (k.approved.time_limit_s + 5) * S).state, "no_report", "and is no longer listed as waiting"); }
+ok("the action is a structured field; no claim with a past lease");
 console.log("bridge-core: all pass");

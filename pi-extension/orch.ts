@@ -77,7 +77,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   const textOf = (c: any) => (Array.isArray(c) ? c.filter((x: any) => x?.type === "text").map((x: any) => String(x.text || "")).join("") : String(c ?? ""));
   pi.on("message_end", async (e: any) => {
     const m = e?.message; if (firstSeen || !m) return;
-    if (m.role === "user") { if (!firstPrompt) firstPrompt = textOf(m.content); return; }
+    if (m.role === "user" || m.role === "custom") { firstPrompt += "\n" + textOf(m.content); return; } // every task message before the first reply (a busy delivery arrives as a custom message)
     if (m.role !== "assistant") return;
     firstSeen = true;
     const why = garbled({ text: textOf(m.content), hasToolCall: Array.isArray(m.content) && m.content.some((x: any) => x?.type === "toolCall"), usage: m.usage, stopReason: m.stopReason }, firstPrompt);

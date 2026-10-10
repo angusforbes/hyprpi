@@ -218,6 +218,12 @@ async function cmdNew() {
   const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}), ...(wantName ? { HYPRPI_NAME: wantName } : {}), ...(wantIcon ? { HYPRPI_ICON: wantIcon } : {}) });
   const piCmd = cfg.pi;
   const piArgv = ["-e", ext, ...(cfg.piArgs || []), ...piArgs];
+  { // J397: the host's scoped model list is the only list: a --model that isn't on it is refused here too
+    const opts = piArgv.slice(0, piArgv.indexOf("--") < 0 ? piArgv.length : piArgv.indexOf("--")); // pi stops reading options at its first "--"
+    const last = (flagName) => { let v = ""; opts.forEach((a, i) => { if (a === flagName) v = String(opts[i + 1] || ""); else if (a.startsWith(flagName + "=")) v = a.slice(flagName.length + 1); }); return v; }; // pi uses the LAST one
+    let wanted = last("--model"); const prov = last("--provider"); if (wanted && prov && !wanted.startsWith(prov + "/")) wanted = `${prov}/${wanted}`;
+    if (wanted) { const { allowedBy } = await import("../lib/modellist.mjs"); let ok; try { ok = allowedBy(wanted); } catch (e) { die(`the model ${wanted} wasn't used: ${e.message}`); } if (!ok) die(`the model ${wanted} is not on the host's scoped model list (enabledModels in ~/.pi/agent/settings.json), so no agent was opened`); }
+  }
   if (directTerminal) {
     process.stdout.write(`\x1b]2;pi\x07`);
     const child = spawn(piCmd, piArgv, { cwd, env, stdio: "inherit" });

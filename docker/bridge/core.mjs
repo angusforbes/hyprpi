@@ -33,10 +33,10 @@ const cleanList = (a) => {
 };
 
 // A new job, made by the relay when the owner approves a free-form draft on a host in bridge mode.
-export function newJob({ id, sandbox, asker, action, tools = [], folders = [], timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
+export function newJob({ id, sandbox, asker, action, actionLine = "", tools = [], folders = [], timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
   return {
     id, type: "host_job", sandbox: String(sandbox), for: String(asker || ""), created_at: iso(nowMs), state: "waiting",
-    approved: { action: String(action), tools: [...tools].map(String), folders: [...folders].map(String), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
+    approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
     claim: null, claimed_at: null, questions: [], outcome: null,
     history: [{ at: iso(nowMs), ev: "approved by the owner; waiting for a host agent", by: "owner" }],
   };
@@ -63,6 +63,12 @@ export function sweep(rec, nowMs = Date.now()) {
     const open = (rec.questions || []).find((q) => q.answer == null);
     if (open && nowMs - Date.parse(open.at) > LIMITS.questionTtlS * 1000) { const a = answer(rec, open.n, "(no answer: the question expired unanswered)", nowMs); if (a) return { patch: a.patch, history: [{ at: iso(nowMs), ev: `question ${open.n} expired unanswered (no answer from the owner)`, by: "relay" }], effects: [] }; }
     return null;
+  }
+  // (FixReview) a waiting job whose time limit (from its first claim) is used up can't be claimed again: it ends as no_report
+  if (rec?.type === "host_job" && rec.state === "waiting" && rec.claimed_at && nowMs >= Date.parse(rec.claimed_at) + rec.approved.time_limit_s * 1000) {
+    const summary = `no report: the job's time limit (${rec.approved.time_limit_s} s) ran out without a report`;
+    return { patch: { state: "no_report", claim: null, outcome: { state: "no_report", summary, ran: [], changed: [], at: iso(nowMs), by: "relay" } },
+      history: [{ at: iso(nowMs), ev: "time limit used up while waiting", by: "relay" }], effects: [{ kind: "outcome", state: "no_report", summary }] };
   }
   if (rec?.type !== "host_job" || rec.state !== "claimed" || !rec.claim) return null;
   if (Date.parse(rec.claim.until) > nowMs) return null;
@@ -92,6 +98,7 @@ export function apply(rec, op, nowMs = Date.now()) {
     if (cur.state !== "waiting") return no(`the job is ${cur.state} by ${cur.claim?.by || "another agent"} (lease until ${cur.claim?.until || "?"})`);
     const token = crypto.randomBytes(16).toString("hex"), first = cur.claimed_at || iso(nowMs);
     const end = Math.min(nowMs + leaseS * 1000, Date.parse(first) + cur.approved.time_limit_s * 1000);
+    if (end <= nowMs) return no("the job's time limit is used up: it can't be claimed again"); // (J379) never a claim with a past lease
     return done({ state: "claimed", claim: { by, token, since: iso(nowMs), until: iso(end) }, claimed_at: first }, `claimed by ${by}`, { text: `claimed until ${iso(end)}`, token, until: iso(end) });
   }
   if (!cur.claim || op.token !== cur.claim.token) return no("not your claim (wrong or expired token): claim the job first");

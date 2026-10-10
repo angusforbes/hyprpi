@@ -94,11 +94,14 @@ function accessLevel(w, relay, sandbox, world = WORLD) {
 // one "projects" entry → { name, rw } or null: "kev", "kev:rw", "kev:ro", { "name": "kev", "mode": "rw" }
 function projectEntry(e, level) {
   let name = "", mode = "";
+  let ident = null;
   if (typeof e === "string") { const parts = e.split(":"); if (parts.length > 2) return null; [name, mode = ""] = parts; }
-  else if (e && typeof e === "object") { name = String(e.name || ""); mode = String(e.mode ?? ""); }
+  else if (e && typeof e === "object") { name = String(e.name || ""); mode = String(e.mode ?? "");
+    // (J379, FixReview) an entry added from an approved request keeps the reviewed folder's identity; every plan checks it
+    if (e.realpath != null || e.ino != null) { if (typeof e.realpath !== "string" || !/^\d+$/.test(String(e.ino))) return null; ident = { realpath: e.realpath, ino: String(e.ino) }; } }
   if (!/^[\w.-]+$/.test(name) || name === "." || name === ".." || !["", "rw", "ro"].includes(mode)) return null;
   const rw = level === "strict" ? false : level === "safe" ? mode === "rw" : mode !== "ro";
-  return { name, rw };
+  return { name, rw, ident };
 }
 
 const isGit = (d) => fs.existsSync(path.join(d, ".git"));
@@ -172,7 +175,9 @@ function plan() {
       if (!pe) { skipped.push(`${JSON.stringify(e)} (bad project entry)`); continue; }
       // (LevelReview) a real directory directly inside its project folder: no symlink out of it
       const hit = pf.map((f) => path.join(f, pe.name)).find((d) => { try { return fs.lstatSync(d).isDirectory() && path.dirname(fs.realpathSync(d)) === fs.realpathSync(path.dirname(d)); } catch { return false; } });
-      if (hit) { add(hit, { ro: !pe.rw, why: `project (${access.level})` }); shared.push(hit); } else skipped.push(`${pe.name} (no such project)`);
+      let same = true; if (hit && pe.ident) { let st = null; try { st = fs.statSync(hit); } catch { /* */ } same = !!st && real(hit) === pe.ident.realpath && String(st.ino) === pe.ident.ino; }
+      if (hit && !same) skipped.push(`${pe.name} (not the folder that was approved: ${pe.ident.realpath}, inode ${pe.ident.ino}; not shared)`);
+      else if (hit) { add(hit, { ro: !pe.rw, why: `project (${access.level})` }); shared.push(hit); } else skipped.push(`${pe.name} (no such project)`);
     }
   }
   // 3. general shares
@@ -433,8 +438,15 @@ async function watch() {
 // only; open with "all": already shared), writes worlds/<world>.json atomically, and doesn't apply (the watcher, or
 // `shares.mjs apply WORLD`, does). → { ok, text }
 // J372 (review): a worlds-file writer: serialised with the other writers (setTask, gateway settings) so a stale write can't revert their change.
-export function addProject(world, name, mode = "") { return withWorldsLock(CFG, () => addProjectLocked(world, name, mode)); }
-function addProjectLocked(world, name, mode = "") {
+// (J379 red team) expect = { realpath, ino } as shown when the owner approved it: if the folder was removed or swapped since, refuse
+// what to show (and keep) at review time, for addProject's expect
+export function projectIdentity(name) {
+  const g = readJson(path.join(CFG, "config.json")); const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  const hit = (g.projectFolders || []).map(exp).map(real).map((d) => path.join(d, String(name))).find((d) => { try { return fs.lstatSync(d).isDirectory(); } catch { return false; } });
+  if (!hit) return null; const st = fs.statSync(hit); return { realpath: real(hit), ino: String(st.ino) };
+}
+export function addProject(world, name, mode = "", expect = null) { return withWorldsLock(CFG, () => addProjectLocked(world, name, mode, expect)); }
+function addProjectLocked(world, name, mode = "", expect = null) {
   if (typeof world !== "string" || !/^[a-z0-9-]{1,32}$/.test(world)) return { ok: false, text: "bad world name" };
   if (typeof mode !== "string") return { ok: false, text: `mode must be "rw" or "ro"` };
   if (typeof name !== "string" || !/^[\w.-]+$/.test(name) || name === "." || name === "..") return { ok: false, text: `bad project name ${JSON.stringify(name)}` };
@@ -446,12 +458,13 @@ function addProjectLocked(world, name, mode = "") {
   const pf = (g.projectFolders || []).map(exp).map(real);
   const hit = pf.map((d) => path.join(d, name)).find((d) => { try { return fs.lstatSync(d).isDirectory() && path.dirname(fs.realpathSync(d)) === fs.realpathSync(path.dirname(d)); } catch { return false; } });
   if (!hit) return { ok: false, text: `${name} isn't a project folder in ${pf.join(", ") || "(no projectFolders)"}` };
+  if (expect) { let st = null; try { st = fs.statSync(hit); } catch { /* */ } if (real(hit) !== expect.realpath || !st || String(st.ino) !== String(expect.ino)) return { ok: false, text: `${name} isn't the folder that was approved (it was ${expect.realpath}, inode ${expect.ino}; now ${real(hit)}, inode ${st?.ino ?? "?"}): not shared` }; }
   const { level, why } = accessLevel(w, relay, w.sandbox || world, world);
   if (level === "open" && w.projects === "all") return { ok: true, text: `${name} is already shared (${world} is at the open level with "projects": "all"; ${why})` };
   if (level === "strict" && mode === "rw") return { ok: false, text: `${world} is at the strict level (${why}): projects are read-only there; add it as ro, or change the level` };
   const eff = level === "strict" ? "ro" : level === "safe" ? (mode === "rw" ? "rw" : "ro") : (mode === "ro" ? "ro" : "rw");
   const list = Array.isArray(w.projects) ? w.projects.filter((e) => projectEntry(e, level)?.name !== name) : [];
-  list.push(eff === "rw" && level === "open" ? name : `${name}:${eff}`);
+  list.push(expect ? { name, mode: eff, realpath: expect.realpath, ino: String(expect.ino) } : eff === "rw" && level === "open" ? name : `${name}:${eff}`); // (J379) the identity stays with the entry
   w.projects = list;
   const tmp = `${f}.${process.pid}.tmp`;
   try { fs.writeFileSync(tmp, JSON.stringify(w, null, 2) + "\n", { mode: 0o600 }); fs.renameSync(tmp, f); } catch (e) { try { fs.unlinkSync(tmp); } catch { /* */ } return { ok: false, text: `couldn't write ${f}: ${e.message}` }; }
