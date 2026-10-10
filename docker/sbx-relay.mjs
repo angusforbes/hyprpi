@@ -898,7 +898,7 @@ class Relay {
     if (msg.research) { // J309: approved once (never a rule); deny drops it
       const rs = msg.research, ev = { rid: rs.rid, sandbox: sb.name, from: rs.from, depth: rs.depth, looking_for: String(rs.want || "").slice(0, 300), via: via || "terminal" };
       if (verdict === "deny") {
-        log({ sb: sb.name, op: "research", decision: "denied", id });
+        log({ sb: sb.name, op: "research", decision: "denied", id, rid: rs.rid }); // rid: the Doorman window follows a plan to its deliverable
         try { researchLog({ ev: "denied", ...ev }); } catch { /* */ }
         heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Denied", "");
         try { inboxWrite(sb, { type: "research", token: rs.token, status: "denied", id }); } catch (e) { log({ sb: sb.name, error: `inbox (research): ${e.message}` }); }
