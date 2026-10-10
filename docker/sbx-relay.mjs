@@ -53,7 +53,6 @@ import { newJob as newHostJob } from "./bridge/core.mjs";
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
 import { handToOpener } from "./gateway/opener.mjs"; // J393: the relay hands links to the world's opener and launches nothing
-import { openStore as doormanHistory, forDoorman } from "./doorman/history.mjs"; // J373: a Doorman call's only memory
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
 const HOME = os.homedir();
@@ -181,12 +180,7 @@ function listNames(dirFd, max) {
   try { let e; while (out.length < max && (e = d.readSync())) out.push(e.name); } finally { d.closeSync(); }
   return out;
 }
-// J373: everything a Doorman receives passes through its history (docker/doorman/history.mjs): a message carries the same
-// asker's bounded context, a receipt is filed with the asker it concerns. (Lazy: the store path needs STATE.)
-let doormanStore = null;
-const dHist = () => (doormanStore ||= doormanHistory(path.join(STATE, "doorman-history.json")));
 function inboxWrite(sb, obj) {
-  if (sb?.doormanFor) { try { obj = forDoorman(dHist(), sb.name, obj); } catch (e) { log({ sb: sb.name, error: `doorman history: ${e.message}` }); } }
   const dirs = pinDirs(sb);
   const have = listNames(dirs.inbox, 5000).filter((n) => /^[0-9]+-[0-9a-f]{8}\.json$/.test(n)).sort();
   const cutoff = Date.now() - LIMITS.inboxKeepMs;
@@ -305,14 +299,6 @@ class Sandbox {
           try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ } // consume before acting (pinned dir, review #1)
           if (/^status-/.test(n) !== (req?.op === "status")) throw new Error("status requests use status-*.json names, and only they do");
           result = await this.handle(req);
-          // J373: the Doorman's answer becomes one exchange in that asker's history; what it drafted while answering is tied
-          // to the asker (req.about = the request_id of the message its fresh call was for, added by the drop-box extension)
-          if (this.doormanFor && result?.ok) {
-            try {
-              if (req.op === "reply") dHist().answered(this.name, req.request_id, req.text);
-              else if (typeof req.about === "string" && Array.isArray(result.pending)) for (const id of result.pending) dHist().link(this.name, id, req.about);
-            } catch (e) { log({ sb: this.name, error: `doorman history: ${e.message}` }); }
-          }
         } catch (e) {
           try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ }
           result = { ok: false, error: e.message.slice(0, 200) };
@@ -980,6 +966,7 @@ class Relay {
       if (editDigest && verdict !== "deny" && !te.applied) { // fail closed: Angus approved an EDITED version; if it can't be applied, the original must NOT go out in its place
         log({ sb: sb.name, op: "edit", id, decision: "not-applied", reason: te.failed || "the edit was missing or didn't match; nothing was sent" });
         heldNote(sb, msg, via, "Approved with an edit, but nothing was sent", te.failed || "the edit couldn't be applied (it was missing or replaced)");
+        if (msg.draft && sb.doormanFor) this.tellOutcome(sb.doormanFor, typeof msg.draftFor === "string" ? msg.draftFor : "", `Angus approved an edited version of the request drafted for you (${id}), but it couldn't be applied, so nothing was sent.`); // J395
         try { inboxWrite(sb, { type: "decision", id, decision: "denied", to: (msg.shown || msg.to || []).map((x) => String(x).replace(/ \(.*\)$/, "")) }); } catch { /* */ }
         if (msg.research?.plan) spawn(process.execPath, [RESEARCH, "drop", "--rid", String(msg.research.rid)], { stdio: "ignore" }).on("error", () => {});
         return;
@@ -1040,13 +1027,11 @@ class Relay {
         fs.rmSync(g.dir, { recursive: true, force: true });
         heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", verdict === "deny" ? `nothing ran${why}` : "but the sandbox it serves isn't configured");
         if (served) { try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "denied", id }); } catch { /* */ } this.gpuTell(served, sb, g, `Angus denied your GPU lease ${g.lease} (${g.job.slice(0, 80)}); nothing ran.${reason ? ` His reason (note from Angus): ${reason}` : ""}`); }
-        try { inboxWrite(sb, { type: "decision", kind: "gpu", id, decision: "denied", outcome: verdict === "deny" ? "nothing ran" : "not run: the sandbox it serves isn't configured" }); } catch { /* */ } // J373: the receipt for the asker's history
         return;
       }
       log({ sb: sb.name, op: "gpu_lease", decision: "approved", id, lease: g.lease, files: (g.files || []).map((x) => `${x.path}:${x.sha256.slice(0, 12)}`), seconds: g.seconds, vramMib: g.vramMib, via: via || "terminal" });
       heldNote(sb, what, via, "Approved", "the GPU worker starts (developer mode)");
       try { inboxWrite(served, { type: "gpu", lease: g.lease, status: "running", id }); } catch { /* */ }
-      try { inboxWrite(sb, { type: "decision", kind: "gpu", id, decision: "approved", outcome: "the worker runs it now" }); } catch { /* */ } // J373: the receipt for the asker's history
       try { fs.writeFileSync(path.join(g.dir, "running.json"), JSON.stringify({ sandbox: served.name, doorman: sb.name, for: g.for, lease: g.lease, job: String(g.job).slice(0, 200) }), { mode: 0o600 }); } catch { /* */ }
       this.gpuTell(served, sb, g, `Angus approved your GPU lease ${g.lease}; the worker runs it now (developer mode). Results arrive in your inbox.`);
       this.runGpu(sb, served, msg, via);
@@ -1109,6 +1094,8 @@ class Relay {
     if (verdict === "deny") {
       log({ sb: sb.name, op: "talk", decision: "denied", id, ...(reason ? { reason } : {}) });
       heldNote(sb, msg, via, `Denied`, reason ? `Angus's reason: ${reason}` : "");
+      // J395 (the Doorman remembers nothing): the agent a Doorman draft was for hears the outcome itself
+      if (msg.draft && sb.doormanFor) this.tellOutcome(sb.doormanFor, typeof msg.draftFor === "string" ? msg.draftFor : "", `Angus denied the request drafted for you (${id})${reason ? `. His reason (note from Angus): ${reason}` : ""}.`);
       if (!sb.conn) return;
       inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to, ...(reason ? { note: reason } : {}) });
       return;
@@ -1127,6 +1114,7 @@ class Relay {
       log({ sb: sb.name, op: "talk", decision: "approved", id, delivered: r.delivered, request_id: r.request_id });
       watchReply(r.request_id, { sandbox: sb.name, id, rooms: msg.rooms, to: (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")) }); // J290
       heldNote(sb, msg, via, verdict.startsWith("allow-") ? "Approved and allowed similar" : "Approved", r.delivered.length ? `delivered to ${r.delivered.join(", ")}` : `it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((s) => s.name || s).join(", ")})` : ""}`);
+      if (msg.draft && sb.doormanFor) this.tellOutcome(sb.doormanFor, typeof msg.draftFor === "string" ? msg.draftFor : "", `Angus approved the request drafted for you (${id}); it went to ${(msg.shown || msg.to || []).map((x) => String(x).replace(/ \(.*\)$/, "")).join(", ") || "the host"}, and any answer comes back here.`); // J395
       // (NoteReview #3: the sandbox's receipt failing is not the delivery failing: its own try, no second note)
       try { inboxWrite(sb, { type: "decision", id, decision: "approved", delivered: r.delivered, request_id: r.request_id, skipped: r.skipped }); } catch (e) { log({ sb: sb.name, error: `inbox (decision receipt): ${e.message}` }); }
     } catch (e) { log({ sb: sb.name, op: "talk", decision: "approved", id, error: e.message }); heldNote(sb, msg, via, "Approved", `but the relay couldn't send it: ${e.message}`); }

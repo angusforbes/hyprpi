@@ -29,6 +29,6 @@ for f in sorted(glob.glob('$1/*.json')):
   if d.get('type')=='result' and d.get('for')=='$2.json': print('  result:', d.get('ok'), d.get('error') or '')"; }
 pend() { for f in $P/pending/*.json; do [ -f $f ] && python3 -c "import json;d=json.load(open('$f'));print(d['id'], (d.get('typed') or {}).get('type'), (d.get('taskChange') or {}).get('for'))"; done; }
 decide() { touch $P/decisions/$1.$2; sleep 4; }
-. "$S/e2e-steps.sh"
+. "${E2E_STEPS:-$S/e2e-steps.sh}" # (J395: another steps file, e.g. docker/doorman/test-outcomes-steps.sh)
 for p in $(pgrep -f "bin/hyprpi daemon|sbx-relay.mjs run"); do grep -q bogus-j368 /proc/$p/environ 2>/dev/null && kill $p; done; sleep 1
 rm -rf "$R"
