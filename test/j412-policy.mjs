@@ -13,6 +13,8 @@ import path from "node:path";
 import vm from "node:vm";
 import { kindAction, MODES } from "../docker/research/mode.mjs";
 
+// The relay's methods are copied out of an ES module; `import.meta` is only valid in a module, so the copy gets the relay's own URL instead.
+const RELAY_URL = new URL("../docker/sbx-relay.mjs", import.meta.url).href, meta = (code) => code.replace(/import\.meta\.url/g, JSON.stringify(RELAY_URL));
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j412-policy-"));
 const src = fs.readFileSync(new URL("../docker/sbx-relay.mjs", import.meta.url), "utf8");
 const between = (a, b) => { const i = src.indexOf(a); assert.ok(i >= 0, a); return src.slice(i, src.indexOf(b, i + a.length)).trim(); };
@@ -26,7 +28,7 @@ const ctx = { fs, path, PENDING, DECISIONS, STATE: T, LIMITS: { pendingPerSandbo
 // The methods under test, verbatim; hold()'s tail (toast, room note) is reached only for held items and is stubbed through notifyHeld/conn.
 const body = between("  // J412 (spec 1.5): which request kind", "  // J309: run one research request");
 const decideHead = between("    // J412: the dial at decision time.", "    // (re-review J368 #7)");
-const R = vm.runInNewContext(`(class R {
+const R = vm.runInNewContext(meta(`(class R {
   constructor() { this.sandboxes = []; }
   returnedFor() { return null; }
   ${body}
@@ -34,7 +36,7 @@ const R = vm.runInNewContext(`(class R {
   async dialCheck(id, verdict, via) { const pf = path.join(PENDING, id + ".json"); let note = "", byDial = false, autoMode = ""; const msg = JSON.parse(fs.readFileSync(pf, "utf8"));
     ${decideHead}
     return { verdict, note, msg, byDial }; }
-})`, ctx);
+})`), ctx);
 const relay = new R();
 const world = { name: "world-t", cfg: {}, relay }, door = { name: "doorman-t", doormanFor: "world-t", cfg: {}, relay, conn: { call: async () => ({}) } };
 relay.sandboxes = [world, door];
