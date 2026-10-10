@@ -11,12 +11,14 @@ fs.writeFileSync(path.join(base, "cfg", "hyprpi", "sbx-relay.json"), JSON.string
 const put = (id, m) => fs.writeFileSync(path.join(PEND, id + ".json"), JSON.stringify({ id, sandbox: "door-t", at: new Date().toISOString(), to: ["Angus"], shown: ["Angus"], mode: "talk", ...m }));
 put("door-t--a11111", { text: "Question from the host agent working job door-t--b22222 (question 1): Which profile?", hostJob: { id: "door-t--b22222", n: 1 } });
 put("door-t--c33333", { text: "hello from a sandbox agent", targets: [{ kind: "agent", id: "x" }] });
+put("door-t--d44444", { text: "hello again", targets: [{ kind: "agent", id: "x" }], revises: "door-t--c00000" });
 const { heldForSandboxes, actOnHeld } = await import("../lib/held.mjs");
 const rp = (await import("../docker/doorman/review-provider.mjs")).default("door-t");
 const ok = (m) => console.log("ok " + m);
 const items = heldForSandboxes(["door-t", "world-t"]), q = items.find((x) => x.id === "door-t--a11111"), m = items.find((x) => x.id === "door-t--c33333");
 assert.equal(q.kind, "host agent's question"); assert.deepEqual(q.choices, ["1", "2"]); assert.equal(q.answer, true);
 assert.deepEqual(m.choices, ["1", "1+", "2"]); assert.equal(m.answer, false);
+assert.deepEqual(items.find((x) => x.id === "door-t--d44444").choices, ["1", "2"], "a revision never offers 1+");
 ok("a held question offers 1 (answer, with text) and 2 (decline); a plain message offers 1, 1+ and 2");
 // review-provider: on the question, 1 needs text; 1+ isn't offered; the answer goes through the guarded CLI (refused under an agent)
 assert.match(rp.decide("door-t--a11111", "1", "").text, /say what to answer/);

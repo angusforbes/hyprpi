@@ -111,14 +111,14 @@ calls.forEach(([name, args], i) => rpc({ id: 10 + i, method: "tools/call", param
 for (let t = 0; t < 200 && (mout.match(/"id":1\d/g) || []).length < calls.length; t++) await new Promise((res) => setTimeout(res, 100));
 mcp.stdin.end();
 const msgs = mout.trim().split("\n").map((l) => JSON.parse(l)), byId = Object.fromEntries(msgs.map((m) => [m.id, m]));
-assert.equal(byId[1].result.serverInfo.name, "doorman-bridge"); assert.equal(byId[7].error.code, -32600, "an invalid request gets an error, the server stays up"); assert.equal(byId[2].result.tools.length, 12);
+assert.equal(byId[1].result.serverInfo.name, "doorman-bridge"); assert.equal(byId[7].error.code, -32600, "an invalid request gets an error, the server stays up"); assert.equal(byId[2].result.tools.length, 13);
 assert.ok(!byId[2].result.tools.some((x) => /approve|deny|edit|create|set_|write/.test(x.name)), "no tool can decide or write");
 const res = (i) => JSON.parse(byId[10 + i].result.content[0].text);
 assert.equal(res(0).ok, true, "register_agent"); assert.equal(res(0).agent_token, undefined, "the agent token stays in the server");
 assert.equal(res(1).jobs.length, 1); assert.equal(res(3).ok, true); assert.equal(res(4).ok, true); assert.equal(res(5).ok, true); assert.equal(res(6).ok, true); assert.equal(res(7).ok, true);
 assert.equal(res(8).ok, true); assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00004.json"), "utf8")).state, "asked", "released with an open question: stays asked, unclaimed");
 assert.equal(res(9).ok, false, "no report without a claim");
-ok("MCP: initialize, 12 tools (none decides or writes), every tool callable");
+ok("MCP: initialize, 13 tools (none decides or writes), every tool callable");
 // 7b. (J379 red team) tokens aren't stored anywhere: no cache for another process of the user to reuse
 assert.ok(!fs.existsSync(path.join(cache, "doorman-bridge")), "no token cache written");
 ok("claim tokens are never cached (another process can't reuse them)");

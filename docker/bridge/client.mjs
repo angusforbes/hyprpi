@@ -62,3 +62,11 @@ export async function ask(id, by, text, token) { return vid(id) || request({ op:
 export async function report(id, by, { state, summary, ran = [], changed = [] }, token) {
   return vid(id) || request({ op: "report", id, by, state, summary, ran, changed, token: tok(id, token) });
 }
+
+// J412 (spec 2.3.4): the relay's receipts for decisions on settings proposals, newest last; only the given proposer's (no tokens involved:
+// what Angus decided and his text for that proposal, nothing else)
+export function receipts(by) {
+  let lines = []; try { lines = fs.readFileSync(path.join(stateDir(), "bridge", "receipts.jsonl"), "utf8").trim().split("\n").filter(Boolean).slice(-200); } catch { /* none yet */ }
+  const who = String(by || "");
+  return { ok: true, receipts: lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((r) => r && r.by === who).slice(-20) };
+}

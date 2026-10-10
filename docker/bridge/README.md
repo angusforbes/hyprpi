@@ -27,6 +27,7 @@ The relay only knows a host agent exists if it registers. A host agent registers
 | heartbeat --agent-token T           | (automatic)      | stay alive                |
 | unregister --agent-token T          | unregister_agent | leave                     |
 | agents                              | list_agents      | who is there, read-only   |
+| receipts [--by NAME]                | read_receipts    | decisions on proposals    |
 
 - The MCP server keeps its agent token in memory, heartbeats every 30 s while it runs, and unregisters when its client closes it. `claim_job` refuses until `register_agent` was called. A claim is always made in the registered name.
 - The per-job runner registers for the length of each run (on demand). While its path unit is installed it counts as an available agent.

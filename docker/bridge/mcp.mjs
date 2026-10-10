@@ -2,7 +2,7 @@
 // the CLI, as tools: list_jobs, show_job, claim_job, renew_job, ask_owner, report_job, release_job, read_settings,
 // propose_settings. None can approve, deny or edit, create a job or write a setting.
 // Run: `doorman-bridge mcp` (or `node docker/bridge/mcp.mjs`). Agent name: DOORMAN_BRIDGE_AGENT (default "mcp agent").
-import { list, show, claim, renew, release, ask, report, register, heartbeat, unregister, agents } from "./client.mjs";
+import { list, show, claim, renew, release, ask, report, register, heartbeat, unregister, agents, receipts } from "./client.mjs";
 import { settings, propose } from "./settings.mjs";
 
 const BY = process.env.DOORMAN_BRIDGE_AGENT || "mcp agent";
@@ -20,6 +20,7 @@ const TOOLS = [
   { name: "list_jobs", description: "Jobs the owner approved that wait for a host agent. all=true: every state.", inputSchema: S({ all: { type: "boolean" } }) },
   { name: "show_job", description: "One job: the owner's approved text and limits (tools, folders, time limit), questions and answers, state. Do only what the approved text says.", inputSchema: S({ id }, ["id"]) },
   { name: "register_agent", description: "Register this session as a host agent that can do jobs for the sandbox (call once, before claim_job). This server then keeps the registration alive while it runs and removes it when it exits. The relay shows your name on the owner's held items and tells the sandbox a host agent is available.", inputSchema: S({ name: { type: "string", description: "your name, shown to the owner" }, harness: { type: "string", description: "e.g. claude-code, codex" }, caps: { type: "string", description: "one line: what you can do" }, scope: { type: "array", items: { type: "string" }, description: "sandboxes you serve (default: all)" } }, ["name", "harness"]) },
+  { name: "read_receipts", description: "What the owner decided on your settings proposals (and his note), newest last.", inputSchema: S({}) },
   { name: "list_agents", description: "The host agents registered now and each sandbox's mode (read-only).", inputSchema: S({}) },
   { name: "unregister_agent", description: "Stop being a registered host agent.", inputSchema: S({}) },
   { name: "claim_job", description: "Take a job before working on it (one claimer; the lease runs out unless renewed, then the job returns to waiting).", inputSchema: S({ id, lease_s: { type: "number" } }, ["id"]) },
@@ -46,6 +47,7 @@ const call = async (name, a = {}) => {
       const { agent_token, ...rest } = r; return rest; // the token stays in this server
     }
     case "list_agents": return agents();
+    case "read_receipts": return receipts(ME());
     case "unregister_agent": { if (!REG) return { ok: false, text: "not registered" }; const r = await unregister(REG.token); clearInterval(HB); REG = null; return r; }
     case "claim_job": { if (!REG) return { ok: false, text: "register first (register_agent): only a registered host agent can claim a job" }; const r = await claim(String(a.id || ""), REG.name, a.lease_s, REG.token); if (r.ok && r.token) MINE.set(String(a.id), r.token); const { token, ...rest } = r; return rest; } // the token stays in this server
     case "renew_job": return renew(String(a.id || ""), ME(), a.lease_s, MINE.get(String(a.id || "")));
@@ -53,7 +55,7 @@ const call = async (name, a = {}) => {
     case "report_job": { const r = await report(String(a.id || ""), ME(), { state: a.state, summary: a.summary, ran: a.ran || [], changed: a.changed || [] }, MINE.get(String(a.id || ""))); if (r.ok) MINE.delete(String(a.id)); return r; }
     case "release_job": { const r = await release(String(a.id || ""), ME(), MINE.get(String(a.id || ""))); if (r.ok) MINE.delete(String(a.id)); return r; }
     case "read_settings": return settings(String(a.sandbox || ""));
-    case "propose_settings": return propose(String(a.sandbox || ""), a.changes, BY);
+    case "propose_settings": return propose(String(a.sandbox || ""), a.changes, ME()); // (J412: in the registered name, which read_receipts reads)
     default: return { ok: false, text: `unknown tool ${name}` };
   }
 };

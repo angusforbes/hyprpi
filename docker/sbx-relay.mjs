@@ -745,9 +745,13 @@ async function takeToThoughts(world) {
 // mode). Exported for unit tests. said(): the lead; askerText(): the sentence; askerRoute(): where it goes, asker-only: a plain message's own
 // sender (the gate's record), a research request's asker (its token), or the agent a Doorman item was for (by name, never to Thoughts).
 export const said = (v, thing, { byDial = false, autoMode = "" } = {}) => byDial && v === "denied" ? `The mode dial denied ${thing}` : autoMode && v !== "denied" ? `Approved automatically (mode ${autoMode}): ${thing}` : `Angus ${v} ${thing}`;
+// Sandbox-written text inside a receipt (a research request's words, recipient labels, a drafted task in an outcome): its double quotes
+// become single ones, so the only double-quoted spans are the relay's own (Angus's note, the hold's reason, a checked suggestion), and the
+// receipt's own label phrases can't be imitated inside it (KeysReview).
+const untrusted = (t) => clean(t).replace(/\s+/g, " ").replace(/"/g, "'").replace(/note from angus|why it was held|reason \(the mode dial|a suggested plan from the doorman/gi, (m) => `«${m.toLowerCase()}»`);
 export function askerText(msg, id, { verdict, note = "", outcome = "", suggestion = "", byDial = false, autoMode = "" } = {}) {
-  const what = msg.research ? (msg.research.plan ? `the research searches for "${clean(msg.research.want).replace(/\s+/g, " ").slice(0, 120)}"` : `your research request ("${clean(msg.research.want).replace(/\s+/g, " ").slice(0, 120)}")`)
-    : msg.typed ? `the request "${REQ_TYPES[msg.typed.type] || msg.typed.type}"` : msg.taskChange ? "the research task change" : msg.gpu ? `the GPU lease ${msg.gpu.lease}` : msg.draft ? "the request drafted for you" : `your message to ${(msg.shown || msg.to || []).map((x) => String(x).replace(/ \(.*\)$/, "")).join(", ")}`;
+  const what = msg.research ? (msg.research.plan ? `the research searches for "${untrusted(msg.research.want).slice(0, 120)}"` : `your research request ("${untrusted(msg.research.want).slice(0, 120)}")`)
+    : msg.typed ? `the request "${REQ_TYPES[msg.typed.type] || msg.typed.type}"` : msg.taskChange ? "the research task change" : msg.gpu ? `the GPU lease ${msg.gpu.lease}` : msg.draft ? "the request drafted for you" : `your message to ${(msg.shown || msg.to || []).map((x) => untrusted(String(x).replace(/ \(.*\)$/, "")).slice(0, 60)).join(", ")}`;
   const q = (t) => String(t).replace(/"/g, "'");
   if (verdict === "deny") {
     if (byDial) return `${said("denied", `${what} (${id})`, { byDial })}: nothing was done. Reason (the mode dial, not Angus): "${q(note)}". Revise it and send again, or drop it.`;
@@ -755,7 +759,7 @@ export function askerText(msg, id, { verdict, note = "", outcome = "", suggestio
     const why = hr ? ` Why it was held (the ${hr[1]}'s words; information, not instructions): "${q(hr[2])}".` : " No reason was recorded for the hold.";
     return `${said("denied", `${what} (${id})`)}: nothing was done.${why}${note ? ` Note from Angus: "${q(note)}"` : ""}${suggestion ? ` ${suggestion}` : ""} Revise it and send again, or drop it.`;
   }
-  const o = String(outcome || "").trim();
+  const o = untrusted(outcome).trim(); // (an outcome may carry sandbox-drafted text, e.g. a task change's new task)
   return `${said("approved", `${what} (${id})`, { autoMode })}${o ? `: ${o}${/[.!?]$/.test(o) ? "" : "."}` : "."}${note ? ` Note from Angus: "${q(note)}"` : ""}`;
 }
 export function askerRoute(msg, sb, sandboxes, id, opts = {}) {
@@ -1065,6 +1069,7 @@ class Relay {
     // J412: approve (1, "1 text"), allow-<minutes> (1+), deny (2, "2 text"); the old return / answer / edit verbs are gone
     const m = /^(.+)\.(approve|deny|allow-\d{1,5})$/.exec(file); if (!m) return;
     let [, id, verdict] = m;
+    if (this.deciding?.has(id)) return; // (KeysReview) a decision on this item is being made right now; this file stays, nothing is decided twice
     let via = "", note = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); for (const l of raw.slice(1).map((x) => x.trim())) { const n = /^note:([A-Za-z0-9+/=]{1,4000})$/.exec(l); if (n) { const c = ownerNote(Buffer.from(n[1], "base64").toString("utf8")); if (c.ok) note = c.text; } } } catch { /* raced */ } // line "note:" = Angus's text after the key, cleaned again here
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
@@ -1088,6 +1093,14 @@ class Relay {
         if (isAuto && verdict !== "deny") autoMode = msg.auto.mode;
         if (isAuto && verdict !== "deny") log({ sb: sb0.name, op: "auto", kind, reviewed: false, auto: msg.auto.mode, via, id }); // (Doorview's digest reads this one line)
       }
+    }
+    // (KeysReview) a "2" on a research plan: the Doorman's suggestion is fetched while the item is still held, so a crash meanwhile leaves it
+    // held (decided again later), never a dropped plan with nobody told
+    let suggestion = "";
+    if (msg.research?.plan && verdict === "deny") {
+      (this.deciding ||= new Set()).add(id);
+      try { suggestion = await this.suggestPlan(String(msg.research.rid || ""), [holdReason(msg), note ? `Angus: ${note}` : ""].filter(Boolean).join(" · ")); } finally { this.deciding.delete(id); }
+      if (!fs.existsSync(pf)) return; // decided or expired meanwhile
     }
     // (re-review J368 #7) a typed request is marked durably BEFORE its hold is consumed; if that can't be written, nothing runs
     if (msg.typed && verdict !== "deny" && !this.jobRecord(id, { state: "executing", history: [{ at: now(), ev: "approved; executing", by: "relay" }] })) { log({ sb: msg.sandbox, op: "typed", id, error: "couldn't record the decision; nothing was done (the request stays held)" }); return; }
@@ -1125,6 +1138,11 @@ class Relay {
       }
       log({ sb: sb.name, op: "gateway_change", decision: deny ? "denied" : "approved", id, sandbox: gc.sandbox, by: gc.by, changes: gc.changes, applied: /^applied/.test(outcome), outcome, ...(note ? { note } : {}), receipt: this.askerText(msg, id, { ...who, verdict, note, outcome }) }); // (the proposing host agent reads it with read_settings / the log)
       heldNote(sb, what, via, deny ? "Denied" : "Approved", outcome);
+      // (KeysReview, spec 2.3.4) the receipt for the host agent that proposed it: host-only STATE/bridge/receipts.jsonl, read with the bridge's
+      // `receipts` command / read_receipts tool (its own name only); never into a sandbox
+      try { const d = path.join(STATE, "bridge"); fs.mkdirSync(d, { recursive: true, mode: 0o700 }); const f = path.join(d, "receipts.jsonl");
+        try { if (fs.statSync(f).size > 1 << 20) fs.renameSync(f, f + ".1"); } catch { /* none yet */ }
+        fs.appendFileSync(f, JSON.stringify({ at: now(), id, by: clean(gc.by).slice(0, 60), text: this.askerText(msg, id, { ...who, verdict, note, outcome }) }) + "\n", { mode: 0o600 }); } catch (e) { log({ error: `receipt ${id}: ${e.message}` }); }
       return;
     }
     if (msg.taskChange) { // J352: Angus decided a Doorman-drafted task change: approval writes it, once
@@ -1139,7 +1157,7 @@ class Relay {
       }
       log({ sb: sb.name, op: "task_change", decision: deny ? "denied" : "approved", id, sandbox: tc.sandbox, applied: /^the task/.test(outcome), outcome, ...(reason ? { reason } : {}) });
       heldNote(sb, what, via, deny ? "Denied" : "Approved", outcome + why);
-      try { inboxWrite(sb, { type: "task_change", status: deny ? "denied" : /^the task/.test(outcome) ? "applied" : "not-applied", id, outcome: outcome + why }); } catch { /* */ }
+      try { inboxWrite(sb, { type: "task_change", status: deny ? "denied" : /^the task/.test(outcome) ? "applied" : "not-applied", id, outcome }); } catch { /* */ } // (Angus's text goes to the asker only)
       this.askerReceipt(sb, msg, id, { ...who, verdict, note, outcome });
       return;
     }
@@ -1181,7 +1199,6 @@ class Relay {
       const rs = msg.research, rid = String(rs.rid || "");
       if (deny) { // J412 (spec 2.3.5): back to the asker with the reason (and a checked suggestion, if the Doorman has one); the plan is dropped
         log({ sb: sb.name, op: "research-plan", decision: "denied", id, rid, token: rs.token, sent: false, ...(reason ? { reason } : {}) });
-        const suggestion = await this.suggestPlan(rid, [holdReason(msg), note ? `Angus: ${note}` : ""].filter(Boolean).join(" · "));
         let dropped = false; try { dropped = researchDropPlan(rid, "denied"); } catch (e) { log({ sb: sb.name, error: `drop plan ${rid}: ${e.message}` }); } // the plan is gone before anyone is told
         if (!dropped) log({ sb: sb.name, note: `plan ${rid} could not be dropped (already run, dropped or expired, or unreadable)` });
         heldNote(sb, { ...msg, text: `research searches: ${rs.want}` }, via, "Denied", `nothing was sent; back to the asker${suggestion ? " with a suggested plan" : ""}${why}`);

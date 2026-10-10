@@ -13,13 +13,14 @@
 //   doorman-bridge propose SANDBOX key=value...       propose a settings change; it waits for the owner's approval
 //   doorman-bridge register NAME --harness H [--caps TEXT] [--scope SANDBOX]...   register as a host agent (J407); prints an agent token
 //   doorman-bridge heartbeat|unregister --agent-token T   keep it alive (every 30 s; it expires after 120 s) / remove it
+//   doorman-bridge receipts [--by NAME]                what the owner decided on your settings proposals (J412)
 //   doorman-bridge agents                             registered host agents and each sandbox's mode (read-only)
 //   doorman-bridge mcp                                the MCP server (stdio)
 //   doorman-bridge run-job ID | dispatch | runner --install|--uninstall|--status    the per-job runner (runner.mjs, J387)
 // Options: --json (machine output), --token T (the token claim printed; required for renew/ask/report/release, J379).
 // The bridge can't approve, deny or edit anything, create jobs or change settings: the owner decides in the Doorman
 // window; the relay applies. Exit 0 = ok, 1 = refused, 2 = usage.
-import { list, show, claim, renew, release, ask, report, register, heartbeat, unregister, agents } from "./client.mjs";
+import { list, show, claim, renew, release, ask, report, register, heartbeat, unregister, agents, receipts } from "./client.mjs";
 import { settings, propose } from "./settings.mjs";
 
 const argv = process.argv.slice(2), opts = { ran: [], changed: [] }, pos = [];
@@ -43,6 +44,7 @@ else if (cmd === "runner") { const { runnerUnits } = await import("./runner.mjs"
 else if (cmd === "register") { const r = await register({ name: id || by, harness: opts.harness || "cli", caps: opts.caps || "", scope: opts.scope }); if (r.ok && !opts.json) { console.log(`${r.text}\nagent token: ${r.agent_token}  (pass it with --agent-token to heartbeat, claim and unregister)`); process.exit(0); } out(r); }
 else if (cmd === "heartbeat") out(await heartbeat(opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""));
 else if (cmd === "unregister") out(await unregister(opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""));
+else if (cmd === "receipts") { const r = receipts(by); out(opts.json ? r : { ok: true, text: r.receipts.map((x) => `${x.at} ${x.id}: ${x.text}`).join("\n") || "no receipts" }); } // J412: decisions on your settings proposals
 else if (cmd === "agents") { const r = agents(); out(opts.json ? r : { ok: true, text: [...r.agents.map((a) => `${a.name} (${a.harness}${a.on_demand ? ", on demand" : ""}) since ${a.since}, last heartbeat ${a.last}${a.scope?.length ? `, for ${a.scope.join(", ")}` : ""}`), ...Object.entries(r.modes).map(([s, m]) => `${s}: ${m.mode}${m.agents.length ? ` (${m.agents.join(", ")})` : ""}`)].join("\n") || "no host agents registered" }); }
 else if (cmd === "list") {
   const jobs = list({ all: !!opts.all });
