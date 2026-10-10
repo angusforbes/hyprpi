@@ -310,7 +310,10 @@ function apply() {
   // (J366) not a path that is still wanted with another mode or source: the loop above already replaced it, and
   // `sbx umount host:path` would remove the NEW mount (it doesn't take the mode)
   const wantAt = new Set(want.map((m) => m.at));
-  for (const m of managed) if (!wantKeys.has(key(m)) && haveKeys.has(key(m)) && !wantAt.has(m.at)) { const r = sbx(["umount", p.sandbox, `${m.host}:${m.at}`]); log(`${r.ok ? "removed" : "couldn't remove"} ${m.at}`); }
+  // (LevelReview) removal goes by sbx's own list, not the guest's view: a mount guest root unmounted is still sbx's,
+  // and sbx would restore it at the next start
+  const haveAll = new Set(have.map(key));
+  for (const m of managed) if (!wantKeys.has(key(m)) && haveAll.has(key(m)) && !wantAt.has(m.at)) { const r = sbx(["umount", p.sandbox, `${m.host}:${m.at}`]); log(`${r.ok ? "removed" : "couldn't remove"} ${m.at}`); }
   // (LevelReview) remember what is REALLY there: an earlier managed mount that a failed replace or removal left in
   // place stays on the list, so a later apply still removes it
   const after = new Set(current(p.sandbox).map(key));
