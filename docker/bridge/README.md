@@ -36,7 +36,7 @@ In `~/.config/hyprpi/sbx-relay.json`, on the Doorman's entry:
 - ask: the question becomes a held item in the owner's Doorman window, and the job waits. Read his answer with show. Ask the owner nowhere else.
 - report: done, failed or partial, a summary, and exactly what you ran (`--ran`) and changed (`--changed`). The relay records it, tells the agent that asked and its coordinator, and the Doorman's archive keeps it.
 - propose: the change waits in the Doorman window. The owner approves it with 1, and the host applies it, only if nothing changed meanwhile.
-- `--json` gives machine output. `claim` prints a token. Pass it with `--token` to renew, ask, report or release. It isn't stored anywhere, so another process of the same user can't act on your claim. The MCP server keeps the tokens of its own claims in memory, and a per-job run gets its own token in `DOORMAN_BRIDGE_TOKEN`.
+- `--json` gives machine output. `claim` prints a token. Pass it with `--token` to renew, ask, report or release. There is no shared token cache, so one agent can't pick up another's claim by accident. The MCP server keeps the tokens of its own claims in memory, and a per-job run gets its own token in `DOORMAN_BRIDGE_TOKEN`. The tokens do live in host-only state (the job records, the bridge's request files, a run's 0600 MCP config), so a hostile process running as the owner could still read them. The boundary is the user account, as for the decision files.
 - The job's action is stored as its own field (`approved.action_line`, taken from the Doorman's draft), never parsed out of the text, so a line inside the sandbox's "why" can't pose as the action.
 - `settings` shows no key file paths. Anything key-, token- or secret-like is shown only as "(set)" or "(not set)".
 
@@ -91,6 +91,10 @@ Any harness that runs shell commands can use the CLI: `doorman-bridge list --jso
 - Everything runs as the owner's user on the host, and nothing in a sandbox can reach `STATE`. The protection is the user boundary: a hostile process running as the owner could write decision files directly, just as it could before the bridge.
 - `DOORMAN_STATE` points the CLI and MCP server at another state folder.
 - Job ids are `<sandbox>--<6 hex digits>` (the relay's held-item ids, e.g. `doorman-g--3b0f5e`). The relay makes them. A hand-made test record with another name is skipped by `list`, with a note on stderr.
+
+## Sharing a project from an approved request (share_project)
+
+When the owner approves sharing a project, the request carries the folder's real path and inode as shown to him. `addProject` refuses a folder that no longer matches. The entry then keeps that identity, and every plan checks it again, so a folder swapped after it was added is skipped and never mounted. One small window remains: a swap between the plan's check and the sbx mount itself, a few milliseconds later. Closing it would need sbx to mount a pinned directory.
 
 ## In pi-doorman (standalone)
 

@@ -64,7 +64,7 @@ export async function runJob(id) {
   const job = show(id);
   const token = c.token; // the runner keeps its token; the run's MCP server gets it in DOORMAN_BRIDGE_TOKEN (J379: no shared cache)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "doorman-run-")), mcpConfig = path.join(tmp, "mcp.json"), cache = path.join(tmp, "cache");
-  // (RunnerReview HIGH) the agent's MCP server is bound to THIS job and has a private token cache holding this job's token only
+  // (RunnerReview HIGH, J379) the agent's MCP server is bound to THIS job; its token comes in DOORMAN_BRIDGE_TOKEN (no shared cache)
   const env = { ...process.env, DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, DOORMAN_BRIDGE_TOKEN: token, XDG_CACHE_HOME: cache };
   fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { "doorman-bridge": { command: CLI, args: ["mcp"], env: { DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, DOORMAN_BRIDGE_TOKEN: token, XDG_CACHE_HOME: cache } } } }), { mode: 0o600 }); // (0600, in the run's private temp folder)
   const work = path.join(tmp, "work"); fs.mkdirSync(work, { mode: 0o700 }); // (RunnerReview) a job without folders runs in a private empty folder, not /tmp

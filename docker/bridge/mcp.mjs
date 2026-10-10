@@ -7,7 +7,7 @@ import { settings, propose } from "./settings.mjs";
 
 const BY = process.env.DOORMAN_BRIDGE_AGENT || "mcp agent";
 // (J387, RunnerReview HIGH) a per-job run's server is bound to its job: every tool works only on that id, list_jobs shows only
-// it, and claim/release/settings tools don't exist; its token cache (XDG_CACHE_HOME) holds that job's token alone
+// it, and claim/release/settings tools don't exist; its token comes in DOORMAN_BRIDGE_TOKEN (honoured only for that job)
 const JOB = /^[A-Za-z0-9._-]{1,80}--[0-9a-f]{6}$/.test(process.env.DOORMAN_BRIDGE_JOB || "") ? process.env.DOORMAN_BRIDGE_JOB : "";
 const JOB_TOOLS = new Set(["list_jobs", "show_job", "renew_job", "ask_owner", "report_job"]);
 const MINE = new Map(); // (J379) an unbound server keeps the tokens of ITS OWN claims only (no shared cache): id -> token
