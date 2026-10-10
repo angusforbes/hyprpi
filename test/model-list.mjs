@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// J389 proof: a model on hyprpi.jsonc modelDeny (Kimi) is refused at spawn_agent (orch.spawn), open_agent
+// J389/J397 proof: a model NOT on the host's scoped model list (pi's enabledModels; Kimi isn't on it, and hyprpi.jsonc has no modelDeny any more) is refused at spawn_agent (orch.spawn), open_agent
 // (thoughts.open) and set_model (thoughts.setModel), before any test call, with a suggestion; an allowed
 // model still passes the deny check. Isolated daemon (J333 guard), HYPRPI_ORCH_LAUNCH=/bin/true.
-//   node test/model-deny.mjs   (exit 0 = pass; uses the live config's modelDeny)
+//   node test/model-list.mjs   (exit 0 = pass; uses the live ~/.pi/agent/settings.json enabledModels)
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -32,8 +32,13 @@ try {
     "open_agent": await refused(() => c.call("thoughts.open", { room: "A", task: "x", model: KIMI })),
     "set_model": await refused(() => c.call("thoughts.setModel", { room: "A", agent: "hp-j389probe", model: KIMI })),
     "openrouter kimi": await refused(() => c.call("orch.spawn", { thoughts: "A", prompt: "x", name: "DenyC", model: "openrouter/~moonshotai/kimi-latest" })),
+    "any unlisted model (spawn)": await refused(() => c.call("orch.spawn", { thoughts: "A", prompt: "x", name: "DenyE", model: "openrouter/google/gemini-pro-latest" })),
+    "any unlisted model (set_model)": await refused(() => c.call("thoughts.setModel", { room: "A", agent: "hp-j389probe", model: "openrouter/google/gemini-pro-latest" })),
   };
-  for (const [k, m] of Object.entries(msgs)) ok(`${k} refused`, /deny list/.test(m) && /Use \S+ instead/.test(m), m.slice(0, 200));
+  for (const [k, m] of Object.entries(msgs)) ok(`${k} refused`, /scoped model list/.test(m) && /Use \S+ instead/.test(m), m.slice(0, 200));
+  const listed = await refused(() => c.call("orch.spawn", { thoughts: "A", prompt: "x", name: "AllowE", model: "nvidia/openai/gpt-oss-20b" }));
+  ok("an explicitly listed nvidia model passes", !listed, listed);
+  const policyOnly = (await c.call("models.audit", {})); ok("models.audit: every model hyprpi.jsonc names is on the list", Array.isArray(policyOnly.notOnList) && policyOnly.notOnList.length === 0, JSON.stringify(policyOnly.notOnList));
   const allowed = await refused(() => c.call("orch.spawn", { thoughts: "A", prompt: "x", name: "AllowD", model: "anthropic/claude-haiku-4-5" }));
   ok("allowed model passes", !allowed, allowed);
   ok("no test call made", !/model check: /.test(fs.readFileSync(logf, "utf8")));
