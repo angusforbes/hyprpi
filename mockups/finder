@@ -247,17 +247,20 @@ async function rows() {
       rich: esc(icon) + " " + font(worldColor(m[2][0]), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc) + (age ? font("dim", " · " + age) : ""), sub: "",
       worlds: [...new Set([wsWorld, m[2][0]])].join(""), ws, subtitle: [SUMMON && ws === S.workspace ? "already here" : "", info.sub].filter(Boolean).join(" · ") });
   }
-  // J404: a sandboxed world's own agents and panels (summon, that world only): 🐳 before the name, as Linkpath's rows.
-  if (SUMMON) {
+  // J404: a sandboxed world's own agents and panels, 🐳 before the name (Linkpath's rows). Summon: that world's, after
+  // the host agents (⏎ brings the window in); the finder (J404 v2, Angus: "alpha and beta are not appearing … either"):
+  // every world's, its agents with the agents and its panels with the panels (⏎ jumps to the window).
+  {
     const sw = sandboxWindows(clients);
     for (const c of clients) {
       const w = sw[c.address], ws = c.workspace?.id;
-      if (!w || !(ws > 0) || WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] !== S.room) continue;
+      const wsWorld = ws > 0 ? WORLD_LETTERS[Math.floor((ws - 1) / WORLD_SIZE)] : "";
+      if (!w || !wsWorld || (SUMMON && wsWorld !== S.room)) continue;
       const loc = wsLabel(ws, WORLD_SIZE), agent = w.kind === "agent";
-      const nm = agent ? w.name || safeText(String(c.title || "").replace(/^π - /, "").split(" - ")[0]) || "agent" : `${S.room}: ${(PANEL_KIND[w.kind] || ["", w.kind || "panel"])[1]}`;
-      out.push({ kind: "panel", id: c.address, room: S.room, sort: (agent ? "0" : "1") + nm, recent: 0, mark: "▫", glyph: agent ? "○" : "▫", sandboxed: true, // (one category: agents first by their sort key)
-        label: `🐳 ${nm} · ${loc}`, rich: "🐳 " + font(worldColor(S.room), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
-        worlds: S.room, ws, subtitle: [agent ? "sandboxed agent" : "sandboxed world's panel", ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
+      const nm = agent ? w.name || safeText(String(c.title || "").replace(/^π - /, "").split(" - ")[0]) || "agent" : `${wsWorld}: ${(PANEL_KIND[w.kind] || ["", w.kind || "panel"])[1]}`;
+      out.push({ kind: SUMMON ? "panel" : agent ? "sbxagent" : "panel", id: c.address, room: wsWorld, sort: SUMMON ? (agent ? "0" : "1") + nm : (agent ? "" : ">") + nm, recent: 0, mark: SUMMON ? "▫" : "○", glyph: agent ? "○" : "▫", sandboxed: true, // (summon: one category, agents first by their sort key)
+        label: `🐳 ${nm} · ${loc}`, rich: "🐳 " + font(worldColor(wsWorld), nm) + font("dim", " · ") + font(worldColor(loc[0]), loc), sub: "",
+        worlds: wsWorld, ws, subtitle: [agent ? "sandboxed agent" : "sandboxed world's panel", SUMMON && ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
     }
   }
   // Summon: this world's app windows (Angus, J28: "apply this summon logic to all apps"), two lines each:
@@ -285,7 +288,7 @@ async function rows() {
   // their last turn event, projects their card's last change. Ties A–Z. (The SUPER+S pop-up has its own order.)
   const CAT = { "×": 0, "●": 1, "◐": 2, "✓": 3, "○": 4, "◌": 5 }; // ◐ background (J93): its turn ended, subagents still running
   const cat = (r) => CAT[r.mark] ?? 3;
-  const KIND = SUMMON ? { agent: 0, panel: 1, app: 2, project: 3 } : { agent: 0, project: 1, panel: 2 }; // finder: panels last (J195)
+  const KIND = SUMMON ? { agent: 0, panel: 1, app: 2, project: 3 } : { agent: 0, sbxagent: 0, project: 1, panel: 2 }; // finder: panels last (J195)
   out.sort((x, y) => KIND[x.kind] - KIND[y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
@@ -299,7 +302,7 @@ async function rows() {
 }
 
 async function act(r) {
-  if (r.kind === "panel") return hypr.focusWindow(r.id); // J195: go to its workspace and focus it
+  if (r.kind === "panel" || r.kind === "sbxagent") return hypr.focusWindow(r.id); // J195: go to its workspace and focus it (J404: a sandboxed agent's window too)
   if (r.kind === "agent") {
     if (r.parked) return request("agent.unpark", { agent: r.id });
     return request("agent.focus", { agent: r.id });
