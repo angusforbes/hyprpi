@@ -43,7 +43,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { modeForSandbox, MODE_TEXT } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
+import { modeForSandbox, MODE_TEXT, withWorldsLock } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
 import { taskForSandbox } from "../research/task.mjs"; // J352: the host-set research task in the host card
 
 import { cardSection } from "../gpu/gpu.mjs"; // J328: the card's GPU section
@@ -432,7 +432,9 @@ async function watch() {
 // name (a real directory directly inside a project folder, no symlink), never widens past the level (strict: ro
 // only; open with "all": already shared), writes worlds/<world>.json atomically, and doesn't apply (the watcher, or
 // `shares.mjs apply WORLD`, does). → { ok, text }
-export function addProject(world, name, mode = "") {
+// J372 (review): a worlds-file writer: serialised with the other writers (setTask, gateway settings) so a stale write can't revert their change.
+export function addProject(world, name, mode = "") { return withWorldsLock(CFG, () => addProjectLocked(world, name, mode)); }
+function addProjectLocked(world, name, mode = "") {
   if (typeof world !== "string" || !/^[a-z0-9-]{1,32}$/.test(world)) return { ok: false, text: "bad world name" };
   if (typeof mode !== "string") return { ok: false, text: `mode must be "rw" or "ro"` };
   if (typeof name !== "string" || !/^[\w.-]+$/.test(name) || name === "." || name === "..") return { ok: false, text: `bad project name ${JSON.stringify(name)}` };

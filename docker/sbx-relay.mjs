@@ -883,7 +883,7 @@ class Relay {
           if (!v.ok || digestOf(gc.sandbox, v.changes) !== gc.digest) throw new Error("the proposal doesn't match what was shown");
           const r = applyChanges(path.dirname(CONFIG), gc.sandbox, v.changes, { expectBefore: gc.before });
           outcome = `applied: ${Object.entries(r.after).map(([k, x]) => `${k} ${r.before[k]} → ${x}`).join("; ")}`;
-          if (v.changes["search.provider"]) { const rc = researchConf(gc.sandbox); const n = syncReaderNetwork({ reader: rc.reader, provider: rc.gateway.search.provider }); outcome += `; reader network: ${n.results.map((x) => `${x.cmd.split(" ").slice(2).join(" ")} ${x.status === 0 ? "ok" : "failed"}`).join(", ") || "no change"}`; }
+          if (v.changes["search.provider"]) { const rc = researchConf(gc.sandbox); const n = syncReaderNetwork({ reader: rc.reader, provider: rc.gateway.search.provider }); outcome += `; reader network: ${n.results.map((x) => `${x.cmd.split(" ").slice(2).join(" ")} ${x.status === 0 ? "ok" : "FAILED"}`).join(", ") || "no change"}${n.failed ? ". The reader is blocked until `research.mjs reader network --apply` succeeds" : ""}`; }
         } catch (e) { outcome = `not applied: ${String(e.message).replace(/^not applied: /, "")}`; }
       }
       log({ sb: sb.name, op: "gateway_change", decision: verdict === "deny" ? "denied" : "approved", id, sandbox: gc.sandbox, by: gc.by, changes: gc.changes, applied: /^applied/.test(outcome), outcome });

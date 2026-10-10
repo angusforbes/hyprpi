@@ -46,10 +46,10 @@ export function resolveGateway({ w, research = {}, relay = [], sandbox = "", lev
   const dm = relay.find((x) => x && x.doorman_for === sandbox) || {};
   const doormanChat = String(dm.model || "").replace(/^nv-claude\//, "");
   const doorman = g.doorman_model !== undefined ? model("doorman_model", [[g.doorman_model, "gateway.doorman_model"]], "") : (src.doorman_model = "the Doorman sandbox's own model", "");
-  let mode = DEFAULTS.mode, modeFrom = "default";
-  if (g.mode !== undefined) { if (["doorman-strict", "doorman-safe", "doorman-open"].includes(g.mode)) { mode = g.mode; modeFrom = "gateway.mode"; } else { notes.push(`gateway.mode ${JSON.stringify(g.mode).slice(0, 30)} isn't a Doorman mode: ignored`); } }
-  if (modeFrom === "default" && w?.doorman?.mode !== undefined && ["doorman-strict", "doorman-safe", "doorman-open"].includes(w.doorman.mode)) { mode = w.doorman.mode; modeFrom = "doorman.mode"; }
-  { const mo = modeOf(w); if (modeFrom === "default" && mo.mode !== DEFAULTS.mode) { mode = mo.mode; modeFrom = "research.strict (deprecated)"; } if (mo.note) notes.push(mo.note); }
+  // The mode is whatever the runner resolves (mode.mjs modeOf: gateway.mode, else doorman.mode, else the deprecated research.strict), so the display can never differ from what is enforced.
+  const mo = modeOf(w), mode = mo.mode, valid = (x) => ["doorman-strict", "doorman-safe", "doorman-open"].includes(x);
+  let modeFrom = g.mode !== undefined ? (valid(g.mode) ? "gateway.mode" : "default (gateway.mode is invalid)") : w?.doorman?.mode !== undefined ? (valid(w.doorman.mode) ? "doorman.mode" : "default (doorman.mode is invalid)") : w?.research?.strict === true ? "research.strict (deprecated)" : "default";
+  if (mo.note) notes.push(mo.note);
   src.mode = modeFrom;
   const searchKeyFile = s.key_file ? tilde(s.key_file) : "";
   if (SEARCH_PROVIDERS[provider].ownKey && !searchKeyFile) notes.push(`search provider ${provider} needs gateway.search.key_file (an API key file); research with it will fail until it is set`);

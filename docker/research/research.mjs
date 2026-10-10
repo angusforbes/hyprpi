@@ -74,7 +74,7 @@ export function conf(sandbox) {
   const gw = resolveGateway({ w: worldFor(String(sandbox)), research: c, relay: relayEntries(), sandbox: String(sandbox) }); // J372
   return { mode, modeNote, strict: mode === "doorman-strict", task, taskNote, gateway: gw,
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
-    key_file: c.key_file ? tilde(c.key_file) : "", shape_model: gw.report_model === gw.search.quick_model ? "" : (gw.sources.report_model === "default" ? "" : gw.report_model), doorman_model: gw.doorman_model,
+    key_file: c.key_file ? tilde(c.key_file) : "", shape_model: gw.sources.report_model === "default" ? "" : gw.report_model, doorman_model: gw.doorman_model, // J372 (review): the configured report model is always the one used, even if it equals a search model
   };
 }
 const mkState = () => { fs.mkdirSync(DELIVERABLES(), { recursive: true, mode: 0o700 }); fs.chmodSync(STATE, 0o700); };
@@ -365,6 +365,7 @@ export function doormanCheck(cfg, payload) {
 }
 export function readerRun(cfg, lookingFor, depth, plan = {}) {
   try {
+    if (fs.existsSync(path.join(STATE, "reader-network-unsynced"))) return { ok: false, error: "the reader's network rules aren't reconciled with the selected search provider (a policy change failed); run: research.mjs reader network --apply" }; // J372 (review): fail closed
     if (process.env.HYPRPI_RESEARCH_FAKE_READER) return JSON.parse(execFileSync(process.env.HYPRPI_RESEARCH_FAKE_READER, { input: JSON.stringify({ looking_for: lookingFor, depth, searches: plan.searches, brief: plan.brief }), encoding: "utf8" }));
     if (!cfg.key_file) throw new Error(`no key_file for ${cfg.reader} in ${CONFIG} (the model API key file; there is no default)`);
     const key = fs.readFileSync(cfg.key_file, "utf8").replace(/[\r\n]/g, "");
@@ -616,7 +617,7 @@ async function main(argv) {
     if (flags.json) console.log(JSON.stringify(e, null, 1)); else console.log(summaryText(e, sb) + `\n  (one line: ${summaryLine(e)})`);
   } else if (cmd === "config-set") { // J372: ANGUS ONLY: a real terminal and no agent ancestor (agent-guard.mjs); key=value arguments
     const r = adminSet(path.dirname(CONFIG), flags.sandbox || "world-g", rest);
-    console.log(r.text); if (r.ok) { const cfg = conf(flags.sandbox || "world-g"); const n = syncReaderNetwork({ reader: cfg.reader, provider: cfg.gateway.search.provider, apply: !flags["no-network"] }); for (const x of n.results) console.log(`  reader network: ${x.cmd} -> ${x.status === 0 ? "ok" : `status ${x.status} ${x.out}`}`); } process.exit(r.ok ? 0 : r.code);
+    console.log(r.text); if (r.ok) { const cfg = conf(flags.sandbox || "world-g"); const n = syncReaderNetwork({ reader: cfg.reader, provider: cfg.gateway.search.provider, apply: !flags["no-network"] }); for (const x of n.results) console.log(`  reader network: ${x.cmd} -> ${x.status === 0 ? "ok" : `FAILED (status ${x.status}) ${x.out}`}`); if (n.failed) console.log("  WARNING: the reader sandbox is blocked from research until `research.mjs reader network --apply` succeeds"); } process.exit(r.ok ? 0 : r.code);
   } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, flags.why === "expired" ? "expired" : "denied") }));
   } else if (cmd === "digest") {
     const m = /^(\d+)(m|h)$/.exec(String(flags.since || "1h")); const d = digest({ sinceMs: m ? Number(m[1]) * (m[2] === "h" ? 3600e3 : 60e3) : 3600e3 });

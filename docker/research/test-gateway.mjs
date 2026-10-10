@@ -133,6 +133,10 @@ await t("the admin command (guard passed) applies validated keys atomically and 
   for (const bad of [["mode=banana"], ["nokey=1"], ["report_model=bad model"], ["search.provider=zzz"], ["justtext"]]) { const x = A.adminSet(path.join(CFG, "hyprpi"), "world-t", bad, { guard: () => "" }); assert.equal(x.ok, false, bad.join()); }
 });
 
+await t("an invalid gateway.mode never makes the display differ from what the runner enforces", () => {
+  writeW({ sandbox: "world-t", doorman: { mode: "doorman-strict" }, gateway: { mode: "bogus" } });
+  assert.equal(R.conf("world-t").mode, M.modeOf(readW()).mode); assert.equal(R.conf("world-t").gateway.mode, R.conf("world-t").mode);
+});
 await t("LOOSENS compares against what is in effect (legacy strict mode, derived levels), not what is written", () => {
   writeW({ sandbox: "world-t", research: { strict: true } }); // legacy: strict
   const r = A.proposeChange({ cfgDir: path.join(CFG, "hyprpi"), PENDING, sandbox: "world-t", changes: { mode: "doorman-safe" } }); assert.equal(r.ok, true, r.text);
@@ -146,6 +150,15 @@ await t("two writers of a worlds file don't lose each other's change (shared loc
   const Tk = await import("./task.mjs"); const w = [];
   for (let i = 0; i < 12; i++) { Tk.setTask(path.join(CFG, "hyprpi"), "world-t", `task ${i}`); A.applyChanges(path.join(CFG, "hyprpi"), "world-t", { report_model: `m/${i}` }); }
   const x = readW(); assert.equal(x.task, "task 11"); assert.equal(x.gateway.report_model, "m/11"); assert.ok(!fs.existsSync(path.join(WORLDS, ".write.lock")), "the lock is released");
+});
+await t("a failed reader-network change blocks the reader until a later sync succeeds (fail closed); a configured report model equal to a search model is still used", () => {
+  const bad = path.join(T, "badsbx"); fs.writeFileSync(bad, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const r = A.syncReaderNetwork({ reader: "reader-t", provider: "sonar", sbxBin: bad }); assert.equal(r.failed, 1);
+  const rr = R.readerRun(R.conf("world-t"), "q", "quick", { searches: ["s"] }); assert.equal(rr.ok, false); assert.match(rr.error, /aren't reconciled/);
+  const ok = path.join(T, "oksbx"); fs.writeFileSync(ok, "#!/bin/sh\nexit 0\n", { mode: 0o755 }); assert.equal(A.syncReaderNetwork({ reader: "reader-t", provider: "sonar", sbxBin: ok }).failed, 0);
+  assert.doesNotMatch(String(R.readerRun(R.conf("world-t"), "q", "quick", { searches: ["s"] }).error || ""), /reconciled/, "after a successful sync the reader runs again");
+  writeW({ sandbox: "world-t", gateway: { report_model: "perplexity/perplexity/sonar" } }); assert.equal(R.conf("world-t").shape_model, "perplexity/perplexity/sonar");
+  writeW({ sandbox: "world-t", gateway: { search: ["x"] } }); A.applyChanges(path.join(CFG, "hyprpi"), "world-t", { "search.provider": "brave" }); assert.equal(readW().gateway.search.provider, "brave", "a malformed search value is replaced, not silently dropped");
 });
 await t("the owner guard fails closed when the ancestry is too deep to check", () => {
   const sh = path.join(T, "pi"); fs.symlinkSync("/bin/sh", sh); // a process whose name is pi, 45 levels above the caller

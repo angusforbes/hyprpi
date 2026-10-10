@@ -4,6 +4,7 @@
 // "current -> proposed" for every key, and when Angus types 1 the relay applies exactly that and nothing else.
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { worldsFor, withWorldsLock, modeOf } from "./mode.mjs";
@@ -44,7 +45,6 @@ const get = (w, k) => {
   if (v !== undefined) return String(v);
   if (k === "mode" && w?.doorman?.mode !== undefined) return String(w.doorman.mode);
   if (k === "level" && w?.access !== undefined) return String(w.access);
-  if (k === "report_model" && w?.research?.shape_model) return String(w.research.shape_model);
   return DEFAULTS[k.replace("search.", "")] && !["level"].includes(k) ? `${DEFAULTS[k.replace("search.", "")]} (default)` : "(default)";
 };
 // The values IN EFFECT (mode and level as the rest of the system resolves them: legacy keys, derived levels), so "current → proposed" and the LOOSENS
@@ -77,7 +77,7 @@ function applyChangesLocked(cfgDir, sandbox, changes, { expectBefore } = {}) {
   const f = path.join(cfgDir, "worlds", hits[0].f), w = JSON.parse(fs.readFileSync(f, "utf8")), before = Object.fromEntries(Object.keys(v.changes).map((k) => [k, effective(cfgDir, w, sandbox, k)]));
   if (expectBefore) for (const k of Object.keys(v.changes)) if (before[k] !== expectBefore[k]) throw new Error(`not applied: ${k} is now ${before[k]}, it was ${expectBefore[k]} when proposed`);
   w.gateway = w.gateway && typeof w.gateway === "object" && !Array.isArray(w.gateway) ? w.gateway : {};
-  for (const [k, val] of Object.entries(v.changes)) { if (k.startsWith("search.")) { w.gateway.search = w.gateway.search && typeof w.gateway.search === "object" ? w.gateway.search : {}; w.gateway.search[k.slice(7)] = val; } else w.gateway[k] = val; }
+  for (const [k, val] of Object.entries(v.changes)) { if (k.startsWith("search.")) { w.gateway.search = w.gateway.search && typeof w.gateway.search === "object" && !Array.isArray(w.gateway.search) ? w.gateway.search : {}; w.gateway.search[k.slice(7)] = val; } else w.gateway[k] = val; }
   const tmp = `${f}.tmp${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(w, null, 2) + "\n", { mode: fs.statSync(f).mode & 0o777 }); fs.renameSync(tmp, f);
   return { file: f, before, after: Object.fromEntries(Object.keys(v.changes).map((k) => [k, v.changes[k]])) };
 }
@@ -91,7 +91,11 @@ export function syncReaderNetwork({ reader, provider, sbxBin = process.env.HYPRP
   }
   if (!apply) return { cmds, results: [] };
   const results = cmds.map((c) => { const r = spawnSync(sbxBin, c, { encoding: "utf8", timeout: 30000 }); return { cmd: c.join(" "), status: r.status, out: String((r.stdout || "") + (r.stderr || "")).trim().slice(0, 200) }; });
-  return { cmds, results, want };
+  // Fail closed (review): if any change failed, the reader's egress isn't what the selected provider implies (a failed removal leaves the old provider reachable).
+  // A marker makes the research runner refuse to use the reader until a later sync succeeds.
+  const marker = path.join(process.env.HYPRPI_RESEARCH_STATE || path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "research"), "reader-network-unsynced");
+  try { if (results.some((x) => x.status !== 0)) { fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 }); fs.writeFileSync(marker, new Date().toISOString() + " " + results.filter((x) => x.status !== 0).map((x) => x.cmd).join("; ")); } else fs.rmSync(marker, { force: true }); } catch { /* */ }
+  return { cmds, results, want, failed: results.filter((x) => x.status !== 0).length };
 }
 
 // The admin command: Angus only (real terminal, no agent ancestor). `key=value ...` arguments.
