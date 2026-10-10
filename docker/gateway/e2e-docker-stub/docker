@@ -1,0 +1,3 @@
+#!/bin/sh
+# J368 e2e: a stub docker so the test relay's GPU reconcile never touches real containers (Citecheck, J376)
+exit 0
