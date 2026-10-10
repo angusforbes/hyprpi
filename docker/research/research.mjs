@@ -462,25 +462,32 @@ export function runPlan(rid) {
   logEvent({ ev: "plan-approved", ...p.base, searches: sent });
   return research({ cfg: conf(p.base.sandbox), base: p.base, q: p.q, depth: p.depth, plan: p.plan, sent });
 }
-// J365 ("approve with modifications"): Angus edited the Doorman's searches (quick: one per line, at most 3; deep: the brief) while the plan is
-// held. The edit goes through the same host checks as the Doorman's own plan (planCheck: pattern pre-check, copied words and numbers against
-// the request, J360 link rules, task), and the plan file keeps both versions. Nothing runs here; `run` later runs the stored (edited) searches.
-export function editPlan(rid, text) {
+// J365 ("approve with modifications"), in two steps so that nothing is changed until Angus's approval is actually being carried out:
+//   checkPlanEdit(rid, text): validates the edit with the same host checks as the Doorman's own plan (planCheck: pattern pre-check, copied words and
+//     numbers against the request, J360 link rules, task) and returns the canonical searches. It writes NOTHING. An overlong line is refused, not cut.
+//   applyPlanEdit(rid, searches): called by the relay while it carries out the approval, after the held item was claimed; it replaces the stored
+//     searches (the plan file keeps the original) and fails if the plan is gone, so a plan that was run or dropped is never resurrected.
+export function checkPlanEdit(rid, text) {
   if (!/^q[0-9a-f]{8}$/.test(String(rid))) return { ok: false, reason: "bad plan id" };
-  const f = path.join(PLANS(), `${rid}.json`); let p; try { p = JSON.parse(fs.readFileSync(f, "utf8")); } catch { return { ok: false, reason: "no such plan waiting" }; }
-  const t = String(text ?? "").replace(/\r/g, "").slice(0, 4000);
-  const deep = p.depth === "deep";
-  const plan = deep ? { brief: t.replace(/\s+/g, " ").trim().slice(0, 700), searches: [] } : { searches: t.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 3).map((x) => x.slice(0, 200)), brief: "" };
-  if (deep ? !plan.brief : !plan.searches.length) return { ok: false, reason: "the edit is empty" };
-  if (!deep && t.split("\n").map((x) => x.trim()).filter(Boolean).length > 3) return { ok: false, reason: "at most 3 searches" };
+  let p; try { p = JSON.parse(fs.readFileSync(path.join(PLANS(), `${rid}.json`), "utf8")); } catch { return { ok: false, reason: "no such plan waiting" }; }
+  const lines = String(text ?? "").replace(/\r/g, "").slice(0, 4000).split("\n").map((x) => x.trim()).filter(Boolean), deep = p.depth === "deep";
+  if (deep) { const brief = lines.join(" ").trim(); if (!brief) return { ok: false, reason: "the edit is empty" }; if (brief.length > 700) return { ok: false, reason: "a research brief is at most 700 characters" }; var plan = { brief, searches: [] }; }
+  else { if (!lines.length) return { ok: false, reason: "the edit is empty" }; if (lines.length > 3) return { ok: false, reason: "at most 3 searches" }; if (lines.some((x) => x.length > 200)) return { ok: false, reason: "a search is at most 200 characters" }; plan = { searches: lines, brief: "" }; }
   const cfg = conf(p.base.sandbox), pc = planCheck(p.q, { ...plan, public_terms: [] }, { strict: cfg.strict, task: cfg.task });
   if (pc.length) { logEvent({ ev: "plan-edit-refused", ...p.base, reason: pc.join("; ").slice(0, 300) }); return { ok: false, reason: `your edit doesn't pass the host's checks: ${pc.join("; ")}` }; }
-  const original = p.edited ? p.edited.original : { searches: p.plan.searches || [], brief: p.plan.brief || "" };
-  const next = { ...p, plan, edited: { original, at: Date.now() } };
-  fs.writeFileSync(f + ".tmp", JSON.stringify(next), { mode: 0o600 }); fs.renameSync(f + ".tmp", f);
-  const shown = deep ? [plan.brief] : plan.searches;
-  logEvent({ ev: "plan-edited", ...p.base, original: deep ? [original.brief] : original.searches, searches: shown });
-  return { ok: true, searches: shown, original: deep ? [original.brief] : original.searches };
+  const original = deep ? [p.plan.brief || ""] : (p.plan.searches || []);
+  return { ok: true, searches: deep ? [plan.brief] : plan.searches, original, deep };
+}
+export function applyPlanEdit(rid, searches) {
+  if (!/^q[0-9a-f]{8}$/.test(String(rid)) || !Array.isArray(searches) || !searches.length) return { ok: false, reason: "bad edit" };
+  const f = path.join(PLANS(), `${rid}.json`); let p; try { p = JSON.parse(fs.readFileSync(f, "utf8")); } catch { return { ok: false, reason: "the plan is gone (already run, denied or expired)" }; }
+  const deep = p.depth === "deep", original = p.edited ? p.edited.original : { searches: p.plan.searches || [], brief: p.plan.brief || "" };
+  const next = { ...p, plan: deep ? { brief: String(searches[0]), searches: [] } : { searches: searches.map(String), brief: "" }, edited: { original, at: Date.now() } };
+  const tmp = `${f}.edit${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
+  if (!fs.existsSync(f)) { try { fs.unlinkSync(tmp); } catch { /* */ } return { ok: false, reason: "the plan is gone (already run, denied or expired)" }; } // never resurrect a plan
+  fs.renameSync(tmp, f);
+  logEvent({ ev: "plan-edited", ...p.base, original: deep ? [original.brief] : original.searches, searches: deep ? [next.plan.brief] : next.plan.searches });
+  return { ok: true };
 }
 // J314: a denied (or expired) plan: drop it; nothing was sent.
 export function dropPlan(rid, why = "denied") {
@@ -545,8 +552,10 @@ async function main(argv) {
     const c = conf(sb); console.log(JSON.stringify({ sandbox: sb, task: c.task, note: c.taskNote || (c.task ? "" : NO_TASK) }));
   } else if (cmd === "mode") { const c = conf(flags.sandbox || "world-g"); console.log(JSON.stringify({ sandbox: flags.sandbox || "world-g", mode: c.mode, note: c.modeNote, means: MODE_TEXT[c.mode] }));
   } else if (cmd === "run") { console.log(JSON.stringify(runPlan(flags.rid))); // J314: only the relay calls this, after Angus approved the plan
-  } else if (cmd === "edit") { // J365: only the relay's guarded CLI calls this, for an edit Angus typed; the new searches arrive on stdin
-    console.log(JSON.stringify(editPlan(flags.rid, fs.readFileSync(0, "utf8"))));
+  } else if (cmd === "edit-check") { // J365: only the relay's guarded CLI calls this (the edit arrives on stdin); it writes nothing
+    console.log(JSON.stringify(checkPlanEdit(flags.rid, fs.readFileSync(0, "utf8"))));
+  } else if (cmd === "edit-apply") { // J365: only the relay calls this, while carrying out an approval (searches as JSON on stdin)
+    let a; try { a = JSON.parse(fs.readFileSync(0, "utf8")); } catch { a = null; } console.log(JSON.stringify(applyPlanEdit(flags.rid, a)));
   } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, flags.why === "expired" ? "expired" : "denied") }));
   } else if (cmd === "digest") {
     const m = /^(\d+)(m|h)$/.exec(String(flags.since || "1h")); const d = digest({ sinceMs: m ? Number(m[1]) * (m[2] === "h" ? 3600e3 : 60e3) : 3600e3 });

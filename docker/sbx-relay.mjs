@@ -44,7 +44,7 @@ import { logTurn } from "../lib/held.mjs"; // J289: decision notes as highlighte
 import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule } from "../lib/sbx-rules.mjs";
 import { logEvent as researchLog, conf as researchConf } from "./research/research.mjs"; // J309
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
-import { applyHeldEdit } from "./held-edit.mjs"; // J365
+import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
@@ -839,7 +839,7 @@ class Relay {
   async decide(file) {
     const m = /^(.+)\.(approve|deny|allow-(?:\d{1,5}|today))$/.exec(file); if (!m) return;
     const [, id, verdict] = m;
-    let via = ""; try { via = fs.readFileSync(path.join(DECISIONS, file), "utf8").trim().slice(0, 20); } catch { /* raced */ } // J284
+    let via = "", editDigest = ""; try { const raw = fs.readFileSync(path.join(DECISIONS, file), "utf8").split("\n"); via = raw[0].trim().slice(0, 20); editDigest = (/^edit:([0-9a-f]{16})$/.exec((raw[1] || "").trim()) || [])[1] || ""; } catch { /* raced */ } // J284 (J365: line 2 = the digest of the edit this approval carries)
     try { fs.unlinkSync(path.join(DECISIONS, file)); } catch { /* raced */ }
     const pf = path.join(PENDING, id + ".json");
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
@@ -849,11 +849,7 @@ class Relay {
     if (!sb) return;
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, verdict === "deny");
-    if (msg.edit && typeof msg.edit.text === "string" && verdict !== "deny" && !msg.research && !msg.draft && !msg.gpu && !msg.taskChange) { // J365: Angus approved an edited message: it is the edited text that is sent
-      const head = String(msg.body || "").split("\n")[0];
-      msg = { ...msg, text: msg.edit.text, body: `${head}\n🐳│ ${msg.edit.text.split("\n").join("\n🐳│ ")}\n🐳│ (edited by Angus before it was sent)` };
-      log({ sb: sb.name, op: "talk", id, edited: true, original: String(msg.edit.original || "").slice(0, 4000), sent: msg.edit.text });
-    }
+    { const te = takeEdit(id, verdict === "deny" ? "" : editDigest, msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) }); msg = te.msg; } // J365: an edit is applied only for the approval that carries its digest; a stale one is deleted
     if (msg.taskChange) { // J352: Angus decided a Doorman-drafted task change: approval writes it, once
       const tc = msg.taskChange, what = { ...msg, text: `task change for ${tc.sandbox}: ${tc.task}` };
       let outcome = "nothing changed";
@@ -1077,10 +1073,12 @@ function heldNote(sb, msg, via, what, outcome) {
 // passes it too, and the same user can write decisions/, rules.json and reviews/ directly): a hostile process running under the user's
 // account could still write a decision file directly. It stops well-behaved agents approving by accident or
 // because a message told them to; the sandbox itself can't reach the decisions folder at all.
-// J365 ("approve with modifications"): apply Angus's edit BEFORE the approval is written (docker/held-edit.mjs). Runs only in the guarded CLI.
-function applyEdit(id, editFile) {
-  const r = applyHeldEdit(id, editFile, { PENDING, RESEARCH, clean, bytes, maxBytes: LIMITS.textBytes, log });
+// J365 ("approve with modifications"): prepare Angus's edit BEFORE the approval is written (docker/held-edit.mjs): validated by host code, kept in an
+// envelope that only THIS approval can use (the decision file names its digest). Runs only in the guarded CLI.
+function prepareHeldEdit(id, editFile) {
+  const r = prepareEdit(id, editFile, { PENDING, EDITS: path.join(STATE, "edits"), RESEARCH, clean, bytes, maxBytes: LIMITS.textBytes });
   if (!r.ok) { console.error(r.code === 1 ? `no pending message ${id}` : `sbx-relay: edit refused: ${r.reason}`); process.exit(r.code || 4); }
+  return r.digest;
 }
 function decideAsAngus(id, verdict, editFile = "") {
   if (verdict !== "deny") { // approve and allow (J274) are Angus's only
@@ -1088,17 +1086,18 @@ function decideAsAngus(id, verdict, editFile = "") {
     if (why || !process.stdin.isTTY) { console.error(`sbx-relay: only Angus can approve, from his own terminal (${why || "no terminal"}). Agents may deny.`); process.exit(3); }
     if (!process.env.HYPRPI_HELD_VIA) console.error("sbx-relay: note: the normal route is the review in the Doorman window or the Thoughts panel (Review on the toast, then type 1 after the full request); this terminal command is the admin tool."); // J355
   }
-  if (editFile) { if (verdict !== "approve") { console.error("sbx-relay: an edit only goes with approve"); process.exit(4); } applyEdit(id, editFile); }
+  let editDigest = "";
+  if (editFile) { if (verdict !== "approve") { console.error("sbx-relay: an edit only goes with approve"); process.exit(4); } editDigest = prepareHeldEdit(id, editFile); }
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   const via = /^(panel|room panel|doorman window)$/.test(process.env.HYPRPI_HELD_VIA || "") ? process.env.HYPRPI_HELD_VIA : "terminal";
-  writeDecision(id, verdict, via); // J284: the route, for the Thoughts note
+  writeDecision(id, verdict, via, editDigest); // J284: the route, for the Thoughts note (J365: and the digest of the edit this approval carries)
 }
 // J284 (NoteReview #2): written under a temporary name and renamed into place, so the relay never reads a decision
 // before its route is in it (the temp name doesn't match the decision pattern, so the watcher ignores it).
-function writeDecision(id, verdict, via) {
+function writeDecision(id, verdict, via, editDigest = "") {
   fs.mkdirSync(DECISIONS, { recursive: true, mode: 0o700 });
   const tmp = path.join(DECISIONS, `.${id}.${verdict}.${process.pid}.tmp`);
-  fs.writeFileSync(tmp, via, { mode: 0o600 });
+  fs.writeFileSync(tmp, via + (editDigest ? `\nedit:${editDigest}` : ""), { mode: 0o600 });
   fs.renameSync(tmp, path.join(DECISIONS, `${id}.${verdict}`));
 }
 function agentAncestor() {
