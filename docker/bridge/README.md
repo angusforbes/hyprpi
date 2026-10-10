@@ -132,3 +132,8 @@ When the owner approves sharing a project, the request carries the folder's real
 ## In pi-doorman (standalone)
 
 pi-doorman ships the relay with the fixed request types, and agent-free (`host_agents: false`) by default. It also ships this bridge (the `docker/bridge/` files, generic, with no hyprpi names in the code) and this guide. The bridge stays off unless the owner sets `host_agents: "bridge"`. `settings` and `propose` call the host's own config commands, set with `DOORMAN_SETTINGS_CMD` and `DOORMAN_PROPOSE_CMD`. The bridge has no config writer of its own.
+
+
+## The host-job test for world G (J432)
+
+`node docker/bridge/host-job-test.mjs` runs the whole route as a test and prints PASS or FAIL per hop: it checks the setup (relay, Doorman-G, a host agent available, nothing else held, a fresh test file name, Alpha live in G), prompts Alpha to ask the Doorman for a host request that only a host agent can do (a new file in `~/Documents/doorman-g-jobs`, which is not shared into G), and then waits for Angus's 1 in the Doorman-G window. After the 1 it confirms: the request was held for the bridge, approved, claimed (by the per-job runner when it is installed; it claims within a second, so a Doorman-Host window gets nothing), the job done, the file on the host with the exact text, G's gate delivered the outcome to Alpha as a visible message, and Alpha answered it. It decides nothing. `--no-send` prints the prompt instead of sending it; `--wait N` sets the seconds to wait for the 1. `--check-alpha JOBID` is read-only: it tells whether an earlier job's outcome reached Alpha's session.
