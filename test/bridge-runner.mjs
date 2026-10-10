@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { plan } from "../docker/bridge/runner.mjs";
 const d = fs.mkdtempSync(path.join(os.tmpdir(), "j387-"));
-const job = { id: "door-t--a00001", approved: { action: "Request drafted by D for A.\nAction asked for: write hello", tools: ["Write", "Bash(git status)", "Read; rm -rf /", "x".repeat(60)], folders: [d, "/nonexistent/x", "relative/dir"], time_limit_s: 600 }, questions: [{ n: 1, text: "Which file?", answer: "out.txt" }, { n: 2, text: "open?", answer: null }] };
+const job = { id: "door-t--a00001", approved: { action: "Request drafted by D for A.\nAction asked for: write hello", tools: ["Write", "Bash(git status)", "Read; rm -rf /", "x".repeat(60), "default", "DEFAULT", "default(x)", "Write,Bash", "MadeUp"], folders: [d, "/nonexistent/x", "relative/dir"], time_limit_s: 600 }, questions: [{ n: 1, text: "Which file?", answer: "out.txt" }, { n: 2, text: "open?", answer: null }] };
 const p = plan(job, { mcpConfig: "/tmp/m.json", model: "" });
 const at = (f) => p.argv[p.argv.indexOf(f) + 1];
 assert.equal(p.argv[0], "claude"); assert.ok(p.argv.includes("-p") && p.argv.includes("--no-session-persistence") && p.argv.includes("--restricted") && p.argv.includes("--strict-mcp-config"));
@@ -14,7 +14,7 @@ assert.equal(at("--tools"), "Write,Bash", "built-in tools: exactly the job's (ba
 const allowed = at("--allowedTools").split(",");
 assert.ok(allowed.includes("Write") && allowed.includes("Bash(git status)"), "the job's tools with their rules");
 assert.ok(!allowed.some((t) => /claim_job|release_job|propose|read_settings/.test(t)), "the agent can't claim, release or touch settings");
-assert.deepEqual(p.dropped, ["Read; rm -rf /", "x".repeat(60)], "odd tool names are dropped, not passed");
+assert.deepEqual(p.dropped, ["Read; rm -rf /", "x".repeat(60), "default", "DEFAULT", "default(x)", "Write,Bash", "MadeUp"], "odd or unknown tool names (incl. the all-tools sentinel 'default') are dropped, not passed");
 assert.deepEqual(p.argv.filter((a, i) => p.argv[i - 1] === "--add-dir"), [d], "only existing absolute folders");
 assert.equal(p.cwd, d);
 assert.ok(!p.argv.includes(p.prompt) && !p.argv.some((a) => /write hello/.test(a)), "the prompt isn't an argument (it goes on stdin)");
@@ -22,6 +22,7 @@ assert.match(p.prompt, /----- the owner's approved text -----\nRequest drafted b
 assert.match(p.prompt, /Q1: Which file\?\nA1: out\.txt/); assert.ok(!/open\?/.test(p.prompt), "only answered questions");
 const none = plan({ ...job, approved: { ...job.approved, tools: [], folders: [] } }, { mcpConfig: "/tmp/m.json" });
 assert.equal(none.argv[none.argv.indexOf("--tools") + 1], "", "no built-in tools at all when the job names none");
-assert.ok(!none.argv.includes("--add-dir")); assert.equal(none.cwd, os.tmpdir());
+assert.ok(!none.argv.includes("--add-dir")); assert.notEqual(none.cwd, os.tmpdir(), "no folders: a private empty folder, never /tmp itself"); assert.ok(none.cwd.startsWith(os.tmpdir() + path.sep) && fs.readdirSync(none.cwd).length === 0); fs.rmSync(none.cwd, { recursive: true, force: true });
+assert.equal(plan({ ...job, approved: { ...job.approved, folders: [] } }, { mcpConfig: "m", cwd: "/x/work" }).cwd, "/x/work");
 process.env.DOORMAN_RUNNER_CMD = '["/opt/agent","--x"]'; assert.deepEqual(plan(job, { mcpConfig: "m" }).argv.slice(0, 3), ["/opt/agent", "--x", "-p"]);
 fs.rmSync(d, { recursive: true, force: true }); console.log("bridge-runner: all pass");

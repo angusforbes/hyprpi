@@ -20,15 +20,19 @@ import { validId } from "./core.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), CLI = path.join(HERE, "doorman-bridge");
 const BRIDGE_TOOLS = ["list_jobs", "show_job", "renew_job", "ask_owner", "report_job"].map((t) => `mcp__doorman-bridge__${t}`); // no claim/release: the runner holds the claim
-const TOOL_RE = /^[A-Za-z][A-Za-z0-9_]{0,40}(\([^()\n]{0,200}\))?$/; // a tool name, optionally with a rule: Write, Bash(git status), Read(./notes/**)
+// a known built-in tool, optionally with a rule: Write, Bash(git status), Read(./notes/**). Only these names: "default" and the
+// like mean ALL tools to Claude Code, so a name outside this list is dropped (RunnerReview)
+const BUILTIN = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "Bash", "NotebookEdit", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite"]);
+const TOOL_RE = /^([A-Za-z]{2,20})(\([^()\n,]{0,200}\))?$/;
+const toolOk = (t) => { const m = TOOL_RE.exec(String(t)); return !!m && BUILTIN.has(m[1]); };
 const log = (o) => { try { const f = path.join(stateDir(), "bridge", "runner.jsonl"); fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); fs.appendFileSync(f, JSON.stringify({ t: new Date().toISOString(), ...o }) + "\n", { mode: 0o600 }); } catch { /* */ } };
 const agentCmd = () => { try { const a = JSON.parse(process.env.DOORMAN_RUNNER_CMD || "null"); if (Array.isArray(a) && a.length) return a.map(String); } catch { /* */ } return ["claude"]; };
 const home = (p) => String(p).replace(/^~(?=\/|$)/, os.homedir());
 
 // The command line for one job (pure, so tests can check it): argv for the agent, the prompt, cwd.
-export function plan(job, { mcpConfig, model = process.env.DOORMAN_RUNNER_MODEL || "" } = {}) {
-  const tools = (job.approved.tools || []).filter((t) => TOOL_RE.test(String(t)));
-  const dropped = (job.approved.tools || []).filter((t) => !TOOL_RE.test(String(t)));
+export function plan(job, { mcpConfig, model = process.env.DOORMAN_RUNNER_MODEL || "", cwd = "" } = {}) {
+  const tools = (job.approved.tools || []).filter(toolOk);
+  const dropped = (job.approved.tools || []).filter((t) => !toolOk(t));
   const folders = (job.approved.folders || []).map(home).filter((d) => path.isAbsolute(d) && fs.existsSync(d) && fs.statSync(d).isDirectory());
   const builtin = [...new Set(tools.map((t) => t.replace(/\(.*$/, "")))];
   const argv = [...agentCmd(), "-p", "--output-format", "text", "--no-session-persistence", "--restricted",
@@ -47,13 +51,14 @@ export function plan(job, { mcpConfig, model = process.env.DOORMAN_RUNNER_MODEL 
     "If you can't do it without the owner's input, call ask_owner with ONE short question, then stop (end your reply). A new run continues after his answer.",
     "When you're done, call report_job: state done, failed or partial, a short summary, and exactly what you ran and what you changed. Then stop.",
   ].join("\n");
-  return { argv, prompt, cwd: folders[0] || os.tmpdir(), dropped };
+  return { argv, prompt, cwd: folders[0] || cwd || fs.mkdtempSync(path.join(os.tmpdir(), "doorman-work-")), dropped };
 }
 
 export async function runJob(id) {
   if (!validId(id)) return { ok: false, text: "bad job id" };
   const by = `runner:${id}`.slice(0, 60);
-  const c = await claim(id, by, undefined); // the lease: up to the job's time limit (the relay caps it)
+  const pre = show(id);
+  const c = await claim(id, by, pre?.approved?.time_limit_s); // (RunnerReview) the lease runs to the job's deadline (the relay caps it at claimed_at + time limit)
   if (!c.ok) { log({ id, ev: "not claimed", text: c.text }); return c; }
   const job = show(id);
   const token = c.token; saveToken(id, ""); // the runner keeps its token itself (not in the shared cache)
@@ -62,10 +67,12 @@ export async function runJob(id) {
   const prev = process.env.XDG_CACHE_HOME; process.env.XDG_CACHE_HOME = cache; saveToken(id, token); if (prev === undefined) delete process.env.XDG_CACHE_HOME; else process.env.XDG_CACHE_HOME = prev;
   const env = { ...process.env, DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, XDG_CACHE_HOME: cache };
   fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { "doorman-bridge": { command: CLI, args: ["mcp"], env: { DOORMAN_STATE: stateDir(), DOORMAN_BRIDGE_AGENT: by, DOORMAN_BRIDGE_JOB: id, XDG_CACHE_HOME: cache } } } }), { mode: 0o600 });
-  const p = plan(job, { mcpConfig });
+  const work = path.join(tmp, "work"); fs.mkdirSync(work, { mode: 0o700 }); // (RunnerReview) a job without folders runs in a private empty folder, not /tmp
+  const p = plan(job, { mcpConfig, cwd: work }), asked0 = (job.questions || []).length;
   log({ id, ev: "start", argv: p.argv, cwd: p.cwd, dropped: p.dropped, time_limit_s: job.approved.time_limit_s });
-  // stopped a little BEFORE the job's time limit, so the runner (not the lease sweep) records why: "failed, hit the time limit"
-  const limitMs = Math.max(15, (Number(job.approved.time_limit_s) || 0) - 15) * 1000;
+  // stopped a little BEFORE the claim's real end (the job's deadline, counted from its FIRST claim), so the runner, not the lease
+  // sweep, records why: "failed, hit the time limit"
+  const limitMs = Math.max(5000, Date.parse(c.until) - Date.now() - 15000);
   const res = await new Promise((resolve) => {
     let out = "", timedOut = false;
     // the prompt goes on stdin: --add-dir / --tools take several values, so a trailing argument would be eaten
@@ -80,7 +87,8 @@ export async function runJob(id) {
   const after = show(id);
   log({ id, ev: "end", code: res.code, timedOut: res.timedOut, state: after?.state, tail: res.out.slice(-600) });
   if (!after) return { ok: false, text: "the job is gone" };
-  if (after.state === "asked") { const r = await release(id, by, token); return { ok: true, text: `asked the owner; the claim is given back (${r.text})` }; } // its answer brings a new run
+  // a question asked in this run: give the claim back (the job waits for the owner, or, if he already answered, a new run picks it up)
+  if (after.state === "asked" || ((after.questions || []).length > asked0 && after.state === "claimed" && after.claimed_by === by)) { const r = await release(id, by, token); return { ok: true, text: `asked the owner; the claim is given back (${r.text})` }; } // its answer brings a new run
   if (after.state === "claimed" && after.claimed_by === by) {
     const why = res.timedOut ? `the run hit the job's time limit (${job.approved.time_limit_s} s) and was stopped` : `the run ended (exit ${res.code}) without reporting`;
     const r = await report(id, by, { state: "failed", summary: `${why}. Its last output: ${res.out.replace(/\s+/g, " ").slice(-400) || "(none)"}` }, token);
@@ -111,10 +119,13 @@ export function runnerUnits(action) {
   if (action === "--status") return spawnSync("systemctl", ["--user", "status", `${name}.path`, "--no-pager"], { encoding: "utf8" }).stdout || "not installed";
   if (action === "--uninstall") { spawnSync("systemctl", ["--user", "disable", "--now", `${name}.path`]); for (const x of ["path", "service"]) { try { fs.unlinkSync(path.join(dir, `${name}.${x}`)); } catch { /* */ } } spawnSync("systemctl", ["--user", "daemon-reload"]); return "uninstalled"; }
   if (action !== "--install") return "usage: doorman-bridge runner --install|--uninstall|--status";
+  // (RunnerReview LOW) values go into unit files: no newline or %, and quoted
+  const vals = { DOORMAN_STATE: process.env.DOORMAN_STATE, DOORMAN_RUNNER_CMD: process.env.DOORMAN_RUNNER_CMD, DOORMAN_RUNNER_MODEL: process.env.DOORMAN_RUNNER_MODEL, PATH: process.env.PATH, req, exec: process.execPath, cli: CLI };
+  for (const [k, v] of Object.entries(vals)) if (v != null && /[\n\r%"\\]/.test(String(v))) return `refused: ${k} has a newline, %, quote or backslash, which a unit file can't hold safely`;
   fs.mkdirSync(dir, { recursive: true }); fs.mkdirSync(req, { recursive: true, mode: 0o700 });
-  const envLines = ["DOORMAN_STATE", "DOORMAN_RUNNER_CMD", "DOORMAN_RUNNER_MODEL"].filter((k) => process.env[k]).map((k) => `Environment=${k}=${process.env[k]}`).join("\n");
+  const envLines = ["DOORMAN_STATE", "DOORMAN_RUNNER_CMD", "DOORMAN_RUNNER_MODEL"].filter((k) => process.env[k]).map((k) => `Environment="${k}=${process.env[k]}"`).join("\n");
   fs.writeFileSync(path.join(dir, `${name}.path`), `[Unit]\nDescription=Doorman bridge: start a host-agent run for each new approved job (J387)\n\n[Path]\nPathChanged=${req}\nUnit=${name}.service\n\n[Install]\nWantedBy=default.target\n`);
-  fs.writeFileSync(path.join(dir, `${name}.service`), `[Unit]\nDescription=Doorman bridge: dispatch waiting jobs (J387)\n\n[Service]\nType=oneshot\nEnvironment=PATH=${process.env.PATH}\n${envLines}\nExecStart=${process.execPath} ${CLI} dispatch\n`);
+  fs.writeFileSync(path.join(dir, `${name}.service`), `[Unit]\nDescription=Doorman bridge: dispatch waiting jobs (J387)\n\n[Service]\nType=oneshot\nEnvironment="PATH=${process.env.PATH}"\n${envLines}\nExecStart="${process.execPath}" "${CLI}" dispatch\n`);
   spawnSync("systemctl", ["--user", "daemon-reload"]); const r = spawnSync("systemctl", ["--user", "enable", "--now", `${name}.path`], { encoding: "utf8" });
   return r.status === 0 ? `installed and enabled: ${name}.path watches ${req}` : `couldn't enable: ${r.stderr}`;
 }
