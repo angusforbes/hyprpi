@@ -46,7 +46,8 @@ import { fileURLToPath } from "node:url";
 import { modeForSandbox, MODE_TEXT, withWorldsLock } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
 import { taskForSandbox } from "../research/task.mjs"; // J352: the host-set research task in the host card
 
-import { cardSection } from "../gpu/gpu.mjs"; // J328: the card's GPU section
+import { cardSection } from "../gpu/gpu.mjs";
+import { cardLine } from "../bridge/registry.mjs"; // J407: the host-agent mode line // J328: the card's GPU section
 
 const HOME = os.homedir();
 const CFG = path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi");
@@ -403,6 +404,7 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
       ? [`Task (set by Angus): ${task}`, "", "The Doorman writes the searches toward this task. A request it doesn't serve, or a run of requests jumping between unrelated subjects, waits for Angus as an exception (a few an hour at most; more are refused). Your Doorman can draft a task change for Angus to approve.", ""]
       : [`Task: none set${note ? ` (${note})` : ""}. Every research request waits for Angus until he sets one; your Doorman can draft a task for him to approve.`, ""]; })(),
     ...cardSection(p.sandbox),
+    ...hostAgentsSection(p.sandbox), // J407
     "## How to ask", "",
     "- Talk to your Doorman (always allowed, no approval needed).",
     "- Messages to agents in other worlds wait for Angus's approval (a toast and the Thoughts panel); he can allow similar ones for a while.", "",
@@ -417,11 +419,22 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
   return changed;
 }
 
+// J407: the host-agent mode for this sandbox, only when its Doorman uses the bridge ("host_agents": "bridge") or is agent-free (false).
+// The relay writes STATE/sbx-relay/bridge/mode.json when a host agent registers or expires; the card says who would do a free-form job.
+const RELAY_STATE = path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "hyprpi", "sbx-relay");
+function hostAgentsSection(sandbox) {
+  const dm = (readJson(path.join(CFG, "sbx-relay.json"), { sandboxes: [] }).sandboxes || []).find((x) => x?.doorman_for === sandbox);
+  if (!dm || (dm.host_agents !== "bridge" && dm.host_agents !== false)) return [];
+  if (dm.host_agents === false) return ["## Host agents", "", cardLine({ mode: "agent-free", agents: [] }), ""];
+  const m = readJson(path.join(RELAY_STATE, "bridge", "mode.json"), {})?.sandboxes?.[sandbox] || { mode: "agent-free", agents: [] };
+  return ["## Host agents", "", cardLine({ mode: m.mode === "host agent available" ? m.mode : "agent-free", agents: Array.isArray(m.agents) ? m.agents.map((x) => String(x).replace(/[\u0000-\u001f]/g, " ").slice(0, 120)) : [] }), ""];
+}
+
 // --- watch: re-apply when the config or a project folder's contents change ---------------------------
 function fingerprint() {
   const { g, w } = config();
   // (LevelReview) sbx-relay.json too: the Doorman's visibility decides the default level (J366)
-  const parts = [fs.readFileSync(path.join(CFG, "config.json"), "utf8"), JSON.stringify(w), JSON.stringify(readJson(path.join(CFG, "sbx-relay.json"), {}))];
+  const parts = [fs.readFileSync(path.join(CFG, "config.json"), "utf8"), JSON.stringify(w), JSON.stringify(readJson(path.join(CFG, "sbx-relay.json"), {})), JSON.stringify(readJson(path.join(RELAY_STATE, "bridge", "mode.json"), {}).sandboxes || {})]; // (J407: the host-agent mode too)
   for (const f of (g.projectFolders || []).map(exp)) parts.push(subdirs(f).join("\n"));
   return crypto.createHash("sha256").update(parts.join("\0")).digest("hex");
 }

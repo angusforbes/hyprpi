@@ -4,26 +4,30 @@
 //
 //   doorman-bridge list [--all]                       jobs waiting for a host agent (--all: every state)
 //   doorman-bridge show ID                            the owner's approved text and limits, questions and answers
-//   doorman-bridge claim ID [--by NAME] [--lease S]   take it (one claimer; the lease runs out unless renewed)
+//   doorman-bridge claim ID --agent-token T [--lease S]   take it (only a registered host agent; one claimer; the lease runs out unless renewed)
 //   doorman-bridge renew ID [--lease S]               keep it
 //   doorman-bridge ask ID TEXT                        a question for the owner; the job waits for the answer (see show)
 //   doorman-bridge report ID done|failed|partial --summary TEXT [--ran LINE]... [--changed LINE]...
 //   doorman-bridge release ID                         give it back unfinished
 //   doorman-bridge settings SANDBOX                   the settings in effect (read-only)
 //   doorman-bridge propose SANDBOX key=value...       propose a settings change; it waits for the owner's approval
+//   doorman-bridge register NAME --harness H [--caps TEXT] [--scope SANDBOX]...   register as a host agent (J407); prints an agent token
+//   doorman-bridge heartbeat|unregister --agent-token T   keep it alive (every 30 s; it expires after 120 s) / remove it
+//   doorman-bridge agents                             registered host agents and each sandbox's mode (read-only)
 //   doorman-bridge mcp                                the MCP server (stdio)
 //   doorman-bridge run-job ID | dispatch | runner --install|--uninstall|--status    the per-job runner (runner.mjs, J387)
 // Options: --json (machine output), --token T (the token claim printed; required for renew/ask/report/release, J379).
 // The bridge can't approve, deny or edit anything, create jobs or change settings: the owner decides in the Doorman
 // window; the relay applies. Exit 0 = ok, 1 = refused, 2 = usage.
-import { list, show, claim, renew, release, ask, report } from "./client.mjs";
+import { list, show, claim, renew, release, ask, report, register, heartbeat, unregister, agents } from "./client.mjs";
 import { settings, propose } from "./settings.mjs";
 
 const argv = process.argv.slice(2), opts = { ran: [], changed: [] }, pos = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--json" || a === "--all") opts[a.slice(2)] = true;
-  else if (["--by", "--lease", "--token", "--summary"].includes(a)) opts[a.slice(2)] = argv[++i];
+  else if (["--by", "--lease", "--token", "--summary", "--harness", "--caps", "--agent-token"].includes(a)) opts[a.slice(2).replace("-t", "T")] = argv[++i];
+  else if (a === "--scope") (opts.scope ||= []).push(argv[++i]);
   else if (a === "--ran" || a === "--changed") opts[a.slice(2)].push(argv[++i]);
   else pos.push(a);
 }
@@ -35,12 +39,17 @@ if (cmd === "mcp") { await import("./mcp.mjs"); }
 else if (cmd === "run-job") { if (!id) usage(); const { runJob } = await import("./runner.mjs"); out(await runJob(id)); }
 else if (cmd === "dispatch") { const { dispatch } = await import("./runner.mjs"); out({ ok: true, text: JSON.stringify(dispatch()) }); }
 else if (cmd === "runner") { const { runnerUnits } = await import("./runner.mjs"); console.log(runnerUnits(id || "")); }
+// J407: registration
+else if (cmd === "register") { const r = await register({ name: id || by, harness: opts.harness || "cli", caps: opts.caps || "", scope: opts.scope }); if (r.ok && !opts.json) { console.log(`${r.text}\nagent token: ${r.agent_token}  (pass it with --agent-token to heartbeat, claim and unregister)`); process.exit(0); } out(r); }
+else if (cmd === "heartbeat") out(await heartbeat(opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""));
+else if (cmd === "unregister") out(await unregister(opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""));
+else if (cmd === "agents") { const r = agents(); out(opts.json ? r : { ok: true, text: [...r.agents.map((a) => `${a.name} (${a.harness}${a.on_demand ? ", on demand" : ""}) since ${a.since}, last heartbeat ${a.last}${a.scope?.length ? `, for ${a.scope.join(", ")}` : ""}`), ...Object.entries(r.modes).map(([s, m]) => `${s}: ${m.mode}${m.agents.length ? ` (${m.agents.join(", ")})` : ""}`)].join("\n") || "no host agents registered" }); }
 else if (cmd === "list") {
   const jobs = list({ all: !!opts.all });
   if (opts.json) out(jobs);
   else { for (const j of jobs) console.log(`${j.id}  ${j.state}  for ${j.for || "?"} in ${j.sandbox}  ${String(j.approved.action_line || j.approved.action || "").replace(/\s+/g, " ").slice(0, 120)}`); if (!jobs.length) console.log("(no jobs waiting)"); } // (J379) the structured action, never a line parsed from text
 } else if (cmd === "show") { if (!id) usage(); const j = show(id); out(j ? (opts.json ? j : formatJob(j)) : { ok: false, text: "no such host job" }); }
-else if (cmd === "claim") { if (!id) usage(); const r = await claim(id, by, lease); if (r.ok && !opts.json) { console.log(`${r.text}\ntoken: ${r.token}  (pass it with --token to renew, ask, report or release; it isn't stored anywhere)`); process.exit(0); } out(r); }
+else if (cmd === "claim") { if (!id) usage(); const r = await claim(id, by, lease, opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""); if (r.ok && !opts.json) { console.log(`${r.text}\ntoken: ${r.token}  (pass it with --token to renew, ask, report or release; it isn't stored anywhere)`); process.exit(0); } out(r); }
 else if (cmd === "renew") { if (!id) usage(); out(await renew(id, by, lease, opts.token)); }
 else if (cmd === "release") { if (!id) usage(); out(await release(id, by, opts.token)); }
 else if (cmd === "ask") { if (!id || !rest.length) usage(); out(await ask(id, by, rest.join(" "), opts.token)); }

@@ -44,7 +44,18 @@ const tok = (id, token) => token || (process.env.DOORMAN_BRIDGE_JOB === id && pr
 const vid = (id) => (validId(id) ? null : { ok: false, text: "bad job id" });
 
 // the five operations, as the CLI and MCP tools call them
-export async function claim(id, by, leaseS) { return vid(id) || request({ op: "claim", id, by, lease_s: leaseS }); }
+// J407: a claim needs a live registration (agent token from register); it is made in the registered name
+export async function claim(id, by, leaseS, agentToken = process.env.DOORMAN_BRIDGE_AGENT_TOKEN || "") { return vid(id) || request({ op: "claim", id, by, lease_s: leaseS, agent_token: agentToken }); }
+// J407: registration (the relay keeps the registry; the token is returned once by register)
+export async function register({ name, harness, caps = "", scope, onDemand = false }) { return request({ op: "register", name, harness, caps, ...(scope ? { scope } : {}), on_demand: !!onDemand }); }
+export async function heartbeat(agentToken) { return request({ op: "heartbeat", agent_token: agentToken }); }
+export async function unregister(agentToken) { return request({ op: "unregister", agent_token: agentToken }); }
+// the live registrations and each sandbox's mode, read-only (no tokens: the registry holds only their hashes)
+export function agents() {
+  let reg = {}, mode = {}; try { reg = JSON.parse(fs.readFileSync(path.join(stateDir(), "bridge", "agents.json"), "utf8")); } catch { /* */ } try { mode = JSON.parse(fs.readFileSync(path.join(stateDir(), "bridge", "mode.json"), "utf8")).sandboxes || {}; } catch { /* */ }
+  const live = Object.values(reg.agents || {}).filter((a) => Date.now() - Date.parse(a.last) < 120000).map(({ name, harness, caps, scope, on_demand, since, last }) => ({ name, harness, caps, scope, on_demand, since, last }));
+  return { ok: true, agents: live, modes: mode };
+}
 export async function renew(id, by, leaseS, token) { return vid(id) || request({ op: "renew", id, by, lease_s: leaseS, token: tok(id, token) }); }
 export async function release(id, by, token) { return vid(id) || request({ op: "release", id, by, token: tok(id, token) }); }
 export async function ask(id, by, text, token) { return vid(id) || request({ op: "ask", id, by, text, token: tok(id, token) }); }

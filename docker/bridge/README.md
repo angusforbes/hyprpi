@@ -17,13 +17,29 @@ In `~/.config/hyprpi/sbx-relay.json`, on the Doorman's entry:
 - `bridge`: the default tools, folders and time limit printed with each job, to start the agent narrowly.
 - Restart the relay to start the bridge.
 
+## Who is there: registration (J407)
+
+The relay only knows a host agent exists if it registers. A host agent registers with a name, its harness, a one-line capability summary and optionally the sandboxes it serves, then heartbeats at least every 30 s; one that stops for 120 s expires. Registration grants nothing new: it only lets the agent claim jobs (the bridge's existing powers) and tells the relay and the sandbox that someone is there.
+
+| CLI                                 | MCP tool         | what it does              |
+|-------------------------------------|------------------|---------------------------|
+| register NAME --harness H           | register_agent   | register; get a token     |
+| heartbeat --agent-token T           | (automatic)      | stay alive                |
+| unregister --agent-token T          | unregister_agent | leave                     |
+| agents                              | list_agents      | who is there, read-only   |
+
+- The MCP server keeps its agent token in memory, heartbeats every 30 s while it runs, and unregisters when its client closes it. `claim_job` refuses until `register_agent` was called. A claim is always made in the registered name.
+- The per-job runner registers for the length of each run (on demand). While its path unit is installed it counts as an available agent.
+- Per sandbox the relay is then in one of two modes. Host agent available: a free-form request the Doorman drafts is held for the owner as before, and the held item says "Will be done by: <name> (<harness>)". Agent-free (nobody registered, no runner): a free-form request is refused at once with "no host agent available" and never held; the fixed request types, research, GPU leases and task changes still work. The sandbox's host card has a "Host agents" line saying which, refreshed when it changes.
+- A claim from an unregistered or expired agent is refused. Only a Doorman entry with `"host_agents": "bridge"` uses any of this; world G's bridge is off.
+
 ## The operations
 
 | CLI                      | MCP tool         | what it does            |
 |--------------------------|------------------|-------------------------|
 | list [--all]             | list_jobs        | jobs waiting for an agent |
 | show ID                  | show_job         | approved text and limits |
-| claim ID [--lease S]     | claim_job        | take it, with a lease   |
+| claim ID --agent-token T | claim_job        | take it, with a lease   |
 | renew ID                 | renew_job        | keep the claim          |
 | ask ID TEXT              | ask_owner        | a question; the job waits |
 | report ID STATE          | report_job       | done, failed or partial |

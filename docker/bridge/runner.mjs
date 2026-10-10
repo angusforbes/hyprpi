@@ -16,7 +16,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
-import { list, show, claim, release, report, stateDir } from "./client.mjs";
+import { list, show, claim, release, report, register, unregister, stateDir } from "./client.mjs";
 import { validId } from "./core.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), CLI = path.join(HERE, "doorman-bridge");
@@ -58,8 +58,14 @@ export function plan(job, { mcpConfig, model = process.env.DOORMAN_RUNNER_MODEL 
 export async function runJob(id) {
   if (!validId(id)) return { ok: false, text: "bad job id" };
   const by = `runner:${id}`.slice(0, 60);
+  // J407: the per-job runner registers as an on-demand host agent for this run only (a claim needs a live registration), and unregisters after
+  const reg = await register({ name: by, harness: `per-job runner (${path.basename(agentCmd()[0])})`, caps: "one fresh agent run for one approved job", onDemand: true });
+  if (!reg.ok) { log({ id, ev: "not registered", text: reg.text }); return reg; }
+  try { return await runRegistered(id, by, reg.agent_token); } finally { await unregister(reg.agent_token).catch(() => {}); }
+}
+async function runRegistered(id, by, agentToken) {
   const pre = show(id);
-  const c = await claim(id, by, pre?.approved?.time_limit_s); // (RunnerReview) the lease runs to the job's deadline (the relay caps it at claimed_at + time limit)
+  const c = await claim(id, by, pre?.approved?.time_limit_s, agentToken); // (RunnerReview) the lease runs to the job's deadline (the relay caps it at claimed_at + time limit)
   if (!c.ok) { log({ id, ev: "not claimed", text: c.text }); return c; }
   const job = show(id);
   const token = c.token; // the runner keeps its token; the run's MCP server gets it in DOORMAN_BRIDGE_TOKEN (J379: no shared cache)
@@ -127,6 +133,10 @@ function redispatchLater(id) {
 }
 
 // the systemd path unit that runs dispatch when a job record changes (installed only by the owner)
+// J407: the runner is installed for THIS state (its path unit watches this state's job records): it counts as an on-demand host agent
+export function runnerInstalled() {
+  try { const u = fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user", "doorman-bridge-runner.path"), "utf8"); return u.includes(path.join(stateDir(), "requests")); } catch { return false; }
+}
 export function runnerUnits(action) {
   const dir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user"), name = "doorman-bridge-runner";
   const req = path.join(stateDir(), "requests");

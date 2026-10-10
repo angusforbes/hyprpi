@@ -26,7 +26,15 @@ const bridge = startBridge({ stateDir: st, log: (o) => logs.push(o), jobRecord, 
 const env = { ...process.env, DOORMAN_STATE: st, XDG_CACHE_HOME: cache, XDG_CONFIG_HOME: cfg,
   DOORMAN_SETTINGS_CMD: JSON.stringify(["sh", "-c", 'echo "{\\"sandbox\\":\\"$0\\",\\"gateway\\":{\\"level\\":\\"safe\\"}}"']),
   DOORMAN_PROPOSE_CMD: JSON.stringify(["sh", "-c", 'echo "{\\"ok\\":true,\\"id\\":\\"doorman-t--feed01\\",\\"text\\":\\"held for the owner\\"}"']) };
-const cli = (...a) => new Promise((res) => execFile(CLI, ["--json", ...a], { env, timeout: 30000 }, (e, out, err) => { let j = null; try { j = JSON.parse(out); } catch { /* */ } res({ code: e ? e.code : 0, j, out, err }); }));
+const cli0 = (...a) => new Promise((res) => execFile(CLI, ["--json", ...a], { env, timeout: 30000 }, (e, out, err) => { let j = null; try { j = JSON.parse(out); } catch { /* */ } res({ code: e ? e.code : 0, j, out, err }); }));
+// J407: a claim needs a live registration: "claim … --by NAME" registers NAME first (once) and passes its agent token
+const regs = new Map();
+const cli = async (...a) => {
+  if (a[0] === "claim" && !a.includes("--agent-token")) { const k = a.indexOf("--by"), name = k > 0 ? a[k + 1] : "host agent";
+    if (!regs.has(name)) regs.set(name, cli0("register", name, "--harness", "test").then((r) => r.j?.agent_token));
+    a = [...a, "--agent-token", await regs.get(name)]; }
+  return cli0(...a);
+};
 const ok = (m) => console.log("ok " + m);
 const mk = (id, extra = {}) => { const j = newJob({ id, sandbox: "world-t", asker: "Alpha", action: "Request drafted by Doorman-T (the Doorman of world-t) for Alpha.\nWhy: test\nTried: nothing\nAction asked for: open cube-art", timeLimitS: 3600, ...extra }); jobRecord(id, j); return j; };
 // a snapshot of everything the bridge must never write: config, decisions, pending
@@ -97,19 +105,20 @@ const rpc = (m) => mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\
 mcp.stdin.write("null\n[]\n42\n{\"jsonrpc\":\"2.0\",\"id\":7}\n"); // (BridgeReview: odd valid JSON must not crash it)
 rpc({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } }); rpc({ method: "notifications/initialized" }); rpc({ id: 2, method: "tools/list" });
 mk("doorman-t--a00004");
-const calls = [["list_jobs", {}], ["show_job", { id: "doorman-t--a00004" }], ["claim_job", { id: "doorman-t--a00004" }], ["renew_job", { id: "doorman-t--a00004" }], ["ask_owner", { id: "doorman-t--a00004", question: "ok?" }],
+const calls = [["register_agent", { name: "mcp-tester", harness: "test" }], ["list_jobs", {}], ["show_job", { id: "doorman-t--a00004" }], ["claim_job", { id: "doorman-t--a00004" }], ["renew_job", { id: "doorman-t--a00004" }], ["ask_owner", { id: "doorman-t--a00004", question: "ok?" }],
   ["read_settings", { sandbox: "world-t" }], ["propose_settings", { sandbox: "world-t", changes: { level: "open" } }], ["release_job", { id: "doorman-t--a00004" }], ["report_job", { id: "doorman-t--a00004", state: "done", summary: "x" }]];
 calls.forEach(([name, args], i) => rpc({ id: 10 + i, method: "tools/call", params: { name, arguments: args } }));
 for (let t = 0; t < 200 && (mout.match(/"id":1\d/g) || []).length < calls.length; t++) await new Promise((res) => setTimeout(res, 100));
 mcp.stdin.end();
 const msgs = mout.trim().split("\n").map((l) => JSON.parse(l)), byId = Object.fromEntries(msgs.map((m) => [m.id, m]));
-assert.equal(byId[1].result.serverInfo.name, "doorman-bridge"); assert.equal(byId[7].error.code, -32600, "an invalid request gets an error, the server stays up"); assert.equal(byId[2].result.tools.length, 9);
+assert.equal(byId[1].result.serverInfo.name, "doorman-bridge"); assert.equal(byId[7].error.code, -32600, "an invalid request gets an error, the server stays up"); assert.equal(byId[2].result.tools.length, 12);
 assert.ok(!byId[2].result.tools.some((x) => /approve|deny|edit|create|set_|write/.test(x.name)), "no tool can decide or write");
 const res = (i) => JSON.parse(byId[10 + i].result.content[0].text);
-assert.equal(res(0).jobs.length, 1); assert.equal(res(2).ok, true); assert.equal(res(3).ok, true); assert.equal(res(4).ok, true); assert.equal(res(5).ok, true); assert.equal(res(6).ok, true);
-assert.equal(res(7).ok, true); assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00004.json"), "utf8")).state, "asked", "released with an open question: stays asked, unclaimed");
-assert.equal(res(8).ok, false, "no report without a claim");
-ok("MCP: initialize, 9 tools (none decides or writes), every tool callable");
+assert.equal(res(0).ok, true, "register_agent"); assert.equal(res(0).agent_token, undefined, "the agent token stays in the server");
+assert.equal(res(1).jobs.length, 1); assert.equal(res(3).ok, true); assert.equal(res(4).ok, true); assert.equal(res(5).ok, true); assert.equal(res(6).ok, true); assert.equal(res(7).ok, true);
+assert.equal(res(8).ok, true); assert.equal(JSON.parse(fs.readFileSync(path.join(REQ, "doorman-t--a00004.json"), "utf8")).state, "asked", "released with an open question: stays asked, unclaimed");
+assert.equal(res(9).ok, false, "no report without a claim");
+ok("MCP: initialize, 12 tools (none decides or writes), every tool callable");
 // 7b. (J379 red team) tokens aren't stored anywhere: no cache for another process of the user to reuse
 assert.ok(!fs.existsSync(path.join(cache, "doorman-bridge")), "no token cache written");
 ok("claim tokens are never cached (another process can't reuse them)");
