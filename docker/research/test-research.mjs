@@ -127,6 +127,8 @@ t("cleaning drops citation markers, links, code and hidden tags", () => assert.e
     ["41 nested quotes don't beat the container strip", "> ".repeat(41) + "~~~sh\n" + "> ".repeat(41) + "echo CODE\n" + "> ".repeat(41) + "~~~\nend", "[code omitted]\nend"],
     ["a wrong closing tag inside script doesn't end it", 'a <script>const x="</code>";echo CODE</script> b', "a [code omitted] b"],
     ["mismatched close is ignored", "a <pre><code>x</pre>echo CODE</code></pre> b", "a [code omitted] b"],
+    ["a quoted closer doesn't close an unquoted fence", "~~~sh\n> ~~~\necho CODE\n~~~\nend", "[code omitted]\nend"],
+    ["a list closer doesn't close an unquoted fence either", "~~~sh\n- ~~~\necho CODE\n~~~\nend", "[code omitted]\nend"],
     ["separate code elements stay separate", "a <code>x</code> b <code>y</code> c", "a [code omitted] b [code omitted] c"],
     ["a long backtick run after a span", "Prose `a" + "`".repeat(30) + "b", "Prose ab"],
     ["matching runs of different lengths", "x ``a`b`` y `c` z", "x [code] y [code] z"],

@@ -344,13 +344,16 @@ export function stripCode(text) {
   // A line's content after any blockquote markers ("> > ") and list markers ("- ", "1. "): a fence or code block inside a quote or a list counts too.
   // Containers may nest in any order ("- > - ~~~"): strip quote and list markers repeatedly until none is left (bounded).
   const unquote = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, "");
-  const inner = (l) => l.replace(/^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*/, ""); // every quote / list marker, any depth, one pass
+  const PFX = /^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*/;
+  const inner = (l) => l.replace(PFX, ""); // every quote / list marker, any depth, one pass
+  const listed = (l) => /(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.test(PFX.exec(l)[0]); // a list marker starts a new item: never a closing fence
+  const quotes = (l) => (PFX.exec(l)[0].match(/>/g) || []).length; // how deep in blockquotes a line is: a fence closes only at its opener's depth (GapReview)
   const out = []; let fence = null, prevBlank = true, inInd = false;
   for (const line of t1.split("\n")) {
     const c = inner(line), q = unquote(line);
-    if (fence) { const m = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null; continue; }
+    if (fence) { const m = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n && quotes(line) === fence.q && !listed(line)) fence = null; continue; }
     const f = /^[ \t]*(`{3,}|~{3,})/.exec(c);
-    if (f) { fence = { ch: f[1][0], n: f[1].length }; out.push("[code omitted]"); prevBlank = false; inInd = false; continue; }
+    if (f) { fence = { ch: f[1][0], n: f[1].length, q: quotes(line) }; out.push("[code omitted]"); prevBlank = false; inInd = false; continue; }
     if (!/[^ \t]/.test(c)) { prevBlank = true; out.push(line.replace(/^[ \t]+|[ \t]+$/g, "")); continue; }
     if (/^( {4,}|\t)/.test(q) && (inInd || prevBlank) && !/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/.test(q)) { if (!inInd) out.push("[code omitted]"); inInd = true; prevBlank = false; continue; }
     inInd = false; prevBlank = false; out.push(line);

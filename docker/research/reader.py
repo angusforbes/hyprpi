@@ -69,9 +69,22 @@ def _unquote(line):
     return re.sub(r"^(?:[ \t]*>)+[ \t]?", "", line)
 
 
+_PFX = re.compile(r"^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*")
+
+
 def _inner(line):
     # every quote / list marker, any depth, one pass (same regex as research.mjs)
-    return re.sub(r"^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*", "", line)
+    return _PFX.sub("", line, count=1)
+
+
+def _listed(line):
+    # a list marker starts a new item: never a closing fence
+    return re.search(r"(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)", _PFX.match(line).group(0)) is not None
+
+
+def _quotes(line):
+    # how deep in blockquotes a line is: a fence closes only at its opener's depth (GapReview)
+    return _PFX.match(line).group(0).count(">")
 
 
 def html_code(t):
@@ -115,12 +128,12 @@ def strip_code(s):
         c, q = _inner(line), _unquote(line)
         if fence:
             m = re.match(r"^[ \t]*(`{3,}|~{3,})[ \t]*$", c)
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and _quotes(line) == fence[2] and not _listed(line):
                 fence = None
             continue
         f = re.match(r"^[ \t]*(`{3,}|~{3,})", c)
         if f:
-            fence = (f.group(1)[0], len(f.group(1))); out.append("[code omitted]"); prev_blank = False; in_ind = False; continue
+            fence = (f.group(1)[0], len(f.group(1)), _quotes(line)); out.append("[code omitted]"); prev_blank = False; in_ind = False; continue
         if not re.search(r"[^ \t]", c):
             prev_blank = True; out.append(re.sub(r"^[ \t]+|[ \t]+$", "", line)); continue
         if re.match(r"^( {4,}|\t)", q) and (in_ind or prev_blank) and not re.match(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]", q):
