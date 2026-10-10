@@ -76,6 +76,9 @@ export default function (pi: ExtensionAPI) {
   let busy = false, ctxRef: any = null, timer: ReturnType<typeof setInterval> | null = null, lastStatus = "";
 
   function send(req: any): string {
+    // J395: what a Doorman drafts names the message it is answering (about = its request_id); the relay sends the outcome to THAT
+    // message's asker, never to whatever "for" the model wrote. (Not memory: nothing comes back to the Doorman.)
+    if (process.env.HYPRPI_DOORMAN === "1" && currentRid && ["draft", "task_change", "gpu_lease", "request"].includes(req.op)) req = { ...req, about: currentRid };
     const name = `${req.op === "status" ? "status-" : ""}${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`;
     const tmp = path.join(outbox, `.${name}.tmp`);
     fs.writeFileSync(tmp, JSON.stringify(req), { mode: 0o600, flag: "wx" });

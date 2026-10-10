@@ -25,4 +25,13 @@ ms=[json.load(open(f)) for f in sorted(glob.glob('$R/x/dinbox/*.json'))]; ms=[m 
 a2=[m for m in ms if 'SECRET-A2' in m['text']]; b=[m for m in ms if 'SECRET-B' in m['text']]
 sys.exit(0 if a2 and b and 'SECRET-A\\\\n' not in a2[0]['text'] and 'SECRET-A ' not in a2[0]['text'] and 'SECRET-A' not in b[0]['text'] else 1)\""
 chk "no doorman-history.json is written" "[ ! -e $P/doorman-history.json ]"
+echo "== a draft names Beta, but it answers Alpha's message (about): the outcome goes to Alpha"
+RQ=$(python3 -c "
+import json,glob
+for f in sorted(glob.glob('$R/x/dinbox/*.json')):
+  d=json.load(open(f))
+  if d.get('type')=='message' and 'SECRET-A2' in d.get('text',''): print(d['request_id'])")
+D o8 '{"op":"draft","for":"Beta","about":"'$RQ'","why":"x","action":"allow foo.org"}'; ID8=$(ls $P/pending/ | sed -n 's/\.json$//p' | head -1); printf 'terminal\n' > $P/decisions/$ID8.deny; sleep 4
+chk "the outcome of $ID8 went to Alpha (the asker of $RQ), not to Beta" "G | grep -q 'Alpha: \[Outside\] Angus denied the request drafted for you ($ID8)' && ! G | grep -q 'Beta: \[Outside\] Angus denied the request drafted for you ($ID8)'"
 echo "outcomes: $FAILS failed"
+E2E_RC=$(( FAILS > 0 ))

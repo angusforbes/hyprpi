@@ -32,3 +32,4 @@ decide() { touch $P/decisions/$1.$2; sleep 4; }
 . "${E2E_STEPS:-$S/e2e-steps.sh}" # (J395: another steps file, e.g. docker/doorman/test-outcomes-steps.sh)
 for p in $(pgrep -f "bin/hyprpi daemon|sbx-relay.mjs run"); do grep -q bogus-j368 /proc/$p/environ 2>/dev/null && kill $p; done; sleep 1
 rm -rf "$R"
+exit ${E2E_RC:-0} # (J395: a steps file sets E2E_RC=1 when an assertion failed)
