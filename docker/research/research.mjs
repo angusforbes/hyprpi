@@ -484,6 +484,8 @@ export function applyPlanEdit(rid, searches) {
   const deep = p.depth === "deep", original = p.edited ? p.edited.original : { searches: p.plan.searches || [], brief: p.plan.brief || "" };
   const next = { ...p, plan: deep ? { brief: String(searches[0]), searches: [] } : { searches: searches.map(String), brief: "" }, edited: { original, at: Date.now() } };
   const tmp = `${f}.edit${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
+  // Only the relay calls this, once, while carrying out the approval of an item it already claimed, and it is the same process that later queues the run:
+  // nothing else claims or drops this plan in between (an expiry sweep works from the pending record, which is already gone). The check below is a last guard.
   if (!fs.existsSync(f)) { try { fs.unlinkSync(tmp); } catch { /* */ } return { ok: false, reason: "the plan is gone (already run, denied or expired)" }; } // never resurrect a plan
   fs.renameSync(tmp, f);
   logEvent({ ev: "plan-edited", ...p.base, original: deep ? [original.brief] : original.searches, searches: deep ? [next.plan.brief] : next.plan.searches });

@@ -73,4 +73,5 @@ const relay = fs.readFileSync(new URL("./sbx-relay.mjs", import.meta.url), "utf8
 assert.ok(relay.indexOf("editDigest = prepareHeldEdit(id, editFile)") > relay.indexOf("const why = agentAncestor()"), "the edit is prepared only after the tty / agent guard");
 assert.ok(/takeEdit\(id, verdict === "deny" \? "" : editDigest/.test(relay), "decide() applies an edit only for an approval that names its digest");
 assert.ok(/edit:\$\{editDigest\}/.test(relay), "the decision file carries the digest");
+assert.ok(/editDigest && verdict !== "deny" && !te\.applied/.test(relay) && /Approved with an edit, but nothing was sent/.test(relay), "decide() fails closed when an approved edit can't be applied (the original is never sent instead)");
 console.log("held-edit: all pass");

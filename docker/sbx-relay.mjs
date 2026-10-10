@@ -849,7 +849,15 @@ class Relay {
     if (!sb) return;
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, verdict === "deny");
-    { const te = takeEdit(id, verdict === "deny" ? "" : editDigest, msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) }); msg = te.msg; } // J365: an edit is applied only for the approval that carries its digest; a stale one is deleted
+    { const te = takeEdit(id, verdict === "deny" ? "" : editDigest, msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) });
+      if (editDigest && verdict !== "deny" && !te.applied) { // fail closed: Angus approved an EDITED version; if it can't be applied, the original must NOT go out in its place
+        log({ sb: sb.name, op: "edit", id, decision: "not-applied", reason: te.failed || "the edit was missing or didn't match; nothing was sent" });
+        heldNote(sb, msg, via, "Approved with an edit, but nothing was sent", te.failed || "the edit couldn't be applied (it was missing or replaced)");
+        try { inboxWrite(sb, { type: "decision", id, decision: "denied", to: (msg.shown || msg.to || []).map((x) => String(x).replace(/ \(.*\)$/, "")) }); } catch { /* */ }
+        if (msg.research?.plan) spawn(process.execPath, [RESEARCH, "drop", "--rid", String(msg.research.rid)], { stdio: "ignore" }).on("error", () => {});
+        return;
+      }
+      msg = te.msg; } // J365: an edit is applied only for the approval that carries its digest; a stale one is deleted // J365: an edit is applied only for the approval that carries its digest; a stale one is deleted
     if (msg.taskChange) { // J352: Angus decided a Doorman-drafted task change: approval writes it, once
       const tc = msg.taskChange, what = { ...msg, text: `task change for ${tc.sandbox}: ${tc.task}` };
       let outcome = "nothing changed";
