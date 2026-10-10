@@ -52,6 +52,7 @@ import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman br
 import { newJob as newHostJob } from "./bridge/core.mjs";
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
+import { handToOpener } from "./gateway/opener.mjs"; // J393: the relay hands links to the world's opener and launches nothing
 import { openStore as doormanHistory, forDoorman } from "./doorman/history.mjs"; // J373: a Doorman call's only memory
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
@@ -897,23 +898,10 @@ class Relay {
     const H = path.dirname(fileURLToPath(import.meta.url));
     return {
       served: { name: served.name, cfg: served.cfg }, cfgDir: path.dirname(CONFIG), now: Date.now(),
-      // (J368 live run: Brave started inside the relay's own unit crashed at once, TasksMax=32 / MemoryMax=256M) the link gate runs in
-      // its own transient scope, so the browser it starts isn't bound by the relay's limits; without a user bus (tests) it runs directly
-      openUrl: (url) => {
-        const gate = ["python3", path.join(H, "world", "g_open_url.py"), "--agent", url, served.name];
-        let r = spawnSync("systemd-run", ["--user", "--scope", "--collect", "--quiet", `--unit=hyprpi-open-${served.name}-${crypto.randomBytes(4).toString("hex")}`, ...gate], { encoding: "utf8", timeout: 30000 });
-        if (r.error || /Failed to (connect|start|create)/i.test(String(r.stderr || ""))) r = spawnSync(gate[0], gate.slice(1), { encoding: "utf8", timeout: 30000 });
-        if (r.status !== 0) return { ok: false, text: (r.stderr || r.stdout || "").trim().slice(-300) || "refused by the link gate" };
-        if (process.env.HYPRPI_G_AGENT_OPENER) return { ok: true, text: "" }; // (tests: a stub opener, no browser to watch)
-        const t0 = Date.now(); // (review J368 #6: the outcome says what was observed and when; an already running profile can't prove this launch)
-        // (Thoughts-B: never report "opened" for a browser that crashed) the world's Brave must still be running a few seconds later
-        return new Promise((res) => setTimeout(() => {
-          const prof = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "worlds", served.name, "brave");
-          const alive = spawnSync("pgrep", ["-f", "--", `user-data-dir=${prof}`], { encoding: "utf8" }).stdout.split("\n").filter(Boolean).some((pid) => { try { return fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim() === "brave"; } catch { return false; } });
-          const secs = ((Date.now() - t0) / 1000).toFixed(0);
-          res(alive ? { ok: true, text: `its browser was running ${secs} s later` } : { ok: false, text: `the browser was started but wasn't running ${secs} s later (it may have crashed)` });
-        }, OPEN_SETTLE_MS));
-      },
+      // J393 (Angus "5a"): the relay starts no apps. The link is handed to the world's own link opener through the systemd manager
+      // (docker/gateway/opener.mjs), which reports accepted/refused and whether the world's browser is running afterwards.
+      // Tests set HYPRPI_G_AGENT_OPENER (a stub browser) and HYPRPI_OPEN_VIA (a stub for systemd-run).
+      openUrl: (url) => handToOpener(url, served.name, { systemdRun: process.env.HYPRPI_OPEN_VIA || "systemd-run", settleMs: OPEN_SETTLE_MS, checkBrowser: !process.env.HYPRPI_G_AGENT_OPENER, env: process.env.HYPRPI_G_AGENT_OPENER ? { HYPRPI_G_AGENT_OPENER: process.env.HYPRPI_G_AGENT_OPENER } : {} }),
       putInbox: (name, buf) => { const dirs = pinDirs(served); createFile(dirs.inbox, name, buf); return path.join(String(served.cfg.inbox || "").replace(/^~(?=\/)/, os.homedir()), name); },
       policyAllow: (host) => {
         const SBXB = process.env.HYPRPI_SBX || "sbx";

@@ -1,5 +1,5 @@
 echo "== 1 open (approve)"; D 1-open '{"op":"request","type":"open_for_owner","for":"Alpha","params":{"what":"https://example.org/cube?trk=1","why":"see the result"}}'; res $R/x/dinbox 1-open; ID=$(pend | awk '$2=="open_for_owner"{print $1}'); echo "  held $ID"; decide $ID approve
-echo "  opened: $(cat $R/x/opened 2>/dev/null)"; echo "  record: $(python3 -c "import json;d=json.load(open('$P/requests/$ID.json'));print(d['state'],'|',d['outcome']['summary'])")"
+echo "  opened: $(cat $R/x/opened 2>/dev/null)"; echo "  handed off via: $(cat $R/x/handoffs 2>/dev/null | cut -c1-120)"; echo "  relay's process tree now: $(pstree -p $(pgrep -f 'sbx-relay.mjs run' | while read p; do grep -q bogus-j368 /proc/$p/environ 2>/dev/null && echo $p; done | head -1) 2>/dev/null | tr -d '\n' | cut -c1-200)"; echo "  record: $(python3 -c "import json;d=json.load(open('$P/requests/$ID.json'));print(d['state'],'|',d['outcome']['summary'])")"
 echo "  log: $(grep -h "\"op\":\"typed\"" $P/log.jsonl | tail -1 | cut -c1-200)"
 echo "  G inbox:"; grep -h '"text"' $R/x/inbox/*.json | tail -2 | cut -c1-220
 echo "  doorman note: $(grep -h '"typed"' $R/x/dinbox/*.json -l | wc -l)"

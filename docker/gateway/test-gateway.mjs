@@ -25,7 +25,7 @@ const G = await import("./types.mjs");
 import { execFileSync } from "node:child_process";
 const require_mkfifo = (p) => execFileSync("mkfifo", [p]);
 let n = 0; const t = async (name, fn) => { await fn(); n++; console.log("ok", n, name); };
-const ctx = (extra = {}) => ({ served: { name: "world-t", cfg: {} }, cfgDir: CFG, now: Date.now() + Math.random() * 1e9, snapshotDir: path.join(T, "snaps"), ...extra });
+let ctxN = 0; const ctx = (extra = {}) => ({ served: { name: `world-t${++ctxN}`, cfg: {} }, cfgDir: CFG, now: Date.now(), snapshotDir: path.join(T, "snaps"), ...extra });
 const ok = (type, p, c = ctx()) => { const v = G.validate(type, p, c); assert.ok(v.ok, `${type}: ${v.error}`); return v; };
 const bad = (type, p, re, c = ctx()) => { const v = G.validate(type, p, c); assert.ok(!v.ok, `${type} should be refused: ${JSON.stringify(p)}`); if (re) assert.match(v.error, re); };
 
