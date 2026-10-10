@@ -40,6 +40,9 @@ fine({ text: "好的，构建一切正常，测试全部通过，没有任何警
 fine({ text: "好的，构建一切正常，测试全部通过，没有任何警告需要处理。", usage: U }, W("请总结。"), "a short Chinese brief inside the English spawn wrapper");
 fine({ text: "빌드는 정상이며 모든 테스트가 통과했습니다. 경고는 없습니다. 이상입니다 감사합니다.", usage: U }, W("요약해 주세요."), "a short Korean brief inside the wrapper");
 fine({ text: "Build OK. Сборка прошла успешно, все тесты зелёные. البناء ناجح وجميع الاختبارات ناجحة تماما اليوم.", usage: U }, "Summarise the build in English, русский and العربية.", "a trilingual reply to a trilingual task");
+fine({ text: "Special tokens include <|im_start|>, <|im_end|>, and <|endoftext|>.", usage: U }, "List common tokenizer special tokens.", "a task about tokens may quote them");
+fine({ text: "第一部分：构建一切正常，测试全部通过。日本語：ビルドは成功しました、問題ありません。한국어: 빌드가 성공했고 문제가 없습니다.", usage: U }, "Translate the build summary into Chinese, Japanese, Korean, Russian, Arabic, and Hebrew.", "many named languages");
+fine({ text: "构建一切正常，所有测试都已通过，没有发现任何需要处理的警告信息，请放心。", usage: U }, W("Please review the repository.") + "\n(extra)\nPlease give your answer in Chinese.", "a later task message after the footer");
 assert.ok(garbled({ text: fx.replies[0], usage: fx.usage }, W("请总结。")) === "" ? false : true, "salad is still flagged under the wrapper");
 ok("normal English, code-heavy, quoted, short, tool-only, and legitimate Chinese/Japanese replies are not flagged");
 console.log("garble: all pass");
