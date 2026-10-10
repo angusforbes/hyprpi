@@ -46,7 +46,12 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
         let held = null; try { held = holdScope(rec, e.proposal); } catch (err) { log({ error: `bridge scope proposal ${rec.id}: ${err.message}` }); }
         const cur = readJob(rec.id);
         if (held && cur?.proposal) jobRecord(rec.id, { proposal: { ...cur.proposal, held_id: held } });
-        else if (cur) jobRecord(rec.id, { state: "needs_wider", proposal: null, outcome: { state: "needs_wider", summary: "the proposed folders couldn't be put to the owner", ran: [], changed: [], at: new Date().toISOString(), by: "relay" }, history: [{ at: new Date().toISOString(), ev: "the scope proposal couldn't be held", by: "relay" }] });
+        else if (cur) { // (J428Check) the job ends, and the asker hears it like any other outcome
+          const summary = "the proposed folders couldn't be put to the owner";
+          jobRecord(rec.id, { state: "needs_wider", proposal: null, outcome: { state: "needs_wider", summary, ran: [], changed: [], at: new Date().toISOString(), by: "relay" }, history: [{ at: new Date().toISOString(), ev: "the scope proposal couldn't be held", by: "relay" }] });
+          effects({ ...cur, state: "needs_wider" }, [{ kind: "outcome", state: "needs_wider", summary, ran: [], changed: [] }]);
+          failed = summary;
+        }
         log({ op: "host_job_scope", id: rec.id, held: held || null, folders: e.proposal.folders });
       } else if (e.kind === "hold") {
         let held = null, why = ""; try { held = holdQuestion(rec, e.n, e.text); } catch (err) { why = err.message; log({ error: `bridge question ${rec.id}: ${err.message}` }); }
@@ -87,9 +92,19 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
       if (!rec || rec.state !== "scoping") reply = { ok: false, text: rec ? `the job is ${rec.state}, not scoping` : "no such job" };
       else {
         const raw = Array.isArray(req.folders) ? req.folders.slice(0, 8) : [], beyond = [], refused = [];
-        for (const f of raw) { const c = scopeCheck(rec.sandbox, [f]); if (c.ok) { for (const b of c.beyond || []) if (!beyond.some((x) => x.path === b.path)) beyond.push(b); } else refused.push(String(c.text || "").slice(0, 200)); }
+        const under = (p, r) => p === r || p.startsWith(r + "/"), ro = rec.approved?.read_only || [], have = rec.approved?.folders || [];
+        for (const f of raw) {
+          const c = scopeCheck(rec.sandbox, [f]); if (!c.ok) { refused.push(String(c.text || "").slice(0, 200)); continue; }
+          for (const b of c.beyond || []) {
+            // (J428Check) a write folder inside one the job already has read-only couldn't be enforced (that deny covers it): refused;
+            // one the job already has with these rights: nothing to add
+            if (b.access === "write" && ro.some((r) => under(b.path, r))) { refused.push(`${b.path}: inside a folder this job has read-only`); continue; }
+            if (have.some((h) => under(b.path, h) && (b.access === "read" || !ro.some((r) => under(b.path, r))))) continue;
+            if (!beyond.some((x) => x.path === b.path)) beyond.push(b);
+          }
+        }
         const r = scopeResult(rec, { beyond: beyond.slice(0, 4), why: [String(req.why || ""), ...refused.map((x) => `refused: ${x}`)].filter(Boolean).join("; ") }, Date.now());
-        commit(rec, r); reply = { ok: true, text: beyond.length ? `proposed to the owner: ${beyond.map((b) => `${b.path} (${b.access})`).join(", ")}` : "nothing found beyond the shares: the job ends needs_wider", refused };
+        const hf = commit(rec, r); reply = hf ? { ok: false, text: hf } : { ok: true, text: beyond.length ? `proposed to the owner: ${beyond.map((b) => `${b.path} (${b.access})`).join(", ")}` : "nothing found beyond the shares: the job ends needs_wider", refused };
       }
       log({ op: "bridge", req: "scope_result", id: String(req?.id || "").slice(0, 80), ok: reply.ok, text: String(reply.text || "").slice(0, 300) });
       try { const o = path.join(OUT, name); fs.writeFileSync(o + ".tmp", JSON.stringify(reply), { mode: 0o600 }); fs.renameSync(o + ".tmp", o); } catch { /* */ }

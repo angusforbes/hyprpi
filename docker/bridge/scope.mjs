@@ -41,7 +41,7 @@ export function checkScope(raw = {}, { home = os.homedir(), shares = null } = {}
   // read-only for host jobs: the sandbox's read-only mounts AND every protected path, also one no share covers (hyprpi's own
   // checkout, agent-config, projects the host runs: a host job never writes there)
   const roPaths = known ? [...new Set([...mounts.filter((m) => m.ro).map((m) => m.path), ...(Array.isArray(shares.protected) ? shares.protected : []).filter((p) => typeof p === "string" && path.isAbsolute(p)).map(realOr)])] : [H];
-  const hidden = known ? (shares.hidden || []).map((h) => String(h?.path || "")).filter((p) => path.isAbsolute(p)) : [];
+  const hidden = known ? [...new Set((shares.hidden || []).map((h) => String(h?.path || "")).filter((p) => path.isAbsolute(p)).map(realOr))] : []; // (J428Check: canonical, like the mounts)
   const readable = (r) => mounts.some((m) => under(r, m.path));
   const writable = (r) => mounts.some((m) => !m.ro && under(r, m.path)) && !roPaths.some((q) => under(r, q) || under(q, r));
   const folders = mounts.map((m) => ({ path: m.path, access: m.ro ? "read" : "write", share: true }));

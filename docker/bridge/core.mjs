@@ -144,7 +144,7 @@ export function apply(rec, op, nowMs = Date.now()) {
   if (!ran || !changed) return no(`ran/changed: lists of at most ${LIMITS.items} lines of ${LIMITS.itemBytes} bytes`);
   // J428 v3: needs_wider goes to the host's own scoping (a read-only run finds the folders; the owner says 1 or 2), at most MAX_WIDEN times
   if (op.state === "needs_wider" && (cur.widenings || 0) < MAX_WIDEN)
-    return done({ state: "scoping", claim: null, widenings: (cur.widenings || 0) + 1, approved: { ...cur.approved, needs: summary } }, `${by}: it needs folders beyond the approved ones (${summary.slice(0, 200)}); the host looks for them`,
+    return done({ state: "scoping", claim: null, widenings: (cur.widenings || 0) + 1, scoping_since: iso(nowMs), approved: { ...cur.approved, needs: summary } }, `${by}: it needs folders beyond the approved ones (${summary.slice(0, 200)}); the host looks for them`,
       { text: "the host will look for those folders (read-only) and ask the owner; the job waits" });
   return done({ state: op.state, claim: null, outcome: { state: op.state, summary, ran, changed, at: iso(nowMs), by } }, `reported ${op.state}`,
     { text: `reported ${op.state}; the asker, its coordinator and the Doorman archive are told` }, [{ kind: "outcome", state: op.state, summary, ran, changed }]);
@@ -193,5 +193,7 @@ export function scopeDecision(rec, approve, heldId, folders, nowMs = Date.now())
   const ids = { ...(a.folder_ids || {}) }; for (const f of folders) if (f.id) ids[f.path] = String(f.id); // (J428Review) checked again by the runner
   const tools = !a.tools_named && folders.some((f) => f.access === "write") ? [...new Set([...(a.tools || []), "Read", "Glob", "Grep", "Write", "Edit"])] : a.tools; // (J428Review: a write folder from scoping, no tools named)
   const approved = { ...a, tools, folders: [...(a.folders || []), ...add.map((f) => f.path)], read_only: [...ro], beyond: [...(a.beyond || []), ...folders.map((f) => `${f.path} (${f.access})`)], folder_ids: ids };
-  return { patch: { state: "waiting", proposal: null, approved }, history: [{ at: iso(nowMs), ev: `the owner approved the extra folders: ${folders.map((f) => `${f.path} (${f.access})`).join(", ")}`, by: "owner" }], effects: [] };
+  // (J428Check) the time spent looking for folders and waiting for the owner doesn't use up the job's time limit (as for questions)
+  const claimedAt = rec.claimed_at && rec.scoping_since ? iso(Date.parse(rec.claimed_at) + Math.max(0, nowMs - Date.parse(rec.scoping_since))) : rec.claimed_at;
+  return { patch: { state: "waiting", proposal: null, approved, claimed_at: claimedAt, scoping_since: null }, history: [{ at: iso(nowMs), ev: `the owner approved the extra folders: ${folders.map((f) => `${f.path} (${f.access})`).join(", ")}`, by: "owner" }], effects: [] };
 }

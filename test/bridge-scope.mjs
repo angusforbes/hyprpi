@@ -89,3 +89,19 @@ console.log("bridge-scope: all pass");
   fs.rmSync(H2, { recursive: true, force: true });
   console.log("bridge-scope review cases: all pass");
 }
+// J428Check: hidden paths through a symlinked share are compared canonically; the scoping wait doesn't use up the time limit
+{
+  const H3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "scope-alias-")));
+  fs.mkdirSync(path.join(H3, "rw/secret[abc]"), { recursive: true }); fs.symlinkSync(path.join(H3, "rw"), path.join(H3, "rw-alias"));
+  const r = checkScope({}, { home: H3, shares: { mounts: [{ host: path.join(H3, "rw-alias"), ro: false }], hidden: [{ path: path.join(H3, "rw-alias/secret[abc]") }] } });
+  assert.deepEqual(r.hidden, [path.join(H3, "rw/secret[abc]")], "the hidden path is canonical");
+  const { plan } = await import("../docker/bridge/runner.mjs");
+  const a = plan({ id: "world-t--abc431", approved: { action: "x", tools: ["Read"], folders: r.folders.map((f) => f.path), read_only: [], hidden: [path.join(H3, "rw-alias/secret[abc]")], time_limit_s: 600 }, questions: [] }, { mcpConfig: "/tmp/m.json" }).argv;
+  assert.ok(!a.includes("--add-dir"), "a share holding an unfenceable hidden path (even via an alias) is left out");
+  const { scopeDecision } = await import("../docker/bridge/core.mjs");
+  const T0 = Date.parse("2026-10-10T12:00:00Z"), iso = (ms) => new Date(ms).toISOString();
+  const d = scopeDecision({ type: "host_job", state: "scope_held", claimed_at: iso(T0), scoping_since: iso(T0 + 60e3), proposal: { held_id: "h", folders: [] }, approved: { folders: [], read_only: [], tools: ["Read"], tools_named: true, time_limit_s: 600 } }, true, "h", [{ path: "/x", access: "read", id: "1:1" }], T0 + 1800e3);
+  assert.equal(d.patch.claimed_at, iso(T0 + 1740e3), "the clock moves on by the scoping wait");
+  fs.rmSync(H3, { recursive: true, force: true });
+  console.log("bridge-scope J428Check cases: all pass");
+}
