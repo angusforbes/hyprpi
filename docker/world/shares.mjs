@@ -14,7 +14,18 @@
 //                                                (defaults: screenshotsDir, the jot root, ~/Downloads)
 // Per sandbox, in ~/.config/hyprpi/worlds/<world>.json:
 //   "roles": { "screenshots": true, "jot": true, "downloads": { "at": "/elsewhere" } }   (default: all OFF)
-//   "projects": "all" | ["vibezAI", "kev"]       "all" = every projectFolder, writable, incl. later projects
+//   "projects": "all" | ["vibezAI", "kev:rw", { "name": "notes", "mode": "rw" }]
+//                                                "all" = every projectFolder (open level only), incl. later projects
+//   "access": "open" | "safe" | "strict"         J366: how much of the project folders the world gets (default below)
+//
+// Access levels (J366, Angus: "if I was in a more normal mode … I would have an explicit list. For now developer =
+// open"). The level is "access" if set; else "open" when the world's Doorman runs in developer visibility
+// (sbx-relay.json "visibility": "developer", J327); else the Doorman research mode (J325): doorman-open → open,
+// doorman-safe → safe, doorman-strict → strict.
+//   open    "projects" as given: "all" = every project folder writable, or the listed ones writable (unless ":ro")
+//   safe    ONLY the listed projects, read-only unless an entry says rw; "all" is not honoured
+//   strict  ONLY the listed projects, all read-only
+// Protected projects are read-only at every level. The host card lists every shared project by name and mode.
 //   "shares": [ { "path": "~/Music", "mode": "ro", "at": "/data/music" } ]
 //   "gitignored": { "hide": true, "show": ["kids-mazes", "nim-demos/.env.example"] }   (default: hide)
 //   "doorman": { "mode": "doorman-safe" }        J325 research mode: doorman-strict, doorman-safe (default) or doorman-open (docker/research/mode.mjs)
@@ -65,6 +76,26 @@ function config() {
   const roleDirs = { screenshots: g.screenshotsDir || "~/Screenshots", jot: jotRoot, downloads: "~/Downloads", ...(g.roleFolders || {}) };
   const relay = readJson(path.join(CFG, "sbx-relay.json"), { sandboxes: [] });
   return { g, w, roleDirs, relay, sandbox: w.sandbox || WORLD };
+}
+
+// J366: the world's access level and why (see the header)
+export const LEVELS = ["open", "safe", "strict"];
+function accessLevel(w, relay, sandbox) {
+  if (w.access != null) return LEVELS.includes(w.access) ? { level: w.access, why: `"access" in worlds/${WORLD}.json` } : { level: "strict", why: `"access": ${JSON.stringify(w.access)} isn't open, safe or strict, so strict` };
+  const dm = (relay.sandboxes || []).find((x) => x.doorman_for === sandbox);
+  if (dm && dm.visibility === "developer") return { level: "open", why: `its Doorman ${dm.name} runs in developer visibility (developer = open)` };
+  const m = modeForSandbox(CFG, sandbox).mode;
+  const level = m === "doorman-open" ? "open" : m === "doorman-strict" ? "strict" : "safe";
+  return { level, why: `Doorman research mode ${m}` };
+}
+// one "projects" entry → { name, rw } or null: "kev", "kev:rw", "kev:ro", { "name": "kev", "mode": "rw" }
+function projectEntry(e, level) {
+  let name = "", mode = "";
+  if (typeof e === "string") [name, mode = ""] = e.split(":");
+  else if (e && typeof e === "object") { name = String(e.name || ""); mode = String(e.mode || ""); }
+  if (!/^[\w.-]+$/.test(name) || name === "." || name === "..") return null;
+  const rw = level === "strict" ? false : level === "safe" ? mode === "rw" : mode !== "ro";
+  return { name, rw };
 }
 
 const isGit = (d) => fs.existsSync(path.join(d, ".git"));
@@ -122,12 +153,16 @@ function plan() {
   }
   // 2. projects
   const pf = (g.projectFolders || []).map(exp);
-  const shared = [];
-  if (w.projects === "all") for (const f of pf) { add(f, { why: "projects (all)" }); shared.push(f); }
-  else for (const name of Array.isArray(w.projects) ? w.projects : []) {
-    if (!/^[\w.-]+$/.test(name)) { skipped.push(`${name} (bad project name)`); continue; }
-    const hit = pf.map((f) => path.join(f, name)).find((d) => fs.existsSync(d));
-    if (hit) { add(hit, { why: "project" }); shared.push(hit); } else skipped.push(`${name} (no such project)`);
+  const shared = [], access = accessLevel(w, relay, sandbox);
+  if (w.projects === "all" && access.level === "open") for (const f of pf) { add(f, { why: "projects (all)" }); shared.push(f); }
+  else {
+    if (w.projects === "all") skipped.push(`"projects": "all" isn't honoured at the ${access.level} level: list the projects in worlds/${WORLD}.json`);
+    for (const e of Array.isArray(w.projects) ? w.projects : []) {
+      const pe = projectEntry(e, access.level);
+      if (!pe) { skipped.push(`${JSON.stringify(e)} (bad project entry)`); continue; }
+      const hit = pf.map((f) => path.join(f, pe.name)).find((d) => fs.existsSync(d) && fs.statSync(d).isDirectory());
+      if (hit) { add(hit, { ro: !pe.rw, why: `project (${access.level})` }); shared.push(hit); } else skipped.push(`${pe.name} (no such project)`);
+    }
   }
   // 3. general shares
   for (const s of w.shares || []) add(s.path, { ro: s.mode !== "rw", at: s.at, why: "share" });
@@ -183,7 +218,13 @@ function plan() {
     }
     if (hidden.length > MAX_HIDE) { skipped.push(`${hidden.length - MAX_HIDE} more gitignored paths not hidden (limit ${MAX_HIDE})`); hidden.length = MAX_HIDE; }
   }
-  return { sandbox, mounts, hidden, skipped, own };
+  // J366: every shared project by name and mode, for the card ("all" = each folder in the project folders)
+  const roAt = (d) => { const cov = mounts.filter((m) => under(d, m.host)).sort((a, b) => b.host.length - a.host.length)[0]; return !cov || cov.ro; }; // the most specific mount decides
+  const projects = [];
+  for (const m of mounts.filter((x) => x.why === "projects (all)")) for (const d of subdirs(m.host)) if (d !== own) projects.push({ name: path.basename(d), path: d, mode: roAt(d) ? "ro" : "rw" });
+  for (const m of mounts.filter((x) => x.why.startsWith("project ("))) projects.push({ name: path.basename(m.host), path: m.host, mode: roAt(m.host) ? "ro" : "rw" });
+  projects.sort((a, b) => a.name.localeCompare(b.name));
+  return { sandbox, mounts, hidden, skipped, own, access, projects };
 }
 
 // The placeholders: an empty dir and an empty file, host-side, never written to.
@@ -241,7 +282,10 @@ function apply() {
   // mounts this tool made earlier that the config no longer wants
   const managed = readJson(path.join(STATE, WORLD, "managed.json"), []);
   const wantKeys = new Set(want.map(key));
-  for (const m of managed) if (!wantKeys.has(key(m)) && haveKeys.has(key(m))) { const r = sbx(["umount", p.sandbox, `${m.host}:${m.at}`]); log(`${r.ok ? "removed" : "couldn't remove"} ${m.at}`); }
+  // (J366) not a path that is still wanted with another mode or source: the loop above already replaced it, and
+  // `sbx umount host:path` would remove the NEW mount (it doesn't take the mode)
+  const wantAt = new Set(want.map((m) => m.at));
+  for (const m of managed) if (!wantKeys.has(key(m)) && haveKeys.has(key(m)) && !wantAt.has(m.at)) { const r = sbx(["umount", p.sandbox, `${m.host}:${m.at}`]); log(`${r.ok ? "removed" : "couldn't remove"} ${m.at}`); }
   fs.writeFileSync(path.join(STATE, WORLD, "managed.json"), JSON.stringify(want), { mode: 0o600 });
   log(`${p.mounts.length} shares, ${p.hidden.length} gitignored paths hidden; mounted ${done} new${failed ? `, ${failed} failed` : ""}`);
   for (const s of p.skipped) log(`skipped: ${s}`);
@@ -294,6 +338,9 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
     `| rw | ${p.own} | this sandbox's workspace |`, ...rows,
     "| ro | /home/agent/.sandbox | this card |", "",
     `Hidden: ${p.hidden.length} gitignored paths in shared projects show as empty (owner's choice).`, "",
+    "## Projects", "",
+    `Access level: ${p.access.level} (${p.access.why}). ${p.access.level === "open" ? "The owner's projects are shared as configured (protected ones read-only)." : p.access.level === "safe" ? "Only the projects listed for this sandbox are shared, read-only unless marked rw." : "Only the projects listed for this sandbox are shared, all read-only."} Anything not listed here isn't shared at all.`, "",
+    ...(p.projects.length ? ["| mode | project | path |", "|------|------|------|", ...p.projects.map((x) => `| ${x.mode} | ${x.name} | ${x.path} |`)] : ["No projects are shared with this sandbox."]), "",
     "## Tools on the host", "",
     "The host runs the desktop (windows, notifications, the clipboard) and hyprpi. You can't run host commands; ask the Doorman to have something done there.", "",
     "## Network", "",
@@ -340,7 +387,9 @@ async function watch() {
 
 if (cmd === "plan") {
   const p = plan();
+  console.log(`access level: ${p.access.level} (${p.access.why})`);
   for (const m of p.mounts) console.log(`${m.ro ? "ro" : "rw"}  ${m.at}${m.at !== m.host ? `  (from ${m.host})` : ""}  [${m.why}]`);
+  console.log(`projects (${p.projects.length}): ${p.projects.map((x) => `${x.name} ${x.mode}`).join(", ")}`);
   console.log(`hidden gitignored: ${p.hidden.length}`); for (const h of p.hidden.slice(0, 20)) console.log(`  ${h.at}${h.dir ? "/" : ""}`);
   for (const s of p.skipped) console.log(`skipped: ${s}`);
 } else if (cmd === "apply") process.exit(apply());
