@@ -33,12 +33,13 @@ const cleanList = (a) => {
 };
 
 // A new job, made by the relay when the owner approves a free-form draft on a host in bridge mode.
-export function newJob({ id, sandbox, asker, action, actionLine = "", tools = [], folders = [], timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
+export function newJob({ id, auto = "", sandbox, asker, action, actionLine = "", tools = [], folders = [], timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
   return {
     id, type: "host_job", sandbox: String(sandbox), for: String(asker || ""), created_at: iso(nowMs), state: "waiting",
     approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
     claim: null, claimed_at: null, questions: [], outcome: null,
-    history: [{ at: iso(nowMs), ev: "approved by the owner; waiting for a host agent", by: "owner" }],
+    ...(auto ? { auto: String(auto) } : {}), // J412 red team #7: approved by the mode dial, not reviewed by the owner
+    history: [auto ? { at: iso(nowMs), ev: `approved automatically (mode ${auto}), not reviewed by the owner; waiting for a host agent`, by: "relay" } : { at: iso(nowMs), ev: "approved by the owner; waiting for a host agent", by: "owner" }],
   };
 }
 
@@ -47,7 +48,7 @@ export function view(rec, nowMs = Date.now()) {
   const v = sweepView(rec, nowMs);
   return {
     id: v.id, sandbox: v.sandbox, for: v.for, state: v.state, created_at: v.created_at,
-    approved: v.approved, claimed_by: v.claim?.by || null, lease_until: v.claim?.until || null,
+    ...(v.auto ? { auto: v.auto } : {}), approved: v.approved, claimed_by: v.claim?.by || null, lease_until: v.claim?.until || null,
     questions: (v.questions || []).map((q) => ({ n: q.n, text: q.text, at: q.at, answer: q.answer ?? null, answered_at: q.answered_at ?? null })),
     outcome: v.outcome || null,
   };
