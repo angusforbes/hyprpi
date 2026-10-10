@@ -104,17 +104,13 @@ MODE.now = "open"; shown.length = 0;
   assert.deepEqual(rec.rooms, ["H"]); assert.equal(rec.reviewIn, "doorman-t"); assert.equal(rec.auto, undefined); assert.equal(shown.length, 1); assert.equal(shown[0].reviewIn, "doorman-t", "the toast is routed too"); }
 door.cfg = {};
 console.log("PASS  decision-time re-check: a stale auto is held, a now-refused kind is denied with the dial's reason, a forged auto is ignored");
-// J412 red team #6: yolo with a J370b send-back open: a new message is held for Angus as its possible revision (the send-back wins over "message auto")
+// Angus (J412, red team #6): yolo with a J370b send-back open: nothing waits, the new message is still auto
 clear(); MODE.now = "yolo"; shown.length = 0;
 ctx.linkable = () => true; ctx.returnKey = () => "k";
 relay.returnedFor = () => ({ open: [{ id: "world-t--sent01", key: "k", note: "please fix the tone" }] });
-{ const id = relay.hold(world, structuredClone(MSG.message)); assert.ok(!fs.existsSync(path.join(DECISIONS, `${id}.approve`)), "not auto");
-  const rec = JSON.parse(fs.readFileSync(path.join(PENDING, id + ".json"), "utf8")); assert.equal(rec.revises, "world-t--sent01"); assert.equal(rec.auto, undefined); assert.equal(shown.length, 1); }
-relay.returnedFor = () => ({ broken: true, open: [{ id: "x", key: "k" }] });
-{ const id = relay.hold(world, structuredClone(MSG.message)); assert.ok(fs.existsSync(path.join(DECISIONS, `${id}.approve`)), "a broken send-back link doesn't hold"); }
+{ const id = relay.hold(world, structuredClone(MSG.message)); assert.ok(fs.existsSync(path.join(DECISIONS, `${id}.approve`)), "yolo: a send-back does not pause automatic messages"); assert.equal(shown.length, 0); }
 relay.returnedFor = () => null; ctx.linkable = () => false;
-{ const id = relay.hold(world, structuredClone(MSG.message)); assert.ok(fs.existsSync(path.join(DECISIONS, `${id}.approve`)), "no send-back: still auto in yolo"); }
-console.log("PASS  yolo with a send-back open: the new message is held with the revises link, not auto");
+console.log("PASS  yolo with a send-back open: the message is still automatic (Angus: nothing waits in yolo)");
 // J412 red team #5 (LOW): the strict refusal of a draft at the op carries the shared UNSUPPORTED guidance (source check: the op needs a live bridge)
 { const line = src.split("\n").find((l) => l.includes('this.relay.policy(this, "draft") === "refused"')); assert.ok(line && line.includes("${UNSUPPORTED}"), "strict draft refusal includes UNSUPPORTED"); }
 console.log("PASS  a strict draft refusal carries the shared UNSUPPORTED guidance");

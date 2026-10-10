@@ -807,10 +807,8 @@ class Relay {
     // record and execution path in decide()) and approved at once as "auto (<mode>)", with no toast and no review; re-checked at decision time.
     const kind = this.kindOfMsg(msg), pol = kind ? this.policy(sb, kind, msg) : "held";
     if (pol === "refused") throw new Error(this.refusalFor(sb, kind));
-    // J412 red team #6: while a J370b send-back is open, a new message of that sandbox is its possible revision and goes to Angus with the link,
-    // even where the dial says "message auto" (yolo): the send-back wins
-    const sentBack = pol === "auto" && !msg.revises && linkable(msg) && !msg.research && (() => { const r = this.returnedFor(sb.name, "message"); return !!(r && !r.broken && r.open?.length); })();
-    if (pol === "auto" && !sentBack) return this.holdAuto(sb, msg, kind);
+    // Angus (J412, red team #6): in yolo nothing waits, not even while a J370b send-back is open: an auto message is sent (only the sandbox's own mode change stays held)
+    if (pol === "auto") return this.holdAuto(sb, msg, kind);
     // J363 (Angus: approvals happen in the Doorman window): a sandbox configured with "review_in": "<doorman entry>" has its held items
     // reviewed in THAT Doorman's host window; its rooms become the sandbox's own world letter ("review_room", default G) so no other world's
     // Thoughts panel claims them, and the toast's Review raises the window (openReview).
