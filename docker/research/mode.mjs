@@ -13,7 +13,10 @@ import path from "node:path";
 // Fail closed: an unknown value is strict; two worlds files naming one sandbox is strict.
 export const MODES = ["strict", "safe", "open", "yolo"];
 export const DEFAULT_MODE = "safe";
-export const LEGACY_MODES = { "doorman-strict": "strict", "doorman-safe": "safe", "doorman-open": "yolo" };
+// Legacy long names (own-property lookups only: "constructor", "__proto__" etc. are NOT modes). doorman-open used to mean "no review";
+// it now reads as open (reviewed, tighter), never as yolo: yolo comes only from the exact word in gateway.mode (red team J412).
+export const LEGACY_MODES = Object.assign(Object.create(null), { "doorman-strict": "strict", "doorman-safe": "safe", "doorman-open": "open" });
+const legacyMode = (m) => (typeof m === "string" && Object.hasOwn(LEGACY_MODES, m) ? LEGACY_MODES[m] : null);
 
 export const MODE_TEXT = {
   strict: "Angus approves the Doorman's searches before anything is sent, then reviews the result before it reaches you.",
@@ -43,11 +46,16 @@ export function kindAction(mode, kind, { modeChange = false } = {}) {
 }
 // The share level a mode implies (spec 1.3): strict → strict, safe → safe, open and yolo → open.
 export const levelOfMode = (m) => (m === "open" || m === "yolo" ? "open" : m === "strict" ? "strict" : "safe");
-// The level in effect: the legacy "gateway.level" / "access" still win (deprecated), else the mode's.
+// The level in effect: the mode's, and the legacy "gateway.level" / "access" can only NARROW it (red team J412: they used to widen).
 export function levelOf(w, mode) {
-  const L = ["open", "safe", "strict"];
-  for (const [v, k] of [[w?.gateway?.level, "gateway.level"], [w?.access, "access"]]) if (v !== undefined) return L.includes(v) ? { level: v, why: `${k} (deprecated: the mode decides now)` } : { level: "strict", why: `${k} isn't open, safe or strict, so strict` };
-  return { level: levelOfMode(mode), why: `mode ${mode}` };
+  const L = ["strict", "safe", "open"], base = levelOfMode(MODES.includes(mode) ? mode : "strict");
+  let level = base, why = `mode ${MODES.includes(mode) ? mode : "strict"}`;
+  for (const [v, k] of [[w?.gateway?.level, "gateway.level"], [w?.access, "access"]]) {
+    if (v === undefined) continue;
+    const lv = typeof v === "string" && L.includes(v) ? v : "strict";
+    if (L.indexOf(lv) < L.indexOf(level)) { level = lv; why = `${k} (deprecated; it can only narrow the mode's level)`; }
+  }
+  return { level, why };
 }
 
 // A worlds/<name>.json object (or null) → { mode, note }. relay = the sbx-relay.json sandboxes (only for the legacy developer-visibility reading).
@@ -55,8 +63,8 @@ export function modeOf(w, relay = [], sandbox = "") {
   const g = w && typeof w === "object" ? w.gateway?.mode : undefined;
   const legacy = w && typeof w === "object" ? w.doorman?.mode : undefined;
   const m = g !== undefined ? g : legacy;
-  if (typeof m === "string" && MODES.includes(m)) return { mode: m, note: "" };
-  if (typeof m === "string" && LEGACY_MODES[m]) return { mode: LEGACY_MODES[m], note: `legacy mode ${m} is read as ${LEGACY_MODES[m]}; set "gateway": {"mode": "${LEGACY_MODES[m]}"}` };
+  if (typeof m === "string" && MODES.includes(m) && (g !== undefined || m !== "yolo")) return { mode: m, note: "" }; // yolo only from the exact word in gateway.mode
+  if (legacyMode(m)) return { mode: legacyMode(m), note: `legacy mode ${m} is read as ${legacyMode(m)}${m === "doorman-open" ? " (reviewed; it used to mean no review: for that set \"gateway\": {\"mode\": \"yolo\"})" : ""}; set "gateway": {"mode": "${legacyMode(m)}"}` };
   if (m !== undefined) { let shown = "?"; try { shown = String(JSON.stringify(m) ?? typeof m).slice(0, 40); } catch { /* */ } return { mode: "strict", note: `unknown mode ${shown}: using strict` }; }
   if (w?.research?.strict === true) return { mode: "strict", note: 'deprecated "research": {"strict": true}: read as strict; set "gateway": {"mode": "strict"} instead' };
   const dm = (Array.isArray(relay) ? relay : []).find((x) => x && x.doorman_for === sandbox && sandbox);

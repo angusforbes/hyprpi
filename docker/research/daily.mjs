@@ -7,8 +7,8 @@ import path from "node:path";
 
 function readLines(f, now, sinceMs) {
   let raw = ""; try { raw = fs.readFileSync(f, "utf8"); } catch { return []; }
-  const out = [];
-  for (const l of raw.split("\n").slice(-20000)) { if (!l) continue; try { const e = JSON.parse(l); const t = Date.parse(e.ts || e.t); if (t > now - sinceMs) out.push(e); } catch { /* skip */ } }
+  const out = []; // by time, not by line count: the whole window is read (red team J412: a flood must not push an item out)
+  for (const l of raw.split("\n")) { if (!l) continue; try { const e = JSON.parse(l); const t = Date.parse(e.ts || e.t); if (t > now - sinceMs) out.push(e); } catch { /* skip */ } }
   return out;
 }
 // → { count, text }: text is a single line ("" when nothing went through unreviewed).

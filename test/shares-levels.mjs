@@ -24,7 +24,7 @@ const world = (w, relay = { sandboxes: [] }) => {
 };
 const ok = (m) => console.log("ok " + m);
 // open: "all" → the whole project folder rw (as today), protected ro on top
-let r = world({ access: "open", projects: "all" });
+let r = world({ gateway: { mode: "open" }, projects: "all" });
 assert.equal(r.level, "open"); assert.equal(r.mounts[work], "rw"); assert.equal(r.p("prot-x"), "ro");
 assert.match(r.out, /projects \(4\): alpha rw, beta rw, gamma rw, prot-x ro/);
 ok("open + all: all of Work rw, protected ro, every project listed by name and mode");
@@ -46,9 +46,9 @@ assert.equal(r.p("prot-x"), "ro"); ok("a protected project stays ro when listed 
 // level defaults: developer visibility → open; Doorman modes → their level; bad access → strict
 r = world({ projects: "all" }, { sandboxes: [{ name: "doorman-t", doorman_for: "world-t", visibility: "developer" }] }); assert.equal(r.level, "open");
 r = world({ projects: "all", doorman: { mode: "strict" } }); assert.equal(r.level, "strict"); assert.equal(r.mounts[work], undefined);
-r = world({ projects: "all", doorman: { mode: "yolo" } }); assert.equal(r.level, "open");
+r = world({ projects: "all", gateway: { mode: "yolo" } }); assert.equal(r.level, "open");
 r = world({ projects: "all" }); assert.equal(r.level, "safe", "no Doorman setting: the default mode safe");
-r = world({ access: "wide-open", projects: "all" }); assert.equal(r.level, "strict"); assert.match(r.out, /isn't open, safe or strict, so strict/);
+r = world({ access: "wide-open", projects: "all" }); assert.equal(r.level, "strict"); assert.match(r.out, /can only narrow/);
 r = world({ access: "safe", projects: ["../x", "a/b", ".."] }); assert.match(r.out, /bad project entry/); assert.match(r.out, /projects \(0\)/);
 r = world({ access: null, projects: "all" }, { sandboxes: [{ name: "doorman-t", doorman_for: "world-t", visibility: "developer" }] }); assert.equal(r.level, "strict", "access: null is unknown → strict");
 r = world({ access: "safe", projects: ["alpha:rw:ro", "beta:RW", { name: "gamma", mode: "write" }] }); assert.match(r.out, /projects \(0\)/, "extra colons / unknown modes refused");
@@ -62,7 +62,7 @@ assert.equal(r.mounts[work], undefined); assert.equal(r.p("gamma"), undefined); 
 assert.match(r.out, /isn't allowed at the safe level/); assert.match(r.out, /linky \(no such project\)/); assert.match(r.out, /projects \(1\): alpha ro/);
 const other = path.join(base, "notes"); fs.mkdirSync(other);
 r = world({ access: "strict", projects: [], shares: [{ path: other, mode: "rw" }] }); assert.equal(r.mounts[other], "ro", "strict: general shares ro");
-r = world({ access: "open", projects: [], shares: [{ path: work, mode: "rw" }] }); assert.equal(r.mounts[work], "rw", "open: as before");
+r = world({ gateway: { mode: "open" }, projects: [], shares: [{ path: work, mode: "rw" }] }); assert.equal(r.mounts[work], "rw", "open: as before");
 ok("safe/strict: no general share around a project folder, no symlinked project; strict shares ro");
 // (LevelReview) role folders can't get around it either; strict roles are ro
 const gcfg = (extra) => fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ projectFolders: [work], protected: [path.join(work, "prot-x")], ...extra }));
@@ -70,7 +70,7 @@ gcfg({ roleFolders: { downloads: work, screenshots: other } });
 r = world({ access: "strict", projects: [], roles: { downloads: true, screenshots: true } });
 assert.equal(r.mounts[work], undefined, "a role folder at the project folder is refused"); assert.match(r.out, /role downloads: in or around a project folder/);
 assert.equal(r.mounts[other], "ro", "strict roles are ro");
-r = world({ access: "open", projects: [], roles: { downloads: true } }); assert.equal(r.mounts[work], "rw", "open: roles as before");
+r = world({ gateway: { mode: "open" }, projects: [], roles: { downloads: true } }); assert.equal(r.mounts[work], "rw", "open: roles as before");
 gcfg({});
 ok("safe/strict: no role folder around a project folder; strict roles ro");
 // (LevelReview) a listed subfolder of a protected project folder stays ro; the card lists what's really mounted
@@ -78,7 +78,7 @@ const mono = path.join(base, "mono"); fs.mkdirSync(path.join(mono, ".git"), { re
 gcfg({ projectFolders: [mono], protected: [mono] });
 r = world({ access: "safe", projects: ["src:rw"] }); assert.equal(r.mounts[path.join(mono, "src")], "ro"); assert.match(r.out, /projects \(1\): src ro/);
 gcfg({ projectFolders: [mono], protected: [] });
-r = world({ access: "open", projects: "all" }); assert.match(r.out, /projects \(2\): docs rw, src rw/, "a repo project folder: its children, each with its real mode");
+r = world({ gateway: { mode: "open" }, projects: "all" }); assert.match(r.out, /projects \(2\): docs rw, src rw/, "a repo project folder: its children, each with its real mode");
 // (LevelReview) a project folder reached through a symlink doesn't dodge protection
 const link = path.join(base, "WorkLink"); fs.symlinkSync(work, link);
 gcfg({ projectFolders: [link], protected: [path.join(work, "prot-x")] });
@@ -93,9 +93,9 @@ assert.match(card, /## Projects/); assert.match(card, /Access level: safe/); ass
 ok("card: level and every shared project by name and mode; unlisted ones absent");
 // (LevelReview) a share that is an alias of a protected project is that project: ro
 const alias = path.join(base, "protAlias"); fs.symlinkSync(path.join(work, "prot-x"), alias);
-r = world({ access: "open", projects: [], shares: [{ path: alias, mode: "rw" }] }); assert.equal(r.mounts[alias], "ro");
+r = world({ gateway: { mode: "open" }, projects: [], shares: [{ path: alias, mode: "rw" }] }); assert.equal(r.mounts[alias], "ro");
 const parentAlias = path.join(base, "WorkAlias"); fs.symlinkSync(work, parentAlias);
-r = world({ access: "open", projects: [], shares: [{ path: parentAlias, mode: "rw" }] }); assert.equal(r.mounts[path.join(parentAlias, "prot-x")], "ro", "overlay at the alias's place");
+r = world({ gateway: { mode: "open" }, projects: [], shares: [{ path: parentAlias, mode: "rw" }] }); assert.equal(r.mounts[path.join(parentAlias, "prot-x")], "ro", "overlay at the alias's place");
 assert.match(r.out, /projects \(\d+\): alpha rw, beta rw, gamma rw, prot-x ro/, "the card lists what an alias share really gives");
 ok("an alias of a protected project is ro; an alias of its parent gets the ro overlay and the card lists its projects");
 // addProject (OpenRoute's share_project): within the level, atomically, never wider
@@ -110,7 +110,7 @@ assert.equal(addProject("World T", "alpha").ok, false); assert.equal(addProject(
 world({ access: "strict", projects: [] });
 a = addProject("world-t", "alpha", "rw"); assert.equal(a.ok, false); assert.match(a.text, /strict level/, "never wider than the level");
 assert.ok(addProject("world-t", "alpha", "ro").ok); assert.deepEqual(wj().projects, ["alpha:ro"]);
-world({ access: "open", projects: "all" });
+world({ gateway: { mode: "open" }, projects: "all" });
 a = addProject("world-t", "gamma"); assert.ok(a.ok); assert.match(a.text, /already shared/); assert.equal(wj().projects, "all");
 r = world({ access: "safe", projects: ["alpha"], keep: 1 }); assert.ok(addProject("world-t", "gamma").ok); assert.equal(wj().keep, 1, "other keys kept");
 assert.match(execFileSync(process.execPath, [SH, "plan", "world-t"], { env, encoding: "utf8" }), /projects \(2\): alpha ro, gamma ro/);

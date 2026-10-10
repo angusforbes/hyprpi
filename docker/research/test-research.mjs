@@ -202,24 +202,30 @@ t("digest shows held and denied searches", () => { const d = R.digest(); assert.
 // ---- J325 Doorman modes ----
 const M = await import("./mode.mjs");
 t("mode: absent → safe", () => assert.deepEqual(M.modeOf(null), { mode: "safe", note: "" }));
-t("mode: each named mode is read exactly", () => { for (const m of ["strict", "safe", "open", "yolo"]) assert.equal(M.modeOf({ gateway: { mode: m } }).mode, m); assert.equal(M.modeOf({ doorman: { mode: "doorman-open" } }).mode, "yolo", "legacy doorman-open is yolo"); });
+t("mode: each named mode is read exactly", () => { for (const m of ["strict", "safe", "open", "yolo"]) assert.equal(M.modeOf({ gateway: { mode: m } }).mode, m);  });
 t("mode: open is never reached without the exact setting", () => {
   for (const v of ["Yolo", "Doorman-Open", "yolo ", "doorman_open", true, 1, null, { mode: "yolo" }]) assert.equal(M.modeOf({ gateway: { mode: v } }).mode, "strict", JSON.stringify(v));
   for (const w of [{ doorman: "yolo" }, { research: { mode: "yolo" } }, { mode: "yolo" }, { research: { strict: false } }, { research: { open: true } }]) assert.notEqual(M.modeOf(w).mode, "yolo", JSON.stringify(w));
+});
+t("J412 red team: prototype names and non-strings are never modes; legacy doorman-open is open, never yolo; yolo only from gateway.mode", () => {
+  for (const v of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) { assert.equal(M.modeOf({ gateway: { mode: v } }).mode, "strict", v); assert.equal(M.modeOf({ doorman: { mode: v } }).mode, "strict", v); }
+  assert.equal(M.modeOf({ doorman: { mode: "doorman-open" } }).mode, "open"); assert.equal(M.modeOf({ doorman: { mode: "yolo" } }).mode, "strict", "doorman.mode can't select yolo");
+  assert.equal(M.levelOf({ gateway: { level: "open" } }, "strict").level, "strict", "a legacy level never widens"); assert.equal(M.levelOf({ access: "open" }, "safe").level, "safe");
+  assert.equal(M.levelOf({ access: "safe" }, "yolo").level, "safe", "a legacy level can narrow"); assert.equal(M.levelOf({}, "open").level, "open"); assert.equal(M.levelOf({}, "constructor").level, "strict");
 });
 t("mode: the old strict flag migrates to strict with a deprecation note", () => { const r = M.modeOf({ research: { strict: true } }); assert.equal(r.mode, "strict"); assert.match(r.note, /deprecated/); });
 t("mode: an explicit doorman.mode wins over the old flag", () => assert.equal(M.modeOf({ doorman: { mode: "safe" }, research: { strict: true } }).mode, "safe"));
 const W = (o) => fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "world-m.json"), JSON.stringify({ sandbox: "world-m", task: TASK, ...o }));
 t("safe: ready, held for review, header says the mode", () => { W({}); const r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 safe mode" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "safe"); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: safe$/m); });
 t("strict: planned first, header says the mode", () => { W({ doorman: { mode: "strict" } }); const n = calls(), r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 strict mode" }); assert.equal(r.status, "planned"); assert.equal(calls(), n); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: strict$/m); });
-t("yolo: runs straight through, marked open and not human-reviewed", () => { W({ doorman: { mode: "yolo" } }); const r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 open mode" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "yolo"); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: yolo \(no human review/m); });
+t("yolo: runs straight through, marked open and not human-reviewed", () => { W({ gateway: { mode: "yolo" } }); const r = R.ask({ sandbox: "world-m", lookingFor: "IPU6 open mode" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "yolo"); assert.match(fs.readFileSync(r.file, "utf8"), /^Doorman mode: yolo \(no human review/m); });
 t("yolo: the Doorman's checks still apply (inside data refused, injection withheld)", () => { assert.equal(R.ask({ sandbox: "world-m", lookingFor: "ipu6 SECRETWORD" }).status, "refused"); assert.equal(R.ask({ sandbox: "world-m", lookingFor: "ipu6 inject open" }).status, "refused"); });
 t("review #2: a non-string mode with a hostile toString is the default, no crash", () => assert.equal(M.modeOf({ doorman: { mode: { toString: null } } }).mode, "strict"));
 t("review #1: two worlds files naming one sandbox → ambiguous, fail closed to strict (whatever sorts first)", () => {
-  fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "aaa-backup.json"), JSON.stringify({ sandbox: "world-m", doorman: { mode: "yolo" } }));
+  fs.writeFileSync(path.join(T, "config", "hyprpi", "worlds", "aaa-backup.json"), JSON.stringify({ sandbox: "world-m", gateway: { mode: "yolo" } }));
   const c = R.conf("world-m"); assert.equal(c.mode, "strict"); assert.match(c.modeNote, /ambiguous/);
   const n = calls(); assert.equal(R.ask({ sandbox: "world-m", lookingFor: "IPU6 ambiguous" }).status, "planned"); assert.equal(calls(), n);
-  fs.unlinkSync(path.join(T, "config", "hyprpi", "worlds", "aaa-backup.json")); W({ doorman: { mode: "yolo" } });
+  fs.unlinkSync(path.join(T, "config", "hyprpi", "worlds", "aaa-backup.json")); W({ gateway: { mode: "yolo" } });
 });
 t("digest header names the mode", () => assert.match(R.digest().text, /Doorman mode: .*world-m: yolo/));
 t("review #3: an open-mode result the relay didn't deliver unreviewed still counts as waiting for review", () => {
@@ -240,7 +246,7 @@ t("task: a missing task verdict counts as off-task (fail closed)", () => { const
 t("task: beyond 3 exceptions an hour, further off-task requests are refused outright", () => { const n = calls(), r = R.ask({ sandbox: "world-t", lookingFor: "offtask the fourth one" }); assert.equal(r.status, "refused"); assert.match(r.reason, /3 such requests already wait/); assert.equal(calls(), n); assert.equal(R.ask({ sandbox: "world-t", lookingFor: "IPU6 still on task" }).status, "ready"); });
 WF("world-n", { doorman: { mode: "safe" } });
 t("task: no task set → every request is held (fail closed), saying so", () => { const r = R.ask({ sandbox: "world-n", lookingFor: "IPU6 no task" }); assert.equal(r.status, "planned"); assert.match(r.exception, /no task is set/); });
-WF("world-o", { task: TASK, doorman: { mode: "yolo" } });
+WF("world-o", { task: TASK, gateway: { mode: "yolo" } });
 t("task: off-task in yolo is sent but flagged (J412), never held", () => { const r = R.ask({ sandbox: "world-o", lookingFor: "offtask open mode" }); assert.equal(r.status, "ready"); assert.match(fs.readFileSync(path.join(T, "state", "log.jsonl"), "utf8") || "", /"ev":"flagged"/); });
 WF("world-p", { task: TASK, gateway: { mode: "open" } });
 t("task: off-task in open is sent but flagged, and the deliverable is still a ready item for review", () => { const r = R.ask({ sandbox: "world-p", lookingFor: "offtask open mode two" }); assert.equal(r.status, "ready"); assert.equal(r.mode, "open"); });

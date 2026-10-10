@@ -29,7 +29,7 @@ await t("defaults and precedence: gateway block > older keys > defaults", () => 
   let e = G.resolveGateway({ w: { sandbox: "world-t", doorman: { mode: "strict" }, access: "strict" }, research: { shape_model: "legacy/report-model" }, relay, sandbox: "world-t" });
   assert.equal(e.search.provider, "sonar"); assert.equal(e.search.quick_model, "perplexity/perplexity/sonar"); assert.equal(e.report_model, "legacy/report-model"); assert.equal(e.mode, "strict"); assert.equal(e.level, "strict"); assert.equal(e.doorman_chat_model, "azure/anthropic/claude-opus-5-5");
   e = G.resolveGateway({ w: { doorman: { mode: "strict" }, access: "strict", gateway: { mode: "yolo", level: "open", report_model: "new/report", doorman_model: "azure/x/y", search: { provider: "brave", key_file: "~/k" } } }, research: { shape_model: "legacy/report-model" }, relay, sandbox: "world-t" });
-  assert.equal(e.mode, "yolo"); assert.equal(e.level, "open"); assert.equal(e.report_model, "new/report"); assert.equal(e.doorman_model, "azure/x/y"); assert.equal(e.search.provider, "brave"); assert.deepEqual(e.search.hosts, ["api.search.brave.com"]);
+  assert.equal(e.mode, "yolo"); assert.equal(e.level, "strict", "the legacy access strict narrows yolo's open level"); assert.equal(e.report_model, "new/report"); assert.equal(e.doorman_model, "azure/x/y"); assert.equal(e.search.provider, "brave"); assert.deepEqual(e.search.hosts, ["api.search.brave.com"]);
   assert.equal(M.modeOf({ doorman: { mode: "strict" }, gateway: { mode: "yolo" } }).mode, "yolo", "mode.mjs reads gateway.mode first");
   e = G.resolveGateway({ w: { gateway: { mode: "bogus", report_model: "bad model!", search: { provider: "nope" } } }, relay, sandbox: "world-t" });
   assert.equal(e.mode, "strict", "an unknown mode fails closed to strict"); assert.equal(e.report_model, "azure/openai/gpt-6-sol"); assert.equal(e.search.provider, "sonar"); assert.ok(e.notes.length >= 3, "invalid values are ignored and listed");
@@ -205,7 +205,7 @@ await t("the relay CLI propose-gateway creates the held item (no terminal needed
 });
 await t("the window shows what is in effect (provider, models, mode, level)", async () => {
   writeW({ sandbox: "world-t", gateway: { report_model: "azure/new/report", search: { provider: "brave", key_file: path.join(T, "bkey") }, mode: "strict", level: "safe" } });
-  const e = R.conf("world-t").gateway; const line = G.summaryLine(e); assert.match(line, /search brave · report report · Doorman claude-opus-5-5 · mode strict · level safe/);
+  const e = R.conf("world-t").gateway; const line = G.summaryLine(e); assert.match(line, /search brave · report report · Doorman claude-opus-5-5 · mode strict · level strict/);
   const prov = await import("../doorman/review-provider.mjs"); assert.equal(typeof prov.default("door-t").info, "function"); assert.match(prov.default("door-t").info(), /world-t: search brave/);
 });
 await t("red team fixes: an over-long plan edit is refused (not cut); ambiguity shows strict everywhere; the legacy shape_model counts as 'before'", () => {
@@ -217,7 +217,7 @@ await t("red team fixes: an over-long plan edit is refused (not cut); ambiguity 
   const r = R.checkPlanEdit(rid, long); assert.equal(r.ok, false); assert.match(r.reason, /over 4000 characters/);
   assert.equal(R.checkPlanEdit(rid, "water ingress and encapsulation of perovskite modules\n").ok, true);
   // (3) two worlds files naming the sandbox: display = enforcement = strict
-  writeW({ sandbox: "world-t", doorman: { mode: "yolo" } }); fs.writeFileSync(path.join(WORLDS, "dup.json"), JSON.stringify({ sandbox: "world-t", doorman: { mode: "yolo" } }));
+  writeW({ sandbox: "world-t", gateway: { mode: "yolo" } }); fs.writeFileSync(path.join(WORLDS, "dup.json"), JSON.stringify({ sandbox: "world-t", gateway: { mode: "yolo" } }));
   const c = R.conf("world-t"); assert.equal(c.mode, "strict"); assert.equal(c.gateway.mode, "strict", "the header and config --json agree with the runner"); assert.ok(c.gateway.notes.some((x) => /several worlds files/.test(x)));
   fs.rmSync(path.join(WORLDS, "dup.json"));
   // (4) a held proposal's 'before' for report_model includes research.json's legacy shape_model, and a change to it after review is caught
