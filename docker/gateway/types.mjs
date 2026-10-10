@@ -1,4 +1,4 @@
-// J368 (Angus: "build the agent free gateway"; design: ~/Obsidian/Papers/Doorman/agent-free-gateway.md): the fixed request
+// J368 (Angus: "build the agent free gateway"; design: the agent-free gateway note in pi-doorman's docs): the fixed request
 // types a sandbox's Doorman can draft for Angus. Each type has fixed parameters, code checks (validate), a plain text for
 // Angus's decision (show) and a host-code handler (run) that carries it out after HIS approval in the Doorman window. No
 // host agent is involved anywhere: in an agent-free setup these, plus research, GPU leases and task changes, are all a

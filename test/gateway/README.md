@@ -18,7 +18,7 @@ Linux, Node, Python, working Docker and the locally cached pi-sandbox image. The
 
 ## Isolation and decisions
 
-Every run creates a fresh temporary HOME, config, research state, relay state and daemon socket. Its synthetic world I belongs only to the private test daemon. No live world G, relay state or daemon socket is passed to the tested processes or mounted in a test container. The worker is a disposable, network-disabled Docker container, not an ASR-approved Docker Sandboxes VM. It has only the fixture outboxes writable and the host-produced inboxes read-only.
+Every run creates a fresh temporary HOME, config, research state, relay state and daemon socket. Its synthetic world I belongs only to the private test daemon. No live world G, relay state or daemon socket is passed to the tested processes or mounted in a test container. The worker is a disposable, network-disabled Docker container, not a Docker Sandboxes (sbx) microVM. It has only the fixture outboxes writable and the host-produced inboxes read-only.
 
 Owner decisions use the unchanged product CLI in a separate disposable container, with a genuine Python PTY. Only scratch config/state/research/edit folders and read-only source are mounted there; no live HOME, daemon socket, Docker socket, Wayland or D-Bus is exposed. The harness validates its scratch paths, fixture config, sandbox names, pending IDs and edit paths before mounting them. Agent-marked and pipe-input decisions must still be refused. These cases test the HYPRPI_AGENT_ID and TTY checks; they do not independently test the pi/script ancestor-chain refusal.
 
@@ -44,7 +44,7 @@ Missing incoming implementations are explicitly PENDING, never PASS. The report 
 
 ## What this does not prove
 
-Providers, browser opening, network policy changes and share mounting are synthetic recorded effects. The production checks, relay, daemon, handlers, guarded CLI and window still run; the suite does not claim live-model semantic accuracy, real Internet availability, actual browser rendering, ASR compliance or a GPU lease. Existing unit/red-team suites and explicit live checks remain complementary.
+Providers, browser opening, network policy changes and share mounting are synthetic recorded effects. The production checks, relay, daemon, handlers, guarded CLI and window still run; the suite does not claim live-model semantic accuracy, real Internet availability, actual browser rendering, compliance with any security review or a GPU lease. Existing unit/red-team suites and explicit live checks remain complementary.
 
 Cleanup tracks every nested rig and the window container, not only the outer worker. A timed-out Docker create remains uncertain until its exact labelled container is observed and removed; an empty early lookup is not cleanup proof. If creation cannot be settled within the bounded wait, cleanup is reported failed and scratch is retained instead of claiming success. Late-create, never-observed-create and partial-constructor cleanup have deterministic regression checks. A constructor error removes its original scratch inode before returning; an unconfirmed removal also makes cleanup fail.
 

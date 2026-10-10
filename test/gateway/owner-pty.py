@@ -36,17 +36,19 @@ def confined(filename, base, regular=False):
 
 def main():
     payload = json.loads(sys.argv[1])
-    if set(payload) != {'root', 'repo', 'args', 'agent', 'pipe'}:
+    if set(payload) != {'root', 'repo', 'home', 'args', 'agent', 'pipe'}:
         raise ValueError('unexpected owner payload')
-    root, repo = payload['root'], payload['repo']
+    root, repo, home = payload['root'], payload['repo'], payload['home']
+    if not isinstance(home, str) or not Path(home).is_absolute() or Path(home).resolve() != Path(home):
+        raise ValueError('invalid host home')
     if not isinstance(root, str) or not Path(root).is_absolute() or not re.fullmatch(r'gateway-e2e-[A-Za-z0-9_-]+', Path(root).name):
         raise ValueError('unsafe scratch root')
-    if not isinstance(repo, str) or not repo.startswith('/home/agf/Harness/') or Path(repo).resolve() != Path(repo):
+    if not isinstance(repo, str) or not repo.startswith(home + '/Harness/') or Path(repo).resolve() != Path(repo):
         raise ValueError('unauthorized source checkout')
     # The state/config mounts are deliberate, but neither the daemon nor any
     # live owner paths may be visible in this fresh container.
     for hidden in (root + '/dstate', root + '/d.sock', '/var/run/docker.sock',
-                   '/home/agf/.local/state/hyprpi', '/home/agf/.config/hyprpi'):
+                   home + '/.local/state/hyprpi', home + '/.config/hyprpi'):
         if os.path.lexists(hidden):
             raise ValueError('host-only path visible: ' + hidden)
     args = payload['args']

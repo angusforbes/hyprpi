@@ -54,8 +54,8 @@ export async function createRig(options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(k => !['repoRoot', 'image'].includes(k))) fail('only repoRoot and cached image may configure a rig');
   const { repoRoot, image = 'pi-sandbox' } = options;
   if (typeof repoRoot !== 'string' || !path.isAbsolute(repoRoot)) fail('repoRoot must be an absolute authorized checkout');
-  const repo = fs.realpathSync(repoRoot), harness = fs.realpathSync('/home/agf/Harness');
-  if (repo !== repoRoot || !below(harness, repo)) fail('repoRoot must resolve inside /home/agf/Harness without aliases');
+  const repo = fs.realpathSync(repoRoot), harness = fs.realpathSync(path.join(os.homedir(), 'Harness'));
+  if (repo !== repoRoot || !below(harness, repo)) fail('repoRoot must resolve inside ~/Harness without aliases');
   const git = execution('/usr/bin/git', ['-C', repo, 'rev-parse', '--show-toplevel'], { PATH: '/usr/bin:/bin', HOME: '/nonexistent' });
   if (git.status !== 0 || git.stdout.trim() !== repo) fail('repoRoot is not a git worktree root');
   for (const f of ['docker/sbx-relay.mjs', 'docker/research/research.mjs', 'test/gateway/worker.mjs', 'test/gateway/owner-pty.py']) {
@@ -267,7 +267,7 @@ export async function createRig(options = {}) {
     assertRoot(); validateConfig(); safeEnv();
     if (!workerId) fail('worker is not started');
     const info = inspectBoundary(workerId, workerMounts());
-    const hidden = [P('state'), P('config'), P('dstate'), P('rstate'), P('d.sock'), '/home/agf/.local/state/hyprpi', '/home/agf/.config/hyprpi', '/run/user/' + process.getuid() + '/hyprpi.sock', '/var/run/docker.sock'];
+    const hidden = [P('state'), P('config'), P('dstate'), P('rstate'), P('d.sock'), path.join(os.homedir(), '.local/state/hyprpi'), path.join(os.homedir(), '.config/hyprpi'), '/run/user/' + process.getuid() + '/hyprpi.sock', '/var/run/docker.sock'];
     const probe = `const fs=require('fs');const hidden=${JSON.stringify(hidden)},inboxes=${JSON.stringify([P('inbox'), P('dinbox')])};for(const p of hidden)if(fs.existsSync(p))throw Error('host path visible '+p);const denied=[];for(const p of inboxes){try{fs.writeFileSync(p+'/.j376-write-probe','x');throw Error('readonly inbox writable')}catch(e){if(!['EROFS','EACCES'].includes(e.code))throw e;denied.push({path:p,code:e.code})}}console.log(JSON.stringify({hidden,writeRefusals:denied}))`;
     const checked = JSON.parse(must(docker(['exec', workerId, NODE, '-e', probe]), 'worker actual read/write boundary probe').stdout);
     return { ok: true, ...info, ...checked, image: imageId };
@@ -335,7 +335,7 @@ export async function createRig(options = {}) {
     try {
       const r = ownedStart(['create', ...hardened(name), ...expected.flatMap(m => mount(m.path, !m.rw)),
         '--env', 'PATH=/usr/local/bin:/usr/bin:/bin', '--env', 'HOME=/tmp', '--entrypoint', '/usr/bin/python3',
-        imageId, path.join(repo, 'test/gateway/owner-pty.py'), JSON.stringify({ root, repo, args, agent, pipe })], name, 'decision container creation');
+        imageId, path.join(repo, 'test/gateway/owner-pty.py'), JSON.stringify({ root, repo, home: os.homedir(), args, agent, pipe })], name, 'decision container creation');
       const cid = r.stdout.trim();
       if (!/^[a-f0-9]{64}$/.test(cid)) fail('decision container did not return an exact ID');
       owners.set(name, cid);

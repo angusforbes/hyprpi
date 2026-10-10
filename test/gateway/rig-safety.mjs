@@ -4,9 +4,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createRig, settleLateCreates } from './rig.mjs';
+
+const HOME = os.homedir();
 
 export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'), onRig = () => {} } = {}) {
   const rig = await createRig({ repoRoot });
@@ -34,27 +37,27 @@ export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPat
     assert.throws(() => settleLateCreates(unknown, { now: () => clock, wait: ms => { clock += ms; }, timeout: 200,
       inspect: () => null, remove: () => assert.fail('must not remove an unobserved creation') }), /cleanup unconfirmed/);
     assert.equal(unknown.size, 1, 'an empty sweep cannot settle an unknown creation'); checks++;
-    await rejects(() => createRig({ repoRoot, root: '/home/agf/.local/state/hyprpi' }), /only repoRoot/);
-    await rejects(() => createRig({ repoRoot: '/home/agf' }), /inside .*Harness/);
+    await rejects(() => createRig({ repoRoot, root: path.join(HOME, '.local/state/hyprpi') }), /only repoRoot/);
+    await rejects(() => createRig({ repoRoot: HOME }), /inside .*Harness/);
     assert.throws(() => rig.P('..', 'live-state'), /escapes/); checks++;
     const forbidden = ['HYPRPI_AGENT_ID', 'PI_CODING_AGENT', 'PI_SESSION_FILE', 'HYPRPI_THOUGHTS_ROOM', 'DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', 'HYPRLAND_INSTANCE_SIGNATURE'];
     for (const k of forbidden) assert.equal(rig.env[k], undefined, `inherited ${k}`);
     checks++;
     await rejects(() => rig.owner(['approve', 'world-g--123abc']), /unsafe or foreign/);
-    await rejects(() => rig.owner(['approve', `${rig.sandbox}--123abc`], { env: { XDG_STATE_HOME: '/home/agf/.local/state' } }), /overrides forbidden/);
-    await rejects(() => rig.owner(['approve', `${rig.sandbox}--123abc`], { root: '/home/agf/.local/state/hyprpi' }), /overrides forbidden/);
-    await rejects(() => rig.cli('docker/sbx-relay.mjs', ['pending'], { env: { XDG_STATE_HOME: '/home/agf/.local/state' } }), /override not permitted/);
+    await rejects(() => rig.owner(['approve', `${rig.sandbox}--123abc`], { env: { XDG_STATE_HOME: path.join(HOME, '.local/state') } }), /overrides forbidden/);
+    await rejects(() => rig.owner(['approve', `${rig.sandbox}--123abc`], { root: path.join(HOME, '.local/state/hyprpi') }), /overrides forbidden/);
+    await rejects(() => rig.cli('docker/sbx-relay.mjs', ['pending'], { env: { XDG_STATE_HOME: path.join(HOME, '.local/state') } }), /override not permitted/);
     await rejects(() => rig.cli('docker/sbx-relay.mjs', ['pending'], { env: { HYPRPI_AGENT_ID: 'bad' } }), /override not permitted/);
     const oldHome = rig.env.HOME;
-    rig.env.HOME = '/home/agf';
+    rig.env.HOME = HOME;
     await rejects(() => rig.start(), /protected environment changed/);
     rig.env.HOME = oldHome;
     const config = rig.P('config/hyprpi/sbx-relay.json'), original = fs.readFileSync(config, 'utf8'), cfg = JSON.parse(original);
-    cfg.sandboxes[0].workspace = '/home/agf';
+    cfg.sandboxes[0].workspace = HOME;
     fs.writeFileSync(config, JSON.stringify(cfg));
     await rejects(() => rig.start(), /not a scratch path/);
     fs.writeFileSync(config, original);
-    fs.symlinkSync('/home/agf/.local/state/hyprpi', rig.P('config', 'no-live-state'));
+    fs.symlinkSync(path.join(HOME, '.local/state/hyprpi'), rig.P('config', 'no-live-state'));
     await rejects(() => rig.start(), /symlink refused/);
     fs.unlinkSync(rig.P('config', 'no-live-state'));
     const stub = spawnSync(rig.P('bin/docker'), ['ps', '-a', '--filter', 'label=hyprpi.gpu=1', '-q'], { env: rig.env, encoding: 'utf8' });
@@ -75,7 +78,7 @@ export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPat
       assert.match(r.stderr, opts.agent ? /called from an agent/ : /no terminal/);
       assert.equal(fs.existsSync(rig.P('state/hyprpi/sbx-relay/decisions', id + '.approve')), false); checks++;
     }
-    await rejects(() => rig.owner(['approve', id, '--edit-file', '/home/agf/.config/hyprpi/config.json']), /not a scratch path/);
+    await rejects(() => rig.owner(['approve', id, '--edit-file', path.join(HOME, '.config/hyprpi/config.json')]), /not a scratch path/);
     const edit = rig.P('edits', id + '.txt');
     fs.writeFileSync(edit, 'Modified synthetic fixture request.');
     const approved = await rig.owner(['approve', id, '--edit-file', edit]);
