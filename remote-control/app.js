@@ -284,6 +284,7 @@ function setWorld(w) {
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
   history.replaceState(null, "", `?world=${w}`);
+  tellHere();
   if (filsWin) filsPost({ world: w });
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
   newestBtn.hidden = true;
@@ -297,6 +298,7 @@ function applyState(s) {
   if (s.theme) { for (const [k, v] of Object.entries(s.theme)) document.documentElement.style.setProperty("--" + k, v); document.querySelector("meta[name=theme-color]").content = s.theme.bg; }
   const first = !stateSeen; stateSeen = true;
   if (!world) setWorld(new URLSearchParams(location.search).get("world") || s.active);
+  if (first) tellHere(); // J416: the world it opened on (?world= sets it without setWorld)
   renderTop();
   if (first) refreshAll();
   // A world that just appeared (F–I in use): fetch its thread now, so switching to it is instant.
@@ -356,7 +358,9 @@ let atts = []; try { atts = JSON.parse(localStorage.getItem(ATT_KEY) || "[]").fi
 const saveAtts = () => { try { const done = atts.filter((a) => a.path).map(({ name, path }) => ({ name, path })); done.length ? localStorage.setItem(ATT_KEY, JSON.stringify(done)) : localStorage.removeItem(ATT_KEY); } catch { /* full */ } };
 function renderAtts() {
   attsEl.hidden = !atts.length || (typeof view !== "undefined" && view !== "thoughts");
-  attsEl.innerHTML = atts.map((a, i) => `<div class="att${a.err ? " err" : ""}" data-i="${i}"><img alt="" src="${esc(a.local || (a.path ? "/api/thumb?path=" + encodeURIComponent(a.path) : ""))}">${a.path ? "" : `<div class="ap">${a.err ? "✗" : (a.pct || 0) + "%"}</div>`}<button type="button" class="ax" aria-label="remove">✕</button></div>`).join("");
+  // J417: any file; an image shows itself (its local copy), anything else (or an image after a reload: the
+  // pending folder isn't served) a tile with its name
+  attsEl.innerHTML = atts.map((a, i) => `<div class="att${a.err ? " err" : ""}" data-i="${i}">${a.local ? `<img alt="" src="${esc(a.local)}">` : `<div class="af">📄<span>${esc(a.name || "")}</span></div>`}${a.path ? "" : `<div class="ap">${a.err ? "✗" : (a.pct || 0) + "%"}</div>`}<button type="button" class="ax" aria-label="remove">✕</button></div>`).join("");
   sendBtn.disabled = sending || atts.some((a) => !a.path && !a.err);
 }
 let upToken = null;
@@ -365,7 +369,7 @@ function putPhoto(file, batch, token, onPct) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest(); x.open("POST", "/api/upload");
     x.setRequestHeader("x-upload-token", token); x.setRequestHeader("x-file-name", encodeURIComponent(file.name || "photo.jpg"));
-    x.setRequestHeader("x-batch", batch); x.setRequestHeader("content-type", "application/octet-stream");
+    x.setRequestHeader("x-batch", batch); x.setRequestHeader("content-type", "application/octet-stream"); x.setRequestHeader("x-pending", "1"); // J417
     x.upload.onprogress = (e) => e.total && onPct(Math.floor(e.loaded / e.total * 100));
     x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch { /* none */ } x.status === 200 ? resolve(j) : reject(Object.assign(new Error(j.error || x.statusText || "failed"), { status: x.status })); };
     x.onerror = () => reject(new Error("network error"));
@@ -375,6 +379,7 @@ function putPhoto(file, batch, token, onPct) {
 // A phone photo can be 5–15 MB (the model takes ≤ ~5 MB an image; the daemon skips > 10 MB, silently),
 // so it goes up as a JPEG of at most 2048 px on the long side; a small png/jpeg/webp/gif goes as it is.
 async function shrink(f) {
+  if (!/^image\//.test(f.type)) return f; // J417: a PDF, video or any other file goes as it is
   if (f.size <= 1.5e6 && /^image\/(png|jpeg|webp|gif)$/.test(f.type)) return f;
   try {
     const bm = await createImageBitmap(f, { imageOrientation: "from-image" }), k = Math.min(1, 2048 / Math.max(bm.width, bm.height));
@@ -386,7 +391,7 @@ async function shrink(f) {
 }
 async function addPhotos(files) {
   const batch = crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now();
-  const items = files.map((f) => ({ name: f.name, local: URL.createObjectURL(f), file: f, pct: 0 }));
+  const items = files.map((f) => ({ name: f.name, local: /^image\//.test(f.type) ? URL.createObjectURL(f) : "", file: f, pct: 0 }));
   atts.push(...items); renderAtts();
   for (const a of items) {
     try {
@@ -394,7 +399,7 @@ async function addPhotos(files) {
       let r; try { r = await putPhoto(a.file, batch, await uploadToken(), (p) => { a.pct = p; renderAtts(); }); }
       catch (e) { if (e.message !== "bad token") throw e; r = await putPhoto(a.file, batch, await uploadToken(true), (p) => { a.pct = p; renderAtts(); }); }
       a.path = r.path; delete a.file;
-    } catch (e) { a.err = e.message; note("✗ photo not uploaded: " + e.message); }
+    } catch (e) { a.err = e.message; note(`✗ ${a.name || "file"} not uploaded: ` + e.message); }
     renderAtts(); saveAtts();
   }
 }
@@ -410,7 +415,12 @@ input.addEventListener("paste", (e) => {
   addPhotos(files.map((f, i) => f.name && f.name !== "image.png" ? f : new File([f], `pasted-${Date.now()}${i ? "-" + i : ""}.${(f.type.split("/")[1] || "png").replace("jpeg", "jpg")}`, { type: f.type })));
 });
 attfile.addEventListener("change", () => { const f = [...attfile.files]; attfile.value = ""; if (f.length) addPhotos(f); });
-attsEl.addEventListener("click", (e) => { const x = e.target.closest(".ax"); if (!x) return; const i = +x.closest(".att").dataset.i; const a = atts[i]; if (a?.local) URL.revokeObjectURL(a.local); atts.splice(i, 1); renderAtts(); saveAtts(); });
+attsEl.addEventListener("click", (e) => {
+  const x = e.target.closest(".ax"); if (!x) return; const i = +x.closest(".att").dataset.i; const a = atts[i];
+  if (a?.local) URL.revokeObjectURL(a.local);
+  if (a?.path) uploadToken().then((t) => fetch("/api/upload/discard", { method: "POST", headers: { "content-type": "application/json", "x-upload-token": t }, body: JSON.stringify({ path: a.path }) })).catch(() => {}); // J417: the pending copy goes at once
+  atts.splice(i, 1); renderAtts(); saveAtts();
+});
 queueMicrotask(renderAtts); // after the rest of the module has set up (view)
 
 let sending = false;
@@ -478,8 +488,13 @@ input.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(() 
 // Scrollable panes (the thread, the Proj tab: J42) and the text box keep their drags.
 document.addEventListener("touchmove", (e) => { if (!e.target.closest("#thread, #projects, #agents, #stream, #input, #sbar, #files, #session, #sinput")) e.preventDefault(); }, { passive: false });
 
+// J416: tell the server which world is on screen, so a share from the iPhone's Share sheet with no
+// ?world= lands here (Angus: "yes to currently open wrld"). On a switch, on coming to the front, and
+// every minute while visible. Fire and forget.
+function tellHere() { if (world && document.visibilityState === "visible") fetch("/api/shot/here", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ world }), cache: "no-store" }).catch(() => {}); }
+setInterval(tellHere, 60e3);
 // iOS drops the connection when the app goes to the background: catch up on return.
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); if (world) refreshAll(); } });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { listen(); tellHere(); if (world) refreshAll(); } });
 addEventListener("pageshow", (e) => { if (e.persisted) { listen(); if (world) refreshAll(); } });
 
 // ---- the Proj tab (J39): this world's projects; one open at a time, as a short summary --------

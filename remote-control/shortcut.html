@@ -22,6 +22,8 @@
   <li><b>Images</b> (screenshots, photos): Thoughts sees them, as with 📎.</li>
   <li><b>PDFs, videos, audio, other files:</b> saved in ~/Phone; Thoughts gets the path (it can't watch videos itself, and is told so).</li>
   <li><b>Links and text:</b> become the message itself; nothing is saved.</li>
+  <li><b>Folders:</b> with the second Shortcut below, saved in ~/Phone as one .zip (not unpacked); Thoughts gets the path.</li>
+  <li><b>Which world:</b> the one π shows on the phone right now (else the one you last wrote to, else the desktop's), unless the URL says <code>&amp;world=</code>.</li>
   <li>Up to <b>500 MB</b> each. Anything bigger is refused and the notification says "too big: 500 MB at most".</li>
 </ul>
 <h2>What you'll paste into the Shortcut</h2>
@@ -30,17 +32,31 @@
 <h2>Set it up (once, in the Shortcuts app)</h2>
 <ol>
   <li>Shortcuts → <b>+</b> → name it <b>Send to π</b>.</li>
-  <li>Tap <b>ⓘ</b> (Details) → turn on <b>Show in Share Sheet</b>. Back in the editor, tap the types at the top (<b>Images and 18 more</b>) and turn on <b>Images, Media, PDFs, Files, URLs, Safari web pages, Text</b> and <b>Rich text</b>; or simply leave all of them on.</li>
+  <li>Tap <b>ⓘ</b> (Details) → turn on <b>Show in Share Sheet</b>. Back in the editor, tap the types at the top (<b>Images and 18 more</b>) and turn on <b>Images, Media, PDFs, Files, URLs</b> and <b>Safari web pages</b>. Leave <b>Text</b> and <b>Rich text</b> off (see Tips).</li>
   <li>Add the action <b>Get Contents of URL</b>. Tap its URL and paste the URL above.</li>
   <li>Tap <b>›</b> on that action (Show More): Method <b>POST</b>; no headers; Request Body <b>File</b> → tap File and pick <b>Shortcut Input</b>.</li>
   <li>Optional: add <b>Show Notification</b> after it, so you see "Sent to Thoughts-D".</li>
 </ol>
 <h2>Set up with the X-Shot-Token header and got "The network connection was lost"?</h2>
 <p>Replace the Shortcut's URL with the one above, and delete every header row under Headers (swipe left on it). The key is now in the URL, so no header is needed.</p>
+<h2>Folders: a second Shortcut, "Send folder to π"</h2>
+<p>iOS can't upload a folder as it is, so this one zips it first. In Shortcuts:</p>
+<ol>
+  <li><b>+</b> → name it <b>Send folder to π</b>. Tap <b>ⓘ</b> → turn on <b>Show in Share Sheet</b>; tap the types at the top and leave only <b>Folders</b> on.</li>
+  <li>Add <b>Make Archive</b>: Make <b>ZIP</b> archive from <b>Shortcut Input</b>. Tap <b>›</b> → Archive Name → <b>Shortcut Input</b> → tap it → <b>Name</b>.</li>
+  <li>Add <b>Get Contents of URL</b>: paste the URL above. Tap <b>›</b>: Method <b>POST</b>; Request Body <b>Form</b> → <b>Add new field</b> → <b>File</b>, Key <code>file</code>, value <b>Archive</b>.</li>
+  <li>In <b>Send to π</b>, turn <b>Folders</b> off at the top, so a folder offers only this one.</li>
+</ol>
+<p class="small">Then: Files → long-press a folder → Share → Send folder to π. It arrives as ~/Phone/&lt;folder name&gt;.zip.</p>
 <h2>Arrives empty ("nothing was shared")?</h2>
 <p>Check that the File field under Request Body shows the blue <b>Shortcut Input</b>. If it still arrives empty, use a form instead: Request Body <b>Form</b> → <b>Add new field</b> → <b>File</b>, Key <code>file</code>, value <b>Shortcut Input</b>. The file's own name is kept, and a Text field with Key <code>caption</code> adds a caption.</p>
 <h2>Already set it up for images only?</h2>
-<p>It keeps working as it is. To send everything else too, one change: open the Shortcut, tap the types at the top (<b>Images</b>) and turn on <b>Media, PDFs, Files, URLs, Safari web pages, Text</b> and <b>Rich text</b> as well. Nothing else changes: the Request Body stays <b>File → Shortcut Input</b>.</p>
+<p>It keeps working as it is. To send everything else too, one change: open the Shortcut, tap the types at the top (<b>Images</b>) and turn on <b>Media, PDFs, Files, URLs</b> and <b>Safari web pages</b> as well (not Text or Rich text). Nothing else changes: the Request Body stays <b>File → Shortcut Input</b>.</p>
+<h2>Tips</h2>
+<ul>
+  <li><b>Leave Text and Rich text off.</b> With them on, iOS often sends a stand-in (the page as text or HTML) instead of the link or the file itself.</li>
+  <li><b>Share a file from outside it:</b> in Files, long-press the file → Share → Send to π. Sharing from inside an open PDF sends the page around it rather than the PDF (π then fetches the PDF from its web address if it has one).</li>
+</ul>
 <h2>Options</h2>
 <ul>
   <li><b>A caption:</b> before Get Contents of URL add <b>Ask for Input</b> (Text, "Say something?"), then <b>URL Encode</b> (Provided Input), then add <code>&amp;caption=</code> to the end of the URL followed by <b>URL Encoded Text</b>.</li>

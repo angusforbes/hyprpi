@@ -45,6 +45,21 @@ export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refused
   try { fs.mkdirSync(PHONE, { recursive: true, mode: 0o755 }); } catch (e) { log("~/Phone:", e.message); }
   if (!phoneDirOk()) log("~/Phone is not a plain folder (a link?): uploads are refused");
   try { fs.mkdirSync(path.dirname(LOG), { recursive: true }); } catch { /* there */ }
+  // J417 (Angus, D6 → c: "Upload right away, but to a hidden temporary folder. It moves into ~/Phone only
+  // when you send, and anything unsent is cleaned up automatically."): π's 📎 uploads (X-Pending: 1) go to
+  // ~/Phone/.pending/<id>/<name>; /api/send moves them into ~/Phone (adoptPending); ✕ deletes one at once
+  // (POST /api/upload/discard); one left unsent is deleted after PENDING_TTL (checked at start and hourly).
+  // A reload keeps them, like the draft. .pending is hidden, so /file, /api/ls and Fils never show it.
+  const PENDING = path.join(PHONE, ".pending"), PENDING_TTL = 24 * 3600e3;
+  const isPending = (p) => { const r = path.resolve(String(p || "")); return r.startsWith(PENDING + path.sep) && path.relative(PENDING, r).split(path.sep).length === 2 ? r : null; };
+  function prunePending(all = false) {
+    let ents = []; try { ents = fs.readdirSync(PENDING, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const d = path.join(PENDING, e.name);
+      try { const st = fs.lstatSync(d); if (all || Date.now() - st.mtimeMs > PENDING_TTL) { fs.rmSync(d, { recursive: true, force: true }); log("pending: cleaned up", e.name); } } catch { /* gone */ }
+    }
+  }
+  prunePending(); setInterval(prunePending, 3600e3).unref();
   // Leftovers of uploads cut off by a restart.
   try { for (const f of fs.readdirSync(PHONE)) if (/^\.upload-[\w-]+\.part$/.test(f)) fs.unlinkSync(path.join(PHONE, f)); } catch { /* none */ }
 
@@ -132,6 +147,9 @@ export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refused
     let released = false;
     const release = (failed) => { if (released) return; released = true; reserved -= len; active -= 1; if (failed) { b.bytes -= len; b.files -= 1; } };
     req.setTimeout(IDLE_MS, () => req.destroy(Object.assign(new Error("upload stalled"), { status: 408 }))); // no data for a minute
+    const pending = req.headers["x-pending"] === "1"; // J417: π's 📎
+    let dest = PHONE;
+    if (pending) { try { fs.mkdirSync(PENDING, { mode: 0o700 }); } catch (e) { if (e.code !== "EEXIST") { release(true); return json(res, 500, { error: e.message }); } } dest = path.join(PENDING, randomUUID()); fs.mkdirSync(dest, { mode: 0o700 }); }
     const tmp = path.join(PHONE, `.upload-${randomUUID()}.part`);
     let fd;
     try { fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644); }
@@ -155,17 +173,18 @@ export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refused
       const ext = path.extname(name), stem = name.slice(0, name.length - ext.length);
       let final = null;
       for (let i = 1; i <= 999 && !final; i++) {
-        const cand = path.join(PHONE, i === 1 ? name : `${stem} (${i})${ext}`);
+        const cand = path.join(dest, i === 1 ? name : `${stem} (${i})${ext}`);
         try { fs.linkSync(tmp, cand); final = cand; } catch (e) { if (e.code !== "EEXIST") throw e; }
       }
       fs.unlinkSync(tmp);
       if (!final) throw Object.assign(new Error("no free name"), { status: 409 });
       uploadLog({ name: path.basename(final), size: len, batch: bid, login: req.headers["tailscale-user-login"] || "local" });
-      log("upload", path.basename(final), len);
+      log("upload", pending ? "(pending)" : "", path.basename(final), len);
       release(false);
       return json(res, 200, { name: path.basename(final), path: final, size: len });
     } catch (e) {
       try { fs.unlinkSync(tmp); } catch { /* gone */ }
+      if (pending) fs.rmSync(dest, { recursive: true, force: true });
       release(true);
       uploadLog({ refused: name, size: len, got, error: e.message });
       if (!res.headersSent) return json(res, e.status || 500, { error: e.message });
@@ -301,8 +320,27 @@ export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refused
   }
   if (process.env.HYPRPI_THUMB_PRUNE_TEST) Object.assign(globalThis, { __pruneThumbs: pruneThumbs, __THUMBS: THUMBS });
 
+  // J417: a pending upload into ~/Phone under a free name (never overwriting); its path, or null.
+  function adoptPending(p) {
+    const real = isPending(p); if (!real || !phoneDirOk()) return null;
+    try { if (!fs.lstatSync(real).isFile()) return null; } catch { return null; }
+    const name = path.basename(real), ext = path.extname(name), stem = name.slice(0, name.length - ext.length);
+    for (let i = 1; i <= 999; i++) {
+      const cand = path.join(PHONE, i === 1 ? name : `${stem} (${i})${ext}`);
+      try { fs.linkSync(real, cand); fs.rmSync(path.dirname(real), { recursive: true, force: true }); uploadLog({ name: path.basename(cand), adopted: true }); return cand; } catch (e) { if (e.code !== "EEXIST") return null; }
+    }
+    return null;
+  }
+
   // Returns true when it handled the request.
-  return async function handle(req, res, url) {
+  async function handle(req, res, url) {
+    if (req.method === "POST" && url.pathname === "/api/upload/discard") { // J417: ✕ on a 📎 tile
+      if (!writeGate(req, res)) return true;
+      const b = await body(req), real = isPending(b.path);
+      if (!real) { json(res, 404, { error: "not a pending upload" }); return true; }
+      fs.rmSync(path.dirname(real), { recursive: true, force: true }); log("pending: discarded", path.basename(real));
+      json(res, 200, { ok: true }); return true;
+    }
     if (req.method === "GET" && url.pathname === "/api/files/token") { res.setHeader("cache-control", "no-store"); json(res, 200, { token: TOKEN, caps: { fileMB: CAPS.file / MB, batchMB: CAPS.batch / MB, batchFiles: CAPS.batchFiles }, phone: PHONE }); return true; }
     if (req.method === "GET" && url.pathname === "/api/ls") {
       const l = listDir(String(url.searchParams.get("path") || ""));
@@ -319,5 +357,6 @@ export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refused
     if (req.method === "POST" && url.pathname === "/api/files/thoughts") { await toThoughts(req, res); return true; }
     if (req.method === "POST" && url.pathname === "/api/files/agent") { await toAgent(req, res); return true; }
     return false;
-  };
+  }
+  return Object.assign(handle, { adoptPending, isPending, prunePending });
 }
