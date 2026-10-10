@@ -5,14 +5,16 @@
 // Generic: the relay passes in what it does (jobRecord, tellOutcome, holdQuestion, log).
 import fs from "node:fs";
 import path from "node:path";
-import { apply, sweep, answer as answerRule, validId } from "./core.mjs";
+import { apply, sweep, answer as answerRule, validId, scopeResult, scopeDecision } from "./core.mjs";
 import { REG_OPS, applyReg, lookup, prune, modeFor, sanitize, empty as emptyReg } from "./registry.mjs"; // J407: host-agent registration
 
 const RID_RE = /^[0-9a-f]{24}\.json$/, MAX_REQ = 16384;
 
 // J407: sandboxes() = the sandboxes whose Doorman uses the bridge; runnerOn() = the per-job runner is installed; onMode(sandbox, mode) is
 // called when a sandbox's mode (who would do a free-form job) changes, so the relay can refresh its host card.
-export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestion, archive = () => {}, sandboxes = () => [], runnerOn = () => false, onMode = () => {} }) {
+// J428 v3: scopeCheck(sandbox, folders) → { ok, beyond, text } (scope.mjs against that sandbox's shares, run by the relay); holdScope(rec,
+// proposal) → the held item id of "job X needs, beyond the shares: … 1 approve, 2 decline".
+export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestion, scopeCheck = () => ({ ok: false, text: "no scope check" }), holdScope = () => null, archive = () => {}, sandboxes = () => [], runnerOn = () => false, onMode = () => {} }) {
   const IN = path.join(stateDir, "bridge", "in"), OUT = path.join(stateDir, "bridge", "out"), REQ = path.join(stateDir, "requests");
   const AGENTS = path.join(stateDir, "bridge", "agents.json"), MODE = path.join(stateDir, "bridge", "mode.json");
   // (RegReview) a missing, corrupt or malformed registry reads as nobody registered (agent-free: the fail-closed direction); bad entries are dropped
@@ -34,10 +36,18 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
     for (const e of list || []) {
       if (e.kind === "outcome") {
         const act = String(rec.approved?.action_line || rec.approved?.action || ""); // (J379) the structured action, never a line parsed from text
-        const text = `the host agent's job ${rec.id} ("${act.replace(/\s+/g, " ").slice(0, 120)}") ended ${e.state}: ${e.summary}`;
+        const text = e.state === "needs_wider" // (J428) the approved folders/tools weren't enough: the asker asks again, naming them
+          ? `the host agent's job ${rec.id} ("${act.replace(/\s+/g, " ").slice(0, 120)}") needs a wider job: ${e.summary}. Nothing beyond the approved folders and tools was done. If it's still wanted, ask your Doorman again, naming exactly those folders (read or write) and tools.`
+          : `the host agent's job ${rec.id} ("${act.replace(/\s+/g, " ").slice(0, 120)}") ended ${e.state}: ${e.summary}`;
         try { tellOutcome(rec.sandbox, rec.for, text); } catch (err) { log({ error: `bridge outcome ${rec.id}: ${err.message}` }); }
         log({ op: "host_job", id: rec.id, sandbox: rec.sandbox, state: e.state, outcome: e.summary, ran: e.ran || [], changed: e.changed || [] });
         archive(rec, e);
+      } else if (e.kind === "hold_scope") { // J428 v3: the scoping run's proposal, held for the owner's 1 or 2
+        let held = null; try { held = holdScope(rec, e.proposal); } catch (err) { log({ error: `bridge scope proposal ${rec.id}: ${err.message}` }); }
+        const cur = readJob(rec.id);
+        if (held && cur?.proposal) jobRecord(rec.id, { proposal: { ...cur.proposal, held_id: held } });
+        else if (cur) jobRecord(rec.id, { state: "needs_wider", proposal: null, outcome: { state: "needs_wider", summary: "the proposed folders couldn't be put to the owner", ran: [], changed: [], at: new Date().toISOString(), by: "relay" }, history: [{ at: new Date().toISOString(), ev: "the scope proposal couldn't be held", by: "relay" }] });
+        log({ op: "host_job_scope", id: rec.id, held: held || null, folders: e.proposal.folders });
       } else if (e.kind === "hold") {
         let held = null, why = ""; try { held = holdQuestion(rec, e.n, e.text); } catch (err) { why = err.message; log({ error: `bridge question ${rec.id}: ${err.message}` }); }
         const cur = readJob(rec.id);
@@ -68,6 +78,21 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
       if (req.op !== "heartbeat" || !r.reply.ok) log({ op: "bridge", req: req.op, by: String(req.name || "").slice(0, 60), ok: r.reply.ok, text: String(r.reply.text || "").slice(0, 200) });
       if (r.reg) refreshMode();
       try { const o = path.join(OUT, name); fs.writeFileSync(o + ".tmp", JSON.stringify(r.reply), { mode: 0o600 }); fs.renameSync(o + ".tmp", o); } catch { /* */ }
+      return;
+    }
+    // J428 v3: the read-only scoping run's result for a job in "scoping": its folders are checked against the sandbox's shares here
+    // (only folders BEYOND them are proposed; anything refused by the rules is dropped with the reason in the log)
+    if (req?.op === "scope_result") {
+      const rec = readJob(req.id); let reply;
+      if (!rec || rec.state !== "scoping") reply = { ok: false, text: rec ? `the job is ${rec.state}, not scoping` : "no such job" };
+      else {
+        const raw = Array.isArray(req.folders) ? req.folders.slice(0, 8) : [], beyond = [], refused = [];
+        for (const f of raw) { const c = scopeCheck(rec.sandbox, [f]); if (c.ok) { for (const b of c.beyond || []) if (!beyond.some((x) => x.path === b.path)) beyond.push(b); } else refused.push(String(c.text || "").slice(0, 200)); }
+        const r = scopeResult(rec, { beyond: beyond.slice(0, 4), why: [String(req.why || ""), ...refused.map((x) => `refused: ${x}`)].filter(Boolean).join("; ") }, Date.now());
+        commit(rec, r); reply = { ok: true, text: beyond.length ? `proposed to the owner: ${beyond.map((b) => `${b.path} (${b.access})`).join(", ")}` : "nothing found beyond the shares: the job ends needs_wider", refused };
+      }
+      log({ op: "bridge", req: "scope_result", id: String(req?.id || "").slice(0, 80), ok: reply.ok, text: String(reply.text || "").slice(0, 300) });
+      try { const o = path.join(OUT, name); fs.writeFileSync(o + ".tmp", JSON.stringify(reply), { mode: 0o600 }); fs.renameSync(o + ".tmp", o); } catch { /* */ }
       return;
     }
     // J407: a claim needs a live registration; the claim is made in the registered name, never a name the request picks
@@ -101,6 +126,16 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
     mode(sandbox) { return modeFor(readReg(), sandbox, { runnerOn: !!runnerOn() }); },
     // the owner's typed answer to a held question (the relay's decide() calls this) → true when applied
     answer(id, n, text, heldId) { const rec = readJob(id); const a = rec && answerRule(rec, n, text, Date.now(), heldId); if (a) { jobRecord(id, { ...a.patch, history: a.history }); log({ op: "host_job_answer", id, n }); } return !!a; },
+    // J428 v3: the owner's 1 / 2 on a held scope proposal (bound to that held item); the folders are checked again now, and a folder
+    // that no longer passes turns a 1 into a decline → { ok, text }
+    decideScope(id, approve, heldId) {
+      const rec = readJob(id); if (!rec || rec.state !== "scope_held" || rec.proposal?.held_id !== heldId) return { ok: false, text: "the job no longer waits for this decision" };
+      let folders = rec.proposal.folders || [], ok = approve, why = "";
+      if (approve) { const c = scopeCheck(rec.sandbox, folders); if (!c.ok) { ok = false; why = c.text; } else folders = (c.beyond || []).map((b) => ({ path: b.path, access: b.access })); } // (what's within the shares by now needs no adding)
+      const d = scopeDecision(rec, ok, heldId, folders, Date.now()); if (!d) return { ok: false, text: "not applied" };
+      commit(rec, d); log({ op: "host_job_scope_decision", id, approve, applied: ok, why: why || undefined });
+      return { ok: true, text: ok ? `approved: ${folders.map((f) => `${f.path} (${f.access})`).join(", ")}; the job waits for its run` : `declined${why ? ` (the folders no longer pass the checks: ${why})` : ""}` };
+    },
     stop() { clearInterval(t1); clearInterval(t2); clearInterval(t3); try { watcher?.close(); } catch { /* */ } },
   };
 }

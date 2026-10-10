@@ -16,6 +16,7 @@
 //   doorman-bridge receipts [--by NAME]                what the owner decided on your settings proposals (J412)
 //   doorman-bridge agents                             registered host agents and each sandbox's mode (read-only)
 //   doorman-bridge mcp                                the MCP server (stdio)
+//   doorman-bridge scope-job ID                      the host's read-only scoping run for a job that needs folders beyond the shares (J428)
 //   doorman-bridge run-job ID | dispatch | runner --install|--uninstall|--status    the per-job runner (runner.mjs, J387)
 // Options: --json (machine output), --token T (the token claim printed; required for renew/ask/report/release, J379).
 // The bridge can't approve, deny or edit anything, create jobs or change settings: the owner decides in the Doorman
@@ -38,6 +39,7 @@ const usage = () => { console.error("usage: doorman-bridge list|show|claim|renew
 
 if (cmd === "mcp") { await import("./mcp.mjs"); }
 else if (cmd === "run-job") { if (!id) usage(); const { runJob } = await import("./runner.mjs"); out(await runJob(id)); }
+else if (cmd === "scope-job") { if (!id) usage(); const { scopeJob } = await import("./scoper.mjs"); out(await scopeJob(id)); } // J428 v3: the read-only scoping run
 else if (cmd === "dispatch") { const { dispatch } = await import("./runner.mjs"); out({ ok: true, text: JSON.stringify(dispatch()) }); }
 else if (cmd === "runner") { const { runnerUnits } = await import("./runner.mjs"); console.log(runnerUnits(id || "")); }
 // J407: registration

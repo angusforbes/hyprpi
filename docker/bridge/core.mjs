@@ -14,7 +14,11 @@
 // operations below are the only ones, and the owner's decisions only arrive through the relay's decision files.
 import crypto from "node:crypto";
 
-export const FINAL = new Set(["done", "failed", "partial", "no_report"]);
+export const FINAL = new Set(["done", "failed", "partial", "needs_wider", "declined", "no_report"]);
+// J428 v3 (Angus: "I don't ever want to type anything except 1 or 2, so have the host figure it out and check with me"): a job that
+// needs folders beyond the sandbox's shares goes "scoping" (a read-only host run finds them) → "scope_held" (the proposal waits for
+// the owner's 1 or 2) → waiting with those folders added (1), or declined (2). At most MAX_WIDEN widenings per job.
+export const MAX_WIDEN = 2; // (J428) needs_wider: the job needs folders or tools it wasn't approved for; the asker asks again
 export const OPS = new Set(["claim", "renew", "release", "ask", "report"]);
 export const LIMITS = { questionTtlS: 24 * 3600 + 600, leaseS: 1800, minLeaseS: 60, timeLimitS: 4 * 3600, askBytes: 1500, summaryBytes: 3000, items: 50, itemBytes: 500, by: 60, questions: 10 };
 const ID_RE = /^[A-Za-z0-9._-]{1,80}--[0-9a-f]{6}$/;
@@ -33,10 +37,10 @@ const cleanList = (a) => {
 };
 
 // A new job, made by the relay when the owner approves a free-form draft on a host in bridge mode.
-export function newJob({ id, auto = "", sandbox, asker, action, actionLine = "", tools = [], folders = [], timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
+export function newJob({ id, auto = "", sandbox, asker, action, actionLine = "", tools = [], folders = [], readOnly = [], hidden = [], beyond = [], needs = "", timeLimitS = LIMITS.timeLimitS, nowMs = Date.now() }) {
   return {
-    id, type: "host_job", sandbox: String(sandbox), for: String(asker || ""), created_at: iso(nowMs), state: "waiting",
-    approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
+    id, type: "host_job", sandbox: String(sandbox), for: String(asker || ""), created_at: iso(nowMs), state: String(cleanText(needs, 1e6) || "").slice(0, 600) ? "scoping" : "waiting", widenings: 0, proposal: null,
+    approved: { action: String(action), action_line: String(actionLine || "").replace(/\s+/g, " ").slice(0, 1500), tools: [...tools].map(String), folders: [...folders].map(String), read_only: [...readOnly].map(String).filter((f) => folders.map(String).includes(f)), hidden: [...hidden].map(String), beyond: [...beyond].map(String), ...(String(cleanText(needs, 1e6) || "").slice(0, 600) ? { needs: String(cleanText(needs, 1e6)).slice(0, 600) } : {}), time_limit_s: Math.max(LIMITS.minLeaseS, Number(timeLimitS) || LIMITS.timeLimitS) },
     claim: null, claimed_at: null, questions: [], outcome: null,
     ...(auto ? { auto: String(auto) } : {}), // J412 red team #7: approved by the mode dial, not reviewed by the owner
     history: [auto ? { at: iso(nowMs), ev: `approved automatically (mode ${auto}), not reviewed by the owner; waiting for a host agent`, by: "relay" } : { at: iso(nowMs), ev: "approved by the owner; waiting for a host agent", by: "owner" }],
@@ -120,10 +124,14 @@ export function apply(rec, op, nowMs = Date.now()) {
       `asked the owner (question ${n})`, { text: `question ${n} is with the owner; the job waits (check with show)`, n }, [{ kind: "hold", n, text }]);
   }
   // report
-  if (!["done", "failed", "partial"].includes(op.state)) return no("report state must be done, failed or partial");
+  if (!["done", "failed", "partial", "needs_wider"].includes(op.state)) return no("report state must be done, failed, partial or needs_wider");
   const summary = cleanText(op.summary, LIMITS.summaryBytes); if (!summary) return no(`a summary is required (up to ${LIMITS.summaryBytes} bytes)`);
   const ran = cleanList(op.ran), changed = cleanList(op.changed);
   if (!ran || !changed) return no(`ran/changed: lists of at most ${LIMITS.items} lines of ${LIMITS.itemBytes} bytes`);
+  // J428 v3: needs_wider goes to the host's own scoping (a read-only run finds the folders; the owner says 1 or 2), at most MAX_WIDEN times
+  if (op.state === "needs_wider" && (cur.widenings || 0) < MAX_WIDEN)
+    return done({ state: "scoping", claim: null, widenings: (cur.widenings || 0) + 1, approved: { ...cur.approved, needs: summary } }, `${by}: it needs folders beyond the approved ones (${summary.slice(0, 200)}); the host looks for them`,
+      { text: "the host will look for those folders (read-only) and ask the owner; the job waits" });
   return done({ state: op.state, claim: null, outcome: { state: op.state, summary, ran, changed, at: iso(nowMs), by } }, `reported ${op.state}`,
     { text: `reported ${op.state}; the asker, its coordinator and the Doorman archive are told` }, [{ kind: "outcome", state: op.state, summary, ran, changed }]);
 }
@@ -142,4 +150,32 @@ export function answer(rec, n, text, nowMs = Date.now(), heldId) {
   // the agent that asked keeps its claim; its lease restarts so it has time to pick the answer up
   const claim = rec.claim && back === "claimed" ? { ...rec.claim, until: iso(Math.min(nowMs + LIMITS.leaseS * 1000, Date.parse(claimedAt) + rec.approved.time_limit_s * 1000)) } : rec.claim;
   return { patch: { state: back, questions: qs, claim, claimed_at: claimedAt }, history: [{ at: iso(nowMs), ev: `the owner answered question ${n}`, by: "owner" }] };
+}
+
+// J428 v3: the scoping run's result for a job in "scoping": beyond = the folders it found, already checked (scope.mjs) and not within
+// the sandbox's shares. None → the job ends needs_wider. Some → "scope_held" with the proposal (an effect holds it for the owner).
+export function scopeResult(rec, { beyond = [], why = "" }, nowMs = Date.now()) {
+  if (rec?.type !== "host_job" || rec.state !== "scoping") return null;
+  const w = String(cleanText(why, 1e6) || "").slice(0, 600);
+  if (!beyond.length) {
+    const summary = `the host couldn't find what it needs beyond the sandbox's shares${w ? `: ${w}` : ""}`;
+    return { patch: { state: "needs_wider", outcome: { state: "needs_wider", summary, ran: [], changed: [], at: iso(nowMs), by: "host scoping" } }, history: [{ at: iso(nowMs), ev: "scoping found nothing", by: "host scoping" }], effects: [{ kind: "outcome", state: "needs_wider", summary, ran: [], changed: [] }] };
+  }
+  const proposal = { folders: beyond.map((f) => ({ path: String(f.path), access: f.access === "write" ? "write" : "read" })), why: w, at: iso(nowMs), held_id: null };
+  return { patch: { state: "scope_held", proposal }, history: [{ at: iso(nowMs), ev: `scoping proposes ${proposal.folders.map((f) => `${f.path} (${f.access})`).join(", ")}`, by: "host scoping" }], effects: [{ kind: "hold_scope", proposal }] };
+}
+
+// J428 v3: the owner's 1 (approve) or 2 (decline) on the held proposal, bound to its held item. folders = the proposal checked again
+// now (a folder swapped since fails the check → treated as declined by the caller). Approve adds exactly those folders.
+export function scopeDecision(rec, approve, heldId, folders, nowMs = Date.now()) {
+  if (rec?.type !== "host_job" || rec.state !== "scope_held" || !rec.proposal || rec.proposal.held_id !== heldId) return null;
+  if (!approve) {
+    const summary = "the owner declined the extra folders it needed";
+    return { patch: { state: "declined", proposal: null, outcome: { state: "declined", summary, ran: [], changed: [], at: iso(nowMs), by: "owner" } }, history: [{ at: iso(nowMs), ev: "the owner declined the proposed folders", by: "owner" }], effects: [{ kind: "outcome", state: "declined", summary, ran: [], changed: [] }] };
+  }
+  const a = rec.approved, add = folders.filter((f) => !(a.folders || []).includes(f.path));
+  const ro = new Set(a.read_only || []);
+  for (const f of folders) { if (f.access === "read" && !(a.folders || []).includes(f.path)) ro.add(f.path); if (f.access === "write") ro.delete(f.path); }
+  const approved = { ...a, folders: [...(a.folders || []), ...add.map((f) => f.path)], read_only: [...ro], beyond: [...(a.beyond || []), ...folders.map((f) => `${f.path} (${f.access})`)] };
+  return { patch: { state: "waiting", proposal: null, approved }, history: [{ at: iso(nowMs), ev: `the owner approved the extra folders: ${folders.map((f) => `${f.path} (${f.access})`).join(", ")}`, by: "owner" }], effects: [] };
 }
