@@ -15,14 +15,15 @@ export function installFixtures(rig) {
     fs.writeFileSync(P('bin/pi'), '#!/bin/sh\nexec ' + q(pi) + ' "$@"\n', { mode: 0o700 });
   }
   fs.writeFileSync(P('bin/bash'), '#!/bin/sh\nif [ "$1" = -lc ]; then shift; exec /bin/bash --noprofile --norc -c "$@"; fi\nexec /bin/bash --noprofile --norc "$@"\n', { mode: 0o700 });
-  for (const dir of ['projects/fixture', 'card', 'edits']) fs.mkdirSync(P(dir), { recursive: true });
+  for (const dir of ['projects/fixture', 'home/bridge-share', 'card', 'edits']) fs.mkdirSync(P(dir), { recursive: true });
+  fs.writeFileSync(P('home/bridge-share/notes.md'), 'Synthetic read-only bridge share. No real work data.\n');
   fs.writeFileSync(P('projects/fixture/notes.md'), 'Synthetic fixture notes. No real work data.\n');
   fs.writeFileSync(P('card/card.md'), '# Synthetic gateway test\nOnly the fixture project is shared.\n');
   const worlds = P('config/hyprpi/worlds');
   fs.mkdirSync(worlds, { recursive: true });
   const worldFile = path.join(worlds, rig.sandbox + '.json');
   // All world letters in this test belong to the PRIVATE daemon. There is no connection to live world G (or I).
-  fs.writeFileSync(worldFile, JSON.stringify({ sandbox: rig.sandbox, world: 'I', workspaces: [81, 82], task: TASK, gateway: { mode: 'safe' }, projects: [] }, null, 2));
+  fs.writeFileSync(worldFile, JSON.stringify({ sandbox: rig.sandbox, world: 'I', workspaces: [81, 82], task: TASK, gateway: { mode: 'safe' }, projects: [], shares: [{ path: P('home/bridge-share'), mode: 'ro' }] }, null, 2));
   const config = {
     rooms: 'world', follow: false, pi: '/bin/false', piArgs: [], chime: false, cwd: P('ws'),
     projectFolders: [P('projects')], roleFolders: {}, jotExtension: '', terminalCommand: ['/bin/false'],

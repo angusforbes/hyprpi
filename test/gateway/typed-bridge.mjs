@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 
 const BRIDGE = 'docker/bridge/doorman-bridge';
 const TYPES = ['open_for_owner', 'note_to_owner', 'share_project', 'send_file', 'allow_host'];
-const MCP_TOOLS = ['list_jobs', 'show_job', 'claim_job', 'renew_job', 'ask_owner', 'report_job', 'release_job', 'read_settings', 'propose_settings', 'register_agent', 'list_agents', 'unregister_agent'];
+const MCP_TOOLS = ['list_jobs', 'show_job', 'claim_job', 'renew_job', 'ask_owner', 'report_job', 'release_job', 'read_settings', 'propose_settings', 'register_agent', 'list_agents', 'unregister_agent', 'wait_for_job'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const readJson = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { if (e.code === 'ENOENT' || e instanceof SyntaxError) return null; throw e; } };
 const record = (ctx, id) => readJson(path.join(ctx.relayState, 'requests', id + '.json'));
@@ -165,7 +165,8 @@ async function refusal(ctx, request, error, role = 'doorman') {
   assert.equal(result.pending, undefined); assert.equal(snapshot(ctx, keep), before); assert.deepEqual(ctx.effects(), effectsBefore); assert.deepEqual(fileCopies(ctx), copiesBefore);
   return result;
 }
-const DRAFT = tag => ({ op: 'draft', for: 'Alpha', why: 'exercise a synthetic host-job lifecycle', tried: 'the fixed request types do not cover this test', action: 'Inspect the synthetic fixture only; tag ' + tag });
+const DRAFT_TOOLS = ['Glob', 'Read']; // J428: deliberately different from the legacy bridge config's ['Read'].
+const DRAFT = tag => ({ op: 'draft', for: 'Alpha', why: 'exercise a synthetic host-job lifecycle', tried: 'the fixed request types do not cover this test', action: 'Inspect the synthetic fixture only; tag ' + tag, tools: [...DRAFT_TOOLS] });
 
 export async function runTyped(ctx) {
   await ctx.feature('J368', ['docker/gateway/types.mjs', 'lib/held.mjs'], async () => {
@@ -318,8 +319,9 @@ export async function runTyped(ctx) {
 }
 
 // Minimal JSON-line MCP client. Uses the actual product server, with scratch env only; one RPC is awaited before the next.
-function startMcp(ctx, agent = 'fixture-mcp') {
-  const env = ctx.rig.validate({ DOORMAN_STATE: ctx.relayState, XDG_CACHE_HOME: ctx.rig.P('cache'), DOORMAN_BRIDGE_AGENT: agent });
+function startMcp(ctx, agent = '') {
+  // J424: an explicitly named server auto-registers on initialize. Manual-registration/negative cases must omit the name, not pass an empty override.
+  const env = ctx.rig.validate({ DOORMAN_STATE: ctx.relayState, XDG_CACHE_HOME: ctx.rig.P('cache'), ...(agent ? { DOORMAN_BRIDGE_AGENT: agent } : {}) });
   // J379/J387: a per-job binding must never leak in; then the server holds only the tokens of its own claims
   assert.equal(env.DOORMAN_BRIDGE_JOB, undefined); assert.equal(env.DOORMAN_BRIDGE_TOKEN, undefined);
   const child = spawn(process.execPath, [path.join(ctx.repoRoot, BRIDGE), 'mcp'], { cwd: ctx.repoRoot, env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -377,7 +379,7 @@ async function newBridgeJob(ctx, tag, why = 'exercise a synthetic host-job lifec
   const action = 'Inspect the synthetic fixture only; tag ' + tag;
   try {
     assert.ok((await liveHosts(ctx)).length > 0, 'a free-form draft needs a registered host agent: register one (ctx.registerHost) first');
-    const result = await ctx.ask('doorman', { op: 'draft', for: 'Alpha', why, tried: 'the fixed request types do not cover this test', action });
+    const result = await ctx.ask('doorman', { op: 'draft', for: 'Alpha', why, tried: 'the fixed request types do not cover this test', action, tools: [...DRAFT_TOOLS] });
     assert.equal(result.ok, true, JSON.stringify(result)); const held = ctx.holdFrom(result); id = held.id;
     assert.equal(held.draft, true); assert.equal(held.typed, undefined);
     // J412 spec 4.2: shown to Angus as a request for the bridge, not "to Thoughts-A"; reports_to (Thoughts-I here) is only the review room
@@ -392,7 +394,11 @@ async function newBridgeJob(ctx, tag, why = 'exercise a synthetic host-job lifec
     assert.equal(job.approved.action, held.text, 'bridge exposes exactly the owner-approved text');
     // J379: the action line is the draft's structured field, never an "Action asked for:" line parsed out of the free text
     assert.equal(job.approved.action_line, action);
-    assert.deepEqual(job.approved.tools, ['Read']); assert.deepEqual(job.approved.folders, [ctx.rig.P('projects/fixture')]); assert.equal(job.approved.time_limit_s, 300);
+    assert.deepEqual(held.draftScope.tools, DRAFT_TOOLS, 'the displayed draft names its tools');
+    assert.deepEqual(job.approved.tools, held.draftScope.tools, 'job tools come from the approved draft, never legacy bridge config');
+    assert.deepEqual(job.approved.folders, [ctx.rig.P('home/bridge-share')], 'job folders come from the actual sandbox shares, not legacy bridge config');
+    assert.deepEqual(job.approved.read_only, job.approved.folders, 'the bridge retains the share’s read-only rights');
+    assert.equal(job.approved.time_limit_s, 300);
     assert.equal(job.claim, null); assert.equal(job.outcome, null);
     // J412 bridge-only: no talk to Thoughts-A (or anyone) for an approved draft: the relay's own host_job line, and the Doorman's note says the bridge
     assert.ok(!ctx.logs().some(x => x.id === id && x.op === 'talk'), 'an approved draft is not delivered as a talk message');
@@ -640,13 +646,15 @@ export async function runBridge(ctx) {
           assert.match((await mcp.tool('register_agent', { name: 'fixture-mcp-agent', harness: 'mcp-fixture' }, false)).text, /already registered as fixture-mcp-agent/);
           const listed = await mcp.tool('list_agents'); assert.ok(listed.agents.some(a => a.name === 'fixture-mcp-agent' && a.harness === 'mcp-fixture')); assert.ok(listed.agents.some(a => a.name === 'fixture-admit'));
           assert.ok(!JSON.stringify(listed).includes('agent_token'));
+          const beforeWait = snapshot(ctx), waiting = await mcp.tool('wait_for_job', { timeout_s: 1 });
+          assert.equal(waiting.event, 'job'); assert.equal(waiting.job.id, id); assert.equal(snapshot(ctx), beforeWait, 'wait_for_job observes the waiting job without claiming or mutating it');
           assert.equal((await mcp.tool('claim_job', { id, lease_s: 120 })).ok, true);
           assert.equal(record(ctx, id).claim.by, 'fixture-mcp-agent', 'the claim is made in the registered name'); assert.equal((await mcp.tool('show_job', { id })).claimed_by, 'fixture-mcp-agent');
           assert.equal((await mcp.tool('renew_job', { id, lease_s: 120 })).ok, true);
           assert.equal((await mcp.tool('release_job', { id })).ok, true); assert.equal(record(ctx, id).state, 'waiting');
           const claimed = await mcp.tool('claim_job', { id }); assert.equal(claimed.ok, true); assert.equal(claimed.token, undefined, 'the MCP server keeps its token');
           // Another MCP server never holds this claim's token (no shared cache); a token argument is not honoured either.
-          const other = startMcp(ctx, 'fixture-mcp-other');
+          const other = startMcp(ctx); // unregistered session: an explicit name would auto-register (J424)
           try {
             for (const extra of [{}, { token: WRONG_TOKEN }]) {
               const label = extra.token ? 'wrong token argument' : 'missing token';
@@ -670,7 +678,7 @@ export async function runBridge(ctx) {
       });
       await ctx.testcase('J407 an MCP session that registers can be the ONLY host agent: its draft is held, and the registration ends when the server stops', async () => {
         await noHosts(ctx);
-        const solo = startMcp(ctx, 'fixture-mcp-solo');
+        const solo = startMcp(ctx); // manual-registration lifecycle, isolated from named auto-registration
         try {
           await solo.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gateway-fixture', version: '1' } }); solo.notify();
           await refusal(ctx, DRAFT('SOLO-BEFORE'), /no host agent is registered/);
@@ -681,6 +689,22 @@ export async function runBridge(ctx) {
         } finally { await solo.close(); }
         await ctx.waitFor('the MCP server unregistered on exit', async () => !(await liveHosts(ctx)).some(a => a.name === 'fixture-solo'));
         await refusal(ctx, DRAFT('SOLO-AFTER'), /no host agent is registered/);
+      });
+      await ctx.testcase('J424 named MCP auto-registration: the only host agent admits and claims a draft, then unregisters on server exit', async () => {
+        await noHosts(ctx);
+        const named = startMcp(ctx, 'fixture-auto-host');
+        try {
+          const init = await named.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gateway-fixture', version: '1' } }); named.notify();
+          assert.match(init.result.instructions, /registers you automatically/);
+          await ctx.waitFor('named MCP auto-registration visible', async () => (await liveHosts(ctx)).some(a => a.name === 'fixture-auto-host'));
+          assert.equal((await liveHosts(ctx)).length, 1, 'only the named MCP server is registered');
+          assert.match((await named.tool('register_agent', { name: 'fixture-other', harness: 'fixture' }, false)).text, /already registered as fixture-auto-host/);
+          const { id } = await newBridgeJob(ctx, 'AUTO-REGISTER', undefined, ['fixture-auto-host']);
+          assert.equal((await named.tool('claim_job', { id })).ok, true);
+          assert.equal(record(ctx, id).claim.by, 'fixture-auto-host');
+          assert.equal((await named.tool('report_job', { id, state: 'failed', summary: 'Synthetic auto-registration job closed; nothing executed.' })).ok, true);
+        } finally { await named.close(); }
+        await noHosts(ctx);
       });
       await ctx.testcase('J371 unauthorized CLI and MCP approve/deny/config-write refuse without config/decisions/pending mutations', async () => {
         const before = snapshot(ctx), effectsBefore = ctx.effects();
@@ -963,7 +987,8 @@ async function modeMatrix(ctx) {
         await withHosts(ctx, ['fixture-yolo-host'], async tokens => {
           const result = await ctx.ask('doorman', DRAFT('YOLO')); assert.equal(result.ok, true, JSON.stringify(result)); const id = result.pending[0];
           const job = await ctx.waitFor('yolo draft becomes a bridge job ' + id, () => { const r = record(ctx, id); return r?.type === 'host_job' ? r : false; });
-          assert.equal(job.state, 'waiting'); assert.equal(job.approved.action_line, 'Inspect the synthetic fixture only; tag YOLO'); assert.deepEqual(job.approved.tools, ['Read']);
+          assert.equal(job.state, 'waiting'); assert.equal(job.approved.action_line, 'Inspect the synthetic fixture only; tag YOLO'); assert.deepEqual(job.approved.tools, DRAFT_TOOLS, 'auto job tools come from its draft');
+          assert.deepEqual(job.approved.folders, [ctx.rig.P('home/bridge-share')]); assert.deepEqual(job.approved.read_only, job.approved.folders);
           await autoLog(ctx, id, 'draft', 'yolo');
           assert.ok(!ctx.logs().some(x => x.id === id && x.op === 'talk'));
           const dn = await ctx.waitFor('Doorman decision note ' + id, () => ctx.inbox('doorman').find(x => x.type === 'decision' && x.id === id));
