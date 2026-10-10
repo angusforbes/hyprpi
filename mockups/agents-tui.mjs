@@ -188,6 +188,28 @@ function wrapStyled(s, n, indentW = 0) {
 
 // ---- drawing ---------------------------------------------------------------
 let batching = false, dirty = false;
+// J401: ~/.local/state/hyprpi/worlds/*/agents.json (written by world-helper, host-only) for this room; cached 2 s
+let reportedCache = { t: 0, room: "", v: null };
+function reportedFor(r) {
+  const now = Date.now(); if (reportedCache.room === r && now - reportedCache.t < 2000) return reportedCache.v;
+  let v = null;
+  try {
+    const base = (process.env.XDG_STATE_HOME || process.env.HOME + "/.local/state") + "/hyprpi/worlds";
+    for (const n of fs.readdirSync(base)) { try { const j = JSON.parse(fs.readFileSync(`${base}/${n}/agents.json`, "utf8")); if (j && j.room === r && Array.isArray(j.agents)) { v = j; break; } } catch { /* */ } }
+  } catch { /* */ }
+  reportedCache = { t: now, room: r, v }; return v;
+}
+const SAFE = (s, n) => String(s ?? "").replace(/[^A-Za-z0-9 _.\-]/g, "").slice(0, n); // (the helper already checked them; belt and braces)
+function reportedRows(r, W) {
+  const j = reportedFor(r); if (!j) return [];
+  const age = Date.now() - Number(j.at || 0);
+  if (!(age < 90000)) return [dim(clip(`  ◇ world ${SAFE(j.room, 1)}'s own agents: not reporting (last ${Math.round(age / 60000)} min ago)`, W))];
+  const marks = { working: "●", background: "◐", blocked: "×", done: "✓", idle: "○" };
+  const out = [dim(clip(`  reported by ${SAFE(j.room, 1)} (inside its sandbox, display only):`, W))];
+  for (const a of j.agents.slice(0, 12)) out.push(dim(clip(`   ${marks[a.status] || "○"} ${SAFE(a.name, 31)} · ${SAFE(a.status, 12)}${a.ws ? " · " + wsLabel(Number(a.ws), WORLD_SIZE) : ""}${a.model ? " · " + SAFE(a.model, 40) : ""} · reported by ${SAFE(j.room, 1)}`, W)));
+  if (j.thoughts) out.push(dim(clip(`   💭 Thoughts-${SAFE(j.room, 1)} · ${SAFE(j.thoughts, 10)} · reported by ${SAFE(j.room, 1)}`, W)));
+  return out;
+}
 function render() { if (restarting) return; if (batching) { dirty = true; return; } draw(); }
 onThemeChange(render);
 
@@ -333,6 +355,9 @@ function draw() {
   } else {
     for (const { l, id } of fill.ls) { if (id) listRowAgent[rows.length + 1] = id; rows.push(l); }
   }
+  // J401: a sandboxed world's agents as its own daemon reports them (checked by world-helper against a strict schema): dim,
+  // display-only rows. They aren't in listRowAgent, so no click, Enter, ^W or message can reach them from here.
+  if (!showHelp) for (const l of reportedRows(room, W)) rows.push(l);
   pendingNew = pendingNew.filter((p) => Date.now() - p.t < 30000);
   if (!showHelp) for (const p of pendingNew) rows.push(dim(`  ◌ ${" ".repeat(ICON_W)}starting a new agent in ${String(p.cwd).replace(process.env.HOME, "~")} …`));
   projRowY = {}; projMemberX = {};

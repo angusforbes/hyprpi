@@ -44,6 +44,7 @@ case "$CMD" in
     node "$H/docker/world/shares.mjs" apply "$WORLD" >/dev/null || echo "world.sh: shares apply failed" >&2
     in_sb 'pgrep -ax node | grep -q "/bin/hyprpi daemon" || { cd "$G_WORLD_DIR"; setsid -f sh -c "exec node $G_HOST_HYPRPI/bin/hyprpi daemon" >> $HOME/.hyprpi-g/daemon.log 2>&1 < /dev/null; sleep 3; }'
     in_sb 'pgrep -ax node | grep -q "/g-gate[.]mjs" || HYPRPI_GATE_WORKSPACE='"$HI"' setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/g-gate.mjs; sleep 3; done" >> $HOME/.hyprpi-g/gate.log 2>&1 < /dev/null'
+    in_sb 'pgrep -ax node | grep -q "/g-status[.]mjs run" || setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/g-status.mjs run; sleep 5; done" >> $HOME/.hyprpi-g/status.log 2>&1 < /dev/null'   # J401: the world's agents, reported to the host's agents panel
     in_sb 'for p in agents-tui room-tui board-tui search-tui; do pgrep -f "$p.mjs" >/dev/null || G_WS='"$HI"' setsid -f $G_HOST_HYPRPI/mockups/$p G >/dev/null 2>&1 < /dev/null; done'
     # J307: folder shares from config + the host card (re-applied on changes), the inner guide and the sandbox note
     systemctl --user is-active --quiet "hyprpi-$WORLD-shares" || systemd-run --user --quiet --unit="hyprpi-$WORLD-shares" --collect --property=Restart=on-failure node "$H/docker/world/shares.mjs" watch "$WORLD"

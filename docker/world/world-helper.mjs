@@ -27,6 +27,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { validateStatus } from "./g-status.mjs"; // J401: the world's agents, reported from inside, shown on the host
 
 const HOME = os.homedir();
 const [cmd, worldArg] = process.argv.slice(2);
@@ -141,7 +142,7 @@ class Helper {
         const tok = (env.find((x) => x.startsWith("G_TOKEN=")) || "").slice(8);
         const t = this.tokens.get(tok) || {};
         if (this.tokens.has(tok)) t.mapped = true;
-        o = { pid: c.pid, agent: t.agent || "", kind: t.kind || "agent", token: TOKEN_RE.test(tok) ? tok : "" };
+        o = { pid: c.pid, agent: t.agent || "", kind: t.kind || "agent", token: TOKEN_RE.test(tok) ? tok : "", home: this.inWorld(t.ws) ? t.ws : 0 };
         this.owned.set(c.address, o);
       }
       // Review #5: a G window Angus moved out of G's workspaces is no longer the world's to see or touch.
@@ -149,7 +150,25 @@ class Helper {
       mine.push({ c, o });
     }
     for (const [a, o] of [...this.owned]) if (!all.some((c) => c.address === a)) { this.owned.delete(a); this.closed(o.token); if (o.token) { this.tokens.delete(o.token); this.saveTokens(); } }
+    this.saveWindows(mine);
     return mine;
+  }
+  // J401: the world's windows as the HOST knows them (class set by our own launch, home recorded at launch), for the host daemon's
+  // dismiss: { address: { kind, home } }. Host-only file; nothing in it comes from the sandbox but the agent id it asked for.
+  saveWindows(mine) {
+    const v = JSON.stringify(Object.fromEntries(mine.map(({ c, o }) => [c.address, { kind: o.kind, home: o.home || 0, agent: o.agent }])));
+    if (v === this.lastWindows) return; this.lastWindows = v;
+    try { const f = path.join(STATE, "windows.json"); fs.writeFileSync(f + ".tmp", JSON.stringify({ lo: this.cfg.lo, hi: this.cfg.hi, windows: JSON.parse(v) }), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); } catch { /* */ }
+  }
+  // J401: the world's agents as its own daemon reports them, checked against a strict schema (g-status.mjs); the workspace comes
+  // from OUR window map (the agent id each window was opened for), never from the report. Written for the host's agents panel.
+  async status(raw) {
+    const t = Date.now(); if (t - (this.lastStatus || 0) < 2000) return { ok: false, error: "too soon" }; this.lastStatus = t;
+    const v = validateStatus(raw), wins = await this.windows();
+    const room = String.fromCharCode(65 + Math.floor((this.cfg.lo - 1) / 10));
+    const agents = v.agents.map((a) => { const w = wins.find(({ o }) => o.kind === "agent" && o.agent === a.id); return { name: a.name, status: a.status, model: a.model, ws: w ? w.c.workspace.id : 0 }; });
+    try { const f = path.join(STATE, "agents.json"); fs.writeFileSync(f + ".tmp", JSON.stringify({ world: WORLD, room, at: t, agents, thoughts: v.thoughts, dropped: v.dropped }), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); } catch { /* */ }
+    return { ok: true, shown: agents.length, dropped: v.dropped };
   }
   view({ c, o }) {
     const title = String(c.title || "").replace(/^G: /, "");
@@ -231,7 +250,7 @@ class Helper {
     if (agent && !AGENT_RE.test(agent)) throw new Error("bad agent id");
     const ws = this.inWorld(Number(r.ws)) ? Number(r.ws) : this.cfg.lo;
     this.opens.push(t);
-    this.tokens.set(r.token, { agent, kind, at: t });
+    this.tokens.set(r.token, { agent, kind, at: t, ws }); // ws: the window's home in this world (J401: dismiss sends it back there)
     // forget tokens of windows that never opened within a minute, and of closed windows (below)
     const liveTok = new Set([...this.owned.values()].map((o) => o.token));
     for (const [k, v] of this.tokens) if (!liveTok.has(k) && !v.mapped && t - v.at > 60000) this.tokens.delete(k);
@@ -283,6 +302,7 @@ class Helper {
       case "query": return { ok: true, data: await this.query(String(r.what || "")) };
       case "dispatch": return await this.dispatch(r.lua);
       case "open": return await this.open(r);
+      case "status": return await this.status(r.status);
       default: throw new Error("unknown op");
     }
   }
@@ -307,7 +327,7 @@ class Helper {
           res = await this.handle(r);
         } catch (e) { try { fs.unlinkSync(fdPath(d.out, n)); } catch { /* */ } res = { ok: false, error: String(e.message || e).slice(0, 200) }; }
         const op = typeof r?.op === "string" ? r.op.slice(0, 12) : "?";
-        if (op !== "query" || !res.ok) log({ op, what: op === "dispatch" ? String(r?.lua || "").slice(0, 120) : op === "open" ? r?.kind : r?.what, ok: !!res.ok, error: res.error });
+        if ((op !== "query" && op !== "status") || !res.ok) log({ op, what: op === "dispatch" ? String(r?.lua || "").slice(0, 120) : op === "open" ? r?.kind : r?.what, ok: !!res.ok, error: res.error });
         try { writeResult(this.st, stem, res); } catch (e) { log({ error: `result: ${e.message}` }); }
       }
       if (dropped) log({ dropped, reason: "rate limit" });
