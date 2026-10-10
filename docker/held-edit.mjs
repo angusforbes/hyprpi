@@ -25,7 +25,7 @@ export function prepareEdit(id, editFile, { PENDING, EDITS, RESEARCH, clean, byt
     let o; try { o = JSON.parse(String(r.stdout).trim().split("\n").pop()); } catch { o = { ok: false, reason: "the research runner gave no answer" }; }
     if (!o.ok) return { ok: false, code: 4, reason: o.reason };
     env = { kind: "research-plan", rid: String(m.research.rid), edited: o.searches, original: m.research.searches || o.original };
-  } else if (!m.draft && !m.gpu && !m.taskChange && !m.research && !m.typed && m.mode === "talk") {
+  } else if (!m.draft && !m.gpu && !m.taskChange && !m.research && !m.typed && !m.gatewayChange && m.mode === "talk") {
     const t = clean(text).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!t) return { ok: false, code: 4, reason: "the text is empty" };
     if (bytes(t) > maxBytes) return { ok: false, code: 4, reason: `over ${maxBytes} bytes` };
@@ -44,7 +44,7 @@ export function takeEdit(id, digest, msg, { EDITS, RESEARCH, log }) {
   try { env = JSON.parse(fs.readFileSync(f, "utf8")); } catch { /* none */ }
   try { fs.unlinkSync(f); } catch { /* none */ }
   if (!env || !digest || env.digest !== digest || env.id !== id || sha({ id, kind: env.kind, edited: env.edited }) !== digest) return { msg, applied: false };
-  if (env.kind === "talk" && !msg.research && !msg.draft && !msg.gpu && !msg.taskChange && !msg.typed && typeof env.edited === "string") {
+  if (env.kind === "talk" && !msg.research && !msg.draft && !msg.gpu && !msg.taskChange && !msg.typed && !msg.gatewayChange && typeof env.edited === "string") {
     const head = String(msg.body || "").split("\n")[0];
     log({ op: "edit", id, kind: "talk", original: String(env.original || "").slice(0, 4000), edited: env.edited });
     return { msg: { ...msg, text: env.edited, body: `${head}\n🐳│ ${env.edited.split("\n").join("\n🐳│ ")}\n🐳│ (edited by Angus before it was sent)` }, applied: true };

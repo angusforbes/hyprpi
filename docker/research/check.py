@@ -123,6 +123,8 @@ def main():
     except Exception:
         fail("bad request")
     base, model, key = provider()
+    if isinstance(req.get("model"), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:+-]{0,99}", req["model"]):
+        model = req["model"]  # J372: gateway.doorman_model: another model on the same provider and key (the host validates it too)
     want = str(req.get("looking_for", ""))[:1500]
     if req.get("mode") == "request":
         v = ask(base, model, key, QUERY_RULES, fence("REQUEST", want))

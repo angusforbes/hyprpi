@@ -25,6 +25,9 @@
 //   research.mjs task [--sandbox S] [--set TEXT | --clear]    the sandbox's task (J352; Angus sets it, never the sandbox)
 //   research.mjs digest [--since 1h] [--send] [--json]       the hourly digest (--send: to the reporting Thoughts)
 //   research.mjs reader create|rm [--sandbox S]              the reader sandbox (reader-<world>)
+//   research.mjs reader network [--sandbox S] [--apply]      (J372) the hosts the reader may reach: only the selected search provider's
+//   research.mjs config [--sandbox S] [--json]               (J372) what is in effect (search provider and models, report model, Doorman model, mode, level) and where each came from
+//   research.mjs config-set [--sandbox S] key=value ...      (J372) ANGUS ONLY (real terminal, no agent ancestor): change those settings in worlds/<name>.json "gateway"
 // Config (optional): ~/.config/hyprpi/research.json
 //   { "sandboxes": { "world-g": { "doorman": "doorman-g", "reader": "reader-g", "reports_to": "Thoughts-A",
 //       "key_file": "~/.config/<your-secrets>/<model-api-key-file>", "shape_model": "azure/openai/gpt-6-sol" } } }
@@ -39,6 +42,8 @@ import { fileURLToPath } from "node:url";
 import { modeForSandbox, MODE_TEXT } from "./mode.mjs"; // J325: doorman-strict / doorman-safe (default) / doorman-open
 import { taskForSandbox, setTask, NO_TASK } from "./task.mjs"; // J352: task-bound research
 import { numberLeaks } from "./numbers.mjs"; // J352: numbers however they are written
+import { resolveGateway, summaryText, summaryLine, SEARCH_PROVIDERS } from "./gateway.mjs"; // J372: per-sandbox gateway settings in one place
+import { adminSet, syncReaderNetwork } from "./gateway-admin.mjs"; // J372: changing them (Angus only)
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
@@ -52,6 +57,13 @@ const SBX = process.env.HYPRPI_SBX || "sbx";
 export const LIMITS = { requestChars: 1000, requestLines: 12, whyChars: 400, quickPerHour: 10, deepPerHour: 3, exceptionsPerHour: 3, deliverableChars: 60000, sources: 40 };
 
 const tilde = (p) => String(p || "").replace(/^~(?=\/|$)/, HOME);
+// J372: the worlds/<name>.json object that names this sandbox (exactly one; else null) and the relay's sandbox entries, read for the gateway summary.
+function worldFor(sandbox) {
+  const dir = path.join(path.dirname(CONFIG), "worlds"); let hit = null, n = 0;
+  try { for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json"))) { try { const w = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); if (w && typeof w === "object" && (typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox) { hit = w; n++; } } catch { /* */ } } } catch { /* */ }
+  return n === 1 ? hit : null;
+}
+function relayEntries() { try { return JSON.parse(fs.readFileSync(process.env.HYPRPI_RELAY_CONF || path.join(path.dirname(CONFIG), "sbx-relay.json"), "utf8")).sandboxes || []; } catch { return []; } }
 export function conf(sandbox) {
   let c = {}; try { c = JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sandbox] || {}; } catch { /* defaults */ }
   const world = String(sandbox).replace(/^world-/, "");
@@ -59,9 +71,10 @@ export function conf(sandbox) {
   // J325: the Doorman mode, per sandbox in ~/.config/hyprpi/worlds/<name>.json (docker/research/mode.mjs)
   const { mode, note: modeNote } = modeForSandbox(path.dirname(CONFIG), String(sandbox));
   const { task, note: taskNote } = taskForSandbox(path.dirname(CONFIG), String(sandbox)); // J352
-  return { mode, modeNote, strict: mode === "doorman-strict", task, taskNote,
+  const gw = resolveGateway({ w: worldFor(String(sandbox)), research: c, relay: relayEntries(), sandbox: String(sandbox) }); // J372
+  return { mode, modeNote, strict: mode === "doorman-strict", task, taskNote, gateway: gw,
     doorman: c.doorman || `doorman-${world}`, reader: c.reader || `reader-${world}`, reports_to: c.reports_to || "Thoughts-A",
-    key_file: c.key_file ? tilde(c.key_file) : "", shape_model: c.shape_model || "",
+    key_file: c.key_file ? tilde(c.key_file) : "", shape_model: gw.report_model === gw.search.quick_model ? "" : (gw.sources.report_model === "default" ? "" : gw.report_model), doorman_model: gw.doorman_model,
   };
 }
 const mkState = () => { fs.mkdirSync(DELIVERABLES(), { recursive: true, mode: 0o700 }); fs.chmodSync(STATE, 0o700); };
@@ -347,7 +360,7 @@ function lastJson(out) { const l = String(out).trim().split("\n").reverse().find
 export function doormanCheck(cfg, payload) {
   try {
     if (process.env.HYPRPI_RESEARCH_FAKE_DOORMAN) return JSON.parse(execFileSync(process.env.HYPRPI_RESEARCH_FAKE_DOORMAN, { input: JSON.stringify(payload), encoding: "utf8" }));
-    return lastJson(sbx(["exec", "-i", cfg.doorman, "python3", "-c", fs.readFileSync(path.join(HERE, "check.py"), "utf8")], JSON.stringify(payload)));
+    return lastJson(sbx(["exec", "-i", cfg.doorman, "python3", "-c", fs.readFileSync(path.join(HERE, "check.py"), "utf8")], JSON.stringify(cfg.doorman_model ? { ...payload, model: cfg.doorman_model } : payload))); // J372: gateway.doorman_model
   } catch (e) { return { ok: false, reason: `the Doorman's check didn't run (${String(e.message).split("\n")[0].slice(0, 120)})` }; }
 }
 export function readerRun(cfg, lookingFor, depth, plan = {}) {
@@ -355,7 +368,13 @@ export function readerRun(cfg, lookingFor, depth, plan = {}) {
     if (process.env.HYPRPI_RESEARCH_FAKE_READER) return JSON.parse(execFileSync(process.env.HYPRPI_RESEARCH_FAKE_READER, { input: JSON.stringify({ looking_for: lookingFor, depth, searches: plan.searches, brief: plan.brief }), encoding: "utf8" }));
     if (!cfg.key_file) throw new Error(`no key_file for ${cfg.reader} in ${CONFIG} (the model API key file; there is no default)`);
     const key = fs.readFileSync(cfg.key_file, "utf8").replace(/[\r\n]/g, "");
-    const req = { looking_for: lookingFor, depth, searches: plan.searches || [], brief: plan.brief || "", ...(cfg.shape_model ? { shape_model: cfg.shape_model } : {}) };
+    const gw = cfg.gateway || { search: { provider: "sonar" } };
+    const req = { looking_for: lookingFor, depth, searches: plan.searches || [], brief: plan.brief || "", ...(cfg.shape_model ? { shape_model: cfg.shape_model } : {}),
+      search: { provider: gw.search.provider, quick_model: gw.search.quick_model, deep_model: gw.search.deep_model } }; // J372: which search provider and models the reader uses
+    if (SEARCH_PROVIDERS[gw.search.provider]?.ownKey) { // a provider with its own API key: the key travels on stdin like the Inference Hub key, never stored
+      if (!gw.search.key_file) throw new Error(`search provider ${gw.search.provider} needs gateway.search.key_file`);
+      req.search_key = fs.readFileSync(gw.search.key_file, "utf8").replace(/[\r\n]/g, "");
+    }
     return lastJson(sbx(["exec", "-i", cfg.reader, "python3", "-c", fs.readFileSync(path.join(HERE, "reader.py"), "utf8")], key + "\n" + JSON.stringify(req) + "\n", depth === "deep" ? 2400e3 : 900e3));
   } catch (e) { return { ok: false, error: `the reader didn't run (${String(e.message).split("\n")[0].slice(0, 120)})` }; }
 }
@@ -591,6 +610,13 @@ async function main(argv) {
     console.log(JSON.stringify(checkPlanEdit(flags.rid, fs.readFileSync(0, "utf8"))));
   } else if (cmd === "edit-apply") { // J365: only the relay calls this, while carrying out an approval (searches as JSON on stdin)
     let a; try { a = JSON.parse(fs.readFileSync(0, "utf8")); } catch { a = null; } console.log(JSON.stringify(applyPlanEdit(flags.rid, a)));
+  } else if (cmd === "config") { // J372: what is in effect for a sandbox, and where each value comes from
+    const sb = flags.sandbox || "world-g";
+    const e = resolveGateway({ w: worldFor(sb), research: (() => { try { return JSON.parse(fs.readFileSync(CONFIG, "utf8")).sandboxes?.[sb] || {}; } catch { return {}; } })(), relay: relayEntries(), sandbox: sb });
+    if (flags.json) console.log(JSON.stringify(e, null, 1)); else console.log(summaryText(e, sb) + `\n  (one line: ${summaryLine(e)})`);
+  } else if (cmd === "config-set") { // J372: ANGUS ONLY: a real terminal and no agent ancestor (agent-guard.mjs); key=value arguments
+    const r = adminSet(path.dirname(CONFIG), flags.sandbox || "world-g", rest);
+    console.log(r.text); if (r.ok) { const cfg = conf(flags.sandbox || "world-g"); const n = syncReaderNetwork({ reader: cfg.reader, provider: cfg.gateway.search.provider, apply: !flags["no-network"] }); for (const x of n.results) console.log(`  reader network: ${x.cmd} -> ${x.status === 0 ? "ok" : `status ${x.status} ${x.out}`}`); } process.exit(r.ok ? 0 : r.code);
   } else if (cmd === "drop") { console.log(JSON.stringify({ dropped: dropPlan(flags.rid, flags.why === "expired" ? "expired" : "denied") }));
   } else if (cmd === "digest") {
     const m = /^(\d+)(m|h)$/.exec(String(flags.since || "1h")); const d = digest({ sinceMs: m ? Number(m[1]) * (m[2] === "h" ? 3600e3 : 60e3) : 3600e3 });

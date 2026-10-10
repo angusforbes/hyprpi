@@ -46,6 +46,8 @@ import { logEvent as researchLog, conf as researchConf } from "./research/resear
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
 import { ownerNote, returnable, senderLabel, returnKey } from "./held-note.mjs"; // J370
+import { agentAncestor } from "./agent-guard.mjs"; // J372: shared with the gateway admin command
+import { applyChanges, proposeChange, syncReaderNetwork, validateChanges, digestOf } from "./research/gateway-admin.mjs"; // J372
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
@@ -872,6 +874,22 @@ class Relay {
         return;
       }
       msg = te.msg; } // J365: an edit is applied only for the approval that carries its digest; a stale one is deleted // J365: an edit is applied only for the approval that carries its digest; a stale one is deleted
+    if (msg.gatewayChange) { // J372: a proposed change of the research gateway's settings (from a host agent, through the bridge): applied by code, exactly as shown, once
+      const gc = msg.gatewayChange, what = { ...msg, text: `gateway settings for ${gc.sandbox}: ${Object.entries(gc.changes || {}).map(([k, v]) => `${k}=${v}`).join(", ")}` };
+      let outcome = "nothing changed";
+      if (verdict !== "deny") {
+        try {
+          const v = validateChanges(gc.changes, { admin: false });
+          if (!v.ok || digestOf(gc.sandbox, v.changes) !== gc.digest) throw new Error("the proposal doesn't match what was shown");
+          const r = applyChanges(path.dirname(CONFIG), gc.sandbox, v.changes, { expectBefore: gc.before });
+          outcome = `applied: ${Object.entries(r.after).map(([k, x]) => `${k} ${r.before[k]} → ${x}`).join("; ")}`;
+          if (v.changes["search.provider"]) { const rc = researchConf(gc.sandbox); const n = syncReaderNetwork({ reader: rc.reader, provider: rc.gateway.search.provider }); outcome += `; reader network: ${n.results.map((x) => `${x.cmd.split(" ").slice(2).join(" ")} ${x.status === 0 ? "ok" : "failed"}`).join(", ") || "no change"}`; }
+        } catch (e) { outcome = `not applied: ${String(e.message).replace(/^not applied: /, "")}`; }
+      }
+      log({ sb: sb.name, op: "gateway_change", decision: verdict === "deny" ? "denied" : "approved", id, sandbox: gc.sandbox, by: gc.by, changes: gc.changes, applied: /^applied/.test(outcome), outcome });
+      heldNote(sb, what, via, verdict === "deny" ? "Denied" : "Approved", outcome);
+      return;
+    }
     if (msg.taskChange) { // J352: Angus decided a Doorman-drafted task change: approval writes it, once
       const tc = msg.taskChange, what = { ...msg, text: `task change for ${tc.sandbox}: ${tc.task}` };
       let outcome = "nothing changed";
@@ -1184,20 +1202,6 @@ function writeDecision(id, verdict, via, editDigest = "", note = "") {
   fs.writeFileSync(tmp, via + (editDigest ? `\nedit:${editDigest}` : "") + (note ? `\nnote:${Buffer.from(note, "utf8").toString("base64")}` : ""), { mode: 0o600 }); // J370: Angus's note / reason, base64 on one line
   fs.renameSync(tmp, path.join(DECISIONS, `${id}.${verdict}`));
 }
-function agentAncestor() {
-  if (process.env.HYPRPI_AGENT_ID || process.env.PI_CODING_AGENT || process.env.PI_SESSION_FILE || process.env.HYPRPI_THOUGHTS_ROOM) return "called from an agent"; // (J274: Thoughts too)
-  let pid = process.ppid;
-  for (let i = 0; i < 40 && pid > 1; i++) {
-    let env = "", stat = "", comm = "";
-    // J274: the user's systemd manager (the root of every desktop process) can't be read (not dumpable) and is
-    // no agent: stop there. Before this, every panel and terminal under it failed closed ("can't check").
-    try { if (fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0] === "/usr/lib/systemd/systemd" && fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[1] === "--user") return ""; } catch { /* checked below */ }
-    try { env = fs.readFileSync(`/proc/${pid}/environ`, "utf8"); stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8"); comm = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim(); } catch { return `can't check process ${pid}`; } // fail closed
-    if (/(^|\0)(HYPRPI_AGENT_ID|PI_CODING_AGENT|PI_SESSION_FILE|HYPRPI_THOUGHTS_ROOM)=/.test(env) || comm === "pi" || comm === "script") return `under an agent (pid ${pid})`;
-    pid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]) || 0;
-  }
-  return "";
-}
 
 // --- CLI ---------------------------------------------------------------------------------------------------
 const [cmd, arg] = process.argv.slice(2);
@@ -1246,6 +1250,12 @@ if (cmd === "run") {
 } else if (cmd === "clear" && arg) {
   // clear SANDBOX: every rule of one sandbox (world.sh stop calls it)
   console.log(`revoked ${revokeRules(STATE, arg, { sandbox: true })} rule(s)`);
+} else if (cmd === "propose-gateway" && arg) { // J372: a host agent / the bridge PROPOSES a change of the research gateway's settings; it only creates a held item for Angus
+  const o = (k) => { const i = process.argv.indexOf(k); return i > 0 ? String(process.argv[i + 1] || "") : ""; };
+  let changes; try { changes = JSON.parse(o("--changes")); } catch { console.log(JSON.stringify({ ok: false, text: "--changes must be JSON" })); process.exit(2); }
+  const entry = (readConfig().sandboxes || []).find((x) => x.name === arg) || {};
+  const r = proposeChange({ cfgDir: path.dirname(CONFIG), PENDING, sandbox: arg, changes, by: o("--by") || "a host agent", reviewIn: entry.review_in || "", room: entry.review_room || "G" });
+  console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1);
 } else if ((cmd === "approve" || cmd === "deny" || cmd === "return") && arg) {
   if (!/^[A-Za-z0-9._-]+--[0-9a-f]{6}$/.test(arg) || !fs.existsSync(path.join(PENDING, arg + ".json"))) { console.error(`no pending message ${arg}`); process.exit(1); }
   const ef = process.argv.indexOf("--edit-file"), editFile = ef > 0 ? String(process.argv[ef + 1] || "") : "";
@@ -1262,6 +1272,6 @@ if (cmd === "run") {
   decideAsAngus(arg, cmd, editFile, note.text);
   console.log(`${cmd === "deny" ? "denied" : cmd === "return" ? "sent back with your note" : "approved"}${editFile ? " (edited)" : ""}${note.text && cmd === "deny" ? " (with your reason)" : ""} ${arg}`);
 } else {
-  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|clear SANDBOX");
+  console.log("usage: sbx-relay.mjs start|stop|status|run|pending|approve ID|deny ID|allow ID [DURATION]|review ID|rules|revoke N|all|clear SANDBOX|propose-gateway SANDBOX --changes JSON [--by NAME]");
   process.exit(cmd ? 1 : 0);
 }

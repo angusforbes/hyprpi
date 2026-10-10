@@ -83,6 +83,7 @@ function config() {
 // J366: the world's access level and why (see the header)
 export const LEVELS = ["open", "safe", "strict"];
 function accessLevel(w, relay, sandbox, world = WORLD) {
+  if (w.gateway?.level !== undefined) return LEVELS.includes(w.gateway.level) ? { level: w.gateway.level, why: `"gateway.level" in worlds/${world}.json` } : { level: "strict", why: `"gateway.level": ${JSON.stringify(w.gateway.level)} isn't open, safe or strict, so strict` }; // J372
   if (w.access !== undefined) return LEVELS.includes(w.access) ? { level: w.access, why: `"access" in worlds/${world}.json` } : { level: "strict", why: `"access": ${JSON.stringify(w.access)} isn't open, safe or strict, so strict` };
   const dm = (relay.sandboxes || []).find((x) => x.doorman_for === sandbox);
   if (dm && dm.visibility === "developer") return { level: "open", why: `its Doorman ${dm.name} runs in developer visibility (developer = open)` };

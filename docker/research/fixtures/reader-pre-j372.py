@@ -17,9 +17,9 @@ Two steps, both on NVIDIA Inference Hub:
 Then the text is cleaned: no HTML, images, code blocks, links or citation markers in the body; sources are a
 separate list of bare http(s) URLs. It never returns raw pages.
 """
-import json, os, re, sys, urllib.parse, urllib.request, urllib.error
+import json, re, sys, urllib.request, urllib.error
 
-BASE = os.environ.get("HYPRPI_READER_BASE") or "https://inference-api.nvidia.com/v1/chat/completions"  # (the env override is for offline tests; the sandbox never sets it)
+BASE = "https://inference-api.nvidia.com/v1/chat/completions"
 SEARCH = {"quick": "perplexity/perplexity/sonar", "deep": "perplexity/perplexity/sonar-deep-research"}
 SHAPE_MODEL = "azure/openai/gpt-6-sol"
 MAX_DELIVERABLE = 60000
@@ -95,11 +95,20 @@ def clean_sources(lst):
     return res[:MAX_SOURCES]
 
 
-# ---- search providers (J372). An adapter takes (key, req, depth, searches, brief) and returns (research_text, sources, models). Everything after it is the
-# same for every provider: clean_md, the shaping model, clean_sources, and (on the host) the cleaning, the J360 link rules and the Doorman's vet.
-def search_sonar(key, req, depth, searches, brief):
-    s = req.get("search") or {}
-    smodel = req.get("search_model") or (s.get("deep_model") if depth == "deep" else s.get("quick_model")) or SEARCH[depth]
+def main():
+    key = sys.stdin.readline().strip()
+    try:
+        req = json.loads(sys.stdin.readline())
+    except Exception:
+        out({"ok": False, "error": "bad request"})
+    want = str(req.get("looking_for", ""))[:1200]
+    depth = "deep" if req.get("depth") == "deep" else "quick"
+    smodel = req.get("search_model") or SEARCH[depth]
+    shape = req.get("shape_model") or SHAPE_MODEL
+    if not key or not want.strip():
+        out({"ok": False, "error": "missing key or request"})
+    searches = [str(x)[:200] for x in (req.get("searches") or []) if str(x).strip()][:3]
+    brief = str(req.get("brief") or "")[:700]
     if depth == "deep":
         if not brief:
             out({"ok": False, "error": "no research brief from the Doorman"})
@@ -115,57 +124,6 @@ def search_sonar(key, req, depth, searches, brief):
             srcs += clean_sources(d.get("citations") or [x.get("url") for x in (d.get("search_results") or []) if isinstance(x, dict)])
         research = "\n\n".join(parts)
         srcs = clean_sources(srcs)
-    return research, srcs, [smodel]
-
-
-BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
-
-
-def search_brave(key, req, depth, searches, brief):
-    """Brave Search API: it returns result snippets, not prose; the shaping model writes the report from them like it does from Sonar's prose."""
-    bkey = str(req.get("search_key") or "").strip()
-    if not bkey:
-        out({"ok": False, "error": "no search API key for the brave provider"})
-    base = os.environ.get("HYPRPI_SEARCH_BASE") or BRAVE_URL  # (the env override is for offline tests; the sandbox never sets it)
-    qs = [brief[:400]] if depth == "deep" else searches
-    if not qs or not any(q.strip() for q in qs):
-        out({"ok": False, "error": "no research brief from the Doorman" if depth == "deep" else "no searches from the Doorman"})
-    parts, srcs = [], []
-    for q in qs:
-        r = urllib.request.Request(base + "?" + urllib.parse.urlencode({"q": q[:400], "count": 8}), headers={"X-Subscription-Token": bkey, "Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(r, timeout=60) as resp:
-                d = json.loads(resp.read().decode("utf-8", "replace"))
-        except urllib.error.HTTPError as e:
-            out({"ok": False, "error": f"brave: HTTP {e.code}"})
-        except Exception as e:
-            out({"ok": False, "error": f"brave: {e.__class__.__name__}"})
-        rows = [x for x in ((d.get("web") or {}).get("results") or []) if isinstance(x, dict)][:8]
-        parts.append("Search: " + q + "\n" + "\n".join("- " + str(x.get("title", ""))[:200] + ": " + re.sub(r"<[^>]+>", "", str(x.get("description", "")))[:500] for x in rows))
-        srcs += clean_sources([x.get("url") for x in rows])
-    return "\n\n".join(parts), clean_sources(srcs), ["brave"]
-
-
-PROVIDERS = {"sonar": search_sonar, "brave": search_brave}
-
-
-def main():
-    key = sys.stdin.readline().strip()
-    try:
-        req = json.loads(sys.stdin.readline())
-    except Exception:
-        out({"ok": False, "error": "bad request"})
-    want = str(req.get("looking_for", ""))[:1200]
-    depth = "deep" if req.get("depth") == "deep" else "quick"
-    shape = req.get("shape_model") or SHAPE_MODEL
-    if not key or not want.strip():
-        out({"ok": False, "error": "missing key or request"})
-    searches = [str(x)[:200] for x in (req.get("searches") or []) if str(x).strip()][:3]
-    brief = str(req.get("brief") or "")[:700]
-    provider = str((req.get("search") or {}).get("provider") or "sonar")
-    if provider not in PROVIDERS:
-        out({"ok": False, "error": "unknown search provider"})
-    research, srcs, smodels = PROVIDERS[provider](key, req, depth, searches, brief)
     research = clean_md(research)
     if not research:
         out({"ok": False, "error": "the search returned nothing"})
@@ -175,7 +133,7 @@ def main():
     deliverable = clean_md(shaped)
     if not deliverable:
         out({"ok": False, "error": "shaping returned nothing"})
-    out({"ok": True, "deliverable": deliverable, "sources": srcs, "models": smodels + [shape]})
+    out({"ok": True, "deliverable": deliverable, "sources": srcs, "models": [smodel, shape]})
 
 
 main()

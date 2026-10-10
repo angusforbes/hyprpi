@@ -22,7 +22,7 @@ export const MODE_TEXT = {
 
 // A worlds/<name>.json object (or null) → { mode, note } (note: why it isn't simply the configured value).
 export function modeOf(w) {
-  const m = w && typeof w === "object" ? w.doorman?.mode : undefined;
+  const m = w && typeof w === "object" ? (w.gateway?.mode !== undefined ? w.gateway.mode : w.doorman?.mode) : undefined; // J372: the gateway block wins
   if (typeof m === "string" && MODES.includes(m)) return { mode: m, note: "" };
   if (m !== undefined) { let shown = "?"; try { shown = String(JSON.stringify(m) ?? typeof m).slice(0, 40); } catch { /* */ } return { mode: DEFAULT_MODE, note: `unknown doorman.mode ${shown}: using ${DEFAULT_MODE}` }; }
   if (w?.research?.strict === true) return { mode: "doorman-strict", note: 'deprecated "research": {"strict": true}: read as doorman-strict; set "doorman": {"mode": "doorman-strict"} instead' };

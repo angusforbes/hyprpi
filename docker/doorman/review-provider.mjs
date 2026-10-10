@@ -11,6 +11,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { conf as researchConf } from "../research/research.mjs";
+import { summaryLine } from "../research/gateway.mjs";
 const HOME = os.homedir();
 const CONF = process.env.HYPRPI_RELAY_CONF || path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi", "sbx-relay.json");
 
@@ -21,7 +23,7 @@ function names(name) {
 }
 
 export default function createReview(name) {
-  const own = names(name);
+  const own = names(name); let infoCache = { t: 0, v: "" };
   const first = () => heldForSandboxes(own)[0] || null;
   return {
     current() { const h = first(); return h ? { id: h.id, text: h.text, choices: h.choices, reason: h.reason === true } : null; },
@@ -38,6 +40,8 @@ export default function createReview(name) {
       if (!choice || !["approve", "deny", "allow"].includes(choice.verdict)) return { ok: false, text: "not a choice" };
       return actOnHeld(id, choice, "doorman window", edited, note && k === "2" ? String(note) : "");
     },
+    // J372: what is in effect for the sandbox this Doorman serves: search provider and models, report model, Doorman model, mode, level (one dim line under the header)
+    info() { const now = Date.now(); if (infoCache.t && now - infoCache.t < 5000) return infoCache.v; let v = ""; try { const served = own.find((x) => x !== name) || name, c = researchConf(served); v = `${served}: ${summaryLine(c.gateway)}`; } catch { /* no line */ } infoCache = { t: now, v }; return v; },
     track(id) { return trackHeld(id); }, // where the decided request is now (pinned under the conversation)
   };
 }
