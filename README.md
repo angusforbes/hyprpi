@@ -310,7 +310,8 @@ The Thoughts window has no `/ai`, `/thought`, `/digest` or `/search` of the shar
 - `/stream [@names…] [3h|today|since 9am] [words] [raw]` — filter the Stream (alone clears; `raw` adds tool lines)
 - `/history N | all` — how far back the Stream goes (default 200 interactions)
 - Enter sends to the room; Tab completes a `/command` or `@project`, Shift+Tab an `@agent`
-- Ctrl+F cycles the view: full, compact, topics, all activity
+- Ctrl+F cycles the view: full, compact, topics, all activity, highlights
+- The highlights view (J420) shows only what matters to you: ✗ / ⚠ alerts and errors, 🔧 done / plan / decide / stuck results, ✓✓ verified and ✗ failed jobs, decide items asked or answered, briefs (→ Agent · brief J…), Thoughts' summaries of agents' replies (Agent ↩ …), your own posts, and lines that @-mention or quote you. It leaves out board bookkeeping, 🧹 upkeep, routine "↩ answered" lines, ⏰ 🌱 🍂 📨 ⛽ notes, tool and did lines, topics, and joins, leaves and moves. The rules are in lib/stream.mjs (highlight()).
 - Alt+Up / Alt+Down pick a Stream row; Ctrl+Up / Ctrl+Down, PgUp / PgDn and Ctrl+Home / Ctrl+End scroll
 - Ctrl+N a new agent
 
