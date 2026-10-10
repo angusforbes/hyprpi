@@ -22,6 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { execFile, execFileSync } from "node:child_process";
 import { imgSize } from "./session-read.mjs";
 
@@ -96,10 +97,23 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
     return u && /^https?:\/\//.test(u[1]) ? u[1] : null;
   };
   // J417: a PDF from Safari's viewer, fetched into ~/Phone (https only, not a local or literal-IP host, ≤ MAX, must be a PDF)
+  // Every hop is checked (Pocket): https, a host name (not a literal IP, not local/tailnet names) whose
+  // addresses are all public; redirects are followed by hand, at most 5. (A rebinding race between the
+  // lookup and fetch's own is left: only a %PDF body is kept, and only into ~/Phone.)
+  const privateAddr = (a) => /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(a) || /^(::1?$|f[cd]|fe[89ab]|::ffff:)/i.test(a);
+  async function publicHttps(u) {
+    if (u.protocol !== "https:" || /^(localhost|.*\.local|.*\.internal|.*\.ts\.net)$/i.test(u.hostname) || /^[\d.]+$|:|^\[/.test(u.hostname)) throw new Error("not a public https address");
+    let addrs = []; try { addrs = await lookup(u.hostname, { all: true }); } catch { throw new Error("unknown host"); }
+    if (!addrs.length || addrs.some((x) => privateAddr(x.address))) throw new Error("not a public https address");
+  }
   async function fetchPdf(src) {
-    const u = new URL(src);
-    if (u.protocol !== "https:" || /^(localhost|.*\.local|.*\.internal|.*\.ts\.net)$/i.test(u.hostname) || /^[\d.]+$|:/.test(u.hostname)) throw new Error("not a public https address");
-    const r = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(120e3), headers: { "user-agent": "Mozilla/5.0 (hyprpi remote control)" } });
+    let u = new URL(src), r;
+    for (let hop = 0; ; hop++) {
+      await publicHttps(u);
+      r = await fetch(u, { redirect: "manual", signal: AbortSignal.timeout(120e3), headers: { "user-agent": "Mozilla/5.0 (hyprpi remote control)" } });
+      if (r.status >= 300 && r.status < 400 && r.headers.get("location")) { if (hop >= 5) throw new Error("too many redirects"); u = new URL(r.headers.get("location"), u); continue; }
+      break;
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     if (Number(r.headers.get("content-length") || 0) > MAX) throw new Error(`over ${MAX / MB} MB`);
     const tmp = path.join(UPLOAD_DIR, `.shot-${randomBytes(6).toString("hex")}.part`);
@@ -248,7 +262,7 @@ export function shotRoutes({ HOME, UPLOAD_DIR, json, log, getApi, room, getActiv
     if (/^(<!doctype html|<html)/i.test(headTxt)) {
       const emb = (headTxt.match(/<embed\b[^>]*type=["']application\/pdf["'][^>]*>/i) || [])[0];
       const src = emb && (emb.match(/\bsrc=["']([^"']+)/i) || [])[1];
-      if (src && /^https:\/\//i.test(src)) {
+      if (src && /^https?:\/\//i.test(src)) { // http: refused in fetchPdf → the link (Pocket)
         try {
           const file = await fetchPdf(src);
           let size = 0; try { size = fs.statSync(file).size; } catch { /* gone */ }
