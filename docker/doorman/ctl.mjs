@@ -83,7 +83,7 @@ export function gather(world, sys = realSys, P = paths()) {
   for (const [k, u] of [["digest (hourly)", "hyprpi-research-digest.timer"], ["digest (daily)", "hyprpi-research-daily.timer"]]) { const e = sys.enabled(u), a = sys.active(u); add(k, e === "enabled" && a === "active" ? "ok" : "fail", e === "enabled" && a === "active" ? "scheduled" : "timer missing or stopped", "doorman install"); }
   // phone decisions, remote app
   let phone = false; try { phone = phoneDecisionsFor(P.cfg, S); } catch { /* fail closed */ }
-  add("phone decisions", "off", phone ? "on (the world asks for it and the host allows it)" : "off");
+  add("phone decisions", phone ? "ok" : "off", phone ? "on (the world asks for it and the host allows it)" : "off");
   const ra = sys.active("hyprpi-remote-control"); add("remote app", ra === "active" ? "ok" : "off", ra === "active" ? "the phone web app is up" : "not running (optional)");
   // held + errors
   const pend = fs.existsSync(path.join(P.relayState, "pending")) ? fs.readdirSync(path.join(P.relayState, "pending")).filter((f) => f.startsWith(`${dm?.name || S}--`)).length : 0;
