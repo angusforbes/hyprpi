@@ -30,7 +30,7 @@ const server = http.createServer((req, res) => {
     const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
     const first = msgs.find((m) => m.role === "user"), rid = (/· id ([^,\s]+),/.exec(text(first)) || [])[1], tools = msgs.filter((m) => m.role === "tool").length;
     const want = ([...text(first).matchAll(/TOOL:([a-z_]+)/g)].at(-1) || [])[1]; // (the last: earlier ones are in the relay-supplied history) // W3: the question asks for one of the Doorman's tools first
-    const ARGS = { hyprpi_talk: { to: ["Alpha"], text: "your draft is waiting" }, hyprpi_draft_request: { for: "Alpha", why: "needs pypi", action: "allow pypi.org" }, hyprpi_task_change: { task: "perovskite research", why: "the work moved on" }, hyprpi_gpu_lease: { for: "Alpha", job: "matmul", why: "speed", script: "a.py" } };
+    const ARGS = { hyprpi_talk: { to: ["Alpha"], text: "your draft is waiting" }, hyprpi_draft_request: { for: "Alpha", why: "needs pypi", action: "allow pypi.org" }, hyprpi_task_change: { task: "perovskite research", why: "the work moved on" }, hyprpi_gpu_lease: { for: "Alpha", job: "matmul", why: "speed", script: "a.py" }, hyprpi_request: { type: "note_to_owner", for: "Alpha", text: "a note" } };
     if (want && ARGS[want] && tools === 0) {
       chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: want, arguments: JSON.stringify(ARGS[want]) } }] });
       chunk({}, "tool_calls");
@@ -60,15 +60,15 @@ const relayTick = setInterval(() => {
     let req; try { req = JSON.parse(fs.readFileSync(path.join(OUTBOX, n), "utf8")); } catch { continue; } fs.unlinkSync(path.join(OUTBOX, n));
     if (req.op === "reply") { replies.push(req); store.answered("doorman-t", req.request_id, req.text); }
     if (req.op !== "status" && req.op !== "reply") ops.push(req);
-    if (["task_change", "draft", "gpu_lease"].includes(req.op) && req.about) store.link("doorman-t", `doorman-t--${req.op}`, req.about); // as the relay's scan() does with result.pending
-    if (req.op !== "status") inboxWrite({ type: "result", for: n, op: req.op, ok: true, ...(["task_change", "draft", "gpu_lease"].includes(req.op) ? { pending: [`doorman-t--${req.op}`] } : {}) });
+    if (["task_change", "draft", "gpu_lease", "request"].includes(req.op) && req.about) store.link("doorman-t", `doorman-t--${req.op}`, req.about); // as the relay's scan() does with result.pending
+    if (req.op !== "status") inboxWrite({ type: "result", for: n, op: req.op, ok: true, ...(["task_change", "draft", "gpu_lease", "request"].includes(req.op) ? { pending: [`doorman-t--${req.op}`] } : {}) });
   }
 }, 100);
 
 // --- pi under the controller
 const PI = execFileSync("bash", ["-lc", "command -v pi"], { encoding: "utf8" }).trim();
 const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-const PIRUN = [PI, "--mode", "rpc", "--no-extensions", "-e", path.join(HERE, "..", "sbx-dropbox-ext.ts"), "-e", path.join(T, "fake.ts"), "--model", "fake/m", "--no-skills", "--no-context-files", "--no-prompt-templates", "--tools", "read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request,hyprpi_gpu_lease,hyprpi_task_change", "--system-prompt", "You are a test Doorman."].map(q).join(" ");
+const PIRUN = [PI, "--mode", "rpc", "--no-extensions", "-e", path.join(HERE, "..", "sbx-dropbox-ext.ts"), "-e", path.join(T, "fake.ts"), "--model", "fake/m", "--no-skills", "--no-context-files", "--no-prompt-templates", "--tools", "read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request,hyprpi_gpu_lease,hyprpi_task_change,hyprpi_request", "--system-prompt", "You are a test Doorman."].map(q).join(" ");
 const env = { ...process.env, HOME: HOMEDIR, HYPRPI_DROPBOX: BOX, HYPRPI_INBOX: INBOX, HYPRPI_DOORMAN: "1", DOORMAN_PIRUN: PIRUN, PI_OFFLINE: "1" };
 for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_SOCKET", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY"]) delete env[k];
 const ctl = spawn(process.execPath, [path.join(HERE, "doorman-rpc.mjs")], { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -114,7 +114,7 @@ try {
   const perFile = files.map((f) => fs.readFileSync(f, "utf8").split("\n").filter((l) => /"role":"user"/.test(l) && /via the drop-box/.test(l)).length).filter((c) => c > 0);
   ok(perFile.length >= N + 3 && perFile.every((c) => c === 1), `one session file per message, each holding exactly one incoming message (${perFile.length} files: ${perFile.join(",")})`);
   // W3: each of the Doorman's tools still works from a fresh session, and what it sends carries the asked message's id (about)
-  for (const [i, tool, op] of [[1, "hyprpi_talk", "talk"], [2, "hyprpi_draft_request", "draft"], [3, "hyprpi_task_change", "task_change"], [4, "hyprpi_gpu_lease", "gpu_lease"]]) {
+  for (const [i, tool, op] of [[1, "hyprpi_talk", "talk"], [2, "hyprpi_draft_request", "draft"], [3, "hyprpi_task_change", "task_change"], [4, "hyprpi_gpu_lease", "gpu_lease"], [5, "hyprpi_request", "request"]]) {
     ask("world-g", "Alpha", `rid-t${i}`, `please TOOL:${tool}`);
     await waitFor(() => replies.some((r) => r.request_id === `rid-t${i}`), 30000, `answer t${i}`);
     ok(ops.some((o) => o.op === op && o.about === `rid-t${i}`) && replies.some((r) => r.request_id === `rid-t${i}`), `${tool} works in a fresh session and its ${op} request names the message it answers (about=rid-t${i}), then the reply goes out`);
