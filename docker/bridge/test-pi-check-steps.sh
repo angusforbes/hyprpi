@@ -1,7 +1,7 @@
 # J424 (manual, real pi): project MCP config + the skill, the prompt "check" does a job.
 E2E_RC=0; fail() { echo "FAIL: $*"; E2E_RC=1; }; ok() { echo "ok $*"; }
 BR="$H/docker/bridge/doorman-bridge"; export DOORMAN_STATE=$P
-D=$R/x/jobdir; mkdir -p $D $P/requests; W=/home/agf/Work/.j424-pi-test; rm -rf $W; mkdir -p $W/.pi/skills
+D=$R/x/jobdir; mkdir -p $D $P/requests; W=$HOME/Work/.j424-pi-test; rm -rf $W; mkdir -p $W/.pi/skills
 cp -r $H/docker/bridge/skill/doorman-bridge $W/.pi/skills/
 cat > $W/.pi/mcp.json <<J
 { "mcpServers": { "doorman-bridge": { "command": "$BR", "args": ["mcp"], "env": { "DOORMAN_BRIDGE_AGENT": "Doorman-Host", "DOORMAN_BRIDGE_HARNESS": "pi", "DOORMAN_STATE": "$P" }, "exposure": "direct" } } }
