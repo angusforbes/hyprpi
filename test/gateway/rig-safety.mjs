@@ -14,6 +14,16 @@ export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPat
   const rejects = async (fn, re) => { await assert.rejects(fn, re); checks++; };
   try {
     onRig(rig);
+    const originalWrite = fs.writeFileSync;
+    let failedRoot;
+    try {
+      fs.writeFileSync = (file, ...args) => {
+        if (String(file).endsWith('/config/hyprpi/sbx-relay.json')) { failedRoot = String(file).slice(0, -'/config/hyprpi/sbx-relay.json'.length); throw new Error('synthetic constructor write failure'); }
+        return originalWrite(file, ...args);
+      };
+      await assert.rejects(createRig({ repoRoot }), error => { if (error.cleanupUnconfirmedRoot) throw error; assert.match(error.message, /synthetic constructor write failure/); return true; });
+    } finally { fs.writeFileSync = originalWrite; }
+    assert.ok(failedRoot); assert.equal(fs.existsSync(failedRoot), false, 'constructor failure removes its unregistered root'); checks++;
     let clock = 0, inspected = 0, removed = [];
     const late = new Set(['j376-owner-unit-fixture']);
     settleLateCreates(late, { now: () => clock, wait: ms => { clock += ms; }, timeout: 500,

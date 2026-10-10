@@ -64,8 +64,11 @@ export async function createRig(options = {}) {
   }
   if (typeof image !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,200}$/.test(image)) fail('unsafe cached image name');
   const tmp = fs.realpathSync(os.tmpdir()), root = fs.mkdtempSync(path.join(tmp, 'gateway-e2e-'));
+  let allocated;
+  try {
+  allocated = fs.lstatSync(root);
   fs.chmodSync(root, 0o700);
-  const rootStat = fs.lstatSync(root), nonce = crypto.randomBytes(8).toString('hex');
+  const rootStat = allocated, nonce = crypto.randomBytes(8).toString('hex');
   const sandbox = `j376-sandbox-${nonce}`, doorman = `j376-doorman-${nonce}`, reader = `j376-reader-${nonce}`;
   const workerName = `j376-worker-${nonce}`, owners = new Map(), windows = new Map(), uncertainCreates = new Set();
   let closed = false, workerId = '', workerAttempted = false, imageId = '';
@@ -388,4 +391,15 @@ export async function createRig(options = {}) {
     cleanupWindow: name => { if (!windows.has(name)) fail('unregistered window'); removeContainer(name, name); },
     get imageId() { prerequisites(); return imageId; }, dockerEnv: Object.freeze({ ...baseline }) };
   return rig;
+  } catch (error) {
+    // No Docker operation occurs before this constructor returns. Clean a partially initialised root by its original inode only.
+    try {
+      if (fs.existsSync(root)) {
+        const current = fs.lstatSync(root);
+        if (!allocated || fs.realpathSync(root) !== root || current.ino !== allocated.ino || current.dev !== allocated.dev) throw new Error('constructor root ownership is unconfirmed');
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    } catch (cleanupError) { error.cleanupUnconfirmedRoot = root; error.message += '; constructor cleanup failed: ' + cleanupError.message; }
+    throw error;
+  }
 }

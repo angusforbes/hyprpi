@@ -93,7 +93,7 @@ async function feature(job, files, fn) {
 async function cleanup() {
   if (finishPromise) return finishPromise;
   finishPromise = (async () => {
-    const errors = [];
+    const errors = report.constructorCleanupUnconfirmed ? ['constructor cleanup unconfirmed: ' + report.constructorCleanupUnconfirmed] : [];
     for (const child of [...kids].reverse()) try { await stop(child); } catch (e) { errors.push(e.message); }
     if (rig) {
       // Copy only synthetic diagnostics into a requested report. Scratch state is still destroyed on failure.
@@ -176,15 +176,16 @@ try {
       await pause(500);
     },
   };
-  await testcase('W1 negative isolation and owner guards: all 25 rig safety checks', async () => {
+  await testcase('W1 negative isolation and owner guards: all 26 rig safety checks', async () => {
     rig.validate();
     const { safety } = await import('./gateway/rig-safety.mjs');
     const attempts = [];
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const result = await safety({ repoRoot, onRig: nested => ownedRigs.add(nested) }); assert.equal(result.ok, true); assert.equal(result.checks, 25);
+        const result = await safety({ repoRoot, onRig: nested => ownedRigs.add(nested) }); assert.equal(result.ok, true); assert.equal(result.checks, 26);
         attempts.push({ status: 'PASS', result }); ctx.artifact('rig-safety', { attempts }); break;
       } catch (error) {
+        if (error.cleanupUnconfirmedRoot) report.constructorCleanupUnconfirmed = error.cleanupUnconfirmedRoot;
         attempts.push({ status: 'FAIL', error: error.stack, cleanupVerified: error.cleanupVerified === true });
         ctx.artifact('rig-safety', { attempts });
         if (attempt || !error.cleanupVerified || !/exact owned container cleanup.*(?:ETIMEDOUT|already in progress)/s.test(error.message)) throw error;
@@ -205,6 +206,7 @@ try {
   await runConfig(ctx);
   await runStateless(ctx);
 } catch (e) {
+  if (e.cleanupUnconfirmedRoot) report.constructorCleanupUnconfirmed = e.cleanupUnconfirmedRoot;
   report.cases.push({ name: 'suite infrastructure', status: 'FAIL', error: e.stack || String(e) });
   console.error(e.stack || e);
 } finally { await cleanup(); }
