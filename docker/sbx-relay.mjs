@@ -410,7 +410,9 @@ class Sandbox {
         }
         // J274: an "allow similar" rule Angus made covers every gated recipient (talk only, under its cap)?
         // J370: a message Angus sent back is never auto-sent under a rule: its revision comes back to him (held, linked)
-        const revising = gated.length && this.relay.returnedFor(returnKey(this.name, { text: t, targets: gated }));
+        // J370b (red team): while ANY send-back of this sandbox is open, no allow-similar rule sends anything from it (keyed on the sandbox, which the relay
+        // trusts, never on the sender label or the recipients a sandbox chooses); it lifts when Angus decides the revision, or after 24 h (longer than any rule)
+        const revising = gated.length && this.relay.returnedFor(this.name);
         const ruled = gated.length && !revising ? useRules(STATE, { sandbox: this.name, targets: gated, mode }) : null;
         if (ruled) {
           const ns = ruled.map((r) => r.n).join(", ");
@@ -757,9 +759,9 @@ class Relay {
     const mine = fs.readdirSync(PENDING).filter((n) => n.startsWith(sb.name + "--"));
     if (mine.length >= LIMITS.pendingPerSandbox) throw new Error(`too many messages waiting for approval (${LIMITS.pendingPerSandbox})`);
     const id = `${sb.name}--${crypto.randomBytes(3).toString("hex")}`;
-    if (!msg.revises && returnable(msg) && !msg.research) { // J370: the same agent's next message to the same recipients within an hour of a send-back is its revision
-      const k = returnKey(sb.name, msg), r = this.returnedFor(k);
-      if (r && !r.broken) { msg = { ...msg, revises: r.id, revisesNote: r.note }; this.setReturned(k, null); }
+    if (!msg.revises && returnable(msg) && !msg.research) { // J370b: while a send-back is open, every held message of that sandbox is shown as its possible revision
+      const r = this.returnedFor(sb.name);                       // (the one with the same label and recipients if any, else the latest); the link is never used up
+      if (r && !r.broken && r.open?.length) { const k = returnKey(sb.name, msg), o = r.open.find((x) => x.key === k) || r.open[r.open.length - 1]; msg = { ...msg, revises: o.id, revisesNote: o.note || o.reason || "" }; }
     }
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
     if (msg.revises) log({ sb: sb.name, op: "revision", id, revises: msg.revises });
@@ -976,6 +978,7 @@ class Relay {
       return;
     }
     // J370: a send-back is only for a sandbox agent's message or a research plan; anything else that somehow carries one is denied (nothing goes out)
+    if (msg.revises) this.closeReturn(msg.sandbox, String(msg.revises)); // J370b: Angus decided the revision: that send-back is closed (rules resume when none is open)
     if (verdict === "return" && !returnable(msg)) verdict = "deny"; // (J386: the note is optional; the hold's own reason always goes along)
     if (verdict === "return") return this.sendBack(sb, msg, id, via, note);
     const reason = verdict === "deny" ? note : "", why = reason ? ` (Angus's reason: ${reason})` : "";
@@ -1162,22 +1165,34 @@ class Relay {
     delete a._quarantine;
     return { ...a, ...(this.returnedMem || {}) };
   }
-  returnedFor(k) {
-    const r = this.returnedAll()[k];
-    if (r && Date.now() - Number(r.at) < 3600e3) return r;
-    return this.quarantine > Date.now() || this.writeBroken ? { id: "", note: "", at: Date.now(), broken: true } : null; // can't tell: treat every message as a possible revision (held, never ruled)
+  // J370b: a send-back stays open 24 h at most, longer than any allow-similar rule lives (agents 24 h at most, Thoughts until midnight)
+  openOf(e, t = Date.now()) { return (Array.isArray(e?.open) ? e.open : []).filter((x) => x && t - Number(x.at) < 24 * 3600e3); }
+  // the open send-backs of a sandbox, or a stand-in when the record can't be trusted (then every message counts as a possible revision)
+  returnedFor(sbName) {
+    const open = this.openOf(this.returnedAll()[sbName]);
+    if (open.length) return { open };
+    return this.quarantine > Date.now() || this.writeBroken ? { open: [], broken: true } : null;
   }
-  setReturned(k, v) {
-    const a = this.returnedAll(), t = Date.now(); for (const x of Object.keys(a)) if (!(t - Number(a[x]?.at) < 3600e3)) delete a[x];
-    if (v) a[k] = v; else delete a[k];
+  writeReturned(a) {
+    const t = Date.now(); for (const x of Object.keys(a)) { const o = this.openOf(a[x], t); if (o.length) a[x] = { open: o }; else delete a[x]; }
     this.returnedMem = a; // the in-memory copy (used if the file breaks later)
     const out = this.quarantine > t ? { ...a, _quarantine: this.quarantine } : a;
     try { const f = path.join(STATE, "returned.json"), tmp = f + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(out), { mode: 0o600 }); fs.renameSync(tmp, f); this.writeBroken = false; }
     catch (e) { this.writeBroken = true; log({ error: `returned.json: ${e.message}; allow-similar rules are paused until it can be written` }); }
   }
+  openReturn(sbName, o) { const a = this.returnedAll(); a[sbName] = { open: [...this.openOf(a[sbName]), o] }; this.writeReturned(a); }
+  closeReturn(sbName, id) { const a = this.returnedAll(); if (!a[sbName]) return; a[sbName] = { open: this.openOf(a[sbName]).filter((x) => x.id !== id) }; this.writeReturned(a); }
   // J370 (ReturnReview): a send-back's re-plan in flight, kept on disk; a relay restart can't resume it, so at start each leftover ends as an error
   // the window and the asker see ("the rewrite was interrupted; nothing was sent"), never a silent "still rewriting".
-  replansAll() { try { const a = JSON.parse(fs.readFileSync(path.join(STATE, "replans.json"), "utf8")); return a && typeof a === "object" && !Array.isArray(a) ? a : {}; } catch { return {}; } }
+  replansAll() {
+    const f = path.join(STATE, "replans.json"); let a;
+    try { a = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { if (e.code === "ENOENT") return {}; a = null; }
+    if (a && typeof a === "object" && !Array.isArray(a)) return a;
+    // J370b (red team LOW): never read a corrupt file as "nothing in flight" silently: keep it aside and say so loudly
+    const aside = `${f}.corrupt-${Date.now()}`; try { fs.renameSync(f, aside); } catch { /* */ }
+    log({ error: `replans.json was unreadable; kept as ${path.basename(aside)}. A re-plan that was in flight may not report its end: nothing was sent for it` });
+    return {};
+  }
   setReplan(token, v) {
     const a = this.replansAll(); if (v) a[token] = v; else delete a[token];
     try { const f = path.join(STATE, "replans.json"), tmp = f + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(a), { mode: 0o600 }); fs.renameSync(tmp, f); } catch (e) { log({ error: `replans.json: ${e.message}` }); }
@@ -1217,7 +1232,7 @@ class Relay {
     const s = senderLabel(msg.text);
     log({ sb: sb.name, op: "talk", decision: "returned", id, note, reason });
     heldNote(sb, msg, via, note ? "Sent back with your note" : "Sent back", `nothing was sent; ${s || "the asker"} can revise it. ${reason}${note ? `. Your note: ${note}` : ""}`);
-    this.setReturned(returnKey(sb.name, msg), { id, note, at: Date.now() });
+    this.openReturn(sb.name, { id, note, reason, key: returnKey(sb.name, msg), at: Date.now() });
     try { inboxWrite(sb, { type: "decision", id, decision: "returned", to: msg.to, note, reason }); } catch (e) { log({ sb: sb.name, error: `inbox (decision): ${e.message}` }); }
   }
   // J308 (design §9, from Codex / Claude Code): after 3 denied drafts in a row, a Doorman's drafts are refused for an

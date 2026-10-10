@@ -35,7 +35,7 @@ const ctx = { fs, path, crypto: await import("node:crypto"), PENDING, DECISIONS,
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: (...a) => { spawned.push(a); return { on() { return this; } }; }, textMeta: () => ({}), now: () => new Date().toISOString(), fileURLToPath, import: { meta: { url: "file:///x" } },
   ownerNote: N.ownerNote, holdReason: N.holdReason, returnable: N.returnable, senderLabel: N.senderLabel, returnKey: N.returnKey, researchLog() {}, researchDropPlan: (rid) => { dropCalls.push(rid); return true; }, gpuTell() {} };
 const R = vm.runInNewContext(cls.replace(/import\.meta\.url/g, '"file:///x"'), ctx);
-const relay = new R(); const RR = vm.runInNewContext(`(class { ${method("returnedAll", "  // J370 (ReturnReview)")}\n${method("replansAll", "  sendBack(")} })`, ctx); for (const k of ["returnedAll", "returnedFor", "setReturned", "replansAll", "setReplan", "reconcileReplans"]) relay[k] = RR.prototype[k]; const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
+const relay = new R(); const RR = vm.runInNewContext(`(class { ${method("returnedAll", "  // J370 (ReturnReview)")}\n${method("replansAll", "  sendBack(")} })`, ctx); for (const k of ["returnedAll", "openOf", "returnedFor", "writeReturned", "openReturn", "closeReturn", "replansAll", "setReplan", "reconcileReplans"]) relay[k] = RR.prototype[k]; const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
 relay.sandboxes = [sb]; relay.runResearch = (s, token, opts) => runs.push({ token, ...opts }); relay.pumpPlans = () => {}; relay.saveQueue = () => {};
 const put = (rec) => fs.writeFileSync(path.join(PENDING, rec.id + ".json"), JSON.stringify(rec));
 const decideFile = (id, verdict, note) => { fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "doorman window" + (note !== undefined ? `\nnote:${Buffer.from(note).toString("base64")}` : "")); return relay.decide(`${id}.${verdict}`); };
@@ -51,24 +51,30 @@ const revId = relay.hold(sb, { ...talk, id: undefined, text: "[Alpha, in world G
 const rev = JSON.parse(fs.readFileSync(path.join(PENDING, revId + ".json"), "utf8"));
 assert.equal(rev.revises, talk.id, "the revision is linked to the original"); assert.equal(rev.revisesNote, "ask only for the a.md file [2J");
 assert.ok(logs.some((l) => l.op === "revision" && l.id === revId && l.revises === talk.id));
-assert.equal(relay.returnedFor(N.returnKey("world-t", talk)), null, "the link is used once");
-relay.setReturned("k", { id: "x", note: "n", at: Date.now() }); assert.ok(JSON.parse(fs.readFileSync(path.join(T, "returned.json"), "utf8")).k, "kept on disk across a restart");
-const relay2 = { returnedAll: RR.prototype.returnedAll, returnedFor: RR.prototype.returnedFor }; assert.equal(relay2.returnedFor("k").id, "x");
-relay.setReturned("k", null);
-// fail closed: an unreadable / corrupt returned.json pauses rules for an hour (every key answers), and a later write or a restart doesn't lift it
+// J370b (red team): the open send-back is keyed on the SANDBOX and is not used up by the first revision
+assert.equal(relay.returnedFor("world-t").open.length, 1, "still open after a revision was held (a decoy can't use it up)");
+const other = relay.hold(sb, { ...talk, id: undefined, text: "[Beta\u034f, in world G] Thoughts-A: anything else" });
+assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, other + ".json"), "utf8")).revises, talk.id, "any later message of that sandbox is shown as a possible revision, whatever its label or recipients");
+const relay2 = { returnedAll: RR.prototype.returnedAll, openOf: RR.prototype.openOf, returnedFor: RR.prototype.returnedFor }; assert.equal(relay2.returnedFor("world-t").open[0].id, talk.id, "kept on disk across a restart");
+// Angus deciding a revision closes the send-back it revises; then rules resume
+put({ id: revId, ...rev }); await decideFile(revId, "deny");
+assert.equal(relay.returnedFor("world-t"), null, "closed once Angus decided its revision");
+// it expires after 24 h (longer than any rule), never after 1 h
+relay.openReturn("world-t", { id: "world-t--old111", note: "", at: Date.now() - 2 * 3600e3 }); assert.ok(relay.returnedFor("world-t"), "still open after 2 h");
+relay.closeReturn("world-t", "world-t--old111"); relay.openReturn("world-t", { id: "world-t--old222", note: "", at: Date.now() - 25 * 3600e3 }); assert.equal(relay.returnedFor("world-t"), null, "gone after 24 h");
+// fail closed: an unreadable / corrupt returned.json pauses rules for an hour (every sandbox answers), and a later write or a restart doesn't lift it
 fs.writeFileSync(path.join(T, "returned.json"), "{corrupt");
-const mk = () => { const o = {}; for (const k of ["returnedAll", "returnedFor", "setReturned"]) o[k] = RR.prototype[k]; return o; };
-const r1 = mk(); assert.equal(r1.returnedFor("alpha|key").broken, true, "corrupt state: no rule may auto-send");
-r1.setReturned("beta|key", { id: "b", note: "n", at: Date.now() }); // an unrelated return rewrites the file successfully...
-assert.equal(r1.returnedFor("alpha|key").broken, true, "...but the quarantine stays");
-const r2 = mk(); assert.equal(r2.returnedFor("alpha|key").broken, true, "and survives a restart (written into the file)"); assert.equal(r2.returnedFor("beta|key").id, "b");
-fs.writeFileSync(path.join(T, "returned.json"), JSON.stringify({ _quarantine: Date.now() - 1 })); const r3 = mk(); assert.equal(r3.returnedFor("alpha|key"), null, "after the hour: rules work again");
-// a failed write keeps the in-memory link and pauses rules until a write succeeds
+const mk = () => { const o = {}; for (const k of ["returnedAll", "openOf", "returnedFor", "writeReturned", "openReturn", "closeReturn"]) o[k] = RR.prototype[k]; return o; };
+const r1 = mk(); assert.equal(r1.returnedFor("alpha").broken, true, "corrupt state: no rule may auto-send");
+r1.openReturn("beta", { id: "b", note: "n", at: Date.now() }); assert.equal(r1.returnedFor("alpha").broken, true, "...an unrelated write keeps the quarantine");
+const r2 = mk(); assert.equal(r2.returnedFor("alpha").broken, true, "and it survives a restart"); assert.equal(r2.returnedFor("beta").open[0].id, "b");
+fs.writeFileSync(path.join(T, "returned.json"), JSON.stringify({ _quarantine: Date.now() - 1 })); assert.equal(mk().returnedFor("alpha"), null, "after the hour: rules work again");
 fs.rmSync(path.join(T, "returned.json")); fs.mkdirSync(path.join(T, "returned.json"));
-const r4 = mk(); r4.setReturned("k2", { id: "y", note: "n", at: Date.now() }); assert.equal(r4.writeBroken, true); assert.equal(r4.returnedFor("k2").id, "y"); assert.ok(r4.returnedFor("other"));
-fs.rmSync(path.join(T, "returned.json"), { recursive: true }); r4.quarantine = 0; r4.setReturned("k2", null); assert.equal(r4.writeBroken, false); assert.equal(r4.returnedFor("other"), null);
-assert.ok(/const revising = gated\.length && this\.relay\.returnedFor\(/.test(src) && /!revising \? useRules/.test(src), "a revision is never sent under an allow-similar rule");
-const other = relay.hold(sb, { ...talk, id: undefined, text: "[Alpha, in world G] Lenswatch: another one" }); assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, other + ".json"), "utf8")).revises, undefined, "only the first next message is the revision");
+const r4 = mk(); r4.openReturn("k2", { id: "y", note: "n", at: Date.now() }); assert.equal(r4.writeBroken, true); assert.equal(r4.returnedFor("k2").open[0].id, "y"); assert.ok(r4.returnedFor("other"));
+fs.rmSync(path.join(T, "returned.json"), { recursive: true }); r4.quarantine = 0; r4.returnedMem = {}; r4.closeReturn("k2", "y"); r4.writeReturned({}); assert.equal(r4.writeBroken, false); assert.equal(r4.returnedFor("other"), null);
+assert.ok(/const revising = gated\.length && this\.relay\.returnedFor\(this\.name\)/.test(src) && /!revising \? useRules/.test(src), "no rule sends from a sandbox with an open send-back");
+// a corrupt replans.json is kept aside and logged, never silently empty
+fs.writeFileSync(path.join(T, "replans.json"), "{bad"); assert.equal(Object.keys(relay.replansAll()).length, 0); assert.ok(fs.readdirSync(T).some((f) => f.startsWith("replans.json.corrupt-"))); assert.ok(logs.some((l) => /replans\.json was unreadable/.test(l.error || "")));
 
 // W1 (research plan): r goes to the Doorman, which re-plans; the plan isn't run
 const plan = { id: "world-t--bbbbbb", sandbox: "world-t", mode: "talk", to: ["x"], text: "Searches planned", research: { plan: true, rid: "q0123abcd", token: "r01234567", want: "humidity and perovskite", depth: "quick", from: "Alpha", searches: ["a"] } };
