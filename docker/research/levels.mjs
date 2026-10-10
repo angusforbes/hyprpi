@@ -56,9 +56,10 @@ export function checkValue(levels, key, value) {
 // the mode actually used: the world's, or the widest allowed mode that is not wider than it (else the strictest allowed one)
 export function clampMode(levels, mode) {
   const ok = usableModes(levels); if (ok.includes(mode)) return { mode, note: "" };
+  if (!ok.length) return { mode: "strict", note: `the host's levels leave no usable mode: using strict` }; // nothing is allowed: fail closed
   const r = ALL_MODES.indexOf(mode), below = ALL_MODES.filter((m, i) => i < r && ok.includes(m));
-  if (!below.length) return { mode, note: "" }; // already stricter than anything allowed: a stricter mode is never widened (a fail-closed strict stays strict)
-  return { mode: below.at(-1), note: `mode ${mode} isn't allowed by the host's levels (${ok.join(", ") || "none"}): using ${below.at(-1)}` };
+  if (!below.length) return { mode, note: "" }; // stricter than anything allowed: a stricter mode is never widened (a fail-closed strict stays strict)
+  return { mode: below.at(-1), note: `mode ${mode} isn't allowed by the host's levels (${ok.join(", ")}): using ${below.at(-1)}` };
 }
 // the share level actually used: the world's, capped by the host
 export const capShare = (levels, level) => (shareOk(levels, level) ? level : levels.max_share_level);

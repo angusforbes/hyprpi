@@ -70,7 +70,9 @@ const log = (m) => console.log(`shares ${WORLD}: ${m}`);
 
 // The sandbox policy: home subfolders are allowed; home itself, /tmp, system and root folders are not.
 const HOST_ONLY = [CFG, path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "hyprpi")]; // J380 v3: the host's settings, levels and decision files are never shared (nor a folder that holds them)
-const holdsOrIs = (p) => HOST_ONLY.some((h) => h === p || h.startsWith(p + "/") || p.startsWith(h + "/"));
+const realOr = (x) => { try { return fs.realpathSync(x); } catch { return x; } };
+// compared by real path on both sides (a symlink to the settings folder, or a parent alias, is the same folder)
+const holdsOrIs = (p) => { const ps = [p, realOr(p)], hs = HOST_ONLY.flatMap((h) => [h, realOr(h)]); return ps.some((q) => hs.some((h) => h === q || h.startsWith(q + "/") || q.startsWith(h + "/"))); };
 function allowedPath(p) {
   if (holdsOrIs(p)) return false;
   return p.startsWith(HOME + "/") && !p.startsWith(HOME + "/.ssh") && !p.startsWith(HOME + "/.gnupg");

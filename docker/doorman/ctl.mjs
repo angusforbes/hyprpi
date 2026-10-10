@@ -230,10 +230,16 @@ export function configCommand(args, P = paths(), opts = {}) {
       return withWorldsLock(P.cfg, () => {
         if (fs.readFileSync(f, "utf8") !== before) return { code: 2, text: "not kept: the settings changed while you were editing (another change was applied). Run doorman config edit again." };
         try { JSON.parse(after); } catch (e) { return { code: 2, text: `not kept: ${e.message}. Nothing changed.` }; }
-        const tmp = `${f}.edit${process.pid}`, mode = fs.statSync(f).mode & 0o777;
-        fs.writeFileSync(tmp, after, { mode }); fs.renameSync(tmp, f);
-        try { const c = configRows(R.sb.name, P); if (c.error) throw new Error(c.error); const fresh = c.violations.filter((x) => !had.has(x)); if (fresh.length) throw new Error("outside the host's levels: " + fresh.join("; ")); }
-        catch (e) { fs.writeFileSync(tmp, before, { mode }); fs.renameSync(tmp, f); return { code: 2, text: `not kept: ${e.message}. The file is back as it was.` }; }
+        // check the edit in a private copy of the config folder FIRST: nothing live holds the unchecked text
+        const tdir = fs.mkdtempSync(path.join(os.tmpdir(), "doorman-chk-")); let bad = "";
+        try {
+          fs.mkdirSync(path.join(tdir, "worlds"));
+          for (const n of fs.readdirSync(P.cfg)) { const src = path.join(P.cfg, n); if (n === "worlds") { for (const w of fs.readdirSync(src)) if (w.endsWith(".json")) fs.copyFileSync(path.join(src, w), path.join(tdir, "worlds", w)); } else if (/\.json$/.test(n)) fs.copyFileSync(src, path.join(tdir, n)); }
+          fs.writeFileSync(path.join(tdir, "worlds", hits[0].f), after);
+          const c = configRows(R.sb.name, { ...P, cfg: tdir, relayConf: path.join(tdir, "sbx-relay.json") }); if (c.error) bad = c.error; else { const fresh = c.violations.filter((x) => !had.has(x)); if (fresh.length) bad = "outside the host's levels: " + fresh.join("; "); }
+        } catch (e) { bad = e.message; } finally { fs.rmSync(tdir, { recursive: true, force: true }); }
+        if (bad) return { code: 2, text: `not kept: ${bad}. Nothing changed.` };
+        const tmp = `${f}.edit${process.pid}`; fs.writeFileSync(tmp, after, { mode: fs.statSync(f).mode & 0o777 }); fs.renameSync(tmp, f);
         return { code: 0, text: `saved ${f}` };
       });
     } finally { try { fs.unlinkSync(stage); } catch { /* gone */ } }
