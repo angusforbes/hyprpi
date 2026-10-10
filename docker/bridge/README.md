@@ -29,7 +29,7 @@ The relay only knows a host agent exists if it registers. A host agent registers
 | agents                              | list_agents      | who is there, read-only   |
 | receipts [--by NAME]                | read_receipts    | decisions on proposals    |
 
-- The MCP server keeps its agent token in memory, heartbeats every 30 s while it runs, and unregisters when its client closes it. `claim_job` refuses until `register_agent` was called. A claim is always made in the registered name.
+- The MCP server keeps its agent token in memory, heartbeats every 30 s while it runs, and unregisters when its client closes it. `claim_job` refuses until the registration is done (automatic with `DOORMAN_BRIDGE_AGENT` set, J424; otherwise `register_agent`). A claim is always made in the registered name.
 - The per-job runner registers for the length of each run (on demand). While its path unit is installed it counts as an available agent.
 - Per sandbox the relay is then in one of two modes. Host agent available: a free-form request the Doorman drafts is held for the owner as before, and the held item says "Will be done by: <name> (<harness>)". Agent-free (nobody registered, no runner): a free-form request is refused at once with "no host agent available" and never held; the fixed request types, research, GPU leases and task changes still work. The sandbox's host card has a "Host agents" line saying which, refreshed when it changes.
 - A claim from an unregistered or expired agent is refused. Only a Doorman entry with `"host_agents": "bridge"` uses any of this; world G's bridge is off.

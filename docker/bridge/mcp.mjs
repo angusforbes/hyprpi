@@ -35,7 +35,7 @@ const PROMPTS = [{ name: "check", description: "Do the next waiting Doorman job:
 let autoReg = null; // (J424) the registration made on connect: a promise, so a claim waits for it
 async function registerAuto(clientName) {
   if (!AUTO || JOB || REG) return;
-  const scope = clean(process.env.DOORMAN_BRIDGE_SCOPE, 400).split(/[ ,]+/).filter(Boolean);
+  const scope = String(process.env.DOORMAN_BRIDGE_SCOPE || "").split(/[ ,]+/).map((x) => clean(x, 64)).filter(Boolean).slice(0, 20); // split first, then clean each (J424Review: clean() drops commas)
   const harness = clean(process.env.DOORMAN_BRIDGE_HARNESS, 40) || clean(clientName, 40) || "mcp";
   const r = await register({ name: BY, harness, caps: clean(process.env.DOORMAN_BRIDGE_CAPS, 120) || "approved host jobs", scope: scope.length ? scope : undefined }).catch((e) => ({ ok: false, text: e.message }));
   if (r.ok && r.agent_token && !REG) { REG = { token: r.agent_token, name: BY }; HB = setInterval(() => { heartbeat(REG.token).catch(() => {}); }, 30000); HB.unref?.(); }
@@ -103,7 +103,7 @@ process.stdin.on("data", async (d) => {
         reply({ protocolVersion: m.params?.protocolVersion || "2025-06-18", capabilities: { tools: {}, ...(JOB ? {} : { prompts: {} }) }, serverInfo: { name: "doorman-bridge", version: "1.1.0" }, ...(JOB ? {} : { instructions: INSTRUCTIONS }) });
       }
       else if (m.method === "prompts/list") reply({ prompts: JOB ? [] : PROMPTS });
-      else if (m.method === "prompts/get") { if (JOB || m.params?.name !== "check") send({ jsonrpc: "2.0", id: m.id, error: { code: -32602, message: "no such prompt" } }); else reply({ description: PROMPTS[0].description, messages: [{ role: "user", content: { type: "text", text: CHECK } }] }); }
+      else if (m.method === "prompts/get") { if (JOB || m.params?.name !== "check") { if (m.id !== undefined) send({ jsonrpc: "2.0", id: m.id, error: { code: -32602, message: "no such prompt" } }); } else reply({ description: PROMPTS[0].description, messages: [{ role: "user", content: { type: "text", text: CHECK } }] }); }
       else if (m.method === "tools/list") reply({ tools: JOB ? TOOLS.filter((t) => JOB_TOOLS.has(t.name)) : TOOLS });
       else if (m.method === "tools/call") { const r = await call(m.params?.name, m.params?.arguments || {}); reply({ content: [{ type: "text", text: JSON.stringify(r, null, 1) }], isError: r && r.ok === false }); }
       else if (m.method === "ping") reply({});
@@ -111,5 +111,7 @@ process.stdin.on("data", async (d) => {
     } catch (e) { if (m.id !== undefined) send({ jsonrpc: "2.0", id: m.id, error: { code: -32603, message: e.message } }); }
   }
 });
-const bye = async () => { if (autoReg) await Promise.race([autoReg, new Promise((r) => setTimeout(r, 3000))]); if (REG) { clearInterval(HB); const t = REG.token; REG = null; try { await unregister(t); } catch { /* it expires anyway (120 s) */ } } process.exit(0); };
+// (J424Review) a close during the automatic registration waits for its outcome (bounded: the request's own 15 s timeout, which
+// then withdraws the queued request), so a registration can't land after this server is gone and leave a live ghost
+const bye = async () => { if (autoReg) await autoReg.catch(() => {}); if (REG) { clearInterval(HB); const t = REG.token; REG = null; try { await unregister(t); } catch { /* it expires anyway (120 s) */ } } process.exit(0); };
 process.stdin.on("end", bye); process.on("SIGTERM", bye); process.on("SIGINT", bye); process.on("SIGHUP", bye); // (J407) a closing client unregisters this agent

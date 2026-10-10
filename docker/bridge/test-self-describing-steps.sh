@@ -10,7 +10,7 @@ tool() { call tools/call "{\"name\":\"$1\",\"arguments\":$2}"; }
 init() { call initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"9"}}'; }
 s0=$(snap)
 echo "== 1 named by env: registers itself on connect, with the client's name as harness"
-start DOORMAN_BRIDGE_AGENT=Doorman-Host DOORMAN_BRIDGE_SCOPE=world-t
+start DOORMAN_BRIDGE_AGENT=Doorman-Host DOORMAN_BRIDGE_SCOPE=world-x,world-t
 r=$(init); case "$r" in *'"instructions"'*"don't call register_agent"*) ok "instructions in the initialize result";; *) fail "init: $r";; esac
 case "$r" in *'"prompts"'*) ok "prompts capability";; *) fail "no prompts capability";; esac
 sleep 3; a=$($BR agents); case "$a" in *"Doorman-Host (claude-code)"*"world-t"*) ok "registered on connect: Doorman-Host (claude-code), for world-t";; *) fail "agents: $a";; esac
