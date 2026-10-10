@@ -441,16 +441,24 @@ function sessionFile(id) {
 // The uid that owns the OTHER end of this request's TCP connection (/proc/net/tcp{,6}): tailscale serve's proxy is
 // root's tailscaled, so a phone request comes from uid 0; an agent's curl to localhost comes from Angus's uid.
 function peerUid(req) {
-  const rp = req.socket?.remotePort, lp = req.socket?.localPort; if (!rp || !lp) return -1;
-  const hex = (n) => n.toString(16).toUpperCase().padStart(4, "0");
-  for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+  // PhoneReview (HIGH): match the FULL 4-tuple (both addresses and ports) of an ESTABLISHED socket, never a port alone and never TIME_WAIT
+  // (the kernel reports those as uid 0). The client end is: local = the request's remote address:port, remote = our local address:port.
+  const rp = req.socket?.remotePort, lp = req.socket?.localPort, ra = req.socket?.remoteAddress, la = req.socket?.localAddress; if (!rp || !lp || !ra || !la) return -1;
+  const v4 = (ip) => { const m = /^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/i.exec(ip); return m ? m.slice(1).map(Number) : null; };
+  const port = (n) => n.toString(16).toUpperCase().padStart(4, "0");
+  const hex4 = (b) => b.slice().reverse().map((x) => x.toString(16).toUpperCase().padStart(2, "0")).join(""); // /proc/net/tcp: little-endian
+  const hex6 = (b) => "0000000000000000FFFF0000" + hex4(b); // a v4-mapped address in /proc/net/tcp6 (four 32-bit words, each little-endian)
+  const a = v4(ra), b = v4(la); if (!a || !b) return -1; // only IPv4 / v4-mapped (the server listens on 127.0.0.1)
+  const want = [[`${hex4(a)}:${port(rp)}`, `${hex4(b)}:${port(lp)}`, "/proc/net/tcp"], [`${hex6(a)}:${port(rp)}`, `${hex6(b)}:${port(lp)}`, "/proc/net/tcp6"]];
+  const uids = new Set();
+  for (const [loc, rem, f] of want) {
     let t = ""; try { t = fs.readFileSync(f, "utf8"); } catch { continue; }
     for (const l of t.split("\n").slice(1)) {
       const c = l.trim().split(/\s+/); if (c.length < 8) continue;
-      if (c[1].endsWith(":" + hex(rp)) && c[2].endsWith(":" + hex(lp))) return Number(c[7]);
+      if (c[1].toUpperCase() === loc && c[2].toUpperCase() === rem && c[3] === "01") uids.add(Number(c[7]));
     }
   }
-  return -1;
+  return uids.size === 1 ? [...uids][0] : -1; // none or ambiguous: refuse
 }
 // The phone, not this laptop: tailscale serve (root's tailscaled) proxies the phone's request and sets X-Forwarded-For to the CLIENT's tailnet
 // address (a client can't set it: the proxy rewrites it). A request from this laptop to its own tailnet URL also arrives through tailscaled, so
