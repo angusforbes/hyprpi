@@ -112,6 +112,7 @@ await t("the CLI `reader network` is a dry run unless --apply", () => {
   writeW({ sandbox: "world-t", gateway: { search: { provider: "brave", key_file: path.join(T, "bkey") } } });
   const r = spawnSync(process.execPath, [path.join(HERE, "research.mjs"), "reader", "network", "--sandbox", "world-t"], { encoding: "utf8" });
   assert.match(r.stdout, /sbx policy allow network --sandbox reader-t api\.search\.brave\.com/); assert.match(r.stdout, /dry run/);
+  const ap = spawnSync(process.execPath, [path.join(HERE, "research.mjs"), "reader", "network", "--sandbox", "world-t", "--apply"], { encoding: "utf8", input: "" }); assert.equal(ap.status, 3, "--apply needs the owner terminal"); assert.match(ap.stdout, /only Angus/);
 });
 
 // ---- who may change settings
