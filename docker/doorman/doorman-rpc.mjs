@@ -16,8 +16,10 @@ const child = spawn("bash", ["-c", cmd], { stdio: ["pipe", "pipe", "inherit"] })
 // Fail closed (review: StatelessReview): a new_session that pi refuses or cancels, or doesn't confirm within 15 s, ends pi (and this
 // controller), so the unit restarts it: a restart is a fresh session too. The extension does the same from its side if no new session
 // comes after a turn (sbx-dropbox-ext.ts), so a message is never answered in a session that already held another.
-let n = 0; const want = new Map();
-const die = (why) => { console.error(`doorman-rpc: ${why}; ending pi so the unit restarts it fresh`); try { child.kill("SIGTERM"); } catch { /* */ } setTimeout(() => process.exit(1), 2000).unref(); };
+let n = 0, fatal = false; const want = new Map();
+const die = (why) => {
+  fatal = true; // whatever pi's own exit code is (a clean 0 after SIGTERM, say), this run ends as a failure so the unit restarts it
+  console.error(`doorman-rpc: ${why}; ending pi so the unit restarts it fresh`); try { child.kill("SIGTERM"); } catch { /* */ } setTimeout(() => process.exit(1), 2000).unref(); };
 const fresh = () => {
   if (child.stdin.destroyed) return;
   const id = `doorman-fresh-${++n}`;
@@ -33,6 +35,6 @@ readline.createInterface({ input: child.stdout }).on("line", (line) => {
     if (!ev.success || ev.data?.cancelled) die(`new session ${ev.id} was ${ev.success ? "cancelled" : "refused"}`);
   }
 });
-child.on("exit", (code, sig) => process.exit(code ?? (sig ? 1 : 0)));
+child.on("exit", (code, sig) => process.exit(fatal ? 1 : code ?? (sig ? 1 : 0)));
 for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, () => { try { child.kill(s); } catch { /* */ } });
 process.stdout.on("error", () => { try { child.kill("SIGTERM"); } catch { /* */ } process.exit(1); }); // the logger went away: end, so the unit restarts both
