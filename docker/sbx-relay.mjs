@@ -377,7 +377,9 @@ class Sandbox {
           out.delivered = r.delivered; out.request_id = r.request_id; out.skipped = r.skipped;
         }
         // J274: an "allow similar" rule Angus made covers every gated recipient (talk only, under its cap)?
-        const ruled = gated.length ? useRules(STATE, { sandbox: this.name, targets: gated, mode }) : null;
+        // J370: a message Angus sent back is never auto-sent under a rule: its revision comes back to him (held, linked)
+        const revising = gated.length && this.relay.returnedFor(returnKey(this.name, { text: t, targets: gated }));
+        const ruled = gated.length && !revising ? useRules(STATE, { sandbox: this.name, targets: gated, mode }) : null;
         if (ruled) {
           const ns = ruled.map((r) => r.n).join(", ");
           const rbody = `${body}\n(sent without asking under Angus's rule ${ns})`;
@@ -701,8 +703,8 @@ class Relay {
     if (mine.length >= LIMITS.pendingPerSandbox) throw new Error(`too many messages waiting for approval (${LIMITS.pendingPerSandbox})`);
     const id = `${sb.name}--${crypto.randomBytes(3).toString("hex")}`;
     if (!msg.revises && returnable(msg) && !msg.research) { // J370: the same agent's next message to the same recipients within an hour of a send-back is its revision
-      const k = returnKey(sb.name, msg), r = this.returned?.get(k);
-      if (r && Date.now() - r.at < 3600e3) { msg = { ...msg, revises: r.id, revisesNote: r.note }; this.returned.delete(k); }
+      const k = returnKey(sb.name, msg), r = this.returnedFor(k);
+      if (r) { msg = { ...msg, revises: r.id, revisesNote: r.note }; this.setReturned(k, null); }
     }
     fs.writeFileSync(path.join(PENDING, id + ".json"), JSON.stringify({ id, sandbox: sb.name, at: now(), ...msg }, null, 2), { mode: 0o600 });
     if (msg.revises) log({ sb: sb.name, op: "revision", id, revises: msg.revises });
@@ -973,6 +975,14 @@ class Relay {
   // goes out, never approved); the note goes to whoever wrote the item: the Doorman for a research plan (it rewrites the searches, which come back
   // held as a NEW item linked to this one), the asking agent in the sandbox for a message (its revision re-enters the normal path and, when held,
   // is linked to this one). The note is Angus's own text, cleaned again and labelled "note from Angus" wherever it goes.
+  // Sent-back messages waiting for their revision (1 h), kept on disk (host-only) so a relay restart neither loses the link nor lets a rule send the revision.
+  returnedAll() { try { const a = JSON.parse(fs.readFileSync(path.join(STATE, "returned.json"), "utf8")); return a && typeof a === "object" && !Array.isArray(a) ? a : {}; } catch { return {}; } }
+  returnedFor(k) { const r = this.returnedAll()[k]; return r && Date.now() - Number(r.at) < 3600e3 ? r : null; }
+  setReturned(k, v) {
+    const a = this.returnedAll(), t = Date.now(); for (const x of Object.keys(a)) if (!(t - Number(a[x]?.at) < 3600e3)) delete a[x];
+    if (v) a[k] = v; else delete a[k];
+    try { const f = path.join(STATE, "returned.json"), tmp = f + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(a), { mode: 0o600 }); fs.renameSync(tmp, f); } catch (e) { log({ error: `returned.json: ${e.message}` }); }
+  }
   sendBack(sb, msg, id, via, note) {
     try { takeEdit(id, "", msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) }); } catch { /* a stale edit is just dropped */ }
     if (msg.research?.plan) {
@@ -987,7 +997,7 @@ class Relay {
     const s = senderLabel(msg.text);
     log({ sb: sb.name, op: "talk", decision: "returned", id, note });
     heldNote(sb, msg, via, "Sent back with your note", `nothing was sent; ${s || "the asker"} can revise it. Your note: ${note}`);
-    (this.returned ||= new Map()).set(returnKey(sb.name, msg), { id, note, at: Date.now() });
+    this.setReturned(returnKey(sb.name, msg), { id, note, at: Date.now() });
     try { inboxWrite(sb, { type: "decision", id, decision: "returned", to: msg.to, note }); } catch (e) { log({ sb: sb.name, error: `inbox (decision): ${e.message}` }); }
   }
   // J308 (design §9, from Codex / Claude Code): after 3 denied drafts in a row, a Doorman's drafts are refused for an

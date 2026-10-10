@@ -35,7 +35,7 @@ const ctx = { fs, path, crypto: await import("node:crypto"), PENDING, DECISIONS,
   takeEdit: (id, d, msg) => ({ msg, applied: false }), spawn: (...a) => { spawned.push(a); return { on() { return this; } }; }, textMeta: () => ({}), now: () => new Date().toISOString(), fileURLToPath, import: { meta: { url: "file:///x" } },
   ownerNote: N.ownerNote, returnable: N.returnable, senderLabel: N.senderLabel, returnKey: N.returnKey, researchLog() {}, gpuTell() {} };
 const R = vm.runInNewContext(cls.replace(/import\.meta\.url/g, '"file:///x"'), ctx);
-const relay = new R(); const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
+const relay = new R(); const RR = vm.runInNewContext(`(class { ${method("returnedAll", "  sendBack(")} })`, ctx); for (const k of ["returnedAll", "returnedFor", "setReturned"]) relay[k] = RR.prototype[k]; const sb = { name: "world-t", cfg: {}, conn: { call: async () => ({}) }, research: new Map() };
 relay.sandboxes = [sb]; relay.runResearch = (s, token, opts) => runs.push({ token, ...opts }); relay.pumpPlans = () => {}; relay.saveQueue = () => {};
 const put = (rec) => fs.writeFileSync(path.join(PENDING, rec.id + ".json"), JSON.stringify(rec));
 const decideFile = (id, verdict, note) => { fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "doorman window" + (note !== undefined ? `\nnote:${Buffer.from(note).toString("base64")}` : "")); return relay.decide(`${id}.${verdict}`); };
@@ -51,6 +51,11 @@ const revId = relay.hold(sb, { ...talk, id: undefined, text: "[Alpha, in world G
 const rev = JSON.parse(fs.readFileSync(path.join(PENDING, revId + ".json"), "utf8"));
 assert.equal(rev.revises, talk.id, "the revision is linked to the original"); assert.equal(rev.revisesNote, "ask only for the a.md file [2J");
 assert.ok(logs.some((l) => l.op === "revision" && l.id === revId && l.revises === talk.id));
+assert.equal(relay.returnedFor(N.returnKey("world-t", talk)), null, "the link is used once");
+relay.setReturned("k", { id: "x", note: "n", at: Date.now() }); assert.ok(JSON.parse(fs.readFileSync(path.join(T, "returned.json"), "utf8")).k, "kept on disk across a restart");
+const relay2 = { returnedAll: RR.prototype.returnedAll, returnedFor: RR.prototype.returnedFor }; assert.equal(relay2.returnedFor("k").id, "x");
+relay.setReturned("k", null);
+assert.ok(/const revising = gated\.length && this\.relay\.returnedFor\(/.test(src) && /!revising \? useRules/.test(src), "a revision is never sent under an allow-similar rule");
 const other = relay.hold(sb, { ...talk, id: undefined, text: "[Alpha, in world G] Lenswatch: another one" }); assert.equal(JSON.parse(fs.readFileSync(path.join(PENDING, other + ".json"), "utf8")).revises, undefined, "only the first next message is the revision");
 
 // W1 (research plan): r goes to the Doorman, which re-plans; the plan isn't run
