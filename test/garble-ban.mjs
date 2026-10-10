@@ -15,7 +15,7 @@ fs.copyFileSync(path.join(os.homedir(), ".config/hyprpi/hyprpi.jsonc"), path.joi
 const { loadPolicy, policyFile } = await import("../lib/policy.mjs");
 const { createOrch } = await import("../lib/orch.mjs");
 const { allowedBy, readList, removeModel, setKnownModels, knownModels, settingsFile } = await import("../lib/modellist.mjs");
-setKnownModels([...KNOWN, globBad, "nv-inference/acme/glob-keep-1"]);
+setKnownModels([...KNOWN, globBad, "nv-inference/acme/glob-keep-1", bad, "nvidia/acme/healthy-1", "nvidia/acme/other-1", "nvidia/acme/race-x"]); // the fake models must be "known" to pi for the list check to resolve them
 const listed = (m) => !!allowedBy(m, readList());
 const { firstReplyFromSession } = await import("../lib/garble.mjs");
 

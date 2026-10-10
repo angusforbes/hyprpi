@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { allowedBy, notAllowed, auditPolicy, readList, removeModel, setKnownModels } from "../lib/modellist.mjs";
+import { unsupportedPatterns, allowedBy, notAllowed, auditPolicy, readList, removeModel, setKnownModels } from "../lib/modellist.mjs";
 import { loadPolicy } from "../lib/policy.mjs";
 const ok = (m) => console.log("ok " + m);
+setKnownModels(["anthropic/claude-opus-5-5", "nv-inference/a/b/c", "nvidia/openai/gpt-oss-20b", "nvidia/openai/gpt-oss-120b", "anthropic/a/b", "openrouter/foo/bar", "anything/at-all"]);
 const L = ["anthropic/*", "openai-codex/*", "nv-inference/**", "nvidia/openai/gpt-oss-20b"];
 assert.equal(allowedBy("anthropic/claude-opus-5-5", L), "anthropic/*"); assert.equal(allowedBy("anthropic/claude-opus-5-5:high", L), "anthropic/*", "thinking suffix ignored");
 assert.equal(allowedBy("Anthropic/Claude-Opus-5-5", L), "anthropic/*", "case-insensitive");
@@ -19,7 +20,8 @@ setKnownModels(["anthropic/foo", "testprov/kimi-test", "testprov/org/b", "a/dup"
 assert.equal(allowedBy("kimi-test", ["anthropic/*"]), "", "a bare id that pi would resolve outside the list is refused");
 assert.equal(allowedBy("foo", ["anthropic/*"]), "anthropic/*"); assert.equal(allowedBy("dup", ["a/*"]), "", "ambiguous: every meaning must be listed"); assert.equal(allowedBy("dup", ["a/*", "b/*"]), "a/*");
 assert.equal(allowedBy("org/b", ["testprov/**"]), "testprov/**", "a nested bare id"); assert.equal(allowedBy("nope", ["anthropic/*"]), "", "unknown bare id: fail closed");
-assert.ok(allowedBy("anthropic/foo", ["foo"]) && allowedBy("anthropic/foo", ["fo*"]) && allowedBy("anthropic/foo", ["*"]) && allowedBy("testprov/kimi-test", ["testprov/[ac]*"]) === "" && allowedBy("anthropic/foo", ["anthropic/[ef]*"]), "pi's bare/fuzzy/class patterns");
+assert.equal(allowedBy("anthropic/foo", ["foo"]), "", "a bare non-glob name is unsupported: allows nothing (pi picks ONE model by fuzzy lookup)"); assert.deepEqual(unsupportedPatterns(["foo", "a/b", "fo*"]), ["foo"]);
+assert.ok(allowedBy("anthropic/foo", ["fo*"]) && allowedBy("anthropic/foo", ["*"]) && allowedBy("testprov/kimi-test", ["testprov/[ac]*"]) === "" && allowedBy("anthropic/foo", ["anthropic/[ef]*"]), "pi's bare/fuzzy/class patterns");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "j397u-")), f = path.join(tmp, "s.json");
 fs.writeFileSync(f, "{ not json"); process.env.PI_CODING_AGENT_DIR = tmp; fs.renameSync(f, path.join(tmp, "settings.json"));
 assert.throws(() => readList(), /doesn't parse/); assert.equal(readList(path.join(tmp, "missing.json")).length, 0, "no file = no list");
@@ -28,7 +30,10 @@ process.env.HYPRPI_PI = "/bin/false"; setKnownModels(null); assert.throws(() => 
 setKnownModels(["p/bad", "p/good"]); assert.throws(() => removeModel("q/keep", { file: g, protect: ["keep"] }), /protected/);
 removeModel("p/bad", { file: g }); assert.equal(fs.statSync(g).mode & 0o777, 0o600, "file mode kept"); assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).enabledModels, ["p/good", "q/keep"]);
 setKnownModels(["testprov/a", "testprov/claude-test", "testprov/anthropic/evil", "anthropic/real"]);
-assert.equal(allowedBy("testprov/claude-test", ["a"]), "", "no substring matching of a bare pattern"); assert.equal(allowedBy("testprov/a", ["a"]), "a");
+assert.equal(allowedBy("anthropic/unknown-to-pi", ["anthropic/*"]), "", "an identity pi doesn't list: fail closed");
+setKnownModels(null); process.env.HYPRPI_PI = "/bin/false"; assert.equal(allowedBy("anthropic/evil", ["anthropic/*"]), "", "no registry: fail closed"); delete process.env.HYPRPI_PI;
+setKnownModels(["testprov/a", "testprov/claude-test", "testprov/anthropic/evil", "anthropic/real"]);
+assert.equal(allowedBy("testprov/claude-test", ["a"]), "", "no substring matching of a bare pattern"); assert.equal(allowedBy("testprov/a", ["a"]), "", "and a bare name allows nothing at all (unsupported, never wrongly broad)");
 assert.equal(allowedBy("anthropic/evil", ["anthropic/*"]), "", "a qualified-looking id that pi resolves to another provider is refused"); assert.equal(allowedBy("anthropic/real", ["anthropic/*"]), "anthropic/*");
 fs.writeFileSync(g, JSON.stringify({ enabledModels: ["p/bad"] })); assert.throws(() => removeModel("p/bad", { file: g }), /leave the list empty/); assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).enabledModels, ["p/bad"]);
 setKnownModels(["p/bad", "p/good"]);
@@ -42,6 +47,7 @@ assert.match(notAllowed("nvidia/moonshotai/kimi-k3", "anthropic/claude-sonnet-5-
 ok("Kimi (all four) is refused by the host list alone; no modelDeny");
 // every routing / thoughts model is on the list
 assert.deepEqual(auditPolicy(loadPolicy(), real), [], "every model hyprpi.jsonc names is on the list");
+setKnownModels(["anthropic/x", "nvidia/q/w", "foo/bar", "openrouter/y/z"]);
 assert.deepEqual(auditPolicy({ routing: { ladder: ["anthropic/x:low", "openrouter/y/z:high"], kinds: { a: "nvidia/q/w" } }, thoughts: { model: "foo/bar" } }, L).map((b) => b.where), ["routing.ladder[1]", "routing.kinds.a", "thoughts.model"], "the audit finds the ones that aren't");
 ok("the audit: every model in the live hyprpi.jsonc is on the list, and it finds unlisted ones in a made-up policy");
 console.log("modellist: all pass");
