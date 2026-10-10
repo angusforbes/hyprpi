@@ -56,8 +56,10 @@ const RUNTIMES = path.join(HOME, ".local", "state", "sandboxes", "sandboxes", "s
 const BUILD = /(^|\/)(node_modules|dist|build|target|\.?venv[\w.-]*|env|__pycache__|\.next|\.nuxt|\.cache|coverage|\.pytest_cache|\.mypy_cache|\.ruff_cache|out|\.turbo|\.gradle|\.parcel-cache|\.svelte-kit|\.tox|\.eggs|[^/]+\.egg-info)\/?$/;
 const MAX_HIDE = 400;
 
-const [cmd = "plan", WORLD = "world-g"] = process.argv.slice(2);
-if (!/^[a-z0-9-]{1,32}$/.test(WORLD)) die("bad world name");
+// Run as a program (not when another module imports addProject): only then do the command-line arguments count.
+const MAIN = (() => { try { return fs.realpathSync(process.argv[1] || "") === fileURLToPath(import.meta.url); } catch { return false; } })();
+const [cmd = "plan", WORLD = "world-g"] = MAIN ? process.argv.slice(2) : [];
+if (MAIN && !/^[a-z0-9-]{1,32}$/.test(WORLD)) die("bad world name");
 const exp = (p) => path.resolve(String(p).replace(/^~(?=\/|$)/, HOME));
 const readJson = (f, d = {}) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return d; } };
 function die(m) { console.error(`shares: ${m}`); process.exit(2); }
@@ -80,8 +82,8 @@ function config() {
 
 // J366: the world's access level and why (see the header)
 export const LEVELS = ["open", "safe", "strict"];
-function accessLevel(w, relay, sandbox) {
-  if (w.access !== undefined) return LEVELS.includes(w.access) ? { level: w.access, why: `"access" in worlds/${WORLD}.json` } : { level: "strict", why: `"access": ${JSON.stringify(w.access)} isn't open, safe or strict, so strict` };
+function accessLevel(w, relay, sandbox, world = WORLD) {
+  if (w.access !== undefined) return LEVELS.includes(w.access) ? { level: w.access, why: `"access" in worlds/${world}.json` } : { level: "strict", why: `"access": ${JSON.stringify(w.access)} isn't open, safe or strict, so strict` };
   const dm = (relay.sandboxes || []).find((x) => x.doorman_for === sandbox);
   if (dm && dm.visibility === "developer") return { level: "open", why: `its Doorman ${dm.name} runs in developer visibility (developer = open)` };
   const m = modeForSandbox(CFG, sandbox).mode;
@@ -202,7 +204,8 @@ function plan() {
   for (const p of [...prot]) { const r = real(p); if (r !== p) { prot.delete(p); prot.add(r); } } // canonical too
   for (const p of prot) if (mounts.some((m) => !m.ro && under(p, m.host)) || [ROOT].includes(p)) add(p, { ro: true, why: "protected" });
   // (LevelReview) a writable mount INSIDE a protected path (e.g. a listed subfolder of a protected repo) is read-only too
-  for (const m of mounts) if (!m.ro && [...prot].some((p) => under(real(m.host), p) && real(m.host) !== p)) { m.ro = true; m.why += ", in a protected project"; }
+  // (canonical equality counts: a share that is an alias of a protected project is that project)
+  for (const m of mounts) if (!m.ro && [...prot].some((p) => under(real(m.host), p))) { m.ro = true; m.why += ", a protected project"; }
   // 5. hide gitignored files in shared git projects (not build output), except where "show" says so
   const gi = w.gitignored || {};
   if (gi.hide !== false) {
@@ -411,7 +414,35 @@ async function watch() {
   }
 }
 
-if (cmd === "plan") {
+// J366 (OpenRoute's share_project): add one project to a world's explicit list, within its level. Validates the
+// name (a real directory directly inside a project folder, no symlink), never widens past the level (strict: ro
+// only; open with "all": already shared), writes worlds/<world>.json atomically, and doesn't apply (the watcher, or
+// `shares.mjs apply WORLD`, does). → { ok, text }
+export function addProject(world, name, mode = "") {
+  if (!/^[a-z0-9-]{1,32}$/.test(String(world))) return { ok: false, text: "bad world name" };
+  if (!/^[\w.-]+$/.test(String(name)) || name === "." || name === "..") return { ok: false, text: `bad project name ${JSON.stringify(name)}` };
+  if (!["", "rw", "ro"].includes(mode)) return { ok: false, text: `mode must be "rw" or "ro"` };
+  const f = path.join(CFG, "worlds", `${world}.json`);
+  let w; try { w = JSON.parse(fs.readFileSync(f, "utf8")); } catch { return { ok: false, text: `no readable ${f}` }; }
+  const g = readJson(path.join(CFG, "config.json")), relay = readJson(path.join(CFG, "sbx-relay.json"), { sandboxes: [] });
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  const pf = (g.projectFolders || []).map(exp).map(real);
+  const hit = pf.map((d) => path.join(d, name)).find((d) => { try { return fs.lstatSync(d).isDirectory() && path.dirname(fs.realpathSync(d)) === fs.realpathSync(path.dirname(d)); } catch { return false; } });
+  if (!hit) return { ok: false, text: `${name} isn't a project folder in ${pf.join(", ") || "(no projectFolders)"}` };
+  const { level, why } = accessLevel(w, relay, w.sandbox || world, world);
+  if (level === "open" && w.projects === "all") return { ok: true, text: `${name} is already shared (${world} is at the open level with "projects": "all"; ${why})` };
+  if (level === "strict" && mode === "rw") return { ok: false, text: `${world} is at the strict level (${why}): projects are read-only there; add it as ro, or change the level` };
+  const eff = level === "strict" ? "ro" : level === "safe" ? (mode === "rw" ? "rw" : "ro") : (mode === "ro" ? "ro" : "rw");
+  const list = Array.isArray(w.projects) ? w.projects.filter((e) => projectEntry(e, level)?.name !== name) : [];
+  list.push(eff === "rw" && level === "open" ? name : `${name}:${eff}`);
+  w.projects = list;
+  const tmp = `${f}.${process.pid}.tmp`;
+  try { fs.writeFileSync(tmp, JSON.stringify(w, null, 2) + "\n", { mode: 0o600 }); fs.renameSync(tmp, f); } catch (e) { try { fs.unlinkSync(tmp); } catch { /* */ } return { ok: false, text: `couldn't write ${f}: ${e.message}` }; }
+  return { ok: true, text: `${name} (${hit}) is now listed for ${world}, ${eff} (level ${level}: ${why}); it's mounted at the next apply (the shares watcher re-applies within seconds). Protected projects stay read-only.` };
+}
+
+if (!MAIN) { /* imported */ }
+else if (cmd === "plan") {
   const p = plan();
   console.log(`access level: ${p.access.level} (${p.access.why})`);
   for (const m of p.mounts) console.log(`${m.ro ? "ro" : "rw"}  ${m.at}${m.at !== m.host ? `  (from ${m.host})` : ""}  [${m.why}]`);

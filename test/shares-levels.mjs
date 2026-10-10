@@ -91,5 +91,26 @@ execFileSync(process.execPath, [SH, "card", "world-t"], { env, encoding: "utf8" 
 const card = fs.readFileSync(path.join(st, "hyprpi", "sandboxes", "world-t", "card", "host-card.md"), "utf8");
 assert.match(card, /## Projects/); assert.match(card, /Access level: safe/); assert.match(card, /\| ro \| alpha \|/); assert.match(card, /\| rw \| beta \|/); assert.ok(!/gamma/.test(card));
 ok("card: level and every shared project by name and mode; unlisted ones absent");
+// (LevelReview) a share that is an alias of a protected project is that project: ro
+const alias = path.join(base, "protAlias"); fs.symlinkSync(path.join(work, "prot-x"), alias);
+r = world({ access: "open", projects: [], shares: [{ path: alias, mode: "rw" }] }); assert.equal(r.mounts[alias], "ro");
+ok("an alias of a protected project is ro");
+// addProject (OpenRoute's share_project): within the level, atomically, never wider
+process.env.XDG_CONFIG_HOME = cfg; process.env.XDG_STATE_HOME = st;
+const { addProject } = await import("../docker/world/shares.mjs");
+const wj = () => JSON.parse(fs.readFileSync(path.join(cfg, "hyprpi", "worlds", "world-t.json"), "utf8"));
+world({ access: "safe", projects: ["alpha"] });
+let a = addProject("world-t", "beta", "rw"); assert.ok(a.ok, a.text); assert.deepEqual(wj().projects, ["alpha", "beta:rw"]);
+a = addProject("world-t", "beta"); assert.ok(a.ok); assert.deepEqual(wj().projects, ["alpha", "beta:ro"], "re-adding replaces, ro by default at safe");
+assert.equal(addProject("world-t", "nope").ok, false); assert.equal(addProject("world-t", "../x").ok, false); assert.equal(addProject("world-t", "linky").ok, false, "no symlinked project");
+assert.equal(addProject("World T", "alpha").ok, false); assert.equal(addProject("world-t", "alpha", "write").ok, false);
+world({ access: "strict", projects: [] });
+a = addProject("world-t", "alpha", "rw"); assert.equal(a.ok, false); assert.match(a.text, /strict level/, "never wider than the level");
+assert.ok(addProject("world-t", "alpha", "ro").ok); assert.deepEqual(wj().projects, ["alpha:ro"]);
+world({ access: "open", projects: "all" });
+a = addProject("world-t", "gamma"); assert.ok(a.ok); assert.match(a.text, /already shared/); assert.equal(wj().projects, "all");
+r = world({ access: "safe", projects: ["alpha"], keep: 1 }); assert.ok(addProject("world-t", "gamma").ok); assert.equal(wj().keep, 1, "other keys kept");
+assert.match(execFileSync(process.execPath, [SH, "plan", "world-t"], { env, encoding: "utf8" }), /projects \(2\): alpha ro, gamma ro/);
+ok("addProject: validated, within the level, atomic, other keys kept; plan shows it");
 fs.rmSync(base, { recursive: true, force: true });
 console.log("shares-levels: all pass");
