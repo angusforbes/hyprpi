@@ -34,8 +34,12 @@ let n = 0; const ok = (what) => { n++; console.log(`PASS  ${what}`); };
 // #1: the asker is the agent who sent the message the Doorman is answering, not the model's "for"
 assert.equal(askerOf(wrap("[Alpha, in world G] need a share")), "Alpha"); assert.equal(askerOf("[Alpha, in world G] x"), ""); assert.equal(askerOf(wrap("hi [Alpha, in world G]")), "");
 door.onEvent("talk", { request_id: "rq-1", mode: "demand", from: { name: "world-t", id: "sbx-world-t" }, text: wrap("[Alpha, in world G] I need proj shared") });
-assert.equal(door.boundAsker({ about: "rq-1", for: "Beta" }), "Alpha"); assert.equal(door.boundAsker({ for: "Beta" }), ""); assert.equal(door.boundAsker({ about: "nope" }), "");
-ok("a draft is bound to the asker of the message being answered (about), whatever 'for' the model wrote");
+assert.equal(door.boundAsker({ about: "rq-1", for: "Beta" }).asker, "Alpha"); assert.equal(door.boundAsker({ for: "Beta" }), null); assert.equal(door.boundAsker({ about: "nope" }), null);
+door.delivered.delete("rq-1"); // what handle("reply") does when the Doorman answers first
+assert.equal(door.boundAsker({ about: "rq-1", for: "Beta" }).asker, "Alpha", "a draft made AFTER the reply is still bound");
+door.onEvent("talk", { request_id: "rq-2", mode: "talk", from: { name: "Thoughts-A", id: "thoughts:A" }, text: "please draft something" });
+assert.equal(door.boundAsker({ about: "rq-2", for: "Beta" }).asker, "", "an unsigned message is bound to nobody, never to the model's 'for'");
+ok("a draft is bound to the asker of the message being answered (about), also after the reply; an unsigned message to nobody; never the model's 'for'");
 
 // #2: approve: what actually happened goes to the asker; an answer to it comes straight back to the asker
 const put = (rec) => fs.writeFileSync(path.join(PENDING, rec.id + ".json"), JSON.stringify(rec));
