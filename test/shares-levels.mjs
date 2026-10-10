@@ -50,6 +50,10 @@ r = world({ projects: "all", doorman: { mode: "doorman-open" } }); assert.equal(
 r = world({ projects: "all" }); assert.equal(r.level, "safe", "no Doorman setting: the default mode doorman-safe");
 r = world({ access: "wide-open", projects: "all" }); assert.equal(r.level, "strict"); assert.match(r.out, /isn't open, safe or strict, so strict/);
 r = world({ access: "safe", projects: ["../x", "a/b", ".."] }); assert.match(r.out, /bad project entry/); assert.match(r.out, /projects \(0\)/);
+r = world({ access: null, projects: "all" }, { sandboxes: [{ name: "doorman-t", doorman_for: "world-t", visibility: "developer" }] }); assert.equal(r.level, "strict", "access: null is unknown → strict");
+r = world({ access: "safe", projects: ["alpha:rw:ro", "beta:RW", { name: "gamma", mode: "write" }] }); assert.match(r.out, /projects \(0\)/, "extra colons / unknown modes refused");
+fs.mkdirSync(path.join(work, ".dotproj"));
+r = world({ access: "safe", projects: [".dotproj"] }); assert.match(r.out, /projects \(1\): \.dotproj ro/, "a dot-folder project is listed");
 ok("level defaults (developer → open, Doorman modes, unknown → strict) and bad entries refused");
 // (LevelReview) no way around the list: a general share of the project folder, or a symlinked project
 fs.symlinkSync(path.join(base, "cfg"), path.join(work, "linky"));

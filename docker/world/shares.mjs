@@ -81,7 +81,7 @@ function config() {
 // J366: the world's access level and why (see the header)
 export const LEVELS = ["open", "safe", "strict"];
 function accessLevel(w, relay, sandbox) {
-  if (w.access != null) return LEVELS.includes(w.access) ? { level: w.access, why: `"access" in worlds/${WORLD}.json` } : { level: "strict", why: `"access": ${JSON.stringify(w.access)} isn't open, safe or strict, so strict` };
+  if (w.access !== undefined) return LEVELS.includes(w.access) ? { level: w.access, why: `"access" in worlds/${WORLD}.json` } : { level: "strict", why: `"access": ${JSON.stringify(w.access)} isn't open, safe or strict, so strict` };
   const dm = (relay.sandboxes || []).find((x) => x.doorman_for === sandbox);
   if (dm && dm.visibility === "developer") return { level: "open", why: `its Doorman ${dm.name} runs in developer visibility (developer = open)` };
   const m = modeForSandbox(CFG, sandbox).mode;
@@ -91,9 +91,9 @@ function accessLevel(w, relay, sandbox) {
 // one "projects" entry → { name, rw } or null: "kev", "kev:rw", "kev:ro", { "name": "kev", "mode": "rw" }
 function projectEntry(e, level) {
   let name = "", mode = "";
-  if (typeof e === "string") [name, mode = ""] = e.split(":");
-  else if (e && typeof e === "object") { name = String(e.name || ""); mode = String(e.mode || ""); }
-  if (!/^[\w.-]+$/.test(name) || name === "." || name === "..") return null;
+  if (typeof e === "string") { const parts = e.split(":"); if (parts.length > 2) return null; [name, mode = ""] = parts; }
+  else if (e && typeof e === "object") { name = String(e.name || ""); mode = String(e.mode ?? ""); }
+  if (!/^[\w.-]+$/.test(name) || name === "." || name === ".." || !["", "rw", "ro"].includes(mode)) return null;
   const rw = level === "strict" ? false : level === "safe" ? mode === "rw" : mode !== "ro";
   return { name, rw };
 }
@@ -243,6 +243,7 @@ function plan() {
   const covered = (d) => mounts.some((m) => under(d, m.host));
   for (const f of pf) {
     for (const d of subdirs(f)) if (covered(d)) put(d, f); else for (const m of mounts) if (under(m.host, d) && m.why !== "hidden") put(m.host, f);
+    for (const m of mounts) if (path.dirname(m.host) === f && path.basename(m.host).startsWith(".")) put(m.host, f); // (a listed dot-folder project)
   }
   projects.sort((a, b) => a.name.localeCompare(b.name));
   return { sandbox, mounts, hidden, skipped, own, access, projects };
