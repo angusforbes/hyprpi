@@ -20,7 +20,7 @@ const WORD_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._:@-]{0,59}$/u;
 export const empty = () => ({ agents: {} });
 // a registration that is still alive (heartbeat within TTL_S)
 // (RegReview) a registration's full shape: anything else is dropped as malformed, never live
-export const wellFormed = (k, a) => /^[0-9a-f]{64}$/.test(String(k)) && !!a && typeof a === "object" && !Array.isArray(a) && WORD_RE.test(String(a.name)) && WORD_RE.test(String(a.harness))
+export const wellFormed = (k, a) => /^[0-9a-f]{64}$/.test(String(k)) && !!a && typeof a === "object" && !Array.isArray(a) && typeof a.name === "string" && typeof a.harness === "string" && WORD_RE.test(a.name) && WORD_RE.test(a.harness)
   && typeof a.caps === "string" && Array.isArray(a.scope) && a.scope.length <= 10 && a.scope.every((x) => SB_RE.test(String(x))) && Number.isFinite(Date.parse(a.since)) && Number.isFinite(Date.parse(a.last)) && typeof a.on_demand === "boolean";
 export const sanitize = (reg) => ({ agents: Object.fromEntries(Object.entries(reg && typeof reg.agents === "object" && reg.agents && !Array.isArray(reg.agents) ? reg.agents : {}).filter(([k, a]) => wellFormed(k, a))) });
 export const isLive = (a, nowMs = Date.now()) => !!a && typeof a === "object" && typeof a.name === "string" && nowMs - Date.parse(a.last) < TTL_S * 1000; // (a malformed entry is never live)
