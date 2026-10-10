@@ -15,11 +15,17 @@ import { runWindow } from './gateway/window.mjs';
 const hostHome = os.homedir();
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
-let reportFile = '', requireComplete = false;
+let reportFile = '', requireComplete = false, viewerRepo = '';
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--report' && args[i + 1]) reportFile = path.resolve(args[++i]);
   else if (args[i] === '--require-complete') requireComplete = true;
-  else throw new Error('usage: node test/gateway-e2e.mjs [--report FILE] [--require-complete]');
+  else if (args[i] === '--viewer-repo' && args[i + 1]) viewerRepo = path.resolve(args[++i]);
+  else throw new Error('usage: node test/gateway-e2e.mjs [--report FILE] [--require-complete] [--viewer-repo PATH]');
+}
+if (viewerRepo) {
+  assert.ok(viewerRepo.startsWith(path.join(hostHome, 'Harness') + path.sep), 'viewer source must be under ~/Harness');
+  assert.equal(fs.realpathSync(viewerRepo), viewerRepo, 'viewer source cannot be aliased');
+  assert.equal(spawnSync('/usr/bin/git', ['-C', viewerRepo, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout.trim(), viewerRepo, 'viewer source must be a checkout root');
 }
 // Output paths are not a route to live relay/config files either. Refuse symlink ancestors before creating a report.
 if (reportFile) {
@@ -38,7 +44,10 @@ const testFiles = [path.join(repoRoot, 'test/gateway-e2e.mjs'), ...fs.readdirSyn
 const suiteHash = crypto.createHash('sha256');
 for (const file of testFiles) suiteHash.update(path.relative(repoRoot, file) + '\0').update(fs.readFileSync(file));
 const dirty = !!spawnSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).stdout.trim();
-const report = { schema: 1, job: 'J376', commit: sha, dirty, suiteSha256: suiteHash.digest('hex'), started: new Date().toISOString(), cases: [], scope: 'private world I only; no live daemon/relay/world G', providers: 'synthetic offline fixtures', prerequisites: 'cached pi-sandbox image, Docker, Node, Python; pi for J373', cleanup: null };
+// Readiness is a shipped CLI surface, not a switch that can turn a failed test into pending.
+// Once Harbor's approve flag lands, all new-key and removed-key assertions must run.
+const parts = { dial: true, host: true, keys: fs.readFileSync(path.join(repoRoot, 'docker/sbx-relay.mjs'), 'utf8').includes('"--allow-similar"') };
+const report = { schema: 1, job: 'J376/J412', spec: 'simplification-spec.md v3; mode-key changes remain held in yolo', parts, commit: sha, dirty, suiteSha256: suiteHash.digest('hex'), started: new Date().toISOString(), cases: [], scope: 'private world I only; no live daemon/relay/world G', providers: 'synthetic offline fixtures', prerequisites: 'cached pi-sandbox image, Docker, Node, Python; pi for J373', cleanup: null };
 const kids = new Set(), ownedRigs = new Set();
 let rig, relay, daemon, ctx, finishPromise;
 const pause = ms => new Promise(r => setTimeout(r, ms));
@@ -132,6 +141,7 @@ try {
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, rig.env);
   const { runTyped, runBridge } = await import('./gateway/typed-bridge.mjs');
+  const { runDecisions } = await import('./gateway/decisions.mjs');
   const { runConfig, runStateless } = await import('./gateway/config-stateless.mjs');
   const relayState = rig.P('state/hyprpi/sbx-relay');
   // Stubbed Docker in the product PATH is essential: relay startup/shutdown otherwise reconciles GLOBAL GPU workers.
@@ -146,7 +156,29 @@ try {
   const readWorld = () => JSON.parse(fs.readFileSync(fixture.worldFile, 'utf8'));
   const writeWorld = update => { const value = update(readWorld()); fs.writeFileSync(fixture.worldFile + '.test-tmp', JSON.stringify(value, null, 2)); fs.renameSync(fixture.worldFile + '.test-tmp', fixture.worldFile); };
   const inbox = role => items(rig.P(role === 'sandbox' ? 'inbox' : 'dinbox'));
-  ctx = { repoRoot, rig, relayState, worldFile: fixture.worldFile, hostHome, testcase, pending, feature, waitFor, inbox, readWorld, writeWorld,
+  const registrations = new Map();
+  ctx = { repoRoot, rig, relayState, worldFile: fixture.worldFile, hostHome, viewerRepo, parts, testcase, pending, feature, waitFor, inbox, readWorld, writeWorld,
+    whenPart: (part, name, fn) => parts[part] ? testcase(name, fn) : pending(name, `J412 ${part} has not landed in this checkout; no old behavior substituted`),
+    registerHost: async (agent = 'fixture-host') => {
+      assert.match(agent, /^fixture-[A-Za-z0-9_.-]{1,64}$/);
+      let token = registrations.get(agent);
+      if (token) {
+        const heartbeat = await ctx.cli('docker/bridge/doorman-bridge', ['--json', 'heartbeat', '--agent-token', token]);
+        if (heartbeat.status === 0 && JSON.parse(heartbeat.stdout).ok) return token;
+        registrations.delete(agent);
+      }
+      const registered = await ctx.cli('docker/bridge/doorman-bridge', ['--json', 'register', agent, '--harness', 'gateway-fixture', '--caps', 'Read synthetic fixture only; no host execution', '--scope', rig.sandbox]);
+      assert.equal(registered.status, 0, registered.stdout + registered.stderr);
+      const value = JSON.parse(registered.stdout); assert.equal(value.ok, true); assert.match(value.agent_token, /^[a-f0-9]{32}$/);
+      registrations.set(agent, value.agent_token); return value.agent_token;
+    },
+    unregisterHost: async (agent = 'fixture-host') => {
+      const token = registrations.get(agent); if (!token) return;
+      const result = await ctx.cli('docker/bridge/doorman-bridge', ['--json', 'unregister', '--agent-token', token]);
+      assert.equal(result.status, 0, result.stdout + result.stderr); assert.equal(JSON.parse(result.stdout).ok, true);
+      registrations.delete(agent);
+    },
+    clearHosts: async () => { for (const agent of [...registrations.keys()]) await ctx.unregisterHost(agent); },
     artifact: (name, data) => { assert.match(name, /^[A-Za-z0-9_.-]{1,150}$/); (report.artifacts ||= {})[name] = structuredClone(data); },
     logs: () => jsonLines(path.join(relayState, 'log.jsonl')),
     effects: () => jsonLines(rig.P('effects.jsonl')),
@@ -156,11 +188,11 @@ try {
       return waitFor('dropbox result ' + filename, () => inbox(role).find(x => x.type === 'result' && x.for === filename));
     },
     holdFrom: r => JSON.parse(fs.readFileSync(path.join(relayState, 'pending', r.pending[0] + '.json'), 'utf8')),
-    decide: async (id, choice, { edit, note } = {}) => {
-      const cmd = choice === '2' ? 'deny' : choice === 'r' ? 'return' : choice === 'a' ? 'answer' : 'approve';
-      const argv = [cmd, id];
-      if (choice === 'e') { const file = rig.P('edits', id + '.txt'); fs.writeFileSync(file, edit); argv.push('--edit-file', file); }
-      if (note) argv.push(['return', 'answer'].includes(cmd) ? '--note' : '--reason', note);
+    decide: async (id, choice, { note, duration = '1h' } = {}) => {
+      assert.ok(['1', '1+', '2'].includes(choice), 'removed or unknown decision key: ' + choice);
+      const cmd = choice === '2' ? 'deny' : 'approve', argv = [cmd, id];
+      if (choice === '1+') { assert.equal(parts.keys, true, 'new key support must land first'); argv.push('--allow-similar', duration); }
+      if (note) { assert.ok(parts.keys || choice === '2', 'approval notes require J412 keys'); argv.push(cmd === 'deny' ? '--reason' : '--note', note); }
       const result = await rig.owner(argv);
       assert.equal(result.status, 0, result.stdout + result.stderr);
       await waitFor('decision consumed for ' + id, () => !fs.existsSync(path.join(relayState, 'pending', id + '.json')));
@@ -176,7 +208,7 @@ try {
       await pause(500);
     },
   };
-  await testcase('W1 negative isolation and owner guards: all 26 rig safety checks', async () => {
+  await testcase('W1 negative isolation and owner guards: all 26 rig safety checks (new CLI, unchanged boundaries)', async () => {
     rig.validate();
     const { safety } = await import('./gateway/rig-safety.mjs');
     const attempts = [];
@@ -200,6 +232,7 @@ try {
     const proof = await rig.proof(); assert.equal(proof.ok, true, JSON.stringify(proof)); report.isolation = proof;
   });
   await runResearch(ctx);
+  await runDecisions(ctx);
   await runWindow(ctx);
   await runTyped(ctx);
   await runBridge(ctx);

@@ -78,20 +78,18 @@ export async function safety({ repoRoot = path.resolve(path.dirname(fileURLToPat
       assert.match(r.stderr, opts.agent ? /called from an agent/ : /no terminal/);
       assert.equal(fs.existsSync(rig.P('state/hyprpi/sbx-relay/decisions', id + '.approve')), false); checks++;
     }
-    await rejects(() => rig.owner(['approve', id, '--edit-file', path.join(HOME, '.config/hyprpi/config.json')]), /not a scratch path/);
-    const edit = rig.P('edits', id + '.txt');
-    fs.writeFileSync(edit, 'Modified synthetic fixture request.');
-    const approved = await rig.owner(['approve', id, '--edit-file', edit]);
+    await rejects(() => rig.owner(['approve', id, '--edit-file', path.join(HOME, '.config/hyprpi/config.json')]), /owner option not permitted/);
+    const approved = await rig.owner(['approve', id]);
     assert.equal(approved.status, 0, JSON.stringify(approved));
-    assert.match(fs.readFileSync(rig.P('state/hyprpi/sbx-relay/decisions', id + '.approve'), 'utf8'), /^terminal\nedit:[a-f0-9]{16}$/);
+    assert.match(fs.readFileSync(rig.P('state/hyprpi/sbx-relay/decisions', id + '.approve'), 'utf8'), /^terminal\n?$/);
     checks++;
     for (const opts of [{ agent: true }, { pipe: true }]) {
-      const r = await rig.owner(['config-set', '--sandbox', rig.sandbox, 'mode=doorman-strict'], opts);
+      const r = await rig.owner(['config-set', '--sandbox', rig.sandbox, 'mode=strict'], opts);
       assert.equal(r.status, 3, JSON.stringify(r)); checks++;
     }
-    const changed = await rig.owner(['config-set', '--sandbox', rig.sandbox, 'mode=doorman-strict']);
+    const changed = await rig.owner(['config-set', '--sandbox', rig.sandbox, 'mode=strict']);
     assert.equal(changed.status, 0, JSON.stringify(changed));
-    assert.equal(JSON.parse(fs.readFileSync(rig.P('config/hyprpi/worlds', rig.sandbox + '.json'), 'utf8')).gateway.mode, 'doorman-strict');
+    assert.equal(JSON.parse(fs.readFileSync(rig.P('config/hyprpi/worlds', rig.sandbox + '.json'), 'utf8')).gateway.mode, 'strict');
     assert.match(changed.stdout, /J376 isolated fixture refuses/); checks++;
     const request = await rig.request('sandbox', { op: 'room.read', limit: 1 });
     assert.deepEqual(JSON.parse(fs.readFileSync(rig.P('ws/.hyprpi-dropbox/outbox', request), 'utf8')), { op: 'room.read', limit: 1 }); checks++;

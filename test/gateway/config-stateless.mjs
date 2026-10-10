@@ -70,23 +70,49 @@ export async function runConfig(ctx) {
     const baseline = ctx.readWorld();
     try {
       await ctx.testcase('J372: effective defaults from the real config CLI', async () => {
-        ctx.writeWorld(w => { delete w.gateway; w.doorman = { ...w.doorman, mode: 'doorman-safe' }; w.access = 'safe'; return w; });
+        ctx.writeWorld(w => { delete w.gateway; delete w.doorman; delete w.access; return w; });
         const e = await effective(ctx);
         assert.equal(e.search.provider, 'sonar');
         assert.equal(e.search.quick_model, 'perplexity/perplexity/sonar');
         assert.equal(e.search.deep_model, 'perplexity/perplexity/sonar-deep-research');
         assert.equal(e.report_model, 'azure/openai/gpt-6-sol');
         assert.equal(e.doorman_model, '', 'no check-model override by default');
-        assert.equal(e.mode, 'doorman-safe');
+        assert.equal(e.mode, 'safe');
         assert.equal(e.level, 'safe');
         for (const key of ['search.provider', 'search.quick_model', 'search.deep_model', 'report_model']) assert.equal(e.sources[key], 'default');
         proof(ctx, 'j372-default-config', e);
       });
 
+      await ctx.testcase('J412 dial: four short modes derive sharing; invalid and ambiguous files fail closed', async () => {
+        const initial = ctx.readWorld(), duplicate = ctx.rig.P('config/hyprpi/worlds', ctx.rig.sandbox + '-duplicate.json');
+        try {
+          for (const [mode, level] of [['strict', 'strict'], ['safe', 'safe'], ['open', 'open'], ['yolo', 'open']]) {
+            ctx.writeWorld(w => { delete w.access; delete w.doorman; w.gateway = { mode }; return w; });
+            const e = await effective(ctx); assert.equal(e.mode, mode); assert.equal(e.level, level); assert.equal(e.levelWhy, 'mode ' + mode);
+          }
+          ctx.writeWorld(w => ({ ...w, gateway: { mode: 'unknown-permissive' } }));
+          let e = await effective(ctx); assert.equal(e.mode, 'strict'); assert.equal(e.level, 'strict'); assert.match(e.notes.join(' '), /unknown mode/);
+          ctx.writeWorld(w => ({ ...w, gateway: { mode: 'yolo' } }));
+          fs.writeFileSync(duplicate, JSON.stringify(ctx.readWorld()));
+          e = await effective(ctx); assert.equal(e.mode, 'strict'); assert.equal(e.level, 'strict'); assert.match(e.notes.join(' '), /several worlds files/);
+        } finally { fs.rmSync(duplicate, { force: true }); ctx.writeWorld(() => initial); }
+      });
+
+      await ctx.testcase('J412 dial: legacy values are read with warnings, never used for new writes', async () => {
+        const initial = ctx.readWorld();
+        try {
+          for (const [legacy, mode] of [['doorman-strict', 'strict'], ['doorman-safe', 'safe'], ['doorman-open', 'yolo']]) {
+            ctx.writeWorld(w => { delete w.gateway; delete w.access; w.doorman = { mode: legacy }; return w; });
+            const e = await effective(ctx); assert.equal(e.mode, mode); assert.match(e.notes.join(' '), /legacy mode/);
+          }
+          const r = await ownerSet(ctx, { mode: 'doorman-open' }); assert.equal(r.status, 2, output(r)); assert.match(output(r), /strict, safe, open or yolo/);
+        } finally { ctx.writeWorld(() => initial); }
+      });
+
       await ctx.testcase('J372: config-set agent PTY and owner pipe are refused byte-identically', async () => {
         const before = bytes(ctx), results = [];
         for (const [options, why] of [[{ agent: true, pipe: false }, /agent/], [{ agent: false, pipe: true }, /no terminal/]]) {
-          const r = await ownerSet(ctx, { report_model: 'fixture/forbidden-write', mode: 'doorman-open' }, options);
+          const r = await ownerSet(ctx, { report_model: 'fixture/forbidden-write', mode: 'yolo' }, options);
           assert.equal(r.status, 3, output(r));
           assert.match(output(r), /only Angus can change/);
           assert.match(output(r), why);
@@ -96,13 +122,14 @@ export async function runConfig(ctx) {
         proof(ctx, 'j372-admin-refusals', { before_sha256: sha(before), after_sha256: sha(bytes(ctx)), results });
       });
 
-      await ctx.testcase('J372: genuine owner PTY changes report, Doorman checks, mode and level', async () => {
-        const before = ctx.readWorld(), changes = { report_model: 'fixture/owner-report', doorman_model: 'fixture/owner-doorman', mode: 'doorman-strict', level: 'strict' };
+      await ctx.testcase('J372: genuine owner PTY changes report, Doorman checks and the one dial', async () => {
+        const before = ctx.readWorld(), changes = { report_model: 'fixture/owner-report', doorman_model: 'fixture/owner-doorman', mode: 'strict' };
         const r = await ownerSet(ctx, changes, { agent: false, pipe: false });
         succeeded(r, 'owner config-set');
         assert.match(output(r), /Applied: research gateway settings/);
         const after = ctx.readWorld(), e = await effective(ctx);
-        for (const [key, value] of Object.entries(changes)) { assert.equal(after.gateway[key], value); assert.equal(e[key], value); assert.equal(e.sources[key] || e.levelWhy, 'gateway.' + key); }
+        for (const [key, value] of Object.entries(changes)) { assert.equal(after.gateway[key], value); assert.equal(e[key], value); assert.equal(e.sources[key], 'gateway.' + key); }
+        assert.equal(e.level, 'strict'); assert.equal(e.levelWhy, 'mode strict');
         const nonGateway = w => { const x = structuredClone(w); delete x.gateway; return x; };
         assert.deepEqual(nonGateway(after), nonGateway(before), 'admin CLI preserves task/sandbox and every unrelated world field');
         assert.equal(e.search.provider, 'sonar', 'configuration-only case does not switch search provider');
@@ -110,12 +137,12 @@ export async function runConfig(ctx) {
       });
 
       await ctx.testcase('J372: legitimate proposal is held, guarded, approved once and logged', async () => {
-        const changes = { report_model: 'fixture/approved-report', doorman_model: 'fixture/approved-doorman', mode: 'doorman-open', level: 'open' };
+        const changes = { report_model: 'fixture/approved-report', doorman_model: 'fixture/approved-doorman', mode: 'open' };
         const held = await proposal(ctx, changes, 'J376 proposer\u001b[2J');
         assert.match(held.text, /LOOSENS/);
         assert.doesNotMatch(held.text, /\u001b/);
-        assert.equal(held.gatewayChange.before.mode, 'doorman-strict');
-        assert.equal(held.gatewayChange.before.level, 'strict');
+        assert.equal(held.gatewayChange.before.mode, 'strict');
+        assert.equal(held.gatewayChange.before.level, undefined, 'only proposed keys are captured');
         const before = bytes(ctx), pendingFile = path.join(ctx.relayState, 'pending', held.id + '.json'), pendingBytes = fs.readFileSync(pendingFile);
         for (const options of [{ agent: true, pipe: false }, { agent: false, pipe: true }]) {
           const r = await ctx.rig.owner(['approve', held.id], options);
@@ -172,8 +199,24 @@ export async function runConfig(ctx) {
         }
       });
 
+      await ctx.testcase('J412 yolo: settings auto-apply and log, but its own mode change stays held', async () => {
+        const initial = ctx.readWorld(); let held;
+        try {
+          ctx.writeWorld(w => ({ ...w, gateway: { ...w.gateway, mode: 'yolo' } }));
+          const r = await ctx.cli(RELAY, ['propose-gateway', ctx.rig.sandbox, '--by', 'fixture-proposer', '--changes', JSON.stringify({ report_model: 'fixture/yolo-report' })]);
+          succeeded(r, 'yolo proposal'); const result = lastJSON(r); assert.equal(result.ok, true); assert.equal(result.auto, 'yolo');
+          const log = await ctx.waitFor('automatic gateway apply', () => ctx.logs().find(x => x.op === 'gateway_change' && x.id === result.id));
+          assert.equal(log.applied, true, log.outcome); assert.equal(log.decision, 'approved'); assert.equal((await effective(ctx)).report_model, 'fixture/yolo-report');
+          assert.ok(!ctx.pendingItems().some(x => x.id === result.id));
+          const autos = ctx.logs().filter(x => x.op === 'auto' && x.id === result.id); assert.equal(autos.length, 1); assert.equal(autos[0].kind, 'gateway'); assert.equal(autos[0].reviewed, false); assert.equal(autos[0].auto, 'yolo');
+          held = await proposal(ctx, { mode: 'open' }, 'fixture-proposer'); assert.equal(held.auto, undefined, 'the mode key may not auto-approve even in yolo');
+          assert.equal((await effective(ctx)).mode, 'yolo'); assert.ok(!ctx.logs().some(x => x.op === 'gateway_change' && x.id === held.id));
+          const denied = await gatewayDecision(ctx, held, '2'); assert.equal(denied.applied, false); assert.equal((await effective(ctx)).mode, 'yolo');
+        } finally { if (held && ctx.pendingItems().some(x => x.id === held.id)) await ctx.decide(held.id, '2'); ctx.writeWorld(() => initial); }
+      });
+
       await ctx.testcase('J372: admin-only key, invalid mode and no-op cannot enter pending queue', async () => {
-        for (const changes of [{ 'search.key_file': ctx.rig.P('config/not-a-key') }, { mode: 'invalid' }, { report_model: (await effective(ctx)).report_model }]) {
+        for (const changes of [{ 'search.key_file': ctx.rig.P('config/not-a-key') }, { level: 'open' }, { mode: 'invalid' }, { report_model: (await effective(ctx)).report_model }]) {
           const before = bytes(ctx), ids = ctx.pendingItems().map(p => p.id).sort();
           const r = await ctx.cli(RELAY, ['propose-gateway', ctx.rig.sandbox, '--changes', JSON.stringify(changes)]);
           assert.equal(r.status, 1, output(r));
@@ -186,7 +229,7 @@ export async function runConfig(ctx) {
       await ctx.testcase('J372: restore original task and safe gateway baseline', async () => {
         ctx.writeWorld(() => structuredClone(baseline));
         assert.deepEqual(ctx.readWorld(), baseline);
-        assert.equal((await effective(ctx)).mode, 'doorman-safe', 'later cases resume from fixture safe mode');
+        assert.equal((await effective(ctx)).mode, 'safe', 'later cases resume from fixture safe mode');
       });
     }
   });
@@ -199,7 +242,8 @@ const FIXTURE_PASS_MIN = 16; // the J395 builder fixture's own PASS lines (its n
 export async function runStateless(ctx) {
   await ctx.feature('J373', J373_FILES, async () => {
     await statelessFixture(ctx);
-    await relayBinding(ctx);
+    if (ctx.parts.keys) await relayBinding(ctx);
+    else for (const name of ['task-change signed asker binding and private receipt', 'approved typed signed asker binding', 'denied typed signed asker binding', 'draft signed asker binding with registration']) ctx.pending('J395/J412: ' + name, 'J412 asker-only receipt helper has not landed; old Thoughts copies are not v3 coverage');
   });
 }
 
@@ -262,7 +306,7 @@ async function statelessFixture(ctx) {
 // --- J395 through the ACTUAL relay: Docker worker -> private daemon -> Doorman. No model runs: the "Doorman" acts through its real drop-box.
 // A signed message carries no history; a draft/task_change/request names the message it answers (about) and is bound to that message's
 // signed asker, even when the model's "for" is wrong and even after the reply consumed the delivered ID. Outcomes are the relay's real
-// served-inbox envelopes ("Asker: [Outside] …" plus the unprefixed coordinator line), decided through the genuine owner PTY.
+// served-inbox asker-only receipts (no coordinator copy), decided through the genuine owner PTY.
 const MARK = /RELAY-SECRET-[A-Z0-9]+/g;
 async function signed(ctx, who, marker, seen) {
   const r = await ctx.ask('sandbox', { op: 'talk', to: ['sbx-' + ctx.rig.doorman], mode: 'demand', text: `[${who}, in world I] ${marker}` });
@@ -287,19 +331,15 @@ async function answer(ctx, item) {
   assert.notEqual(again.ok, true, 'the reply consumed the delivered ID: ' + JSON.stringify(again));
   assert.match(JSON.stringify(again), /unknown request_id/);
 }
-// The relay's real served-inbox envelopes for this held ID: one addressed to the bound asker, one unprefixed to the coordinator.
+// The relay's exact bound-asker-only receipt for this held ID: no Thoughts or guessed-name fallback.
 async function envelopes(ctx, id, asker, wrong, contains) {
-  const got = await ctx.waitFor('bound asker + coordinator outcome for ' + id, () => {
-    const mine = ctx.inbox('sandbox').filter(x => x.type === 'message' && x.from === 'Outside' && typeof x.text === 'string' && x.text.includes(id));
-    const toAsker = mine.find(x => x.text.startsWith(asker + ': [Outside] ') && contains.test(x.text));
-    const toCoordinator = mine.find(x => x.text.startsWith('[Outside] ') && contains.test(x.text) && x.text.endsWith(`(asked by ${asker})`));
-    return toAsker && toCoordinator ? { mine, toAsker, toCoordinator } : false;
-  });
-  assert.equal(got.toAsker.mode, 'talk'); assert.equal(got.toCoordinator.mode, 'talk');
-  assert.equal(got.toAsker.request_id, ''); assert.equal(got.toCoordinator.request_id, '');
-  assert.equal(got.mine.filter(x => /^[^\s:\[]{1,60}: \[Outside\] /.test(x.text)).length, 1, 'exactly one addressed envelope: ' + JSON.stringify(got.mine));
-  assert.ok(!got.mine.some(x => x.text.startsWith(wrong + ': ') || x.text.includes(`asked by ${wrong}`)), 'never addressed to the model-chosen name ' + wrong);
-  return got;
+  const toAsker = await ctx.waitFor('exact bound asker-only receipt for ' + id, () => ctx.inbox('sandbox').find(x => x.type === 'receipt' && x.id === id && contains.test(x.text)));
+  assert.equal(toAsker.for, asker, 'bound to the signed asker, not the model-selected name');
+  const mine = ctx.inbox('sandbox').filter(x => x.id === id || typeof x.text === 'string' && x.text.includes(id));
+  assert.equal(mine.filter(x => x.type === 'receipt').length, 1, 'one asker receipt only');
+  assert.ok(!mine.some(x => x.type === 'message' && x.from === 'Outside'), 'decision has no legacy Thoughts/name message copy');
+  assert.ok(!mine.some(x => x.for === wrong || String(x.text).startsWith(wrong + ': ')), 'never routed to the model-chosen name');
+  return { mine, toAsker };
 }
 async function relayBinding(ctx) {
   const baseline = ctx.readWorld(), evidence = { cases: {} };
@@ -333,7 +373,7 @@ async function relayBinding(ctx) {
       assert.equal(receipt.status, 'applied');
       assert.equal(ctx.readWorld().task, task, 'the approval actually wrote the task');
       rec.log = log; rec.receipt = receipt;
-      rec.envelopes = await envelopes(ctx, h.id, 'FixtureAlpha', 'FixtureBeta', /approved the research task change/);
+      rec.envelopes = await envelopes(ctx, h.id, 'FixtureAlpha', 'FixtureBeta', /Angus approved/);
       // A later signed message gets no receipt or earlier history either.
       const a2 = await signed(ctx, 'FixtureAlpha', 'RELAY-SECRET-ALPHA2', seen);
       assert.doesNotMatch(a2.text, /RELAY-TASK-ALPHA|RELAY-ANSWER|RELAY-SECRET-ALPHA1|RELAY-SECRET-BETA1/);
@@ -357,13 +397,14 @@ async function relayBinding(ctx) {
         const note = await ctx.waitFor('Doorman typed receipt ' + h.id, () => ctx.inbox('doorman').find(x => x.type === 'typed' && x.id === h.id));
         assert.equal(note.status, choice === '1' ? 'done' : 'denied');
         rec.log = log; rec.receipt = note;
-        rec.envelopes = await envelopes(ctx, h.id, 'FixtureBeta', 'WrongModelName', new RegExp(`Angus ${decision} the request`));
+        rec.envelopes = await envelopes(ctx, h.id, 'FixtureBeta', 'WrongModelName', new RegExp(`Angus ${decision}`));
         assert.ok(!rec.envelopes.mine.some(x => x.text.startsWith('FixtureAlpha: ')), 'the other signed asker is not told');
       });
     }
 
     // A free-form draft needs a host agent: switch the scratch relay's fixture flag to the bridge (no real host agent starts), deny only.
     await ctx.restartRelay({ hostAgents: 'bridge' });
+    await ctx.registerHost('fixture-binding');
     await relayCase('J395 relay: denied free-form draft is bound via about to the signed asker after the reply', async ({ seen, held, rec }) => {
       const a = await signed(ctx, 'FixtureAlpha', 'RELAY-SECRET-ALPHAD', seen);
       const b = await signed(ctx, 'FixtureBeta', 'RELAY-SECRET-BETAD', seen);
@@ -376,10 +417,11 @@ async function relayBinding(ctx) {
       await ctx.decide(h.id, '2');
       const log = await ctx.waitFor('durable draft decision ' + h.id, () => ctx.logs().find(l => l.id === h.id && l.decision === 'denied'));
       rec.log = log;
-      rec.envelopes = await envelopes(ctx, h.id, 'FixtureAlpha', 'FixtureBeta', /Angus denied the request drafted for you/);
+      rec.envelopes = await envelopes(ctx, h.id, 'FixtureAlpha', 'FixtureBeta', /Angus denied/);
     });
   } finally {
     await ctx.testcase('J395 relay: restore agent-free relay and original fixture world; no hold left', async () => {
+      await ctx.unregisterHost('fixture-binding');
       await ctx.restartRelay({ hostAgents: false });
       ctx.writeWorld(() => structuredClone(baseline));
       assert.deepEqual(ctx.readWorld(), baseline);

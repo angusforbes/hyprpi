@@ -22,7 +22,7 @@ export function installFixtures(rig) {
   fs.mkdirSync(worlds, { recursive: true });
   const worldFile = path.join(worlds, rig.sandbox + '.json');
   // All world letters in this test belong to the PRIVATE daemon. There is no connection to live world G (or I).
-  fs.writeFileSync(worldFile, JSON.stringify({ sandbox: rig.sandbox, world: 'I', workspaces: [81, 82], task: TASK, access: 'safe', gpu: 'off', projects: [], doorman: { mode: 'doorman-safe' } }, null, 2));
+  fs.writeFileSync(worldFile, JSON.stringify({ sandbox: rig.sandbox, world: 'I', workspaces: [81, 82], task: TASK, gateway: { mode: 'safe' }, projects: [] }, null, 2));
   const config = {
     rooms: 'world', follow: false, pi: '/bin/false', piArgs: [], chime: false, cwd: P('ws'),
     projectFolders: [P('projects')], roleFolders: {}, jotExtension: '', terminalCommand: ['/bin/false'],
@@ -30,7 +30,7 @@ export function installFixtures(rig) {
   fs.writeFileSync(P('config/hyprpi/config.json'), JSON.stringify(config));
   const relay = { log_text: true, sandboxes: [
     { name: rig.sandbox, agent_id: 'sbx-' + rig.sandbox, workspace: P('ws'), inbox: P('inbox'), workspace_num: 81, container: 'gateway-e2e', review_in: rig.doorman, review_room: 'I' },
-    { name: rig.doorman, display: 'Fixture Doorman-I', doorman_for: rig.sandbox, reports_to: 'Thoughts-I', host_agents: false, workspace: P('dws'), inbox: P('dinbox'), card: P('card'), workspace_num: 82, visibility: 'developer', review_in: rig.doorman, review_room: 'I', bridge: { tools: ['Read'], folders: [P('projects/fixture')], time_limit_s: 300 } },
+    { name: rig.doorman, display: 'Fixture Doorman-I', doorman_for: rig.sandbox, reports_to: 'Thoughts-I', host_agents: false, workspace: P('dws'), inbox: P('dinbox'), card: P('card'), workspace_num: 82, review_in: rig.doorman, review_room: 'I', bridge: { tools: ['Read'], folders: [P('projects/fixture')], time_limit_s: 300 } },
   ] };
   fs.writeFileSync(P('config/hyprpi/sbx-relay.json'), JSON.stringify(relay));
   fs.writeFileSync(P('config/hyprpi/research.json'), JSON.stringify({ sandboxes: { [rig.sandbox]: { doorman: rig.doorman, reader: rig.reader || rig.sandbox + '-reader', reports_to: 'Thoughts-I' } } }));

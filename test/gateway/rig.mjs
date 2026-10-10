@@ -99,7 +99,7 @@ export async function createRig(options = {}) {
     { name: sandbox, workspace: P('ws'), inbox: P('inbox'), workspace_num: 61, agent_id: `sbx-${sandbox}` },
     { name: doorman, workspace: P('dws'), inbox: P('dinbox'), workspace_num: 61, agent_id: `sbx-${doorman}`, doorman_for: sandbox, reports_to: 'Thoughts-A' },
   ] });
-  json(`config/hyprpi/worlds/${sandbox}.json`, { sandbox, workspace: P('ws'), inbox: P('inbox'), card: P('cards'), task: 'Study public gateway fixture sources', gateway: { mode: 'doorman-safe', level: 'safe' } });
+  json(`config/hyprpi/worlds/${sandbox}.json`, { sandbox, workspace: P('ws'), inbox: P('inbox'), card: P('cards'), task: 'Study public gateway fixture sources', gateway: { mode: 'safe' } });
   json('config/hyprpi/research.json', { sandboxes: { [sandbox]: { doorman, reader, reports_to: 'Thoughts-A' } } });
   const assertRoot = () => {
     if (closed) fail('rig is closed');
@@ -307,20 +307,20 @@ export async function createRig(options = {}) {
       }
       return;
     }
-    if (!['approve', 'deny', 'return', 'allow', 'answer'].includes(args[0])) fail('owner operation not permitted');
+    if (!['approve', 'deny'].includes(args[0])) fail('owner operation not permitted (removed return/allow/answer)');
     const match = ID.exec(args[1] || '');
     if (!match || ![sandbox, doorman].includes(match[1])) fail('unsafe or foreign pending ID');
     const pending = scratchPath(P('state/hyprpi/sbx-relay/pending', args[1] + '.json'), { file: true });
     const rec = JSON.parse(fs.readFileSync(pending, 'utf8'));
     if (rec.id !== args[1] || rec.sandbox !== match[1]) fail('pending record must match fixture ID and sandbox');
-    const rest = args.slice(2);
-    if (args[0] === 'allow') {
-      if (rest.length > 3 || rest.some(s => !/^[A-Za-z0-9 ]{1,40}$/.test(s))) fail('invalid fixture duration');
-    } else {
-      const flag = { approve: '--edit-file', deny: '--reason', return: '--note', answer: '--note' }[args[0]];
-      if (args[0] === 'answer' && (!rec.hostJob || rest.length !== 2 || !rest[1].trim() || rest[1].length > 500 || /[\x00-\x1f\x7f]/.test(rest[1]))) fail('answer requires a fixture host-job question and plain nonempty note');
-      if (rest.length && (rest.length !== 2 || rest[0] !== flag)) fail('owner option not permitted');
-      if (rest[0] === '--edit-file') scratchPath(rest[1], { file: true, base: P('edits') });
+    const rest = args.slice(2), seen = new Set();
+    for (let i = 0; i < rest.length; i += 2) {
+      const flag = rest[i], value = rest[i + 1];
+      if (value === undefined || seen.has(flag) || !(['approve'].includes(args[0]) ? ['--note', '--allow-similar'] : ['--reason']).includes(flag)) fail('owner option not permitted');
+      seen.add(flag);
+      // All options are scalar text, never paths, commands, environment, or an edited file. The real CLI validates note/duration semantics.
+      if (flag === '--allow-similar' && !/^\d+(?:\.\d+)?[A-Za-z]{1,3}$/.test(value)) fail('invalid fixture duration');
+      if (flag !== '--allow-similar' && value.length > 501) fail('owner note exceeds fixture limit');
     }
   };
   const owner = async (args, opts = {}) => {
