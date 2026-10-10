@@ -154,6 +154,19 @@ function evidence(kind, text, n = 10) {
 // replies, one dim line per thing it did for you, agents' replies. Ctrl+/ cycles the three modes.
 let thoughtsOn = true; // always (no modes any more)
 let linkRows = {}; // screen row -> [{ x0, x1, target }] (1-based rows, 0-based columns): clickable links in the thread
+// Job ids in the thread (J402, J370b) are links too (Angus: "click Project identifiers and jump to that spot
+// in the project"): a click opens the job's card in its world's projects panel, at its item (board.open job).
+const MD_OPTS = { ref: (t) => `job:${t}` };
+function openLink(lt) {
+  if (!lt.startsWith("job:")) { if (openTarget(lt)) note = `opened ${lt.replace(process.env.HOME || "\0", "~")}`; return render(); }
+  const job = lt.slice(4);
+  if (!api) { note = "✗ not connected"; return render(); }
+  api.call("board.open", { job }).then((r) => {
+    const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+    try { spawnChild(new URL("./panel-here", import.meta.url).pathname, ["board", r.room], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); } catch { /* none */ }
+    note = `→ ${job}: @${r.name}${r.item ? " " + r.item : ""} in projects ${r.room}`; render();
+  }, (e) => { note = `✗ ${job}: ${e.message}`; render(); });
+}
 const linkAt = (x, y) => (linkRows[y] || []).find((q) => x - 1 >= q.x0 && x - 1 < q.x1)?.target || null;
 const TH = { room: "", entries: [], busy: false, scroll: 0, pinned: false, unseen: 0, rows: null, key: "", max: 0, anchor: null, restore: null, pill: null }; // scroll: rows up from the bottom
 // J121 (Angus: "i want to be able to 'pin' your stream so you don't auto-move on update until i scroll back
@@ -821,7 +834,7 @@ function render() {
     const who = (e) => e.role === "you" ? fg(c, bold("you")) + (e.via === "voice" ? " 🎤" : e.via === "phone" ? " 📱" : "") : e.role === "thoughts" ? bold(`💭 Thoughts-${room}`) : "";
     // Every entry through mdRows: Markdown, and links / file paths clickable (Angus: all links and
     // paths must be clickable). x.links: [{ x0, x1, target }] in the row's own columns.
-    const md = (text, n, pre, style = (l) => l) => mdRows(text, n, wrap, gw).map((r) => ({ l: pre + style(r.line), links: r.links.map((q) => ({ ...q, x0: q.x0 + pre.length, x1: q.x1 + pre.length })) }));
+    const md = (text, n, pre, style = (l) => l) => mdRows(text, n, wrap, gw, MD_OPTS).map((r) => ({ l: pre + style(r.line), links: r.links.map((q) => ({ ...q, x0: q.x0 + pre.length, x1: q.x1 + pre.length })) }));
     // N53 (Angus via Thoughts-C): incoming agent replies / messages are not drawn (Thoughts' summary
     // already covers them; they stay in its context and in /keyword /ask). Thoughts' own answers to
     // agents show as ONE short grey line with what it said: "↩ to Blink: …", one or two rows.
@@ -1052,7 +1065,7 @@ function render() {
 // Matching: lib/tui/agent-click.mjs.
 function ctrlClick(x, y) {
   const lt = linkAt(x, y);
-  if (lt) { if (openTarget(lt)) { note = `opened ${lt.replace(process.env.HOME || "\0", "~")}`; render(); } return; }
+  if (lt) return openLink(lt);
   const word = wordAt(screen[y - 1] || "", x, gw);
   const url = urlIn(word);
   if (url) { try { spawnChild("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); } catch { /* none */ } return; }
@@ -1210,7 +1223,7 @@ function onKey(d) {
       if (sel.clicks >= 2) return multiClick(Math.min(3, sel.clicks), x, y);
       sel = null;
       const lt = linkAt(x, y); // a plain click on a link / file path in the thread opens it
-      if (lt) { if (openTarget(lt)) note = `opened ${lt.replace(process.env.HOME || "\0", "~")}`; return render(); }
+      if (lt) return openLink(lt);
       return render();
     }
     return;
