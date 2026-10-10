@@ -45,7 +45,7 @@ import { parseDuration, addRules, useRules, loadRules, revokeRules, describeRule
 import { logEvent as researchLog, conf as researchConf, dropPlan as researchDropPlan } from "./research/research.mjs"; // J309
 import { ACTION_KEYS, parseActionLine, toastMayDo } from "./toast-actions.mjs"; // J355
 import { prepareEdit, takeEdit } from "./held-edit.mjs"; // J365
-import { ownerNote, returnable, senderLabel, returnKey, holdReason } from "./held-note.mjs"; // J370
+import { ownerNote, returnable, senderLabel, returnKey, holdReason, openPeer } from "./held-note.mjs"; // J370 (J386: holdReason; J378: openPeer)
 import { agentAncestor } from "./agent-guard.mjs"; // J372: shared with the gateway admin command
 import { applyChanges, proposeChange, syncReaderNetwork, validateChanges, digestOf } from "./research/gateway-admin.mjs"; // J372
 import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman bridge for host agents
@@ -382,11 +382,12 @@ class Sandbox {
         const mode = req.mode === "demand" ? "demand" : "talk";
         // Review J244 #3: "open" only for another relay sandbox that is connected right now, addressed by its
         // exact agent id. Everything else is resolved to an exact id now (or Thoughts-X) and held for Angus.
+        // J378 (FlowRecheck #1): and of those, only a Doorman and its own sandbox (openPeer); any other relay peer is gated (held or under a rule).
         const list = (await this.conn.call("list")).agents || [];
         // J308: peers between relay sandboxes are open, except that a Doorman and its one sandbox reach only each
         // other: any other pair that involves a Doorman is refused (never held).
         const pairOk = (s) => !this.doormanFor && !s.doormanFor ? true : this.doormanFor === s.name || s.doormanFor === this.name;
-        const peerIds = new Set(this.relay.sandboxes.filter((s) => s !== this && s.conn && pairOk(s)).map((s) => s.agentId));
+        const peerIds = new Set(this.relay.sandboxes.filter((s) => s !== this && s.conn && pairOk(s) && openPeer(this, s)).map((s) => s.agentId));
         const doorIds = new Set(this.relay.sandboxes.filter((s) => s !== this && !pairOk(s)).map((s) => s.agentId));
         const resolve = (n) => {
           if (THOUGHTS_RE.test(n)) return { kind: "thoughts", id: n, shown: n, room: n.slice(9).toUpperCase(), peer: false };

@@ -37,3 +37,7 @@ export function holdReason(m) {
   const t = `held because (${src}): ${why}`;
   return t.length > REASON_MAX ? t.slice(0, REASON_MAX - 1) + "…" : t;
 }
+// J378 (FlowRecheck #1): which connected relay sandboxes may message each other at once, with no hold. Only a Doorman and the one sandbox it serves
+// (that IS the Doorman's job: G asks its front desk). Any other pair of relay sandboxes (another world, a probe) is gated like any message out of a
+// sandbox: held for Angus, or sent under an allow-similar rule he made. (A pair involving someone else's Doorman stays refused, see pairOk.)
+export const openPeer = (me, other) => !!me && !!other && me !== other && ((!!me.doormanFor && me.doormanFor === other.name) || (!!other.doormanFor && other.doormanFor === me.name));

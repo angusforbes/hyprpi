@@ -145,5 +145,11 @@ c = cli("deny", "world-t--c3c3c3", "--reason", "nope"); assert.equal(c.status, 3
 c = cli("return", "world-t--c3c3c3", "--note", "x".repeat(501)); assert.equal(c.status, 4); assert.match(c.stderr, /note refused/);
 c = cli("return", "world-t--c3c3c3"); assert.equal(c.status, 3, "a bare send-back is allowed but still needs Angus (terminal, no agent)");
 c = cli("deny", "world-t--c3c3c3"); assert.equal(c.status, 0, c.stderr); assert.ok(fs.existsSync(path.join(T, "state", "hyprpi", "sbx-relay", "decisions", "world-t--c3c3c3.deny")));
+// J378: only a Doorman and its own sandbox are open peers; any other relay sandbox pair is gated
+const G = { name: "world-g", doormanFor: null }, D = { name: "doorman-g", doormanFor: "world-g" }, P = { name: "sbxprobe", doormanFor: null }, D2 = { name: "doorman-x", doormanFor: "world-x" };
+assert.equal(N.openPeer(G, D), true); assert.equal(N.openPeer(D, G), true, "G and its Doorman talk at once (both ways)");
+assert.equal(N.openPeer(G, P), false); assert.equal(N.openPeer(P, G), false, "another relay sandbox (another world, a probe): gated");
+assert.equal(N.openPeer(G, D2), false); assert.equal(N.openPeer(G, G), false); assert.equal(N.openPeer(null, G), false);
+assert.ok(/s\.conn && pairOk\(s\) && openPeer\(this, s\)\)/.test(src), "the relay's open set is limited by openPeer");
 fs.rmSync(T, { recursive: true, force: true });
 console.log("held-return: all pass");
