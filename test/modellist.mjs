@@ -1,6 +1,9 @@
 // node test/modellist.mjs  (J397: the scoped model list as the only list: matching rules, Kimi refused by the list alone, routing models audited)
 import assert from "node:assert/strict";
-import { allowedBy, notAllowed, auditPolicy, readList } from "../lib/modellist.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { allowedBy, notAllowed, auditPolicy, readList, removeModel, setKnownModels } from "../lib/modellist.mjs";
 import { loadPolicy } from "../lib/policy.mjs";
 const ok = (m) => console.log("ok " + m);
 const L = ["anthropic/*", "openai-codex/*", "nv-inference/**", "nvidia/openai/gpt-oss-20b"];
@@ -11,7 +14,22 @@ assert.equal(allowedBy("nvidia/openai/gpt-oss-20b", L), "nvidia/openai/gpt-oss-2
 assert.equal(allowedBy("claude-opus-5-5", L), "anthropic/*", "a bare id matches through a listed provider");
 assert.equal(allowedBy("openrouter/foo/bar", L), ""); assert.equal(allowedBy("", L), ""); assert.equal(allowedBy("anything/at-all", []), "*", "no list = all models (pi's rule)");
 ok("matching rules: exact, globs (* / **), case, thinking suffix, bare ids, empty list");
+// (J397 review) bare ids resolve to what pi knows; pi's looser patterns; failures close
+setKnownModels(["anthropic/foo", "testprov/kimi-test", "testprov/org/b", "a/dup", "b/dup"]);
+assert.equal(allowedBy("kimi-test", ["anthropic/*"]), "", "a bare id that pi would resolve outside the list is refused");
+assert.equal(allowedBy("foo", ["anthropic/*"]), "anthropic/*"); assert.equal(allowedBy("dup", ["a/*"]), "", "ambiguous: every meaning must be listed"); assert.equal(allowedBy("dup", ["a/*", "b/*"]), "a/*");
+assert.equal(allowedBy("org/b", ["testprov/**"]), "testprov/**", "a nested bare id"); assert.equal(allowedBy("nope", ["anthropic/*"]), "", "unknown bare id: fail closed");
+assert.ok(allowedBy("anthropic/foo", ["foo"]) && allowedBy("anthropic/foo", ["fo*"]) && allowedBy("anthropic/foo", ["*"]) && allowedBy("testprov/kimi-test", ["testprov/[ac]*"]) === "" && allowedBy("anthropic/foo", ["anthropic/[ef]*"]), "pi's bare/fuzzy/class patterns");
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "j397u-")), f = path.join(tmp, "s.json");
+fs.writeFileSync(f, "{ not json"); process.env.PI_CODING_AGENT_DIR = tmp; fs.renameSync(f, path.join(tmp, "settings.json"));
+assert.throws(() => readList(), /doesn't parse/); assert.equal(readList(path.join(tmp, "missing.json")).length, 0, "no file = no list");
+const g = path.join(tmp, "g.json"); fs.writeFileSync(g, JSON.stringify({ enabledModels: ["p/*", "q/keep"] }), { mode: 0o600 });
+process.env.HYPRPI_PI = "/bin/false"; setKnownModels(null); assert.throws(() => removeModel("p/bad", { file: g }), /failed or listed nothing/); assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).enabledModels, ["p/*", "q/keep"], "a failed listing changes nothing");
+setKnownModels(["p/bad", "p/good"]); assert.throws(() => removeModel("q/keep", { file: g, protect: ["keep"] }), /protected/);
+removeModel("p/bad", { file: g }); assert.equal(fs.statSync(g).mode & 0o777, 0o600, "file mode kept"); assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).enabledModels, ["p/good", "q/keep"]);
+ok("bare ids resolve (fail closed), pi's bare/fuzzy/class patterns, an unreadable settings file throws, a failed pi listing and a protected model change nothing, the file mode is kept");
 // Kimi is refused by the list alone, with the real host list
+setKnownModels(null); delete process.env.HYPRPI_PI; delete process.env.PI_CODING_AGENT_DIR;
 const real = readList(); assert.ok(real.length > 0, "the host has a list");
 for (const k of ["nvidia/moonshotai/kimi-k3", "nvidia/moonshotai/kimi-k2.6", "openrouter/~moonshotai/kimi-latest", "openrouter/moonshotai/kimi-k2"]) assert.equal(allowedBy(k, real), "", k + " is not on the host list");
 assert.equal(loadPolicy().modelDeny, undefined, "hyprpi.jsonc has no modelDeny any more");

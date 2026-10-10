@@ -22,6 +22,8 @@ try {
   const c = await connect({ path: sock });
   const a = await refused(() => c.call("orch.spawn", { thoughts: "A", prompt: "x", name: "RoutedA", complexity: "simple" }));
   ok("a routed unlisted model is refused (kind simple -> openrouter/acme/unlisted-1)", /scoped model list/.test(a) && /unlisted-1/.test(a), a.slice(0, 180));
+  const fk = await refused(() => c.call("orch.spawn", { thoughts: "A", prompt: "x", name: "RoutedF", complexity: "simple", fork: true }));
+  ok("a fork whose kind routes to an unlisted model is refused too", /scoped model list/.test(fk), fk.slice(0, 120));
   const b = await refused(() => c.call("orch.spawn", { thoughts: "A", prompt: "x", name: "RoutedB", complexity: "ordinary" }));
   ok("a routed listed model passes (kind ordinary -> anthropic sonnet)", !b, b);
   const audit = await c.call("models.audit", {}); ok("models.audit names the unlisted routing model", audit.notOnList.some((x) => /unlisted-1/.test(x.model)), JSON.stringify(audit.notOnList));

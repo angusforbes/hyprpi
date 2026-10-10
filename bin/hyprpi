@@ -218,6 +218,10 @@ async function cmdNew() {
   const env = childEnv({ HYPRPI_AGENT_ID: id, ...(workspace ? { HYPRPI_WORKSPACE: String(workspace) } : {}), ...(twinOf ? { HYPRPI_TWIN_OF: twinOf } : {}), ...(wantName ? { HYPRPI_NAME: wantName } : {}), ...(wantIcon ? { HYPRPI_ICON: wantIcon } : {}) });
   const piCmd = cfg.pi;
   const piArgv = ["-e", ext, ...(cfg.piArgs || []), ...piArgs];
+  { // J397: the host's scoped model list is the only list: a --model that isn't on it is refused here too
+    const mi = piArgv.indexOf("--model"), wanted = mi >= 0 ? String(piArgv[mi + 1] || "") : "";
+    if (wanted) { const { allowedBy } = await import("../lib/modellist.mjs"); let ok; try { ok = allowedBy(wanted); } catch (e) { die(`the model ${wanted} wasn't used: ${e.message}`); } if (!ok) die(`the model ${wanted} is not on the host's scoped model list (enabledModels in ~/.pi/agent/settings.json), so no agent was opened`); }
+  }
   if (directTerminal) {
     process.stdout.write(`\x1b]2;pi\x07`);
     const child = spawn(piCmd, piArgv, { cwd, env, stdio: "inherit" });
