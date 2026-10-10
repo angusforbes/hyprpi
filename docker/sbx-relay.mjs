@@ -52,7 +52,6 @@ import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman br
 import { newJob as newHostJob } from "./bridge/core.mjs";
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
-import { handToOpener } from "./gateway/opener.mjs"; // J393: the relay hands links to the world's opener and launches nothing
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
 const HOME = os.homedir();
@@ -110,8 +109,6 @@ function clean(s) {
   return String(s ?? "").replace(/[\u2028\u2029]/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "").trim();
 }
 function bytes(s) { return Buffer.byteLength(s); }
-
-const OPEN_SETTLE_MS = Number(process.env.HYPRPI_OPEN_SETTLE_MS) || 5000; // J368: how long a world's Brave must stay up to count as opened
 
 // --- the drop-box folders ------------------------------------------------------------------------------------
 // Review J244 #1: checking a path and then using it again is a race (the sandbox can swap a folder for a
@@ -909,10 +906,7 @@ class Relay {
     const H = path.dirname(fileURLToPath(import.meta.url));
     return {
       served: { name: served.name, cfg: served.cfg }, cfgDir: path.dirname(CONFIG), now: Date.now(),
-      // J393 (Angus "5a"): the relay starts no apps. The link is handed to the world's own link opener through the systemd manager
-      // (docker/gateway/opener.mjs), which reports accepted/refused and whether the world's browser is running afterwards.
-      // Tests set HYPRPI_G_AGENT_OPENER (a stub browser) and HYPRPI_OPEN_VIA (a stub for systemd-run).
-      openUrl: (url) => handToOpener(url, served.name, { systemdRun: process.env.HYPRPI_OPEN_VIA || "systemd-run", settleMs: OPEN_SETTLE_MS, checkBrowser: !process.env.HYPRPI_G_AGENT_OPENER, env: process.env.HYPRPI_G_AGENT_OPENER ? { HYPRPI_G_AGENT_OPENER: process.env.HYPRPI_G_AGENT_OPENER } : {} }),
+      // (J402: no "open" request type any more: agents print links for Angus to Ctrl+click; the relay launches nothing)
       putInbox: (name, buf) => { const dirs = pinDirs(served); createFile(dirs.inbox, name, buf); return path.join(String(served.cfg.inbox || "").replace(/^~(?=\/)/, os.homedir()), name); },
       policyAllow: (host) => {
         const SBXB = process.env.HYPRPI_SBX || "sbx";

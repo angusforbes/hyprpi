@@ -7,16 +7,14 @@
 //   validate(type, params, ctx) → { ok: true, params, show, summary } | { ok: false, error }     (at draft time, in the relay)
 //   run(type, params, ctx)      → Promise<{ ok, outcome, detail? }>                               (after approval, in the relay)
 //
-// ctx (from docker/sbx-relay.mjs): { served: { name, cfg }, cfgDir, now, openUrl(url) → { ok, text }, putInbox(name, buf) → path,
+// ctx (from docker/sbx-relay.mjs): { served: { name, cfg }, cfgDir, now, putInbox(name, buf) → path,
 //   policyAllow(host) → { ok, text }, sharesApply() → { ok, text }, addProject(project, mode) → { ok, text } }
 // Every text a sandbox gave (why, note) is shown to Angus as the sandbox's words; nothing here runs a model.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { cleanSource } from "../research/research.mjs";
 
 const HOME = os.homedir();
 const tilde = (p) => String(p || "").replace(/^~(?=\/|$)/, HOME);
@@ -24,20 +22,21 @@ const one = (s, n) => String(s ?? "").replace(/[\u0000-\u001f\u007f-\u009f]|\p{C
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return d; } };
 
 export const TYPES = {
-  open_for_owner: "open a link or file for Angus",
   note_to_owner: "a note for Angus",
   share_project: "share a project",
   send_file: "send a host file into the inbox",
   allow_host: "allow a web host",
 };
-export const LIMITS = { whyBytes: 1500, noteBytes: 1500, openFileBytes: 20 << 20, sendFileBytes: 10 << 20, perHour: { open_for_owner: 6, note_to_owner: 10, share_project: 3, send_file: 6, allow_host: 3 } };
-export const OPEN_EXT = new Set([".html", ".htm", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".txt", ".md"]);
+export const LIMITS = { whyBytes: 1500, noteBytes: 1500, openFileBytes: 20 << 20, sendFileBytes: 10 << 20, perHour: { note_to_owner: 10, share_project: 3, send_file: 6, allow_host: 3 } };
 export const SEND_EXT = new Set([".txt", ".md", ".csv", ".json", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".html", ".htm", ".xml", ".yaml", ".yml", ".tex", ".bib", ".log"]);
 // names that look like secrets are never sent, whatever folder they are in
 const SECRET_RE = /(^|[._-])(id_(rsa|ed25519|ecdsa|dsa)|secret|secrets|token|tokens|credential|credentials|passwd|password|private|apikey|api[_-]?key|\.env|netrc|npmrc|pypirc|htpasswd|keystore|keychain|wallet)([._-]|$)|\.(pem|key|p12|pfx|kdbx|gpg|asc|ovpn)$/i;
 
 // The unsupported answer (relay and Doorman prompt say the same).
-export const UNSUPPORTED = "That isn't something this host can do: it has no agent to carry it out, only these request types: open a link or file for Angus, a note for Angus, share a project, send a host file into the inbox, allow a web host, change the research task, or a GPU lease. If one of those fits, the Doorman can draft it; otherwise send Angus a note.";
+export const UNSUPPORTED = "That isn't something this host can do: it has no agent to carry it out, only these request types: a note for Angus, share a project, send a host file into the inbox, allow a web host, change the research task, or a GPU lease. To show Angus a page or file, print its full link (https://… or file:///…) in your own window; he opens it with Ctrl+click. If none of those fits, send Angus a note.";
+// J402 (Angus "18 a"): opening something for Angus is no longer a request: the agent prints the full link in its window, and
+// Angus's Ctrl+click opens it in the world's own browser (J320/J359).
+export const PRINT_LINK = "Opening a link or file isn't a request any more: print the full link (https://… or file:///… with the absolute path) in your own window, and Angus opens it with Ctrl+click in this world's own browser.";
 
 // Per-Doorman hourly counts (in memory: a relay restart resets them; the relay's circuit breaker also applies).
 const counts = new Map();
@@ -81,28 +80,6 @@ function projectRoots(cfgDir) { return (readJson(path.join(cfgDir, "config.json"
 function roleRoots(cfgDir) { const r = readJson(path.join(cfgDir, "config.json"), {}).roleFolders || {}; return Object.values(r).filter((x) => typeof x === "string").map((x) => path.resolve(tilde(x))); }
 
 const V = {
-  // 1. open a link or file for Angus: an https link (cleaned like research sources), or a file:// / absolute path to a file of an
-  //    allowed type inside a project folder. The handler opens it in the sandbox world's OWN Brave profile (no logins, no focus)
-  //    through docker/world/g_open_url.py --agent, which checks again that the file is shared with the sandbox and opens a snapshot.
-  open_for_owner(p, ctx) {
-    const what = String(p.what ?? "").trim();
-    if (!what || what.length > 2048) return { error: "what: a link or a file path" };
-    if (/^https?:\/\//i.test(what)) {
-      const url = cleanSource(what);
-      if (!url) return { error: "not a plain https link (plain host, ordinary path; no IP, port or login)" };
-      return { params: { what: url, kind: "link" }, show: `Open in ${ctx.served.name}'s own Brave window: ${url}${url !== what ? ` (cleaned from the link given: its query or fragment was dropped)` : ""}` };
-    }
-    let fp = what.startsWith("file://") ? (() => { try { return decodeURIComponent(new URL(what).pathname); } catch { return ""; } })() : what;
-    const pp = plainPath(fp);
-    if (pp.error) return { error: `file: ${pp.error}` };
-    if (!pp.stat.isFile()) return { error: "file: not a regular file" };
-    const ext = path.extname(pp.path).toLowerCase();
-    if (!OPEN_EXT.has(ext)) return { error: `file: ${ext || "no extension"} isn't a type that is opened (${[...OPEN_EXT].join(" ")})` };
-    if (pp.stat.size > LIMITS.openFileBytes) return { error: "file: over 20 MB" };
-    if (!projectRoots(ctx.cfgDir).some((r) => under(pp.path, r))) return { error: "file: not inside a project folder" };
-    const html = ext === ".html" || ext === ".htm" || ext === ".svg"; // (red team J379 #5: SVG can carry scripts too)
-    return { params: { what: pp.path, kind: "file" }, show: `Open in ${ctx.served.name}'s own Brave window: ${pp.path} (${Math.ceil(pp.stat.size / 1024)} KB${html ? "; a page the sandbox can write: its scripts run in that browser profile, which has none of your logins" : ""}; it opens only if the file is shared with the sandbox, which the link gate checks again)` }; // (review J368 LOW: the draft check is project folders; the run-time gate checks the actual shares)
-  },
   // 2. a note for Angus: shown, nothing runs.
   note_to_owner(p) {
     const text = String(p.text ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "").trim();
@@ -167,6 +144,7 @@ const V = {
 };
 
 export function validate(type, params, ctx) {
+  if (type === "open_for_owner") return { ok: false, error: PRINT_LINK }; // J402
   if (!Object.hasOwn(TYPES, type)) return { ok: false, error: `unknown request type (${Object.keys(TYPES).join(", ")})` };
   const p = params && typeof params === "object" && !Array.isArray(params) ? params : {};
   const why0 = one(p.why, 4000); if (Buffer.byteLength(why0) > LIMITS.whyBytes) return { ok: false, error: `why: at most ${LIMITS.whyBytes} bytes` }; const why = why0; // (review J368 #8: bytes, not characters)
@@ -180,10 +158,6 @@ export function validate(type, params, ctx) {
 export async function run(type, p, ctx) {
   try {
     switch (type) {
-      case "open_for_owner": {
-        const r = await ctx.openUrl(p.kind === "file" ? pathToFileURL(p.what).href : p.what); // (review J368 #3: # and ? in a file name are escaped)
-        return r.ok ? { ok: true, outcome: `handed ${p.what} to ${ctx.served.name}'s own Brave window${r.text ? ` (${one(r.text, 120)})` : ""}` } : { ok: false, outcome: `not opened: ${one(r.text, 300)}` };
-      }
       case "note_to_owner": return { ok: true, outcome: "Angus has read the note" };
       case "share_project": {
         // (re-review J368 #4, red team J379 #2) the approved folder or nothing: the same single path and the same inode as reviewed

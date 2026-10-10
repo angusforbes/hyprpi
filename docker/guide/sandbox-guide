@@ -164,6 +164,7 @@ def overview():
                 lines.append(f"Research task: {t.group(1)[:300]} (research outside it waits for Angus).")
         except OSError:
             pass
+    lines.append("To show Angus a page or file: print its full link (https://… or file:///absolute/path) in your window; he Ctrl+clicks it (J402: there is no request for opening things).")
     lines.append("Ask: sandbox-guide why PATH | URL | COMMAND")
     return "\n".join(lines)
 

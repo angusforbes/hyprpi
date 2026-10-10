@@ -6,7 +6,7 @@ set -u
 H="$(cd "$(dirname "$0")/../.." && pwd)"; R="$(mktemp -d)"; S="$(cd "$(dirname "$0")" && pwd)"
 rm -rf $R/x; mkdir -p $R/x/{state,run,cfg/hyprpi/worlds,xstate,ws,dws,inbox,dinbox,card,Work/proj}
 export PATH="$S/e2e-docker-stub:$PATH" E2E_DIR=$R/x HYPRPI_TEST=1 HYPRLAND_INSTANCE_SIGNATURE=bogus-j368 HYPRPI_STATE=$R/x/state HYPRPI_SOCKET=$R/x/s.sock XDG_RUNTIME_DIR=$R/x/run
-export XDG_CONFIG_HOME=$R/x/cfg XDG_STATE_HOME=$R/x/xstate DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent HYPRPI_NO_ENSURE=1 HYPRPI_G_AGENT_OPENER=$S/e2e-opener.sh HYPRPI_SBX=$S/e2e-sbx-stub.sh HYPRPI_OPEN_VIA=$S/e2e-systemd-run.sh
+export XDG_CONFIG_HOME=$R/x/cfg XDG_STATE_HOME=$R/x/xstate DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent HYPRPI_NO_ENSURE=1 HYPRPI_G_AGENT_OPENER=$S/e2e-opener.sh HYPRPI_SBX=$S/e2e-sbx-stub.sh
 HA=${HOSTAGENTS:-true}
 cat > $R/x/cfg/hyprpi/sbx-relay.json <<J
 { "sandboxes": [ { "name": "world-t", "agent_id": "sbx-world-t", "host_agents": ${SERVED_HOSTAGENTS:-true}, "workspace": "$R/x/ws", "inbox": "$R/x/inbox", "workspace_num": 99 },
