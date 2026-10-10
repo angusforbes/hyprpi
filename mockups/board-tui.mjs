@@ -32,7 +32,7 @@ import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 let worldBar = null;
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
-import { createBoardView, boardCompletions } from "../lib/tui/board-view.mjs";
+import { createBoardView, boardCompletions, REF_RE, refPid } from "../lib/tui/board-view.mjs";
 import { createDecisionsView } from "../lib/tui/decisions-view.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
@@ -137,7 +137,50 @@ function wordAt(x, y) {
   while (b < cs.length - 1 && !/\s/.test(cs[b + 1][1])) b++;
   return { a: cs[a][0], b: cs[b][0] + gw(cs[b][1]) - 1, word: cs.slice(a, b + 1).map(([, g]) => g).join("") };
 }
+// J419 (Angus: "if i ctrl+click on the @project tag … whterhe its folded or not it shoudl go to its full view. I
+// should be able to clck on job numebrs etc and jump to where thery are defined"): the reference under (x, y):
+// a job id, an @project or an item handle (lib/tui/board-view.mjs REF_RE), or null.
+function refAt(x, y) {
+  const w = wordAt(x, y); if (!w) return null;
+  const cs = cellsOf(screen[y - 1] || "").filter(([c]) => c >= w.a && c <= w.b);
+  let pos = 0; const colAt = []; // the column of each UTF-16 unit of the word
+  for (const [c, g] of cs) { for (let k = 0; k < g.length; k++) colAt[pos + k] = c; pos += g.length; }
+  for (const m of w.word.matchAll(new RegExp(REF_RE.source, "g"))) {
+    const i = m.index + m[1].length, j = i + m[2].length - 1;
+    if (colAt[i] != null && x >= colAt[i] && x <= colAt[j]) return m[2];
+  }
+  return null;
+}
+// Jump to a reference: @project → its full view (folded or not); J417 → the item where the job is defined, on
+// whichever card and world (archived shown; daemon board.open job); N14 / D2 → that item on the same card.
+// true = handled (a ✗ note counts); false = not a reference here (the click does what it did before).
+function jumpRef(t, y) {
+  const bh = boardHere();
+  if (t[0] === "@") {
+    const p = (bh?.projects || []).find((x) => x.name === t.slice(1)); if (!p) return false;
+    if (p.status === "archived") { note = `@${p.name} is archived (/unarchive @${p.name})`; render(); return true; }
+    mode = "cards"; openCard(p.id); note = `→ @${p.name}`; render(); return true;
+  }
+  if (t[0] === "J") {
+    if (!api) return false;
+    api.call("board.open", { job: t }).then((r) => {
+      mode = "cards";
+      if (r.room === room) { openCard(r.project, r.item); note = `→ ${t}: @${r.name}${r.item ? " " + r.item : ""}`; }
+      else {
+        const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
+        if (!isolatedReason(process.env)) try { spawn(new URL("./panel-here", import.meta.url).pathname, ["board", r.room], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); } catch { /* none */ }
+        note = `→ ${t}: @${r.name}${r.item ? " " + r.item : ""} in projects ${r.room}`;
+      }
+      render();
+    }, (e) => { note = `✗ ${t}: ${e.message}`; render(); });
+    return true;
+  }
+  const pid = refPid(items[rowMeta[y]?.msg]?.key), p = pid && (bh?.projects || []).find((x) => x.id === pid);
+  if (!p?.items?.some((it) => it.h === t)) return false; // only a handle that exists on this row's card
+  mode = "cards"; openCard(p.id, t); note = `→ @${p.name} ${t}`; render(); return true;
+}
 function ctrlClick(x, y) { // a link opens; an agent's name ("Sankey[e]" too) → its window (lib/tui/agent-click.mjs)
+  const ref = refAt(x, y); if (ref && jumpRef(ref, y)) return; // J419: @project / J417 / N14 first
   const w = wordAt(x, y); if (!w) return;
   const url = urlIn(w.word);
   if (url && isolatedReason(process.env)) { note = "link not opened (isolated hyprpi)"; return render(); } // J333
@@ -406,6 +449,9 @@ function mouse(d) {
     if (b === 16) { if (press) ctrlClick(x, y); continue; }            // Ctrl+click: @agent / link
     if (b === 4 && press) { const r = rowMeta[y]; if (r?.msg != null && items[r.msg]) copy(items[r.msg].copy); continue; } // Shift+click: the whole item
     if (b === 0 && press) {
+      // J419: a plain click on an underlined reference in the text jumps too (as links do in Thoughts); a card's
+      // header row (its @name is the fold / highlight target) keeps its click, Ctrl+click opens it.
+      { const ref = !rowMeta[y]?.fold && refAt(x, y); if (ref && jumpRef(ref, y)) { sel = null; continue; } }
       if (mode === "decisions") dv.pick(rowMeta[y], items);              // that decision becomes the current one
       else if (bv.click(rowMeta[y], x)) { sel = null; continue; }      // a card's −/+ marker
       else bv.pick(rowMeta[y], items);                                  // the highlight goes there
