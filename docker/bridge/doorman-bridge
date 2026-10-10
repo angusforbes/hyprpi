@@ -12,6 +12,7 @@
 //   doorman-bridge settings SANDBOX                   the settings in effect (read-only)
 //   doorman-bridge propose SANDBOX key=value...       propose a settings change; it waits for the owner's approval
 //   doorman-bridge mcp                                the MCP server (stdio)
+//   doorman-bridge run-job ID | dispatch | runner --install|--uninstall|--status    the per-job runner (runner.mjs, J387)
 // Options: --json (machine output), --token T (else the claim's token from ~/.cache/doorman-bridge).
 // The bridge can't approve, deny or edit anything, create jobs or change settings: the owner decides in the Doorman
 // window; the relay applies. Exit 0 = ok, 1 = refused, 2 = usage.
@@ -31,6 +32,9 @@ const out = (r) => { if (opts.json) console.log(JSON.stringify(r, null, 1)); els
 const usage = () => { console.error("usage: doorman-bridge list|show|claim|renew|ask|report|release|settings|propose|mcp … (see the top of this file)"); process.exit(2); };
 
 if (cmd === "mcp") { await import("./mcp.mjs"); }
+else if (cmd === "run-job") { if (!id) usage(); const { runJob } = await import("./runner.mjs"); out(await runJob(id)); }
+else if (cmd === "dispatch") { const { dispatch } = await import("./runner.mjs"); out({ ok: true, text: JSON.stringify(dispatch()) }); }
+else if (cmd === "runner") { const { runnerUnits } = await import("./runner.mjs"); console.log(runnerUnits(id || "")); }
 else if (cmd === "list") {
   const jobs = list({ all: !!opts.all });
   if (opts.json) out(jobs);

@@ -55,6 +55,30 @@ with `bridge-mcp.json`:
 
 Give the agent only the tools and folders the job names (`show` lists them). For anything that writes, a throwaway sandbox or a separate user is stronger than tool flags.
 
+## The per-job runner (a fresh Claude Code run for each job)
+
+Instead of a long-running agent, the bridge can start one fresh, narrowly scoped run per approved job:
+
+- `doorman-bridge runner --install` installs a systemd path unit that watches the job records. Whenever one changes, `doorman-bridge dispatch` starts `doorman-bridge run-job ID` for each waiting job, each in its own transient unit. Nothing runs between jobs, and two jobs get two runs. `--uninstall` and `--status` do the rest. It's off unless installed, and it only finds jobs once a Doorman has `host_agents: "bridge"`.
+- `run-job` claims the job and starts the agent with only what the job allows. In a live test, the command was:
+
+```
+claude -p --output-format text --no-session-persistence --restricted --strict-mcp-config --mcp-config <temp>/mcp.json --tools Write --allowedTools mcp__doorman-bridge__list_jobs,mcp__doorman-bridge__show_job,mcp__doorman-bridge__renew_job,mcp__doorman-bridge__ask_owner,mcp__doorman-bridge__report_job,Write --permission-mode dontAsk --add-dir <the job's folder>
+```
+
+  - The bridge MCP is its only MCP server.
+  - `--tools` holds exactly the job's built-in tools; it's empty if the job names none.
+  - `--add-dir` holds exactly the job's folders.
+  - No session is kept, and `--restricted` ignores the owner's own Claude settings and hooks.
+  - The agent can't claim, release or touch settings.
+  - The prompt arrives on stdin. It's the owner's approved text, marked as the task, plus any questions already answered.
+- A question: the agent calls `ask_owner` and stops. The runner gives the claim back, so the job waits for the owner ("asked"). His answer puts the job back to waiting, and the path unit starts a new run, which sees the question and the answer.
+- Failures:
+  - A run that ends without a report is reported failed, with its last output.
+  - A run that reaches 15 s before the job's time limit is stopped and reported failed.
+  - If the runner itself dies, its unit ends and systemd stops the agent. The claim lapses, and the relay records the job as abandoned, or as no_report once the time limit is used up.
+- Another agent: `DOORMAN_RUNNER_CMD` (a JSON argv prefix, default `["claude"]`) and `DOORMAN_RUNNER_MODEL`. The runner logs each run (the exact command, its exit and the job's state) to `STATE/bridge/runner.jsonl`.
+
 ## From anything else
 
 Any harness that runs shell commands can use the CLI: `doorman-bridge list --json`, `claim`, `show`, `report`. Codex and other MCP clients use `doorman-bridge mcp` as a stdio server.
