@@ -26,7 +26,7 @@ export default function createReview(name) {
   const own = names(name); let infoCache = { t: 0, v: "" };
   const first = () => heldForSandboxes(own)[0] || null;
   return {
-    current() { const h = first(); return h ? { id: h.id, text: h.text, choices: h.choices, reason: h.reason === true, answer: h.answer === true } : null; },
+    current() { const h = first(); return h ? { id: h.id, text: h.text, title: h.title, choices: h.choices, reason: h.reason === true, answer: h.answer === true } : null; },
     edit(id) { const h = first(); if (!h || h.id !== id || !h.editable) return null; return { text: h.editText, hint: h.editHint }; },
     decide(id, k, edited, note) { // J370: note = Angus's note for r (send it back) or his reason for 2 (deny)
       const h = first();

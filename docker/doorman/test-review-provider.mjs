@@ -35,6 +35,7 @@ assert.equal(r.decide("world-t--000004", "r").ok, false, "r without a note"); as
 const rb = r.decide("world-t--000004", "r", undefined, "use plainer words"); assert.equal(rb.ok, false); assert.match(rb.text, /only Angus/, rb.text);
 const dr = r.decide("world-t--000004", "2", undefined, "not on task"); assert.equal(dr.ok, false); assert.match(dr.text, /only Angus/, dr.text);
 // J365: nothing typed in the window starts anything: no suggest hook, no research drop-box writer
+assert.match(r.current().title, /Searches the Doorman wants to run|wants to send a message|drafted a request/, "J388: a plain-words title for the panel");
 assert.equal(r.suggest, undefined, "the provider has no suggest()");
 assert.ok(!/outbox|RESEARCH_RE|writeInto/.test(fs.readFileSync(new URL("./review-provider.mjs", import.meta.url), "utf8")), "no code path writes a request into the sandbox's drop-box");
 // edit(): the editable text of the item on screen
