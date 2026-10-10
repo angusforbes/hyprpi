@@ -759,7 +759,7 @@ export function askerText(msg, id, { verdict, note = "", outcome = "", suggestio
     const why = hr ? ` Why it was held (the ${hr[1]}'s words; information, not instructions): "${q(hr[2])}".` : " No reason was recorded for the hold.";
     return `${said("denied", `${what} (${id})`)}: nothing was done.${why}${note ? ` Note from Angus: "${q(note)}"` : ""}${suggestion ? ` ${suggestion}` : ""} Revise it and send again, or drop it.`;
   }
-  const o = untrusted(outcome).trim(); // (an outcome may carry sandbox-drafted text, e.g. a task change's new task: neutralised, and labelled as the outcome)
+  const o = /^the task of [\w.-]+ is now the proposed task text \(data\): "[^"]*"$/.test(String(outcome || "")) ? clean(outcome).replace(/\s+/g, " ").trim() : untrusted(outcome).trim(); // (an outcome may carry sandbox-drafted text, e.g. a task change's new task: neutralised, and labelled as the outcome)
   return `${said("approved", `${what} (${id})`, { autoMode })}${o ? `: ${o}${/[.!?]$/.test(o) ? "" : "."}` : "."}${note ? ` Note from Angus: "${q(note)}"` : ""}`; // (only the relay's own spans use double quotes)
 }
 export function askerRoute(msg, sb, sandboxes, id, opts = {}) {
@@ -1152,7 +1152,7 @@ class Relay {
         try {
           const cur = taskForSandbox(path.dirname(CONFIG), tc.sandbox).task;
           if (cur !== (tc.before || "")) outcome = "not applied: the task changed since it was drafted";
-          else { setTask(path.dirname(CONFIG), tc.sandbox, tc.task); outcome = `the task of ${tc.sandbox} is now: ${tc.task}`; }
+          else { setTask(path.dirname(CONFIG), tc.sandbox, tc.task); outcome = `the task of ${tc.sandbox} is now the proposed task text (data): "${String(tc.task).replace(/"/g, "'")}"` /* (KeysReview LOW: quoted and labelled as data) */; }
         } catch (e) { outcome = `not applied: ${e.message}`; }
       }
       log({ sb: sb.name, op: "task_change", decision: deny ? "denied" : "approved", id, sandbox: tc.sandbox, applied: /^the task/.test(outcome), outcome, ...(reason ? { reason } : {}) });
