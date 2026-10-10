@@ -68,6 +68,8 @@ export function gather(world, sys = realSys, P = paths()) {
   for (const [k, u] of [["helper", `hyprpi-${S}-helper`], ["shares", `hyprpi-${S}-shares`]]) { const a = sys.active(u); if (a === "active") add(k, "ok", `${u} running`); else add(k, "off", `${u} not running (only needed for a world with its own windows/shares)`); }
   // mode
   add("mode", mode.note ? "warn" : "ok", `${mode.mode}${mode.note ? ` (${mode.note})` : ""}`);
+  // the host's levels (J380 v3)
+  try { const c = configRows(S, P); add("levels", c.levelsError ? "fail" : c.violations.length ? "warn" : "ok", c.levelsError ? c.levelsError : c.violations.length ? `outside the host's levels: ${c.violations.join("; ")}` : "every setting is inside the host's levels", c.violations.length || c.levelsError ? `doorman config ${S}` : ""); } catch (e) { add("levels", "warn", `can't read the settings: ${e.message}`, "fix the worlds files, then doorman config"); }
   // host agents + runner
   const bridge = dm && dm.host_agents === "bridge";
   if (!bridge) add("host agents", "off", dm && dm.host_agents === false ? "off (agent-free, fixed request types only)" : "off (not configured: host_agents)", "");
@@ -104,7 +106,7 @@ export function renderStatus(g) {
 export function doctor(world, sys = realSys, P = paths()) {
   const g = gather(world, sys, P); if (g.error) return { error: g.error, issues: [] };
   const issues = [], add = (what, why, fix) => issues.push({ what, why, fix });
-  for (const p of g.pieces) if (p.state === "fail") add(p.name, p.text, p.fix || "");
+  for (const p of g.pieces) if (p.state === "fail" || (p.name === "levels" && p.state === "warn")) add(p.name, p.text, p.fix || "");
   const R = resolveWorld(world, P), { sb, dm } = R;
   // units that point at paths that no longer exist, or at a moved project
   let files = []; try { files = fs.readdirSync(P.units).filter((f) => /^(hyprpi-(research|sbx|doorman|world|sandbox)|doorman-)/.test(f) && /\.(service|path|timer)$/.test(f)); } catch { /* none */ }
@@ -155,4 +157,69 @@ export function apply(p, sys = realSys, out = console.log) {
     const r = sys.run(s.cmd[0], s.cmd.slice(1), s.env || {});
     out(`  ${r.status === 0 ? "done" : "FAILED"}: ${s.what}${r.status === 0 ? "" : ` (${String(r.stderr || r.stdout || "").trim().split("\n").pop().slice(0, 140)})`}`);
   }
+}
+
+// ---- config: the one place to see and change a world's gateway settings (J380 v3) --------------------------------------------------
+// Reads and writes the existing "gateway" block of worlds/<world>.json (via gateway-admin.mjs: validation, atomic write, the owner-terminal rule)
+// and the host's levels file (gateway-levels.json: which modes and options a world may use at all).
+import { currentValues, adminSet, KEYS } from "../research/gateway-admin.mjs";
+import { loadLevels, writeLevels, checkValue, violations, describeLevels, levelsFile } from "../research/levels.mjs";
+import { SEARCH_PROVIDERS } from "../research/gateway.mjs";
+import { ownerTtyProblem } from "../agent-guard.mjs";
+
+const RANGE = (k, lv) => k === "mode" ? lv.modes.join(" | ") : k === "level" ? `strict..${lv.max_share_level}` : k === "phone_decisions" ? (lv.phone_decisions ? "true | false" : "false only (the host doesn't allow it)") : k === "runner.harness" ? (lv.runner_harnesses.join(" | ") || "none") : k === "search.provider" ? Object.keys(SEARCH_PROVIDERS).join(" | ") : /model$/.test(k) ? "a model id" : k === "search.key_file" ? "a path (owner only)" : "";
+export function configRows(world, P = paths()) {
+  const R = resolveWorld(world, P); if (R.error) return { error: R.error, rows: [] };
+  const { sb, dm } = R, { levels, error } = loadLevels(P.cfg);
+  let cur; try { cur = currentValues(P.cfg, sb.name, Object.keys(KEYS)); } catch (e) { return { error: e.message, rows: [] }; }
+  const rows = Object.keys(KEYS).map((k) => ({ key: k, value: cur[k], range: RANGE(k, levels), where: "worlds/<world>.json gateway block", settable: true }));
+  const ro = [["host_agents", dm?.host_agents === undefined ? "(not set: agent-free)" : String(dm.host_agents), "false | bridge", "sbx-relay.json, the Doorman's entry"], ["window", dm?.visibility || "(strict)", "strict | safe | observer | developer", "sbx-relay.json, the Doorman's entry"], ["bridge defaults", dm?.bridge ? JSON.stringify(dm.bridge).slice(0, 80) : "(none)", "tools, folders, time_limit_s", "sbx-relay.json, the Doorman's entry"], ["doorman model", dm?.model || "(default)", "a model id", "sbx-relay.json, the Doorman's entry"]];
+  for (const [key, value, range, where] of ro) rows.push({ key, value, range, where, settable: false });
+  const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, "runner.harness": cur["runner.harness"] && !/default/.test(cur["runner.harness"]) ? cur["runner.harness"] : "" });
+  return { world: sb.name, rows, levels, levelsError: error, violations: viol, levelsFile: levelsFile(P.cfg) };
+}
+export function renderConfig(c) {
+  if (c.error) return c.error;
+  const w = Math.max(...c.rows.map((r) => r.key.length)), v = Math.max(...c.rows.map((r) => String(r.value).length), 8);
+  return [`Settings for ${c.world} (change with: doorman config set ${c.world} KEY VALUE, from your own terminal)`, "",
+    ...c.rows.map((r) => `  ${r.key.padEnd(w)}  ${String(r.value).padEnd(Math.min(v, 44))}  ${r.range}${r.settable ? "" : `   [${r.where}]`}`), "",
+    `The host's levels (${c.levelsFile}${c.levelsError ? ": BROKEN, strictest used" : ""}):`, ...describeLevels(c.levels).map((l) => "  " + l),
+    ...(c.violations.length ? ["", "OUTSIDE the levels (clamped or refused):", ...c.violations.map((x) => "  " + x)] : [])].join("\n");
+}
+const kvOf = (args) => { const kv = []; for (let i = 0; i < args.length; i++) { if (args[i].includes("=")) kv.push(args[i]); else if (i + 1 < args.length) { kv.push(`${args[i]}=${args[i + 1]}`); i++; } else return null; } return kv; };
+// `doorman config ...` -> { text, code }
+export function configCommand(args, P = paths(), opts = {}) {
+  const sub = ["get", "set", "edit", "levels"].includes(args[0]) ? args[0] : "", rest = sub ? args.slice(1) : args, guard = opts.guard || ownerTtyProblem;
+  if (sub === "levels") {
+    const [op = "show", ...kv] = rest;
+    if (op === "show") { const { levels, error } = loadLevels(P.cfg); return { code: error ? 1 : 0, text: [`Host levels (${levelsFile(P.cfg)}):`, ...describeLevels(levels).map((l) => "  " + l), ...(error ? ["", error] : [])].join("\n") }; }
+    if (op !== "set") return { code: 2, text: "usage: doorman config levels [show | set KEY VALUE ...]  (keys: modes, max_share_level, phone_decisions, runner_harnesses; lists with commas)" };
+    const why = guard(); if (why) return { code: 3, text: `only the owner can change the host's levels, from a real terminal (${why})` };
+    const pairs = kvOf(kv); if (!pairs) return { code: 2, text: "expected KEY VALUE pairs" };
+    const patch = {}; for (const p of pairs) { const i = p.indexOf("="), k = p.slice(0, i), v = p.slice(i + 1); patch[k] = k === "modes" || k === "runner_harnesses" ? v.split(",").map((x) => x.trim()).filter(Boolean) : k === "phone_decisions" ? v === "on" || v === "true" : v; }
+    try { const l = writeLevels(P.cfg, patch); return { code: 0, text: ["Host levels now:", ...describeLevels(l).map((x) => "  " + x), "", "Worlds already outside the new levels are clamped (the mode) and listed by doorman status and doctor."].join("\n") }; } catch (e) { return { code: 2, text: e.message }; }
+  }
+  const world = rest.length && !rest[0].includes("=") && (resolveWorld(rest[0], P).sb || sub === "" || rest.length % 2 === 1 && sub !== "get") ? ((resolveWorld(rest[0], P).sb) ? rest[0] : "") : "";
+  const tail = world ? rest.slice(1) : rest, R = resolveWorld(world, P); if (R.error) return { code: 2, text: R.error };
+  if (!sub) return { code: 0, text: renderConfig(configRows(R.sb.name, P)) };
+  if (sub === "get") { const c = configRows(R.sb.name, P); if (c.error) return { code: 2, text: c.error }; const r = c.rows.find((x) => x.key === tail[0]); return r ? { code: 0, text: String(r.value) } : { code: 2, text: `unknown setting ${JSON.stringify(tail[0] || "").slice(0, 40)}; see doorman config ${R.sb.name}` }; }
+  if (sub === "set") {
+    const kv = kvOf(tail); if (!kv || !kv.length) return { code: 2, text: `usage: doorman config set [WORLD] KEY VALUE [KEY VALUE ...]` };
+    const r = adminSet(P.cfg, R.sb.name, kv, { guard }); return { code: r.ok ? 0 : r.code || 1, text: r.text };
+  }
+  if (sub === "edit") {
+    const why = guard(); if (why) return { code: 3, text: `only the owner can edit settings, from a real terminal (${why})` };
+    const hits = worldsFor(P.cfg, R.sb.name); if (hits.length !== 1) return { code: 2, text: hits.length ? `${hits.length} worlds files name ${R.sb.name}: fix that first` : `no worlds file names ${R.sb.name}` };
+    const f = path.join(P.cfg, "worlds", hits[0].f), before = fs.readFileSync(f, "utf8"), had = new Set(configRows(R.sb.name, P).violations || []);
+    const ed = (process.env.VISUAL || process.env.EDITOR || "nano").split(/\s+/); const r = (opts.run || spawnSync)(ed[0], [...ed.slice(1), f], { stdio: "inherit" });
+    const after = fs.readFileSync(f, "utf8"); if (after === before) return { code: 0, text: "no change" };
+    try { JSON.parse(after); const c = configRows(R.sb.name, P); if (c.error) throw new Error(c.error); const fresh = c.violations.filter((x) => !had.has(x)); if (fresh.length) throw new Error("outside the host's levels: " + fresh.join("; ")); /* what was already outside before the edit doesn't block an unrelated change */ } catch (e) { fs.writeFileSync(f, before); return { code: 2, text: `not kept: ${e.message}. The file is back as it was.` }; }
+    return { code: 0, text: `saved ${f}` };
+  }
+}
+import { worldsFor } from "../research/mode.mjs";
+// the line for bringing your own host agent (Claude Code, Codex): the bridge's MCP server for this install
+export function hostAgentConfig(P = paths()) {
+  const cli = path.join(H, "docker/bridge/doorman-bridge"), state = path.join(P.relayState);
+  return [`Claude Code:  claude mcp add doorman-bridge -e DOORMAN_BRIDGE_AGENT=claude-code -- ${cli} mcp`, "Codex (~/.codex/config.toml):", "[mcp_servers.doorman-bridge]", `command = "${cli}"`, 'args = ["mcp"]', `env = { DOORMAN_BRIDGE_AGENT = "codex" }`, "", `(The server finds the gateway's state at ${state}; set DOORMAN_STATE to point it elsewhere.) It lists the jobs you approved and lets the agent claim, ask you, and report; it can't approve anything.`].join("\n");
 }

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { loadLevels, clampMode } from "./levels.mjs";
 // J412 (Angus, simplification-spec v3): ONE dial per sandbox, in ~/.config/hyprpi/worlds/<name>.json
 //   "gateway": { "mode": "strict" | "safe" | "open" | "yolo" }
 // It replaces the old Doorman mode (doorman-strict/safe/open), the window visibility and the share level.
@@ -98,10 +99,15 @@ export function worldsFor(cfgDir, sandbox) {
 // J434: phone decisions on for this sandbox? Only when exactly one worlds file names it and its gateway block says phone_decisions true (fail closed).
 export function phoneDecisionsFor(cfgDir, sandbox) {
   const hits = worldsFor(cfgDir, sandbox); if (hits.length !== 1) return false;
+  if (!loadLevels(cfgDir).levels.phone_decisions) return false; // J380 v3: the host's levels file may forbid it (fail closed on a broken file)
   const v = hits[0].w?.gateway?.phone_decisions; return v === true || v === "true";
 }
 function relayFor(cfgDir) { try { return JSON.parse(fs.readFileSync(process.env.HYPRPI_RELAY_CONF || path.join(cfgDir, "sbx-relay.json"), "utf8")).sandboxes || []; } catch { return []; } }
 export function modeForSandbox(cfgDir, sandbox) {
+  const r = modeForSandboxRaw(cfgDir, sandbox), { levels } = loadLevels(cfgDir), c = clampMode(levels, r.mode); // J380 v3: never wider than the host's levels file
+  return c.note ? { ...r, mode: c.mode, note: [r.note, c.note].filter(Boolean).join("; ") } : r;
+}
+function modeForSandboxRaw(cfgDir, sandbox) {
   const hits = worldsFor(cfgDir, sandbox);
   if (hits.length > 1) return { mode: "strict", note: `ambiguous: ${hits.map((h) => h.f).join(", ")} all name ${sandbox}; using strict until only one does`, file: "" };
   if (!hits.length) return { mode: DEFAULT_MODE, note: "", file: "" };

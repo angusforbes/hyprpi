@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // doorman: one command for the whole gateway of a world. See docker/doorman/ctl.mjs and docker/README.md.
-import { gather, renderStatus, doctor, renderDoctor, plan, apply } from "./ctl.mjs";
+import { gather, renderStatus, doctor, renderDoctor, plan, apply, configCommand, hostAgentConfig } from "./ctl.mjs";
 const [cmd, ...rest] = process.argv.slice(2), json = rest.includes("--json"), world = rest.filter((a) => !a.startsWith("--"))[0] || "";
-const USAGE = "usage: doorman status|doctor|install|start|stop [WORLD] [--json]\n  status   one summary of every piece (relay, Doorman, window, runner, host agents, digests, held items, errors)\n  doctor   find broken pieces and say how to fix each\n  install  set up the units and timers (safe to repeat)   start / stop  the relay and the Doorman";
+const USAGE = "usage: doorman status|doctor|install|start|stop|config|host-agent-config [WORLD] [--json]\n  status   one summary of every piece (relay, Doorman, window, runner, host agents, digests, held items, errors)\n  doctor   find broken pieces and say how to fix each\n  config   see and change a world's gateway settings and the host's levels (doorman config [WORLD] | get KEY | set KEY VALUE | edit | levels)\n  host-agent-config  the line that connects your own Claude Code or Codex to the bridge\n  install  set up the units and timers (safe to repeat)   start / stop  the relay and the Doorman";
 if (cmd === "status") { const g = gather(world); console.log(json ? JSON.stringify(g, null, 1) : renderStatus(g)); process.exit(g.error || g.pieces.some((p) => p.state === "fail") ? 1 : 0); }
 else if (cmd === "doctor") { const d = doctor(world); console.log(json ? JSON.stringify(d, null, 1) : renderDoctor(d)); process.exit(d.error || d.issues.length ? 1 : 0); }
 else if (cmd === "install" || cmd === "start" || cmd === "stop") { const p = plan(cmd, world); if (p.error) { console.error(p.error); process.exit(2); } console.log(`doorman ${cmd}${world ? " " + world : ""}:`); apply(p); }
+else if (cmd === "config") { const r = configCommand(rest.filter((a) => a !== "--json")); console.log(r.text); process.exit(r.code); }
+else if (cmd === "host-agent-config") console.log(hostAgentConfig());
 else { console.log(USAGE); process.exit(cmd ? 2 : 0); }

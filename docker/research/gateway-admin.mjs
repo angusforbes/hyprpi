@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { worldsFor, withWorldsLock, modeOf, levelOf, MODES, LEGACY_MODES } from "./mode.mjs";
 import { SEARCH_PROVIDERS, DEFAULTS, resolveGateway } from "./gateway.mjs";
 import { ownerTtyProblem } from "../agent-guard.mjs";
+import { loadLevels, checkValue } from "./levels.mjs";
 
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\/:+-]{0,99}$/;
 // key -> [validator, where it lives in the gateway block]. key_file is NOT proposable: a proposal could point it at any file and have the contents
@@ -30,7 +31,7 @@ export const KEYS = {
 };
 const RANK = { mode: { strict: 0, safe: 1, open: 2, yolo: 3 }, level: { strict: 0, safe: 1, open: 2 } };
 
-export function validateChanges(changes, { admin = false } = {}) {
+export function validateChanges(changes, { admin = false, levels = loadLevels().levels } = {}) {
   const out = {}, errors = [];
   if (!changes || typeof changes !== "object" || Array.isArray(changes)) return { ok: false, errors: ["changes must be an object of key: value"], changes: {} };
   for (const [k, v] of Object.entries(changes)) {
@@ -38,6 +39,7 @@ export function validateChanges(changes, { admin = false } = {}) {
     if (!spec) { errors.push(`unknown setting ${JSON.stringify(k).slice(0, 40)}`); continue; }
     if (!admin && !spec.proposable) { errors.push(`${k} can only be set by Angus`); continue; }
     if (typeof v !== "string" || !spec.ok(v)) { errors.push(`${k} must be ${spec.why}`); continue; }
+    const lv = checkValue(levels, k, v); if (lv) { errors.push(`refused: ${lv}`); continue; } // J380 v3: the host's levels file limits every route, proposals too
     out[k] = v;
   }
   if (!Object.keys(out).length && !errors.length) errors.push("no changes");
@@ -45,7 +47,8 @@ export function validateChanges(changes, { admin = false } = {}) {
 }
 const get = (w, k) => {
   const g = w?.gateway && typeof w.gateway === "object" ? w.gateway : {};
-  const v = k.startsWith("search.") ? g.search?.[k.slice(7)] : g[k];
+  const v = k.startsWith("search.") ? g.search?.[k.slice(7)] : k.startsWith("runner.") ? g.runner?.[k.slice(7)] : g[k];
+  if (k === "phone_decisions" && typeof v === "boolean") return String(v);
   if (v !== undefined) return String(v);
   if (k === "mode" && w?.doorman?.mode !== undefined) return String(w.doorman.mode);
   if (k === "level" && w?.access !== undefined) return String(w.access);
@@ -85,7 +88,10 @@ function applyChangesLocked(cfgDir, sandbox, changes, { expectBefore } = {}) {
   const f = path.join(cfgDir, "worlds", hits[0].f), w = JSON.parse(fs.readFileSync(f, "utf8")), before = Object.fromEntries(Object.keys(v.changes).map((k) => [k, effective(cfgDir, w, sandbox, k)]));
   if (expectBefore) for (const k of Object.keys(v.changes)) if (before[k] !== expectBefore[k]) throw new Error(`not applied: ${k} is now ${before[k]}, it was ${expectBefore[k]} when proposed`);
   w.gateway = w.gateway && typeof w.gateway === "object" && !Array.isArray(w.gateway) ? w.gateway : {};
-  for (const [k, val] of Object.entries(v.changes)) { if (k.startsWith("search.")) { w.gateway.search = w.gateway.search && typeof w.gateway.search === "object" && !Array.isArray(w.gateway.search) ? w.gateway.search : {}; w.gateway.search[k.slice(7)] = val; } else w.gateway[k] = val; }
+  for (const [k, val] of Object.entries(v.changes)) {
+    const dot = k.indexOf("."), grp = dot > 0 ? k.slice(0, dot) : "", leaf = dot > 0 ? k.slice(dot + 1) : k, store = val; // search.* and runner.* are nested
+    if (grp) { w.gateway[grp] = w.gateway[grp] && typeof w.gateway[grp] === "object" && !Array.isArray(w.gateway[grp]) ? w.gateway[grp] : {}; w.gateway[grp][leaf] = store; } else w.gateway[k] = store;
+  }
   const tmp = `${f}.tmp${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(w, null, 2) + "\n", { mode: fs.statSync(f).mode & 0o777 }); fs.renameSync(tmp, f);
   return { file: f, before, after: Object.fromEntries(Object.keys(v.changes).map((k) => [k, v.changes[k]])) };
 }

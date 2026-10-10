@@ -43,6 +43,8 @@ import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { modeForSandbox, levelOf, MODE_TEXT, withWorldsLock } from "../research/mode.mjs"; // J325: the Doorman mode in the host card
+import { loadLevels } from "../research/levels.mjs"; // J380 v3
+import { currentValues } from "../research/gateway-admin.mjs";
 import { taskForSandbox } from "../research/task.mjs"; // J352: the host-set research task in the host card
 
 import { cardSection } from "../gpu/gpu.mjs";
@@ -393,6 +395,10 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
     ...(ports.filter((x) => x.ok).length ? ["A server you run in here is reachable from the owner's laptop (its browser only, not the network) on these ports. Bind to 0.0.0.0 (e.g. `python3 -m http.server 8000 --bind 0.0.0.0`) and give the owner the host address:", "",
       "| in here | on the host |", "|------|------|", ...ports.filter((x) => x.ok).map((x) => `| port ${x.sandbox} | http://localhost:${x.host} |`), ""]
       : ["No ports are published to the host: a server in here can't be opened from the owner's laptop. Ask the Doorman if you need one.", ""]),
+    "## Settings the host has set for you", "",
+    ...(() => { // J380 v3: the card shows the host's current settings and the range the host allows (the one source: doorman config)
+      try { const lv = loadLevels(CFG).levels, cur = currentValues(CFG, p.sandbox, ["mode", "level", "phone_decisions"]), md = modeForSandbox(CFG, p.sandbox).mode;
+        return [`Mode now: ${md} (the host allows: ${lv.modes.join(", ")}).`, `Share level now: ${cur.level} (at most ${lv.max_share_level}).`, `Decisions from the owner's phone: ${cur.phone_decisions === "true" && lv.phone_decisions ? "on" : "off"}.`, "You can't change these; ask the owner. A request to go beyond what the host allows is refused, not held.", ""]; } catch (e) { return [`(The host's settings for this world can't be read right now (${String(e.message).slice(0, 80)}); assume the strictest.)`, ""]; } })(),
     "## Web research", "",
     ...(() => { const { mode, note } = modeForSandbox(CFG, p.sandbox); return [`Doorman mode: ${mode}${note ? ` (${note})` : ""}`, "", `Ask Outside "Research: <what you're looking for>" (or "Research (deep): …"): ${MODE_TEXT[mode]}`, ""]; })(),
     // J352: task-bound research. The task is Angus's; research outside it waits for him in strict and safe; in open and yolo it goes out flagged (J412).
