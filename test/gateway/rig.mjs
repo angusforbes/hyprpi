@@ -314,10 +314,13 @@ export async function createRig(options = {}) {
     const rec = JSON.parse(fs.readFileSync(pending, 'utf8'));
     if (rec.id !== args[1] || rec.sandbox !== match[1]) fail('pending record must match fixture ID and sandbox');
     const rest = args.slice(2), seen = new Set();
-    for (let i = 0; i < rest.length; i += 2) {
-      const flag = rest[i], value = rest[i + 1];
-      if (value === undefined || seen.has(flag) || !(['approve'].includes(args[0]) ? ['--note', '--allow-similar'] : ['--reason']).includes(flag)) fail('owner option not permitted');
+    for (let i = 0; i < rest.length;) {
+      const flag = rest[i++];
+      if (seen.has(flag) || !(args[0] === 'approve' ? ['--note', '--allow-similar'] : ['--reason']).includes(flag)) fail('owner option not permitted');
       seen.add(flag);
+      if (flag === '--allow-similar' && i === rest.length) continue; // scalar flag, product default duration
+      const value = rest[i++];
+      if (value === undefined) fail('owner option not permitted');
       // All options are scalar text, never paths, commands, environment, or an edited file. The real CLI validates note/duration semantics.
       if (flag === '--allow-similar' && !/^\d+(?:\.\d+)?[A-Za-z]{1,3}$/.test(value)) fail('invalid fixture duration');
       if (flag !== '--allow-similar' && value.length > 501) fail('owner note exceeds fixture limit');

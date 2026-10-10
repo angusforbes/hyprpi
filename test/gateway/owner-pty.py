@@ -77,13 +77,21 @@ def main():
             raise ValueError('pending record does not match ID')
         rest = args[2:]
         permitted = {'approve': {'--note', '--allow-similar'}, 'deny': {'--reason'}}[args[0]]
-        if len(rest) % 2 or len(rest) > 4:
+        if len(rest) > 4:
             raise ValueError('invalid decision options')
-        seen = set()
-        for flag, val in zip(rest[::2], rest[1::2]):
+        seen, index = set(), 0
+        while index < len(rest):
+            flag = rest[index]
+            index += 1
             if flag not in permitted or flag in seen:
                 raise ValueError('decision option not allowed')
             seen.add(flag)
+            if flag == '--allow-similar' and index == len(rest):
+                continue  # bare scalar flag: the real CLI's one-hour default
+            if index == len(rest):
+                raise ValueError('missing decision option value')
+            val = rest[index]
+            index += 1
             # Scalar arguments only: no edit files, executable, mount or environment options.
             # The real CLI checks note/control/duration semantics, including negative probes.
             if flag == '--allow-similar':
