@@ -38,7 +38,7 @@ else if (cmd === "runner") { const { runnerUnits } = await import("./runner.mjs"
 else if (cmd === "list") {
   const jobs = list({ all: !!opts.all });
   if (opts.json) out(jobs);
-  else { for (const j of jobs) console.log(`${j.id}  ${j.state}  for ${j.for || "?"} in ${j.sandbox}  ${String(j.approved.action).split("\n").find((l) => /^Action asked for:/.test(l))?.slice(18, 120) || String(j.approved.action).slice(0, 100).replace(/\s+/g, " ")}`); if (!jobs.length) console.log("(no jobs waiting)"); }
+  else { for (const j of jobs) console.log(`${j.id}  ${j.state}  for ${j.for || "?"} in ${j.sandbox}  ${String(j.approved.action_line || j.approved.action || "").replace(/\s+/g, " ").slice(0, 120)}`); if (!jobs.length) console.log("(no jobs waiting)"); } // (J379) the structured action, never a line parsed from text
 } else if (cmd === "show") { if (!id) usage(); const j = show(id); out(j ? (opts.json ? j : formatJob(j)) : { ok: false, text: "no such host job" }); }
 else if (cmd === "claim") { if (!id) usage(); const r = await claim(id, by, lease); if (r.ok && !opts.json) { console.log(`${r.text}\ntoken: ${r.token}  (pass it with --token to renew, ask, report or release; it isn't stored anywhere)`); process.exit(0); } out(r); }
 else if (cmd === "renew") { if (!id) usage(); out(await renew(id, by, lease, opts.token)); }
