@@ -69,6 +69,11 @@ mv $X/extra2 $X/extra2.old && mkdir -p $X/other && ln -s $X/other $X/extra2.tmp 
 decide $P4 approve
 st=$(python3 -c "import json;print(json.load(open('$P/requests/$J4.json'))['state'])"); [ "$st" = declined ] && ok "a recreated folder (new inode) at the proposed path: the 1 became a decline" || fail "state $st: $(job $J4)"
 rm -rf /tmp/j428-swapped-$$
+echo "== 4c a write child inside a read-only parent in the same proposal: refused (J428Check)"
+mkdir -p $X/par/child; printf '#!/bin/sh\ncat >/dev/null\necho %s\n' "'{\"folders\":[{\"path\":\"$X/par\",\"access\":\"read\"},{\"path\":\"$X/par/child\",\"access\":\"write\"}],\"why\":\"x\"}'" > $R/x/stub3.sh; chmod +x $R/x/stub3.sh
+D b4 '{"op":"draft","for":"Alpha","why":"x","action":"w","needs_beyond":"par"}'
+J5=$(held | grep -v "$J1\|$J2\|$J3\|$J4\|needs, beyond" | awk '{print $1}' | head -1); decide $J5 approve
+s5=$(DOORMAN_RUNNER_CMD="[\"$R/x/stub3.sh\"]" $BR --json scope-job $J5); case "$s5" in *"proposed to the owner: $X/par (read)\""*|*"proposed to the owner: $X/par (read)"*) case "$s5" in *"par/child (write)"*) fail "child proposed: $s5";; *) ok "only the read-only parent is proposed; the write child refused";; esac;; *) fail "s5: $s5";; esac
 echo "== 5 an answer can't widen; needs_wider goes to scoping (W2)"
 CT=$($BR --json claim $J1 --agent-token $T | python3 -c "import json,sys;print(json.load(sys.stdin)['token'])")
 $BR --json ask $J1 --token $CT "may I also write in $X/extra?" >/dev/null; sleep 4

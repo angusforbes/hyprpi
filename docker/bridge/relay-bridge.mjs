@@ -103,6 +103,8 @@ export function startBridge({ stateDir, log, jobRecord, tellOutcome, holdQuestio
             if (!beyond.some((x) => x.path === b.path)) beyond.push(b);
           }
         }
+        // (J428Check) the same batch too: a write folder inside a read-only one proposed alongside can't be honoured: refused
+        for (const w of beyond.filter((x) => x.access === "write")) if (beyond.some((x) => x.access === "read" && x.path !== w.path && under(w.path, x.path))) { refused.push(`${w.path}: inside ${beyond.find((x) => x.access === "read" && under(w.path, x.path)).path}, proposed read-only`); beyond.splice(beyond.indexOf(w), 1); }
         const r = scopeResult(rec, { beyond: beyond.slice(0, 4), why: [String(req.why || ""), ...refused.map((x) => `refused: ${x}`)].filter(Boolean).join("; ") }, Date.now());
         const hf = commit(rec, r); reply = hf ? { ok: false, text: hf } : { ok: true, text: beyond.length ? `proposed to the owner: ${beyond.map((b) => `${b.path} (${b.access})`).join(", ")}` : "nothing found beyond the shares: the job ends needs_wider", refused };
       }
