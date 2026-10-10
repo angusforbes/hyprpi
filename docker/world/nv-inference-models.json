@@ -1,0 +1,713 @@
+{
+  "//": "J405: the model list every sandboxed world gets (provider nv-inference = NVIDIA Inference Hub). docker/world/pi-models.mjs merges it into a sandbox's ~/.pi/agent/models.json; the key stays in the sandbox (never in this file). Claude models use the openai-completions API (tested under a full agent prompt and with a tool call inside world-g, 2026-10-10); the OpenAI ones the provider's openai-responses (J396 tested).",
+  "provider": "nv-inference",
+  "baseUrl": "https://inference-api.nvidia.com/v1",
+  "api": "openai-responses",
+  "enabledModels": [
+    "nv-inference/**"
+  ],
+  "models": [
+    {
+      "id": "openai/openai/gpt-6-astra",
+      "name": "gpt-6-astra (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-6.1-sol",
+      "name": "gpt-6.1-sol (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-6-luna",
+      "name": "gpt-6-luna (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-6-sol",
+      "name": "gpt-6-sol (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.6-luna",
+      "name": "gpt-5.6-luna (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.6-sol",
+      "name": "gpt-5.6-sol (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.6-terra",
+      "name": "gpt-5.6-terra (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.5",
+      "name": "gpt-5.5 (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.4",
+      "name": "gpt-5.4 (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.4-mini",
+      "name": "gpt-5.4-mini (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.4-nano",
+      "name": "gpt-5.4-nano (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.4-pro",
+      "name": "gpt-5.4-pro (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "medium",
+        "minimal": "medium",
+        "low": "medium",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.3-codex",
+      "name": "gpt-5.3-codex (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.2",
+      "name": "gpt-5.2 (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5.1",
+      "name": "gpt-5.1 (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5-mini",
+      "name": "gpt-5-mini (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "minimal",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-5-nano",
+      "name": "gpt-5-nano (Inference Hub)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "minimal",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high"
+      }
+    },
+    {
+      "id": "openai/openai/gpt-3.5-turbo",
+      "name": "gpt-3.5-turbo (Inference Hub)",
+      "reasoning": false,
+      "input": [
+        "text"
+      ],
+      "contextWindow": 16385,
+      "maxTokens": 4096
+    },
+    {
+      "id": "openai/openai/gpt-4o-mini",
+      "name": "gpt-4o-mini (Inference Hub)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 128000,
+      "maxTokens": 16384
+    },
+    {
+      "id": "azure/openai/gpt-5",
+      "name": "gpt-5 (Inference Hub, Azure)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "minimal",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high"
+      }
+    },
+    {
+      "id": "azure/openai/gpt-5.3-chat",
+      "name": "gpt-5.3-chat (Inference Hub, Azure)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 111616,
+      "maxTokens": 16384
+    },
+    {
+      "id": "azure/openai/gpt-5.2-chat",
+      "name": "gpt-5.2-chat (Inference Hub, Azure)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 111616,
+      "maxTokens": 16384
+    },
+    {
+      "id": "azure/openai/gpt-5.2-codex",
+      "name": "gpt-5.2-codex (Inference Hub, Azure)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "azure/openai/gpt-5.1-chat",
+      "name": "gpt-5.1-chat (Inference Hub, Azure)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 128000,
+      "maxTokens": 16384
+    },
+    {
+      "id": "azure/openai/gpt-5.1-codex",
+      "name": "gpt-5.1-codex (Inference Hub, Azure)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high"
+      }
+    },
+    {
+      "id": "azure/openai/gpt-5.1-codex-max",
+      "name": "gpt-5.1-codex-max (Inference Hub, Azure)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      }
+    },
+    {
+      "id": "azure/openai/gpt-5.1-codex-mini",
+      "name": "gpt-5.1-codex-mini (Inference Hub, Azure)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high"
+      }
+    },
+    {
+      "id": "azure/openai/gpt-5-chat",
+      "name": "gpt-5-chat (Inference Hub, Azure)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 128000,
+      "maxTokens": 16384
+    },
+    {
+      "id": "azure/openai/gpt-4.1",
+      "name": "gpt-4.1 (Inference Hub, Azure)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1047576,
+      "maxTokens": 32768
+    },
+    {
+      "id": "azure/openai/gpt-4.1-mini",
+      "name": "gpt-4.1-mini (Inference Hub, Azure)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1047576,
+      "maxTokens": 32768
+    },
+    {
+      "id": "azure/openai/gpt-4o",
+      "name": "gpt-4o (Inference Hub, Azure)",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 128000,
+      "maxTokens": 16384
+    },
+    {
+      "id": "azure/openai/gpt-6-astra",
+      "name": "GPT-6 Astra (Inference Hub, Azure route, fallback)",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
+    {
+      "id": "azure/anthropic/claude-opus-5-5",
+      "name": "claude-opus-5-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-sonnet-5-5",
+      "name": "claude-sonnet-5-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-haiku-5-5",
+      "name": "claude-haiku-5-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-haiku-4-5",
+      "name": "claude-haiku-4-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-opus-5",
+      "name": "claude-opus-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-sonnet-5",
+      "name": "claude-sonnet-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-opus-4-8",
+      "name": "claude-opus-4-8 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-opus-4-7",
+      "name": "claude-opus-4-7 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-opus-4-6",
+      "name": "claude-opus-4-6 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-sonnet-4-6",
+      "name": "claude-sonnet-4-6 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-opus-4-5",
+      "name": "claude-opus-4-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
+    {
+      "id": "azure/anthropic/claude-sonnet-4-5",
+      "name": "claude-sonnet-4-5 (Inference Hub)",
+      "api": "openai-completions",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    }
+  ]
+}
