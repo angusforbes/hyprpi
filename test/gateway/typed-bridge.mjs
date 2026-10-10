@@ -172,7 +172,8 @@ export async function runTyped(ctx) {
           } else if (type === 'share_project') {
             assert.equal(rec.params.mode, 'ro'); assert.equal(rec.params.path, ctx.rig.P('projects/fixture')); assert.equal(typeof rec.params.ino, 'number');
             assert.deepEqual(ctx.readWorld().projects, [{ name: 'fixture', mode: 'ro', realpath: rec.params.path, ino: String(rec.params.ino) }], 'J379: the explicit read-only share retains exactly the reviewed folder identity');
-            assert.match(rec.outcome.summary, /^listed for sharing: /); assert.doesNotMatch(rec.outcome.summary, /\bmounted\b/);
+            assert.match(rec.outcome.summary, /^listed for sharing: /);
+            assert.match(rec.outcome.summary, /mounted at the next apply/, 'the outcome describes a future mount, not a completed one');
             // addProject deliberately lists the project; the real shares watcher mounts it on its next apply.
             assert.deepEqual(addedEffects, [], 'this handler does not run a host agent or a mount watcher');
           } else if (type === 'send_file') {
