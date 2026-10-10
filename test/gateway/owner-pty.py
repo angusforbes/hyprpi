@@ -66,7 +66,7 @@ def main():
                 confined(a.split('=', 1)[1], root + '/config', regular=True)
         script = repo + '/docker/research/research.mjs'
     else:
-        if len(args) < 2 or args[0] not in ('approve', 'deny', 'return', 'allow', 'answer'):
+        if len(args) < 2 or args[0] not in ('approve', 'deny'):
             raise ValueError('owner operation not allowed')
         m = ID.fullmatch(args[1])
         if not m:
@@ -76,20 +76,21 @@ def main():
         if record.get('id') != args[1] or record.get('sandbox') != m[1]:
             raise ValueError('pending record does not match ID')
         rest = args[2:]
-        if args[0] == 'allow':
-            if len(rest) > 3 or any(not re.fullmatch(r'[A-Za-z0-9 ]{1,40}', a) for a in rest):
-                raise ValueError('invalid fixture duration')
-        else:
-            permitted = {'approve': {'--edit-file'}, 'deny': {'--reason'}, 'return': {'--note'}, 'answer': {'--note'}}[args[0]]
-            if args[0] == 'answer' and (not record.get('hostJob') or len(rest) != 2 or not rest[1].strip() or len(rest[1]) > 500 or re.search(r'[\x00-\x1f\x7f]', rest[1])):
-                raise ValueError('answer requires a fixture question and plain nonempty note')
-            if len(rest) % 2 or len(rest) > 2:
-                raise ValueError('invalid decision options')
-            for flag, val in zip(rest[::2], rest[1::2]):
-                if flag not in permitted:
-                    raise ValueError('decision option not allowed')
-                if flag == '--edit-file':
-                    confined(val, root + '/edits', regular=True)
+        permitted = {'approve': {'--note', '--allow-similar'}, 'deny': {'--reason'}}[args[0]]
+        if len(rest) % 2 or len(rest) > 4:
+            raise ValueError('invalid decision options')
+        seen = set()
+        for flag, val in zip(rest[::2], rest[1::2]):
+            if flag not in permitted or flag in seen:
+                raise ValueError('decision option not allowed')
+            seen.add(flag)
+            # Scalar arguments only: no edit files, executable, mount or environment options.
+            # The real CLI checks note/control/duration semantics, including negative probes.
+            if flag == '--allow-similar':
+                if not re.fullmatch(r'\d+(?:\.\d+)?[A-Za-z]{1,3}', val):
+                    raise ValueError('invalid fixture duration')
+            elif len(val) > 501:
+                raise ValueError('note exceeds fixture limit')
         script = repo + '/docker/sbx-relay.mjs'
     # A new environment, not a scrubbed copy: no agent, bus, display, socket or auth flags.
     env = {'HOME': root + '/home', 'XDG_CONFIG_HOME': root + '/config',

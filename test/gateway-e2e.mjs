@@ -46,7 +46,7 @@ for (const file of testFiles) suiteHash.update(path.relative(repoRoot, file) + '
 const dirty = !!spawnSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).stdout.trim();
 // Readiness is a shipped CLI surface, not a switch that can turn a failed test into pending.
 // Once Harbor's approve flag lands, all new-key and removed-key assertions must run.
-const parts = { dial: true, host: true, keys: fs.readFileSync(path.join(repoRoot, 'docker/sbx-relay.mjs'), 'utf8').includes('"--allow-similar"') };
+const parts = { dial: true, host: true, keys: /["']--allow-similar["']/.test(fs.readFileSync(path.join(repoRoot, 'docker/sbx-relay.mjs'), 'utf8')) };
 const report = { schema: 1, job: 'J376/J412', spec: 'simplification-spec.md v3; mode-key changes remain held in yolo', parts, commit: sha, dirty, suiteSha256: suiteHash.digest('hex'), started: new Date().toISOString(), cases: [], scope: 'private world I only; no live daemon/relay/world G', providers: 'synthetic offline fixtures', prerequisites: 'cached pi-sandbox image, Docker, Node, Python; pi for J373', cleanup: null };
 const kids = new Set(), ownedRigs = new Set();
 let rig, relay, daemon, ctx, finishPromise;

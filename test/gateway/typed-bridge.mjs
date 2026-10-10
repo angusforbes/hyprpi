@@ -696,7 +696,7 @@ export async function runBridge(ctx) {
             assert.equal(snapshot(ctx), before); assert.equal(viewed.settings.mode, 'strict', 'the previous approval is what is in effect');
             await proposal(ctx, () => mcp.tool('propose_settings', { sandbox: ctx.rig.sandbox, changes: { mode: 'safe' } }), 'safe', true);
           });
-          await ctx.testcase('J412 a proposal to move to yolo is held and flagged LOOSENS in every mode below it; the old gateway.level can no longer be proposed', async () => {
+          await ctx.testcase('J412 a proposal to move from safe to yolo is held and flagged LOOSENS; the old gateway.level can no longer be proposed', async () => {
             const before = snapshot(ctx, ['config']); let id;
             try {
               const r = await cli(ctx, ['propose', ctx.rig.sandbox, 'mode=yolo']); assert.equal(r.ok, true, JSON.stringify(r)); id = r.id;
@@ -741,7 +741,7 @@ export async function runBridge(ctx) {
         await hostFinal(ctx, id, 'done', summary, [], []);
       });
     });
-    await ctx.testcase('J371/J412 denied free-form draft never becomes a host job (and the asker is told, with the hold reason)', async () => {
+    await ctx.testcase('J371/J412 denied free-form draft never becomes a host job or an approved talk (asker receipt separately gated)', async () => {
       await withHosts(ctx, ['fixture-host'], async () => {
         let id;
         try {
@@ -750,7 +750,7 @@ export async function runBridge(ctx) {
           await ctx.decide(id, '2'); assert.equal(record(ctx, id), null);
           assert.ok(!(await cli(ctx, ['list', '--all'])).some(x => x.id === id));
           assert.ok(ctx.logs().some(x => x.id === id && x.decision === 'denied'));
-          assert.ok(!ctx.logs().some(x => x.id === id && x.op === 'talk'));
+          assert.ok(!ctx.logs().some(x => x.id === id && x.op === 'talk' && (x.decision === 'approved' || x.delivered?.length)), 'a denied-talk audit line is not a delivery; no approved talk or actual recipient delivery is allowed');
           await ctx.whenPart('keys', 'J412 denied draft: asker-only receipt with the hold reason (type receipt)', () => receiptCheck(ctx, id, 'denied', ''));
         } finally { await cleanHeld(ctx, id); }
       });
@@ -871,6 +871,7 @@ async function modeMatrix(ctx) {
           for (const [what, argv] of [
             ['a note over 500 characters', ['approve', id, '--note', 'x'.repeat(501)]],
             ['a control character in the note', ['approve', id, '--note', 'bad\u0007note']],
+            ['a Unicode format character in the note', ['approve', id, '--note', 'bad\u200bnote']],
             ['allow-similar on a typed request (not eligible)', ['approve', id, '--allow-similar', '1h']],
             ['an invalid duration', ['approve', id, '--allow-similar', '5x']],
           ]) {

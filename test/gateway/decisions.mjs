@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export async function runDecisions(ctx) {
-  const names = ['1 text reaches only the asker, never the recipient', '1+ defaults to one hour and authorizes a subsequent similar message', '1+ 5m minimum is accepted', '1+ 2h text sets two hours and preserves the asker note', '1+ over eight hours is capped', '1+ under five minutes refuses without a decision or rule', '2 carries the hold reason and note; the revision cannot use an existing rule', 'removed CLI verbs and edit option refuse without mutation'];
+  const names = ['1 text reaches only the asker, never the recipient', '1+ uses an explicit one-hour CLI rule and authorizes a subsequent similar message (window default separately checked)' , '1+ 5m minimum is accepted', '1+ 2h text sets two hours and preserves the asker note', '1+ over eight hours is capped', '1+ under five minutes refuses without a decision or rule', '2 carries the hold reason and note; the revision cannot use an existing rule', 'removed CLI verbs and edit option refuse without mutation'];
   if (!ctx.parts.keys) { for (const name of names) ctx.pending('J412 message: ' + name, 'new key CLI and asker-only receipt helper have not landed'); return; }
   assert.equal(process.env.HYPRPI_SOCKET, ctx.rig.P('d.sock'), 'peer must capture only the private daemon');
   const { connect } = await import(pathToFileURL(path.join(ctx.repoRoot, 'lib/client.mjs')).href);
@@ -78,7 +78,9 @@ export async function runDecisions(ctx) {
       assert.equal(r.ok, true, JSON.stringify(r)); const original = ctx.holdFrom(r);
       const granting = await held('fixture existing rule before denial'); await ctx.decide(granting.id, '1+'); await delivery(granting);
       await ctx.decide(original.id, '2', { note: 'PRIVATE-DENIAL-NOTE' }); const denied = await receipt(original, 'denied', 'PRIVATE-DENIAL-NOTE');
-      assert.match(denied.text, /Why it was held/); assert.match(denied.text, /Revise it and send again, or drop it\./);
+      assert.match(denied.text, /Why it was held/);
+      assert.ok(denied.text.includes("a message from the sandbox to FixturePeer waits for Angus's approval (no allow-similar rule covers it)"), 'the concrete original hold reason reaches the asker, not merely a heading');
+      assert.match(denied.text, /Revise it and send again, or drop it\./);
       assert.ok(!events.some(x => x.event === 'talk' && x.data.text === original.body));
       const revision = await held('fixture revised original'); assert.equal(revision.revises, original.id); assert.match(revision.text + ' ' + revision.body, /revision of/i);
       const bytes = fs.readFileSync(heldPath(revision.id)), refused = await ctx.rig.owner(['approve', revision.id, '--allow-similar', '1h']);
@@ -88,7 +90,9 @@ export async function runDecisions(ctx) {
     await ctx.testcase('J412 message: ' + names[7], async () => {
       await clearRules(); const h = await held('fixture removed CLI probes'), before = fs.readFileSync(heldPath(h.id));
       for (const argv of [['allow', h.id], ['return', h.id], ['answer', h.id, '--note', 'not an answer'], ['approve', h.id, '--edit-file', ctx.rig.P('projects/fixture/notes.md')]]) {
-        const r = await ctx.cli('docker/sbx-relay.mjs', argv); assert.notEqual(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /usage|removed|unknown|edit|option/i);
+        const r = await ctx.cli('docker/sbx-relay.mjs', argv);
+        assert.equal(r.status, argv[0] === 'approve' ? 4 : 2, 'actual removed-command usage/option rejection, never a TTY guard refusal: ' + r.stdout + r.stderr);
+        assert.match(r.stdout + r.stderr, /usage|removed|unknown|edit|option/i);
         assert.deepEqual(fs.readFileSync(heldPath(h.id)), before); assert.ok(!events.some(x => x.event === 'talk' && x.data.text === h.body));
       }
       await ctx.decide(h.id, '1'); await delivery(h);

@@ -109,6 +109,7 @@ export async function runResearch(ctx) {
       if (keysReady()) { // spec 2.3: the asker always hears it was denied, why it was held, Angus's text, and what to do next
         assert.match(denied.text, /Angus denied/);
         assert.match(denied.text, /Why it was held/);
+        assert.ok(denied.text.includes(held.research.exception), 'the actual off-task exception is carried verbatim in the denial');
         assert.match(denied.text, /Note from Angus[\s\S]*outside the fixture task/);
         assert.match(denied.text, /Revise it and send again, or drop it\./);
       } else {
@@ -201,6 +202,7 @@ export async function runResearch(ctx) {
       assert.match(receipt.text, /Angus denied/);
       assert.match(receipt.text, /nothing (was )?(done|sent)/i);
       assert.match(receipt.text, /Why it was held/);
+      assert.ok(receipt.text.includes('strict mode: every research plan waits for Angus before any search goes out'), 'the concrete strict-mode hold reason reaches the asker');
       assert.match(receipt.text, /Note from Angus[\s\S]*focus on encapsulation instead/);
       assert.match(receipt.text, /suggested plan/i, 'the Doorman attached a plan that passed the host checks');
       assert.match(receipt.text, /water ingress and encapsulation of perovskite modules|moisture degradation of lead halide perovskite/, 'the suggested searches are shown to the agent');
