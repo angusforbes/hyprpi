@@ -31,4 +31,8 @@ for bad in ["javascript:alert(1)", "ftp://x.org/a", "https://x.org/\u202eevil", 
     assert g.main(["g_open_url.py", bad, "world-g"]) == 1, bad
     assert g.main(["g_open_url.py", "--agent", bad, "world-g"]) == 1, bad
 assert len(read("brave.log")) == 2, read("brave.log")
+# review J406: a world Brave outside the world's workspaces is never focused
+json.dump([{"address": "0xdef", "class": "hyprpi.g-brave", "workspace": {"id": 3, "name": "3"}, "focusHistoryID": 0}], open(f"{T}/clients.json", "w"))
+before = sum("hl.dsp.focus" in d for d in read("dispatched")); g.focus_brave("world-g", wait_s=0.8)
+assert sum("hl.dsp.focus" in d for d in read("dispatched")) == before, "focused a window outside the world"
 print("ok: both a click and an agent open go to the world's Brave (never hyprpi-open-url); only the click focuses it; refusals unchanged")

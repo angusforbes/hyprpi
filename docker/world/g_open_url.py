@@ -300,14 +300,22 @@ def focus_brave(world, wait_s=6.0):
     try:
         import re
         letter = world.removeprefix("world-")
-        end = time.time() + wait_s
-        while time.time() < end:
-            out = subprocess.run([HYPRCTL, "clients", "-j"], capture_output=True, text=True, timeout=5).stdout
-            wins = [c for c in json.loads(out or "[]") if c.get("class") == f"hyprpi.{letter}-brave" and not str((c.get("workspace") or {}).get("name", "")).startswith("special:")]
+        cfg_dir = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "hyprpi", "worlds")
+        try:
+            lo, hi = json.load(open(os.path.join(cfg_dir, f"{world}.json"))).get("workspaces", [None, None])[:2]
+        except Exception:
+            return
+        if not isinstance(lo, int) or not isinstance(hi, int):
+            return  # (review J406: fail closed: never focus without knowing the world's range)
+        end = time.monotonic() + wait_s
+        while time.monotonic() < end:
+            left = max(0.5, end - time.monotonic())
+            out = subprocess.run([HYPRCTL, "clients", "-j"], capture_output=True, text=True, timeout=min(2, left)).stdout
+            wins = [c for c in json.loads(out or "[]") if c.get("class") == f"hyprpi.{letter}-brave" and isinstance((c.get("workspace") or {}).get("id"), int) and lo <= c["workspace"]["id"] <= hi]  # (review J406: only inside the world)
             if wins:
                 addr = str(max(wins, key=lambda c: c.get("focusHistoryID", 0) * -1).get("address", ""))
                 if re.fullmatch(r"0x[0-9a-f]+", addr):
-                    subprocess.run([HYPRCTL, "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'], capture_output=True, timeout=5)
+                    subprocess.run([HYPRCTL, "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'], capture_output=True, timeout=2)
                 return
             time.sleep(0.3)
     except Exception:
