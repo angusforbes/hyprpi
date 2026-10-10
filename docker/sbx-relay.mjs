@@ -879,7 +879,8 @@ class Relay {
       const f = path.join(dir, `${id}.json`); let cur = {}; try { cur = JSON.parse(fs.readFileSync(f, "utf8")); } catch { /* new */ }
       const history = [...(Array.isArray(cur.history) ? cur.history : []), ...(Array.isArray(patch.history) ? patch.history : [])].slice(-50); // appended, never replaced
       fs.writeFileSync(f + ".tmp", JSON.stringify({ ...cur, ...patch, history }, null, 1), { mode: 0o600 }); fs.renameSync(f + ".tmp", f);
-    } catch (e) { log({ error: `job record ${id}: ${e.message}` }); }
+      return true;
+    } catch (e) { log({ error: `job record ${id}: ${e.message}` }); return false; }
   }
   // J368: an outcome goes to the agent that asked ("Name: …" reaches that agent in the sandbox) AND, as a separate line, to the
   // sandbox's coordinator (a message with no name prefix goes to its Thoughts, e.g. Thoughts-G).
@@ -921,9 +922,9 @@ class Relay {
         const c = spawnSync(SBXB, ["policy", "check", "network", "--sandbox", served.name, host], { encoding: "utf8", timeout: 30000 }); // (review J368 #5: what policy now says, org rules included)
         return { ok: true, text: (r.stdout + r.stderr).trim().slice(-200), check: c.status === 0 ? (c.stdout || "allowed").trim().split("\n")[0] : `not allowed (${(c.stdout + c.stderr).trim().split("\n").pop()})` };
       },
-      addProject: async (project, mode) => {
+      addProject: async (project, mode, expect) => {
         try { const m = await import("./world/shares.mjs"); if (typeof m.addProject !== "function") return { ok: false, text: "sharing a project needs the share-levels code (J366), which isn't installed yet" };
-          const r = await m.addProject(served.name, project, mode); return r; } catch (e) { return { ok: false, text: e.message }; }
+          const r = await m.addProject(served.name, project, mode, expect); return r; } catch (e) { return { ok: false, text: e.message }; }
       },
     };
   }
@@ -965,6 +966,8 @@ class Relay {
     let msg; try { msg = JSON.parse(fs.readFileSync(pf, "utf8")); } catch { return; }
     // J371 (BridgeReview HIGH): an "answer" fits only a host agent's question; on anything else it decides nothing (the item stays held)
     if (verdict === "answer" && !msg.hostJob) { log({ op: "decision", id, error: "an answer only fits a host agent's question; the item stays held" }); return; }
+    // (re-review J368 #7) a typed request is marked durably BEFORE its hold is consumed; if that can't be written, nothing runs
+    if (msg.typed && /^(approve|allow-)/.test(verdict) && !this.jobRecord(id, { state: "executing", history: [{ at: now(), ev: "approved; executing", by: "relay" }] })) { log({ sb: msg.sandbox, op: "typed", id, error: "couldn't record the decision; nothing was done (the request stays held)" }); return; }
     fs.unlinkSync(pf);
     closeNotif(msg.notif); // decided anywhere (toast, panel, terminal): the toast goes too (J268)
     const sb = this.sandboxes.find((s) => s.name === msg.sandbox);
@@ -984,7 +987,7 @@ class Relay {
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, verdict === "deny");
     // (review J368 #2) a free-form draft held before the host went agent-free can't be carried out any more: denied, with the reason
-    if (msg.draft && !msg.typed && !msg.taskChange && !msg.gpu && verdict !== "deny" && this.agentFree(sb)) { log({ sb: sb.name, op: "talk", decision: "denied", id, reason: "agent-free host" }); heldNote(sb, msg, via, "Not delivered", "this host has no agents now"); try { inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to }); } catch { /* */ } return; }
+    if (!msg.typed && !msg.taskChange && !msg.gpu && !msg.research && !msg.gatewayChange && !msg.hostJob && verdict !== "deny" && verdict !== "return" && this.agentFree(sb)) { log({ sb: sb.name, op: "talk", decision: "denied", id, reason: "agent-free host" }); heldNote(sb, msg, via, "Not delivered", "this host has no agents now"); try { inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to }); } catch { /* */ } return; }
     { const te = takeEdit(id, verdict === "deny" ? "" : editDigest, msg, { EDITS: path.join(STATE, "edits"), RESEARCH, log: (o) => log({ sb: sb.name, ...o }) });
       if (editDigest && verdict !== "deny" && !te.applied) { // fail closed: Angus approved an EDITED version; if it can't be applied, the original must NOT go out in its place
         log({ sb: sb.name, op: "edit", id, decision: "not-applied", reason: te.failed || "the edit was missing or didn't match; nothing was sent" });
@@ -1031,10 +1034,11 @@ class Relay {
       let res = { ok: false, outcome: "denied: nothing was done" };
       if (verdict !== "deny") {
         if (!served) res = { ok: false, outcome: "approved, but the sandbox it serves isn't configured" };
-        else { this.jobRecord(id, { state: "executing", history: [{ at: now(), ev: "approved; executing", by: "relay" }] }); res = await reqRun(tq.type, tq.params, this.typedCtx(served)); } // (review J368 #7: a restart mid-action is found later)
+        else res = await reqRun(tq.type, tq.params, this.typedCtx(served)); // (marked "executing" before the hold was consumed: review J368 #7)
       }
       const decision = verdict === "deny" ? "denied" : "approved";
       log({ sb: sb.name, op: "typed", type: tq.type, decision, id, ok: res.ok, outcome: res.outcome, sandbox: tq.sandbox, ...(reason ? { reason } : {}) });
+      if (tq.params?.snapshot && String(tq.params.snapshot).startsWith(path.join(STATE, "requests", "snapshots") + path.sep)) { try { fs.unlinkSync(tq.params.snapshot); } catch { /* shared by another request, or gone */ } } // (re-review: snapshots don't pile up)
       this.jobRecord(id, { state: verdict === "deny" ? "denied" : res.ok ? "done" : "failed", outcome: { state: verdict === "deny" ? "denied" : res.ok ? "done" : "failed", summary: res.outcome, at: now(), by: "relay" }, decided_at: now(), via: via || "terminal", history: [{ at: now(), ev: verdict === "deny" ? "denied" : res.ok ? "done" : "failed", by: "relay" }] });
       heldNote(sb, { ...msg, text: `${label}: ${clean(msg.text).split("\n").slice(1).join(" ").slice(0, 200)}` }, via, decision === "denied" ? "Denied" : "Approved", res.outcome);
       try { inboxWrite(sb, { type: "typed", id, kind: tq.type, status: verdict === "deny" ? "denied" : res.ok ? "done" : "failed", outcome: res.outcome }); } catch { /* the Doorman's note */ }
@@ -1219,6 +1223,7 @@ class Relay {
           let rec = null; try { rec = JSON.parse(fs.readFileSync(p, "utf8")); closeNotif(rec.notif); } catch { /* */ }
           fs.unlinkSync(p); log({ note: `pending ${n} expired` });
           if (rec?.gpu?.dir && String(rec.gpu.dir).startsWith(GPUDIR + path.sep)) fs.rmSync(rec.gpu.dir, { recursive: true, force: true }); // J328: an expired lease is dropped, never run
+          if (rec?.typed?.params?.snapshot && String(rec.typed.params.snapshot).startsWith(path.join(STATE, "requests", "snapshots") + path.sep)) { try { fs.unlinkSync(rec.typed.params.snapshot); } catch { /* */ } }
           if (rec?.typed) { this.jobRecord(rec.id, { state: "expired", outcome: { state: "expired", summary: "expired without a decision; nothing was done", at: now(), by: "relay" }, history: [{ at: now(), ev: "expired", by: "relay" }] }); this.tellOutcome(rec.typed.sandbox, rec.typed.for, `the request "${REQ_TYPES[rec.typed.type] || rec.typed.type}" (${rec.id}) expired without Angus's decision; nothing was done`); } // (review J368 #7)
           if (rec?.research?.plan) { // J314 review #3: an expired plan can never run, and the asker hears so
             spawn(process.execPath, [RESEARCH, "drop", "--rid", String(rec.research.rid || ""), "--why", "expired"], { stdio: "ignore" }).on("error", () => {});

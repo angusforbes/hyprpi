@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 import { cleanSource } from "../research/research.mjs";
 
 const HOME = os.homedir();
@@ -98,7 +99,7 @@ const V = {
     if (!OPEN_EXT.has(ext)) return { error: `file: ${ext || "no extension"} isn't a type that is opened (${[...OPEN_EXT].join(" ")})` };
     if (pp.stat.size > LIMITS.openFileBytes) return { error: "file: over 20 MB" };
     if (!projectRoots(ctx.cfgDir).some((r) => under(pp.path, r))) return { error: "file: not inside a project folder" };
-    const html = ext === ".html" || ext === ".htm";
+    const html = ext === ".html" || ext === ".htm" || ext === ".svg"; // (red team J379 #5: SVG can carry scripts too)
     return { params: { what: pp.path, kind: "file" }, show: `Open in ${ctx.served.name}'s own Brave window: ${pp.path} (${Math.ceil(pp.stat.size / 1024)} KB${html ? "; a page the sandbox can write: its scripts run in that browser profile, which has none of your logins" : ""}; it opens only if the file is shared with the sandbox, which the link gate checks again)` }; // (review J368 LOW: the draft check is project folders; the run-time gate checks the actual shares)
   },
   // 2. a note for Angus: shown, nothing runs.
@@ -115,8 +116,13 @@ const V = {
     const hits = projectRoots(ctx.cfgDir).map((r) => path.join(r, project)).filter((d) => { try { const st = fs.lstatSync(d); return st.isDirectory() && !st.isSymbolicLink(); } catch { return false; } });
     if (!hits.length) return { error: `project: no folder ${project} in the project folders` };
     if (hits.length > 1) return { error: `project: ${project} exists in more than one project folder; ambiguous` }; // (review J368 #4: the shown path is the one shared)
-    const hit = hits[0];
-    return { params: { project, mode, path: hit }, show: `Share ${hit} with ${ctx.served.name}, ${mode === "rw" ? "WRITABLE" : "read-only"}` };
+    const hit = hits[0], ino = fs.lstatSync(hit).ino;
+    // (red team J379 #1) protected projects (config "protected", hyprpi's own checkout) and other sandboxes' workspaces are only ever read-only
+    const conf = readJson(path.join(ctx.cfgDir, "config.json"), {}), relay = readJson(path.join(ctx.cfgDir, "sbx-relay.json"), {});
+    const prot = [...(conf.protected || []).map((x) => path.resolve(tilde(x))), path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", ".."), ...(relay.sandboxes || []).filter((x) => x?.name !== ctx.served.name).map((x) => path.resolve(tilde(x.workspace || "/nonexistent")))];
+    const isProt = prot.some((r) => under(hit, r) || under(r, hit));
+    const eff = isProt ? "ro" : mode;
+    return { params: { project, mode: eff, path: hit, ino }, show: `Share ${hit} with ${ctx.served.name}, ${eff === "rw" ? "WRITABLE" : "read-only"}${isProt && mode === "rw" ? " (asked writable; it's protected, so read-only is all that can be granted)" : ""}` };
   },
   // 4. send a host file into the sandbox's inbox (a read-only copy).
   send_file(p, ctx) {
@@ -128,15 +134,20 @@ const V = {
     if (!SEND_EXT.has(ext)) return { error: `path: ${ext || "no extension"} isn't a type that is sent (${[...SEND_EXT].join(" ")})` };
     if (pp.stat.size > LIMITS.sendFileBytes) return { error: "path: over 10 MB" };
     if (![...projectRoots(ctx.cfgDir), ...roleRoots(ctx.cfgDir)].some((r) => under(pp.path, r))) return { error: "path: not inside a project or role folder" };
+    if (pp.stat.nlink > 1) return { error: "path: a hard-linked file isn't sent (it may be another file under a harmless name)" }; // (red team J379 #3)
     const rd = pinnedRead(pp.path, LIMITS.sendFileBytes);
     if (rd.error) return { error: `path: ${rd.error}` };
+    const head = rd.buf.subarray(0, 1 << 20).toString("latin1");
+    if (/-----BEGIN [A-Z ]*(PRIVATE KEY|OPENSSH|PGP PRIVATE)|\b(sk-[A-Za-z0-9_-]{16,}|nvapi-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_|gho_[A-Za-z0-9]{20,}|xox[abprs]-|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.)/.test(head)) return { error: "path: the file's content looks like a key or token" }; // (red team J379 #3: content, not just the name)
     const buf = rd.buf, sha = crypto.createHash("sha256").update(buf).digest("hex");
     // the bytes Angus is shown the hash of are the bytes delivered: a host-only snapshot (never re-read from the folder)
     if (!ctx.snapshotDir) return { error: "no snapshot folder" };
     fs.mkdirSync(ctx.snapshotDir, { recursive: true, mode: 0o700 });
+    for (const n of fs.readdirSync(ctx.snapshotDir)) { try { if (Date.now() - fs.statSync(path.join(ctx.snapshotDir, n)).mtimeMs > 3 * 86400e3) fs.unlinkSync(path.join(ctx.snapshotDir, n)); } catch { /* */ } } // (held requests expire long before)
     const snap = path.join(ctx.snapshotDir, `${sha}.bin`); if (!fs.existsSync(snap)) { fs.writeFileSync(snap + ".tmp", buf, { mode: 0o600 }); fs.renameSync(snap + ".tmp", snap); }
     const text = /^\.(txt|md|csv|json|xml|yaml|yml|tex|bib|log)$/.test(ext) ? buf.toString("utf8") : "";
-    const preview = text ? `\nFirst lines:\n${text.split("\n").slice(0, 8).map((l) => "  " + l.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "").slice(0, 160)).join("\n")}` : "";
+    const nl = text ? text.split("\n").length : 0;
+    const preview = text ? `\nFirst ${Math.min(8, nl)} of ${nl} lines${nl > 8 ? " (the rest isn't shown here)" : ""}:\n${text.split("\n").slice(0, 8).map((l) => "  " + l.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "").slice(0, 160)).join("\n")}` : "";
     return { params: { path: pp.path, sha256: sha, size: buf.length, snapshot: snap }, show: `Send a read-only copy of ${pp.path} (${Math.ceil(pp.stat.size / 1024)} KB, sha256 ${sha.slice(0, 16)}…) into ${ctx.served.name}'s inbox${preview}` };
   },
   // 5. allow a web host for the sandbox (sbx policy, scoped to that one sandbox).
@@ -144,6 +155,10 @@ const V = {
     const host = String(p.host ?? "").trim().toLowerCase().replace(/\.$/, "");
     if (host.length > 100 || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host) || /^[\d.]+$/.test(host) || !/[a-z]/.test(host.split(".").pop())) return { error: "host: a plain public domain name (no IP, port, path or wildcard)" };
     if (/(^|\.)(nvidia\.com|nvidia\.net|nvidiangn\.net|nvda\.ai|local|internal|lan|corp|localhost|home\.arpa)$/.test(host)) return { error: "host: internal hosts are never allowed this way" };
+    // (red team J379 #4) a public name that resolves to a private, loopback or link-local address (127.0.0.1.sslip.io) is refused
+    const ga = spawnSync("getent", ["ahosts", host], { encoding: "utf8", timeout: 5000 });
+    const addrs = [...new Set(String(ga.stdout || "").split("\n").map((l) => l.split(/\s+/)[0]).filter(Boolean))];
+    if (addrs.some((a) => /^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(1[6-9]|2\d|3[01])\.)|^(::1|fe80:|fc|fd|::ffff:(127|10|192\.168)\.)/i.test(a))) return { error: `host: ${host} resolves to a private or local address (${addrs.slice(0, 2).join(", ")})` };
     return { params: { host }, show: `Allow ${"the sandbox"} to reach https://${host} (an sbx network rule for this sandbox only)` };
   },
 };
@@ -153,9 +168,9 @@ export function validate(type, params, ctx) {
   const p = params && typeof params === "object" && !Array.isArray(params) ? params : {};
   const why0 = one(p.why, 4000); if (Buffer.byteLength(why0) > LIMITS.whyBytes) return { ok: false, error: `why: at most ${LIMITS.whyBytes} bytes` }; const why = why0; // (review J368 #8: bytes, not characters)
   if (type !== "note_to_owner" && !why) return { ok: false, error: "why: say why it's needed" };
+  if (!takeRate(ctx.served.name, type, ctx.now || Date.now())) return { ok: false, error: `at most ${LIMITS.perHour[type]} ${TYPES[type]} requests an hour` }; // (re-review: admission before any snapshot is written)
   const v = V[type](p, ctx);
   if (v.error) return { ok: false, error: v.error };
-  if (!takeRate(ctx.served.name, type, ctx.now || Date.now())) return { ok: false, error: `at most ${LIMITS.perHour[type]} ${TYPES[type]} requests an hour` };
   return { ok: true, params: { ...v.params, ...(why ? { why } : {}) }, show: v.show + (why ? `\nWhy (the sandbox's words): ${why}` : ""), summary: `${TYPES[type]}` };
 }
 
@@ -167,7 +182,12 @@ export async function run(type, p, ctx) {
         return r.ok ? { ok: true, outcome: `handed ${p.what} to ${ctx.served.name}'s own Brave window${r.text ? ` (${one(r.text, 120)})` : ""}` } : { ok: false, outcome: `not opened: ${one(r.text, 300)}` };
       }
       case "note_to_owner": return { ok: true, outcome: "Angus has read the note" };
-      case "share_project": { const r = await ctx.addProject(p.project, p.mode); return { ok: !!r.ok, outcome: r.ok ? `listed for sharing: ${one(r.text, 360)}` : `not shared: ${one(r.text, 300)}` }; } // (review J368 #4: the share module's own words: level, effective mode, when it mounts)
+      case "share_project": {
+        // (re-review J368 #4, red team J379 #2) the approved folder or nothing: the same single path and the same inode as reviewed
+        const now2 = projectRoots(ctx.cfgDir).map((r) => path.join(r, p.project)).filter((d) => { try { const st = fs.lstatSync(d); return st.isDirectory() && !st.isSymbolicLink(); } catch { return false; } });
+        if (now2.length !== 1 || now2[0] !== p.path || (p.ino && fs.lstatSync(p.path).ino !== p.ino)) return { ok: false, outcome: `not shared: ${p.project} is no longer exactly the folder Angus saw (${p.path})` };
+        const r = await ctx.addProject(p.project, p.mode, { realpath: p.path, ino: p.ino }); // (shares.mjs J379fix checks it again under its own lock)
+        return { ok: !!r.ok, outcome: r.ok ? `listed for sharing: ${one(r.text, 360)}` : `not shared: ${one(r.text, 300)}` }; } // (review J368 #4: the share module's own words: level, effective mode, when it mounts)
       case "send_file": {
         const buf = fs.readFileSync(p.snapshot); // the host-only snapshot taken when Angus was shown it
         if (crypto.createHash("sha256").update(buf).digest("hex") !== p.sha256) return { ok: false, outcome: "not sent: the snapshot doesn't match what Angus saw" };
