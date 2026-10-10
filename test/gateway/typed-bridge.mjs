@@ -124,11 +124,20 @@ export async function runTyped(ctx) {
     // send_file uses 6 of its 6/hour (2 matrix, 3 snapshot probes, the outside-roots refusal: admission is counted before validation).
     // Approve then deny per type also avoids three consecutive denials tripping the real circuit breaker.
     for (const type of TYPES) for (const choice of ['1', '2']) {
-      await ctx.testcase(`J368 ${type}: ${choice === '1' ? 'approve' : 'deny'} routes asker + Thoughts-I + durable archive`, async () => {
+      const retired = type === 'open_for_owner'; // J402 (Angus '18 a'): opening a link or file is no longer a request; the relay refuses it at admission
+      await ctx.testcase(retired ? `J402 ${type}: refused at admission (${choice === '1' ? 'first' : 'second'} try), nothing held or run`
+        : `J368 ${type}: ${choice === '1' ? 'approve' : 'deny'} routes asker + Thoughts-I + durable archive`, async () => {
         let id;
         const effectsBefore = ctx.effects(), copiesBefore = fileCopies(ctx), worldBefore = fs.readFileSync(ctx.worldFile, 'utf8');
         try {
           const result = await ctx.ask('doorman', { op: 'request', type, for: 'Alpha', params: params[type] });
+          if (retired) {
+            assert.equal(result.ok, false, JSON.stringify(result)); assert.ok(!result.pending?.length, 'nothing is held');
+            assert.match(result.error, /isn't a request any more: print the full link/);
+            assert.deepEqual(ctx.effects(), effectsBefore, 'no opener handoff or other effect');
+            assert.deepEqual(fileCopies(ctx), copiesBefore); assert.equal(fs.readFileSync(ctx.worldFile, 'utf8'), worldBefore);
+            return;
+          }
           assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.pending?.length, 1);
           const held = ctx.holdFrom(result); id = held.id;
           assert.equal(held.sandbox, ctx.rig.doorman); assert.equal(held.draft, true);

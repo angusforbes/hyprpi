@@ -26,7 +26,10 @@ try {
   const sp = (model) => c.call("orch.spawn", { thoughts: "A", prompt: "test", name: "Mc" + Math.random().toString(36).slice(2, 6), model }, { timeoutMs: 150000 });
   // W1: blocked model refused, with a suggestion.
   let err = ""; try { await sp(BAD); } catch (e) { err = e.message; }
-  ok("blocked model refused", /can't run here/.test(err) && /wasn.t used/.test(err), err.slice(0, 260));
+  // J389/J397: a model off the host's scoped list (the default BAD) is refused before any call; one on the list that fails its
+  // test call is refused by J383's check. Either way: a clear refusal with a suggestion.
+  const scoped = /not on the host's scoped model list/.test(err);
+  ok("blocked model refused", (scoped || /can't run here/.test(err)) && /wasn.t used/.test(err), err.slice(0, 260));
   ok("refusal suggests a model", /Use \S+\/\S+ instead/.test(err));
   // W2: working model starts; second time cached.
   let t0 = Date.now(); const r1 = await sp(GOOD).catch((e) => ({ error: e.message })); const first = Date.now() - t0;
@@ -34,12 +37,12 @@ try {
   t0 = Date.now(); const r2 = await sp(GOOD).catch((e) => ({ error: e.message })); const second = Date.now() - t0;
   ok("second spawn cached (fast)", r2 && !r2.error && second < 2000, `${second} ms`);
   const checks = (fs.readFileSync(logf, "utf8").match(/model check: /g) || []).length;
-  ok("one real call per model", checks === 2, `${checks} calls logged`);
+  ok("one real call per model", checks === (scoped ? 1 : 2), `${checks} calls logged`);
   const cache = JSON.parse(fs.readFileSync(path.join(state, "model-checks.json"), "utf8"));
-  ok("cache file", cache[GOOD]?.ok === true && cache[BAD]?.ok === false);
+  ok("cache file", cache[GOOD]?.ok === true && (scoped ? !(BAD in cache) : cache[BAD]?.ok === false));
   // Routing-config model: known-good, no call.
   const r3 = await sp("anthropic/claude-haiku-4-5").catch((e) => ({ error: e.message }));
-  ok("ladder model needs no call", !r3.error && (fs.readFileSync(logf, "utf8").match(/model check: /g) || []).length === 2);
+  ok("ladder model needs no call", !r3.error && (fs.readFileSync(logf, "utf8").match(/model check: /g) || []).length === checks, r3.error || "");
   c.close();
   const { isDefinite } = await import("../lib/modelcheck.mjs");
   ok("429 / timeout are transient", !isDefinite("429: rate limit") && !isDefinite("no answer within 90 s") && !isDefinite("ECONNRESET"));
