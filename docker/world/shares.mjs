@@ -259,7 +259,7 @@ function plan() {
     for (const m of rmounts) if (path.dirname(m.r) === f && path.basename(m.r).startsWith(".")) put(m.r, f); // (a listed dot-folder project)
   }
   projects.sort((a, b) => a.name.localeCompare(b.name));
-  return { sandbox, mounts, hidden, skipped, own, access, projects };
+  return { sandbox, mounts, hidden, skipped, own, access, projects, protected: [...prot] }; // (J428: protected also where nothing covers it: host jobs never write there)
 }
 
 // The placeholders: an empty dir and an empty file, host-side, never written to.
@@ -481,7 +481,10 @@ function addProjectLocked(world, name, mode = "", expect = null) {
 }
 
 if (!MAIN) { /* imported */ }
-else if (cmd === "plan") {
+else if (cmd === "plan" && process.argv.includes("--json")) { // J428: for the relay's host-job folder check (protected = read-only mounts)
+  const p = plan();
+  console.log(JSON.stringify({ level: p.access.level, mounts: p.mounts.map((m) => ({ host: m.host, at: m.at, ro: !!m.ro, why: m.why })), hidden: p.hidden.map((h) => ({ path: h.at, dir: !!h.dir })), protected: p.protected }));
+} else if (cmd === "plan") {
   const p = plan();
   console.log(`access level: ${p.access.level} (${p.access.why})`);
   for (const m of p.mounts) console.log(`${m.ro ? "ro" : "rw"}  ${m.at}${m.at !== m.host ? `  (from ${m.host})` : ""}  [${m.why}]`);

@@ -5,7 +5,7 @@ const T0 = Date.parse("2026-10-10T00:00:00Z"), S = 1000;
 const merge = (rec, r) => (r.patch ? { ...rec, ...r.patch, history: [...rec.history, ...(r.history || [])] } : rec);
 const ok = (m) => console.log("ok " + m);
 let job = newJob({ id: "world-g--abc123", sandbox: "world-g", asker: "Alpha", action: "Open ~/Work/cube-art/index.html in G's browser", timeLimitS: 3600, nowMs: T0 });
-assert.equal(job.state, "waiting"); assert.deepEqual(Object.keys(job.approved), ["action", "action_line", "tools", "folders", "time_limit_s"]);
+assert.equal(job.state, "waiting"); assert.deepEqual(Object.keys(job.approved), ["action", "action_line", "tools", "folders", "read_only", "hidden", "beyond", "tools_named", "time_limit_s"]); // (J428: read_only, hidden, beyond, tools_named)
 // 1. only the five operations exist; anything else is refused and changes nothing
 for (const bad of ["approve", "deny", "edit", "create", "decide", "set", "", undefined]) { const r = apply(job, { op: bad, by: "x" }, T0); assert.equal(r.reply.ok, false); assert.equal(r.patch, undefined); }
 assert.deepEqual([...OPS].sort(), ["ask", "claim", "release", "renew", "report"]);

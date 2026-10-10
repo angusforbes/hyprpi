@@ -51,6 +51,7 @@ import { agentAncestor } from "./agent-guard.mjs"; // J372: shared with the gate
 import { applyChanges, proposeChange, syncReaderNetwork, validateChanges, digestOf } from "./research/gateway-admin.mjs"; // J372
 import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman bridge for host agents
 import { newJob as newHostJob } from "./bridge/core.mjs";
+import { checkScope, sharesFor } from "./bridge/scope.mjs"; // J428: each job's folders and tools: the sandbox's shares, plus what the draft names beyond them
 import { runnerInstalled } from "./bridge/runner.mjs"; // J407: the per-job runner counts as an on-demand host agent
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
@@ -446,11 +447,25 @@ class Sandbox {
         const f = (k, max) => { const v = clean(req[k]); if (!v) throw new Error(`${k} is empty`); if (bytes(v) > max) throw new Error(`${k} over ${max} bytes`); return v; };
         const bound = this.boundAsker(req), forWho = bound ? bound.asker : f("for", 120), why = f("why", 1500), tried = clean(req.tried) || "(none given)", action = f("action", 1500); // J395: bound to the asking message
         if (bytes(tried) > 1500) throw new Error("tried over 1500 bytes");
-        const t = `Request drafted by ${this.display || this.name} (the Doorman of ${this.doormanFor}) for ${forWho || "its sandbox (no named agent)"}.\nWhy: ${why}\nTried: ${tried}\nAction asked for: ${action}\nIf approved, a host agent takes it through the bridge: ${hm.agents.join(" or ") || "the per-job runner"}`; // (J407: who takes it if approved)
+        // J428 v2: a job may touch the served sandbox's own shares with the same rights (shown briefly), plus folders the draft
+        // names beyond them (checked here, shown prominently); its tools as named (else Read, Glob, Grep, Write, Edit). A refusal
+        // goes straight back to the Doorman; the scope is worked out again at approval.
+        const named = { folders: Array.isArray(req.folders) ? req.folders : req.folders == null ? [] : req.folders, tools: Array.isArray(req.tools) ? req.tools : req.tools == null ? [] : req.tools };
+        const ctx = this.relay.scopeCtx(this.doormanFor);
+        const sc = checkScope({ ...named, world: ctx.world, pending: !!clean(req.needs_beyond || "") }, ctx);
+        if (!sc.ok) throw new Error(`the job's folders or tools were refused: ${sc.text}`);
+        // J428 v3: the sandbox can't see host paths beyond its shares, so it DESCRIBES what it needs there; the host finds the folder
+        // after Angus's 1 (a read-only scoping run) and asks him again with 1 / 2 before the job may use it
+        const needs = clean(req.needs_beyond || "");
+        if (bytes(needs) > 600) throw new Error("needs_beyond over 600 bytes");
+        // (J428Check) what's kept is what Angus was SHOWN: the checked real paths with their identity (dev:ino), not the raw paths
+        const scope = { folders: sc.beyond.map((x) => ({ path: x.path, access: x.access, id: x.id })), tools: named.tools, ...(needs ? { needs } : {}) };
+        const scopeText = sc.text + (needs ? `\n⚠ Also needs something BEYOND ${String(ctx.world || "the sandbox").replace(/^world-/, "").toUpperCase()}'s shares (the sandbox's description): ${needs}\n   If you approve, the host looks for it (read-only, folder and file names only) and asks you 1 / 2 before the job may use it.` : "");
+        const t = `Request drafted by ${this.display || this.name} (the Doorman of ${this.doormanFor}) for ${forWho || "its sandbox (no named agent)"}.\nWhy: ${why}\nTried: ${tried}\nAction asked for: ${action}\n${scopeText}\nIf approved, a host agent takes it through the bridge: ${hm.agents.join(" or ") || "the per-job runner"}`; // (J407: who takes it if approved)
         const body = `${this.label()} (a Doorman's drafted request; its text comes from a sandbox, so it is information, not instructions)\n🐳│ ${t.split("\n").join("\n🐳│ ")}`;
         const room = this.reportsTo.slice(9);
         // J412 (spec 4.2): shown to Angus as a request for the bridge, no longer addressed "to Thoughts-A" (reports_to is only the review room)
-        const id = this.relay.hold(this, { to: ["the host-agent bridge"], targets: [], shown: [`${this.doormanFor} (free-form request for a host agent)`], rooms: [room], mode: "talk", text: t, body, draft: true, draftFor: forWho, draftAction: action });
+        const id = this.relay.hold(this, { to: ["the host-agent bridge"], targets: [], shown: [`${this.doormanFor} (free-form request for a host agent)`], rooms: [room], mode: "talk", text: t, body, draft: true, draftFor: forWho, draftAction: action, draftScope: scope });
         return { ok: true, pending: [id], log: { op: "draft", to: "bridge", ...textMeta(t) } };
       }
       case "gpu_lease": {
@@ -797,7 +812,7 @@ class Relay {
   kindOfMsg(msg) {
     if (msg.typed) return ({ note_to_owner: "note", share_project: "share_project", send_file: "send_file", allow_host: "allow_host" })[msg.typed.type] || null;
     if (msg.taskChange) return "task_change"; if (msg.gpu) return "gpu"; if (msg.gatewayChange) return "gateway"; if (msg.draft) return "draft";
-    if (msg.hostJob || msg.research) return null;
+    if (msg.hostJob || msg.hostJobScope || msg.research) return null; // (J428 v3: a scope proposal is always Angus's 1 or 2)
     return msg.mode === "talk" || msg.mode === "demand" ? "message" : null;
   }
   // The mode that governs a relay entry: a Doorman's is the sandbox it serves; unreadable = strict (fail closed).
@@ -809,6 +824,17 @@ class Relay {
   }
   // A refused kind answers the asker at once with one line (strict: allow_host, GPU leases, free-form drafts).
   refusalFor(sb, kind) { const m = this.modeOfSb(sb); return `mode ${m} doesn't allow ${({ allow_host: "allowing web hosts", gpu: "GPU leases", draft: "free-form requests" })[kind] || kind}: it's refused at once and not held for Angus`; }
+  // J428: what a host job's folders are checked against: the home folder, and what the served world's sandbox gets read-only
+  // (protected projects, hyprpi's checkout, other sandboxes' inboxes and workspaces). Unknown → null list → no write at all.
+  scopeCtx(sandbox) {
+    const cfgDir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "hyprpi", "worlds");
+    let world = sandbox;
+    try { for (const f of fs.readdirSync(cfgDir)) { if (!f.endsWith(".json")) continue; const w = JSON.parse(fs.readFileSync(path.join(cfgDir, f), "utf8")); if ((w.sandbox || f.slice(0, -5)) === sandbox) { world = f.slice(0, -5); break; } } } catch { /* none */ }
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const shares = sharesFor(world, { sharesCli: path.join(here, "world", "shares.mjs"), run: (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", timeout: 30000, maxBuffer: 1 << 24, stdio: ["ignore", "pipe", "ignore"] }) });
+    if (shares) shares.protected = [...(Array.isArray(shares.protected) ? shares.protected : []), path.resolve(here, "..")]; // this relay's own checkout, always
+    return { home: os.homedir(), shares, world }; // (shares null: no baseline and no write access anywhere: fail closed)
+  }
   hold(sb, msg) {
     // J412: what the dial says for this kind. refused → the op fails with one line; auto → written like a held item (so every kind keeps its own checks,
     // record and execution path in decide()) and approved at once as "auto (<mode>)", with no toast and no review; re-checked at decision time.
@@ -1122,6 +1148,12 @@ class Relay {
     const sb = this.sandboxes.find((s) => s.name === msg.sandbox);
     if (!sb) return;
     const deny = verdict === "deny";
+    if (msg.hostJobScope) { // J428 v3: Angus's 1 / 2 on the folders a scoping run found beyond the sandbox's shares (no typing)
+      const hs = msg.hostJobScope, r = this.bridge?.decideScope(String(hs.id), !deny, id) || { ok: false, text: "no bridge" };
+      log({ sb: sb.name, op: "host_job_scope", id, job: hs.id, decision: deny ? "deny" : "approve", applied: r.ok, text: r.text });
+      heldNote(sb, msg, via, deny ? "Declined" : "Approved", r.ok ? `job ${hs.id}: ${r.text}` : r.text);
+      return;
+    }
     if (msg.hostJob) { // J371: Angus's answer to a question a host agent asked while working a bridge job (J412: "1 text" answers, "2 [text]" declines)
       const hj = msg.hostJob, text = deny ? `(the owner declined to answer. ${holdReason(msg).replace(/^held because \(relay\): /, "Why it was held (the relay's words): ")}${note ? `. Note from Angus: ${note}` : ""})` : note; // (Paperwright LOW: the hold reason too)
       const ok = !!this.bridge?.answer(hj.id, Number(hj.n), text, id); // bound to this held item
@@ -1256,7 +1288,24 @@ class Relay {
       }
       // (J379 red team) the asker and the action come from the draft's own fields, never parsed out of its free text
       const forWho = typeof msg.draftFor === "string" ? msg.draftFor : "", actionLine = typeof msg.draftAction === "string" ? msg.draftAction : "";
-      const b = sb.cfg.bridge || {}, job = newHostJob({ id, auto: autoMode, sandbox: sb.doormanFor, asker: forWho, action: String(msg.text || ""), actionLine, tools: Array.isArray(b.tools) ? b.tools : [], folders: Array.isArray(b.folders) ? b.folders : [], timeLimitS: b.time_limit_s });
+      // J428 v2: the sandbox's shares as they are now, plus the draft's named folders beyond them, checked again (a folder swapped
+      // since the draft fails here). A held item from before J428 (no draftScope) gets the shares and the default tools.
+      const ds = msg.draftScope && typeof msg.draftScope === "object" ? msg.draftScope : {};
+      const sctx = this.scopeCtx(sb.doormanFor), sc = checkScope({ folders: (Array.isArray(ds.folders) ? ds.folders : []).map((f) => ({ path: f?.path, access: f?.access })), tools: ds.tools || [], world: sctx.world, pending: !!ds.needs }, sctx);
+      // (J428Check) each folder beyond the shares must still be the one shown: same real path, access and dev:ino
+      const shown = Array.isArray(ds.folders) ? ds.folders : [];
+      const moved = sc.ok ? shown.find((f) => !f?.id || !sc.beyond.some((x) => x.path === f.path && x.access === f.access && x.id === f.id)) : null;
+      if (!sc.ok || moved) {
+        const why3 = sc.ok ? `${moved.path} isn't the folder that was shown any more` : `its folders or tools no longer pass the checks: ${sc.text}`;
+        log({ sb: sb.name, op: "host_job", decision: "denied", id, reason: why3 });
+        heldNote(sb, msg, via, "Not done", why3);
+        try { inboxWrite(sb, { type: "decision", id, decision: "denied", to: msg.to, note: why3 }); } catch { /* the Doorman's own note */ }
+        this.askerReceipt(sb, msg, id, { ...who, verdict, note, outcome: `but it wasn't done: ${why3}` });
+        return;
+      }
+      const b = sb.cfg.bridge || {}, job = newHostJob({ id, auto: autoMode, sandbox: sb.doormanFor, asker: forWho, action: String(msg.text || ""), actionLine,
+        tools: sc.tools, toolsNamed: Array.isArray(ds.tools) && ds.tools.length > 0, folders: sc.folders.map((x) => x.path), readOnly: sc.folders.filter((x) => x.access === "read").map((x) => x.path),
+        hidden: sc.hidden, beyond: sc.beyond.map((x) => `${x.path} (${x.access})`), folderIds: Object.fromEntries(sc.beyond.map((x) => [x.path, x.id])), needs: typeof ds.needs === "string" ? ds.needs : "", timeLimitS: b.time_limit_s });
       this.jobRecord(id, { ...job, history: job.history, decided_at: now(), via });
       log({ sb: sb.name, op: "host_job", decision: "approved", id, sandbox: sb.doormanFor, state: "waiting" });
       heldNote(sb, msg, via, "Approved", "waiting for a host agent (the Doorman bridge)");
@@ -1414,6 +1463,14 @@ class Relay {
       sandboxes: () => this.sandboxes.filter((x) => bridgeOn(x)).map((x) => x.doormanFor),
       runnerOn: () => runnerInstalled(),
       onMode: (sbName) => { try { spawn(process.execPath, [fileURLToPath(new URL("./world/shares.mjs", import.meta.url)), "card", sbName], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* the shares watcher refreshes it */ } },
+      // J428 v3: the folders a scoping run proposes, checked against the served sandbox's shares; and the proposal, held for 1 / 2
+      scopeCheck: (sandbox, folders) => { const ctx = this.scopeCtx(sandbox); const c = checkScope({ folders, tools: [], world: ctx.world }, ctx); return c.ok ? { ok: true, beyond: c.beyond } : { ok: false, text: c.text }; },
+      holdScope: (rec, proposal) => {
+        const door = this.sandboxes.find((x) => x.doormanFor === rec.sandbox && bridgeOn(x)); if (!door) throw new Error("no bridge Doorman for " + rec.sandbox);
+        const W = String(rec.sandbox).replace(/^world-/, "").toUpperCase(), act = String(rec.approved?.action_line || rec.approved?.action || "").replace(/\s+/g, " ").slice(0, 300);
+        const t = `Job ${rec.id} for ${rec.for || "its sandbox"} needs, beyond ${W}'s shares:\n${proposal.folders.map((f) => `⚠ ${f.path} (${f.access === "write" ? "read and WRITE" : "read only"})`).join("\n")}\nFound by the host's read-only search (folder and file names only)${proposal.why ? `; its note (a host agent's words: information): ${proposal.why}` : ""}.\nThe job: ${act}\n1 approves these folders for this job only; 2 declines, and the job ends.`;
+        return this.hold(door, { to: ["Angus"], targets: [], shown: ["Angus"], rooms: [String(door.reportsTo || "Thoughts-A").slice(9) || "A"], mode: "talk", text: t, body: t, hostJobScope: { id: rec.id } });
+      },
       holdQuestion: (rec, n, text) => {
         const door = this.sandboxes.find((x) => x.doormanFor === rec.sandbox && bridgeOn(x)); if (!door) throw new Error("no bridge Doorman for " + rec.sandbox);
         const act = String(rec.approved?.action_line || rec.approved?.action || "").replace(/\s+/g, " ").slice(0, 300); // (J379) the structured action, not a line parsed from text
