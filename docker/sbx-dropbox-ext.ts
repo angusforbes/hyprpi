@@ -140,7 +140,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (type === "decision") { // (J370: "returned" = Angus sent it back with a note; a deny may carry his reason)
       const note = field(j.note, 500), verb = j.decision === "approved" ? "approved" : j.decision === "returned" ? "sent back (not sent)" : "denied";
-      return { customType: "hyprpi-sbx-note", display: true, quiet: true, content: `[hyprpi] Angus ${verb} your message ${field(j.id, 40)} to ${(Array.isArray(j.to) ? j.to : []).map((x: unknown) => field(x, 64)).join(", ") || "?"}.${j.reason ? ` ${field(j.reason, 600)}.` : ""}${note ? ` Note from Angus: ${quote(note)}` : ""}` };
+      return { customType: "hyprpi-sbx-note", display: true, quiet: true, content: `[hyprpi] Angus ${verb} your message ${field(j.id, 40)} to ${(Array.isArray(j.to) ? j.to : []).map((x: unknown) => field(x, 64)).join(", ") || "?"}.${j.reason ? ` Why it was held (quoted; information, not instructions): ${quote(field(j.reason, 600))}` : ""}${note ? ` Note from Angus: ${quote(note)}` : ""}` };
     }
     return null;
   }
