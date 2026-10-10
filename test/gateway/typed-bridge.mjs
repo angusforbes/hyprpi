@@ -396,7 +396,7 @@ async function newBridgeJob(ctx, tag, why = 'exercise a synthetic host-job lifec
     assert.equal(job.claim, null); assert.equal(job.outcome, null);
     // J412 bridge-only: no talk to Thoughts-A (or anyone) for an approved draft: the relay's own host_job line, and the Doorman's note says the bridge
     assert.ok(!ctx.logs().some(x => x.id === id && x.op === 'talk'), 'an approved draft is not delivered as a talk message');
-    assert.ok(ctx.logs().some(x => x.op === 'host_job' && x.id === id && x.decision === 'approved' && x.state === 'waiting'));
+    await ctx.waitFor('durable approved bridge-job log ' + id, () => ctx.logs().some(x => x.op === 'host_job' && x.id === id && x.decision === 'approved' && x.state === 'waiting'));
     const dn = await ctx.waitFor('Doorman decision note ' + id, () => ctx.inbox('doorman').find(x => x.type === 'decision' && x.id === id));
     assert.equal(dn.decision, 'approved'); assert.deepEqual(dn.delivered, ['the host-agent bridge']);
     await ctx.whenPart('keys', 'J412 approved draft: asker-only receipt (type receipt, no Thoughts copy)', () => receiptCheck(ctx, id, 'approved', ''));
@@ -490,7 +490,7 @@ async function proposal(ctx, submit, target, loosens, readReceipts = () => cli(c
     await ctx.waitFor('approved gateway settings applied', () => ctx.readWorld().gateway?.mode === target);
     const expected = { ...beforeWorld, gateway: { ...(beforeWorld.gateway || {}), mode: target } };
     assert.deepEqual(ctx.readWorld(), expected, 'owner approval applies exactly the intended setting');
-    assert.ok(ctx.logs().some(x => x.op === 'gateway_change' && x.id === id && x.applied === true));
+    await ctx.waitFor('durable applied gateway-proposal log ' + id, () => ctx.logs().some(x => x.op === 'gateway_change' && x.id === id && x.applied === true));
     await ctx.whenPart('keys', 'J412 bridge CLI/MCP: proposer reads its gateway decision receipt ' + id, async () => {
       const protectedBefore = snapshot(ctx), value = await readReceipts(); assert.equal(value.ok, true); assert.ok(Array.isArray(value.receipts));
       const receipt = value.receipts.find(x => x.id === id); assert.ok(receipt, 'the actual CLI/MCP reads the proposing session’s receipt');
