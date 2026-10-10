@@ -32,6 +32,12 @@ removeModel("p/bad", { file: g }); assert.equal(fs.statSync(g).mode & 0o777, 0o6
 setKnownModels(["testprov/a", "testprov/claude-test", "testprov/anthropic/evil", "anthropic/real"]);
 assert.equal(allowedBy("anthropic/unknown-to-pi", ["anthropic/*"]), "", "an identity pi doesn't list: fail closed");
 assert.equal(allowedBy("testprov/a", ["testprov/[!a]*"]), "", "[!a] negates"); assert.equal(allowedBy("testprov/claude-test", ["testprov/[!a]*"]), "testprov/[!a]*"); assert.equal(allowedBy("testprov/a", ["testprov/[^b]*"]), "testprov/[^b]*", "[^b] negates");
+setKnownModels(["testprov/a", "testprov/ab", "testprov/axc", "testprov/a/c", "testprov/a/b/c", "testprov/anthropic/evil", "nv-inference/x/y", "nv-inference/z"]);
+const only = (pat) => ["testprov/a", "testprov/ab", "testprov/axc", "testprov/a/c", "testprov/a/b/c", "testprov/anthropic/evil", "nv-inference/x/y", "nv-inference/z"].filter((m) => allowedBy(m, [pat]));
+assert.deepEqual(only("testprov/a**"), ["testprov/a", "testprov/ab", "testprov/axc"], "** inside a segment stays in the segment");
+assert.deepEqual(only("testprov/a[^b]c"), ["testprov/axc"], "a class never matches /"); assert.deepEqual(only("testprov/**c"), ["testprov/axc"], "**c is segment-local");
+assert.deepEqual(only("nv-inference/**"), ["nv-inference/x/y", "nv-inference/z"], "a whole-segment ** crosses slashes"); assert.deepEqual(only("testprov/**/c"), ["testprov/a/c", "testprov/a/b/c"].filter((m) => only("testprov/**/c").includes(m)), "middle **");
+assert.ok(allowedBy("testprov/a/b/c", ["testprov/**/c"]) && allowedBy("testprov/c", ["testprov/**/c"]) === "" , "** between segments matches several segments");
 setKnownModels(null); process.env.HYPRPI_PI = "/bin/false"; assert.equal(allowedBy("anthropic/evil", ["anthropic/*"]), "", "no registry: fail closed"); delete process.env.HYPRPI_PI;
 setKnownModels(["testprov/a", "testprov/claude-test", "testprov/anthropic/evil", "anthropic/real"]);
 assert.equal(allowedBy("testprov/claude-test", ["a"]), "", "no substring matching of a bare pattern"); assert.equal(allowedBy("testprov/a", ["a"]), "", "and a bare name allows nothing at all (unsupported, never wrongly broad)");
