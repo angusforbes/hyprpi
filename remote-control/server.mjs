@@ -463,11 +463,9 @@ function peerUid(req) {
 // The phone, not this laptop: tailscale serve (root's tailscaled) proxies the phone's request and sets X-Forwarded-For to the CLIENT's tailnet
 // address (a client can't set it: the proxy rewrites it). A request from this laptop to its own tailnet URL also arrives through tailscaled, so
 // its client address must not be one of this machine's own tailnet addresses. -> "" (ok) or why not.
-let ownTs = null;
+// (PhoneReview MED) read fresh for every decision (never cached: the laptop's tailnet address can change while this server runs); empty = refuse.
 function ownTailnetIps() {
-  if (ownTs) return ownTs;
-  try { ownTs = new Set(execFileSync("tailscale", ["ip"], { encoding: "utf8", timeout: 5000 }).split("\n").map((x) => x.trim().toLowerCase()).filter(Boolean)); } catch { ownTs = null; return null; }
-  return ownTs;
+  try { const l = execFileSync("tailscale", ["ip"], { encoding: "utf8", timeout: 5000 }).split("\n").map((x) => x.trim().toLowerCase()).filter(Boolean); return l.length ? new Set(l) : null; } catch { return null; }
 }
 const isTailnet = (ip) => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(ip) || /^fd7a:115c:a1e0:/i.test(ip);
 function notFromPhone(req) {
