@@ -69,7 +69,7 @@ def _unquote(line):
     return re.sub(r"^(?:[ \t]*>)+[ \t]?", "", line)
 
 
-_PFX = re.compile(r"^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*")
+_PFX = re.compile(r"^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]+|$)))*")
 
 
 def _inner(line):
@@ -77,9 +77,14 @@ def _inner(line):
     return _PFX.sub("", line, count=1)
 
 
+def _col(line):
+    # the column where a line's content starts (a closer indented 4+ past its opener is code)
+    return len(line) - len(_PFX.sub("", line, count=1).lstrip())
+
+
 def _listed(line):
     # a list marker starts a new item: never a closing fence
-    return re.search(r"(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)", _PFX.match(line).group(0)) is not None
+    return re.search(r"(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]+|$)", _PFX.match(line).group(0)) is not None
 
 
 def _quotes(line):
@@ -90,7 +95,7 @@ def _quotes(line):
 def html_code(t):
     # same as research.mjs htmlCode: a stack of open names; a close counts only for the innermost open element; script/style are raw text
     st, start, cur, res = [], 0, 0, []
-    for m in re.finditer(r"<(/?)(pre|code|samp|kbd|script|style)\b[^>]*>", t, flags=re.I):
+    for m in re.finditer(r"<(/?)(pre|code|samp|kbd|script|style)(?=[\s/>])[^<>]*>", t, flags=re.I):
         name, top = m.group(2).lower(), (st[-1] if st else None)
         if top in ("script", "style"):
             if m.group(1) and name == top:
@@ -128,12 +133,12 @@ def strip_code(s):
         c, q = _inner(line), _unquote(line)
         if fence:
             m = re.match(r"^[ \t]*(`{3,}|~{3,})[ \t]*$", c)
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and _quotes(line) == fence[2] and not _listed(line):
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and _quotes(line) == fence[2] and not _listed(line) and _col(line) <= fence[3] + 3:
                 fence = None
             continue
         f = re.match(r"^[ \t]*(`{3,}|~{3,})", c)
         if f:
-            fence = (f.group(1)[0], len(f.group(1)), _quotes(line)); out.append("[code omitted]"); prev_blank = False; in_ind = False; continue
+            fence = (f.group(1)[0], len(f.group(1)), _quotes(line), _col(line)); out.append("[code omitted]"); prev_blank = False; in_ind = False; continue
         if not re.search(r"[^ \t]", c):
             prev_blank = True; out.append(re.sub(r"^[ \t]+|[ \t]+$", "", line)); continue
         if re.match(r"^( {4,}|\t)", q) and (in_ind or prev_blank) and not re.match(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]", q):
@@ -141,7 +146,9 @@ def strip_code(s):
                 out.append("[code omitted]")
             in_ind = True; prev_blank = False; continue
         in_ind = False; prev_blank = False; out.append(line)
-    return inline_code("\n".join(out)).replace("`", "")
+    # a last guarantee whatever the parse missed: no backticks, no ~~~ runs, no indented lines (the deliverable is prose)
+    t = re.sub(r"~{3,}", "", inline_code("\n".join(out)).replace("`", ""))
+    return "\n".join(re.sub(r"^((?:[ \t]*>)*)[ \t]+", lambda m: (re.sub(r"[ \t]", "", m.group(1)) + " ") if m.group(1) else "", l) for l in t.split("\n"))
 
 
 def inline_code(t):

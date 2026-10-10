@@ -344,28 +344,31 @@ export function stripCode(text) {
   // A line's content after any blockquote markers ("> > ") and list markers ("- ", "1. "): a fence or code block inside a quote or a list counts too.
   // Containers may nest in any order ("- > - ~~~"): strip quote and list markers repeatedly until none is left (bounded).
   const unquote = (l) => l.replace(/^(?:[ \t]*>)+[ \t]?/, "");
-  const PFX = /^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)))*/;
+  const PFX = /^(?:[ \t]*(?:>[ \t]?|(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]+|$)))*/;
   const inner = (l) => l.replace(PFX, ""); // every quote / list marker, any depth, one pass
-  const listed = (l) => /(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.test(PFX.exec(l)[0]); // a list marker starts a new item: never a closing fence
+  const listed = (l) => /(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]+|$)/.test(PFX.exec(l)[0]); // a list marker starts a new item: never a closing fence
   const quotes = (l) => (PFX.exec(l)[0].match(/>/g) || []).length; // how deep in blockquotes a line is: a fence closes only at its opener's depth (GapReview)
   const out = []; let fence = null, prevBlank = true, inInd = false;
   for (const line of t1.split("\n")) {
     const c = inner(line), q = unquote(line);
-    if (fence) { const m = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n && quotes(line) === fence.q && !listed(line)) fence = null; continue; }
+    const col = (l) => l.length - l.replace(PFX, "").trimStart().length; // the column where a line's content starts
+    if (fence) { const m = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(c); if (m && m[1][0] === fence.ch && m[1].length >= fence.n && quotes(line) === fence.q && !listed(line) && col(line) <= fence.col + 3) fence = null; continue; } // (a closer indented 4+ past its opener is code, CleanerCheck)
     const f = /^[ \t]*(`{3,}|~{3,})/.exec(c);
-    if (f) { fence = { ch: f[1][0], n: f[1].length, q: quotes(line) }; out.push("[code omitted]"); prevBlank = false; inInd = false; continue; }
+    if (f) { fence = { ch: f[1][0], n: f[1].length, q: quotes(line), col: col(line) }; out.push("[code omitted]"); prevBlank = false; inInd = false; continue; }
     if (!/[^ \t]/.test(c)) { prevBlank = true; out.push(line.replace(/^[ \t]+|[ \t]+$/g, "")); continue; }
     if (/^( {4,}|\t)/.test(q) && (inInd || prevBlank) && !/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/.test(q)) { if (!inInd) out.push("[code omitted]"); inInd = true; prevBlank = false; continue; }
     inInd = false; prevBlank = false; out.push(line);
   }
-  return inlineCode(out.join("\n")).replace(/`/g, "");
+  // A last, simple guarantee whatever the parse above missed (CleanerCheck): nothing can render as code in the result: no backticks, no ~~~ / ```
+  // runs, and no indented lines (leading spaces and tabs after any quote markers are dropped; the deliverable is prose).
+  return inlineCode(out.join("\n")).replace(/`/g, "").replace(/~{3,}/g, "").split("\n").map((l) => l.replace(/^((?:[ \t]*>)*)[ \t]+/, (m0, q) => (q ? q.replace(/[ \t]/g, "") + " " : ""))).join("\n");
 }
 // HTML code-like elements (pre, code, samp, kbd, script, style) by a linear tag scan with a depth count, so a nested element can't end the
 // outer one early; everything from the outermost open tag to its matching close (or the end) becomes "[code omitted]".
 export function htmlCode(t) {
   // a stack of open element names: a close tag counts only when it closes the innermost open element; inside script/style (raw text) nothing but
   // its own close tag counts. Outermost open to its real close (or the end, fail closed) -> "[code omitted]".
-  const re = /<(\/?)(pre|code|samp|kbd|script|style)\b[^>]*>/gi, st = []; let start = 0, cur = 0, res = "", m;
+  const re = /<(\/?)(pre|code|samp|kbd|script|style)(?=[\s/>])[^<>]*>/gi, st = []; let start = 0, cur = 0, res = "", m;
   while ((m = re.exec(t))) {
     const name = m[2].toLowerCase(), top = st[st.length - 1];
     if (top === "script" || top === "style") { if (m[1] && name === top) st.pop(); else continue; }
