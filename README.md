@@ -1,549 +1,339 @@
 # hyprpi
 
-Pi agents in **their own windows**, anywhere in any workspace of any
-[hyprwrld](hyprwrlds/), grouped into **rooms** (one per world by
-default). Meant to replace Herdr eventually; for now the two are separate.
+**AI coding agents that live on your desktop, each in its own terminal window, organised into worlds, with panels and a per-world assistant that keep track of all of it.** Built on [Hyprland](https://hypr.land) and the [pi](https://github.com/earendil-works/pi) coding agent; at home on [Omarchy](https://omarchy.org).
 
-## How the parts fit together
+![hyprpi: agents in their own windows, worlds to hold the work, and a system that keeps track of it](docs/img/hero.png)
 
-This repo holds hyprpi and the two desktop pieces it is built around:
+- **Agents in their own windows.** Every agent is an ordinary terminal window running pi. You move it, tile it, put it on any workspace, and it keeps its name, colour and conversation.
+- **Worlds to hold the work.** Workspaces are grouped into worlds (A = workspaces 1–10, B = 11–20, …). Each world has its own agents, a shared room, a project board and its own Thoughts, an assistant that keeps track of the world for you.
+- **A system that keeps track of it.** A small background daemon routes messages, keeps the boards, hands out work as briefs, restores everything after a crash and keeps idle agents tidy, so many agents can work at once without you hunting for them.
 
-- **hyprpi** (the top level: `bin/`, `lib/`, `pi-extension/`, `mockups/`, `shell-plugin/`, plus
-  `remote-control/` (the phone app) and `mcp-gateway/` (shared MCP servers)): Pi agents in their own
-  windows, rooms, panels, Thoughts. It works on plain Hyprland (Omarchy) with ordinary workspaces, and
-  gets better with the two below.
-- **[hyprwrlds/](hyprwrlds/)**: worlds for Hyprland, blocks of ten workspaces (A = 1-10, B = 11-20, …)
-  with keys and a bar widget. It stands alone, but it's really the layout hyprpi is designed for: one
-  room per world. Also published on its own as
-  [angusforbes/hyprwrlds](https://github.com/angusforbes/hyprwrlds) (this folder is the master).
-- **[hyprwrlds-vimarchy/](hyprwrlds-vimarchy/)**: a Vimarchy-style overview and switcher for worlds and
-  workspaces (ALT+SPACE and friends). It builds on hyprwrlds; if you only use workspaces 1-10, that is
-  simply one world. The standalone repo
-  [angusforbes/hyprwrlds-vimarchy](https://github.com/angusforbes/hyprwrlds-vimarchy) is frozen; newer
-  versions live here.
+## How it fits together
+
+![How it fits together: worlds of agents with their rooms, boards, Streams and Thoughts, linked by the hyprpi daemon; the MCP gateway and the phone app at the side](docs/img/overview.png)
+
+This repo holds hyprpi and the desktop pieces it is built around. Each can be installed on its own:
+
+| Part | What it is |
+|---|---|
+| hyprpi | agents in their own windows, rooms, panels, Thoughts |
+| hyprwrlds | worlds: blocks of ten workspaces, keys, bar widget |
+| hyprwrlds-vimarchy | an overview to see and jump around worlds |
+| remote-control | the π phone app for agents, panels and files |
+| mcp-gateway | shared, lazily started MCP servers for all agents |
 
 ## Install
 
-First the [requirements](docs/requirements.md) (pi logged in, Node 22+, a terminal: kitty recommended,
-see [docs/terminals.md](docs/terminals.md)). Then, wherever you cloned it:
+**Requirements:** Linux with Hyprland 0.56 or newer and its Lua config (`hyprland.lua`), Node.js 22+, a terminal (kitty recommended), and pi 1.0.x logged in to a model provider. Omarchy is needed only for the extras that live in its bar and menus (the finder, the bar widgets). Details: [docs/requirements.md](docs/requirements.md).
 
-1. `./install.sh`: hyprpi's recommended pieces: `hypr` (hyprpi.lua linked into `~/.config/hypr` and
-   required from `hyprland.lua`), `path` (`hyprpi` linked into `~/.local/bin`), `bar` (the finder and
-   login-mark shell plugins; Omarchy only) and `kitty` (one include line in your `kitty.conf` for
-   Ctrl+click links).
-2. Optional, in this order: `hyprpi integration install hyprwrlds` (worlds; runs
-   [hyprwrlds/install.sh](hyprwrlds/install.sh)), `hyprpi integration install hyprwrlds-vimarchy`
-   (the overview; needs hyprwrlds), `hyprpi integration install gateway` (shared MCP servers,
-   [mcp-gateway/](mcp-gateway/README.md)), `hyprpi integration install remote` (the phone app,
-   [remote-control/](remote-control/README.md)). `./install.sh all` does everything.
-3. Run `pi` once and `/login`, then SUPER+A for your first agent. (No pi yet? `./install.sh` offers to
-   install the tested version, [docker/PI_VERSION](docker/PI_VERSION), into `~/.local` without sudo:
-   `hyprpi integration install pi`.)
+On Arch / Omarchy the tools are one line:
 
-Each piece is opt-in and reversible: `hyprpi integration status` shows what's installed,
-`hyprpi integration uninstall NAME` undoes exactly what its install did (links, the lines it added,
-units it wrote; backups of edited files stay in `~/.local/state/hyprpi/backups/`). Nothing edits your
-shell's rc files: if `~/.local/bin` isn't on your PATH, you're told how to add it. The pieces find
-this checkout wherever it is; nothing assumes `~/Work/hyprpi`. Each subfolder's README also covers
-installing that part on its own.
+`sudo pacman -S --needed nodejs npm kitty jq fd wl-clipboard libnotify libvips`
 
-| Key | Does |
+Then clone and install, wherever you like:
+
+`git clone https://github.com/angusforbes/hyprpi && cd hyprpi`
+
+`./install.sh`
+
+This installs the recommended pieces: `hypr` (hyprpi's keys and window rules, linked into `~/.config/hypr` and required from `hyprland.lua`), `path` (the `hyprpi` command in `~/.local/bin`), `bar` (the finder and the login mark; Omarchy only) and `kitty` (one include line for Ctrl+click links). If pi is missing it offers to install the tested version into `~/.local` (no sudo).
+
+Optional pieces, in this order: `./install.sh hyprwrlds hyprwrlds-vimarchy gateway remote` (or `./install.sh all` for everything).
+
+Then run `pi` once and `/login`, and press **SUPER+A** for your first agent.
+
+### Uninstall
+
+Every piece is opt-in and reversible. `hyprpi integration status` shows what is installed; `hyprpi integration uninstall NAME…` undoes exactly what its install did (links, the lines it added, the services it wrote), and `hyprpi integration uninstall all` removes everything. Backups of files it edited stay in `~/.local/state/hyprpi/backups/`. Nothing touches your shell's rc files. Your agents' conversations are pi's own sessions and are never deleted.
+
+### Settings
+
+hyprpi's behaviour is set in one file, `~/.config/hyprpi/hyprpi.jsonc`, written on first run with every default and a comment on each; changes apply within a minute, no restart. For example, `"user": { "name": "Sam" }` sets the name the panels and the phone show for your messages (default: your login name).
+
+## hyprpi: agents in their own windows
+
+![The agents panel: each agent with its state, task and model, and helpers it spawned listed under it](docs/img/panels.png)
+
+**SUPER+A** opens a new agent: a terminal window running pi on the workspace you are on. It joins that world's room, gets a name and a colour, and from then on it is part of the world: the other agents can talk to it, Thoughts can hand it work, and it shows up in the panels.
+
+The panels are small terminal apps (TUIs), one of each per world:
+
+- **Agents** (SUPER+ALT+A): every agent in the world with its state (working ●, done ✓, needs you ×), what it is doing and its model. Enter jumps to an agent's window; closed and parked agents can be brought back. Agents that spawned helpers show them indented underneath.
+- **Stream** (SUPER+ALT+R): one timeline of the world: what each agent did, posts, messages between agents, board changes. Filter it by agent, project or time (`/stream @Mira 3h`); Ctrl+F switches between full, compact, topics and "all activity".
+- **Projects** (SUPER+ALT+P): the world's project board. Each project has a card with where it stands, next steps, decisions waiting on you and what's done. Agents keep their cards current; you answer decisions right there.
+- **Thoughts** (SUPER+ALT+/): talk to the world's Thoughts (below), or search everything that happened in the world, by keyword or by asking a question.
+
+**SUPER+S** summons agents, panels and app windows to the workspace you are on, **SUPER+D** sends one home, and **SUPER+ALT+S** pins a window so it stays. With Omarchy, **SUPER+SHIFT+SPACE** finds any agent or project by name.
+
+Everything survives: close an agent's window and it can be resumed with its conversation; after a crash or reboot, hyprpi offers to restore every window and panel where it was.
+
+### Thoughts: a colleague for each world
+
+![Thoughts in the middle of a world, linked to its agents and projects: it keeps track, hands out the work, and doesn't write the code itself](docs/img/thoughts.png)
+
+Each world has a Thoughts agent you talk to in the Thoughts panel (or from your phone). Think out loud with it, ask what is going on, or ask for something to be done. It knows the world's agents, projects and history; it answers questions by asking the agents that know, and it turns a request into a **brief** (a job with a goal, limits and "done when" checks) for the right agent, splitting bigger jobs between several agents and having a different one test the result. It tells you when something needs your decision, and it never writes the code itself.
+
+Agents can also work together without you: they message each other, spawn short-lived helpers for parts of a job (shown under their parent in the agents panel), choose a cheaper or stronger model for each helper, and close them when done.
+
+## hyprwrlds: projects live in worlds
+
+![Worlds A to E as rows of ten workspaces, only the used ones filled](docs/img/hyprwrlds.png)
+
+hyprwrlds adds **worlds** to Hyprland: a world is a block of ten workspaces (A = 1–10, B = 11–20, … I = 81–90). SUPER+1…0 goes to a workspace of the current world, SUPER+CTRL+1…9 switches worlds, and SUPER+ALT+arrows walk the grid of workspaces and worlds. A bar widget (Omarchy) shows the worlds in their colours and the workspaces in use.
+
+In hyprpi each world is one area of work: its own agents, room, board and Thoughts. Keep a world per project or per kind of work and switch between them without losing anything.
+
+It works without hyprpi too. Keys and details: [hyprwrlds/README.md](hyprwrlds/README.md). Also published on its own as [angusforbes/hyprwrlds](https://github.com/angusforbes/hyprwrlds).
+
+## hyprwrlds-vimarchy: a fast way to navigate
+
+![The all-worlds overview: every workspace as a mini-screen with its windows, one row per world](docs/img/vimarchy.png)
+
+An overview of your worlds, inspired by [Vimarchy](https://github.com/clickety-clacks/vimarchy) and in its look: every workspace as a mini-screen with a preview of each window and a letter on it. Type the letter to jump to that window, or move windows between workspaces and worlds from the keyboard.
+
+| Keys | Shows |
 |---|---|
-| SUPER+A | New Pi agent in its own terminal window (Omarchy's default terminal) on the current workspace; it joins that world's room |
-| SUPER+ALT+A | Agents panel for the current world, brought here (`mockups/panels --only 1`) |
-| click the current world in the bar | Agents panel for the current world: jump to it wherever it is, or open it here in the top-left slot (`hyprpi room --toggle` → `mockups/agents-here`) |
-| SUPER+ALT+/ | Toggle the search window for the current world's room |
-| SUPER+SHIFT+ALT+P / R / / | Jump to the current world's projects / Stream / search (Thoughts) panel: its workspace, focused (`mockups/panel-jump`); not open → brought here like SUPER+ALT+P / R / /. (No jump key for the agents panel: SUPER+SHIFT+ALT+A is Omarchy's Grok; clicking the world in the bar jumps to it) |
-| SUPER+SHIFT+A | Claude (moved here from SUPER+A; a personal binding in `~/.config/hypr/bindings.lua`, not part of hyprpi) |
-| SUPER+S | Summon: a pop-up of this world's agents, panels, app windows (two lines: app + profile / vault / folder / cwd, then the page / note / file / command) and projects; Tab marks several, Enter brings them to the workspace you're on. Every unpinned window there, apps included and the focused one too, is dismissed first |
-| SUPER+D | Dismiss the focused agent or app window (to its home, or the nearest workspace with room); a hyprpi panel is closed. App windows are only ever moved, never closed. Refused when pinned |
-| SUPER+ALT+D | Dismiss all: every agent, panel and app window on this workspace except pinned ones and the focused window |
-| SUPER+ALT+S | Pin / unpin the focused agent, panel or app window (a light-blue 1 px border while pinned, the same for all; pinned windows are never dismissed). Dialogs (they travel with their window) and parked windows are never summoned, dismissed or pinned on their own. Fullscreen and maximized windows are (J28 v2, J31): one arriving ALONE on a workspace with nothing else on it stays fullscreen/maximized; otherwise it arrives as a normal window, and a dismissed one leaves fullscreen and arrives home normal |
-
-SUPER+SHIFT+ALT+S ("keep this window, clear the rest", J18) is gone: SUPER+ALT+D now keeps the focused window.
-
-These keys, the rule that tags agent windows as terminals (so Omarchy's SUPER+C/V copy and
-paste instead of sending Ctrl+C, which Pi treats as clear/interrupt) and the click-to-mark-seen
-handler are in `hypr/hyprpi.lua` (installed by `hyprpi integration install hypr`). It finds the
-checkout from its own real path, so hyprpi can live anywhere (`$HYPRPI_HOME` in Hyprland's
-environment overrides it).
-
-## Room window (retired)
-
-**Retired 2026-09-28 (Angus): kept in `ui/`, no longer developed.** The bar click that used to
-toggle it now opens the agents panel (see the table above). It can still be opened explicitly
-with `hyprpi room ROOM`. What follows describes it as it was.
-
-A normal window — tile it, float it, move it anywhere; at most one per
-workspace. Clicking the current world in the bar (or SUPER+ALT+A):
-
-- this workspace has a room window → close it
-- another workspace has this world's room window → take you there
-- neither → open one here, placed as the left-most root of the dwindle tree
-  (left half, everything else moves right); alone it fills the workspace
-
-Top: the room's agents with status, in the world's colour (● working · ✓ done, unseen ·
-○ idle or seen · × blocked), workspace, model and folder. Click an agent to jump to its window;
-each `@` click adds `@Name` to the message box (several = send to just those
-agents). Below: the room's shared conversation. Typing without `@` posts to the
-whole room: every agent in it receives the message plus the room history it
-hasn't seen yet, and answers in the room (`room_reply`). `＋ agent` opens a new
-agent, ⌕ opens search.
-
-Sounds: when an agent finishes a turn (working → done) the room app plays herdr's
-`done` ding (`assets/sounds/done.mp3`, via `paplay`), unless that agent's window
-is focused; an agent going `blocked` plays herdr's `request` sound.
-
-## Search window
-
-Its own window (SUPER+ALT+/ or ⌕ in the room widget). Searches every agent's
-conversation in the room — live agents and ones that have closed — plus the
-room log. **Keyword**: exact phrase, case-insensitive, live as you type.
-**✦ AI** (Ctrl+/ here; Ctrl+S in the room TUI): describe what you mean and press Enter; a small model
-(`searchModel`, default claude-haiku-4-5) reads the recent entries and returns
-the ones that match, each with a short reason. `@Names` in the box limit it to those agents'
-history (`@Lippy kafka`; Tab completes). Also from the terminal:
-`hyprpi find [--ai] QUERY`. What choosing a result does is still open.
-
-### Room TUI keys: three parts, one modifier each
-
-| Part | Keys |
-|---|---|
-| **Top: agent list** (Shift) | Shift+↑↓ cursor · Enter on an empty box (right after using the list) jumps to the agent (the ▸ marks are retired) |
-| **Middle: stream / search / ask** (Ctrl) | Ctrl+↑↓ select the previous / next stream item (highlighted like a search result; past the newest = follow new items again) or search result · PgUp PgDn a page · Ctrl+Home oldest item / Ctrl+End back to the newest · Esc clears the selection · Ctrl+/ next view (stream → search → ask) · Ctrl+S keyword ⇄ AI · Ctrl+F stream view |
-| **Bottom: message box** (plain keys) | multi-line: ↑↓ between lines, Shift+Enter new line, Home/End line start / end · Shift+←→, Ctrl+Shift+←→, Shift+Home/End select · typing replaces the selection · Ctrl+C copy (no selection: clear the box) · Ctrl+X cut · Ctrl+V or SUPER+V paste (line breaks kept) · SUPER+C copy · Enter send |
-| **Other** | Tab / Shift+Tab room · Ctrl+N new agent · Ctrl+W close / Ctrl+K kill (press twice) · Ctrl+Q quit (Ctrl+C never quits) |
-
-The launcher (`mockups/room-tui`) maps Shift+Space and Shift+Enter to CSI-u and Ctrl+Insert to
-`copy_or_noop` for its kitty window, so those keys reach the TUI.
-
-### Search inside the terminal room (`mockups/room-tui.mjs`)
-
-The room TUI's input line takes slash commands (`lib/search-view.mjs`; typing
-`/` shows the matches, Tab completes and steps through them, `/help` lists them):
-
-| command | what the pane below the agent list shows |
-|---|---|
-| `/room` | the stream, filter `room · all activity` |
-| `/stream [WORDS]` | the stream; with WORDS only rows containing all of them (live, heading shows `filter: …`); alone clears the filter |
-| `/search [WORDS]` | keyword search of the room (agents' conversations + room log), one line per hit |
-| `/ai DESCRIPTION` | the same, by meaning (`searchModel`) |
-| `/ask QUESTION` | a one-shot 2–3 sentence answer with its cited lines (daemon `ask`) |
-| `/new [DIR]`, `/help` | new agent · the command list |
-
-In search view the input is the search box: Enter searches and **never posts**
-(the prompt reads `⌕ C ❯`, or `✦ C ❯` in AI mode); Enter again on the same words
-(or on an empty line, or a double click) jumps to the selected hit's agent.
-Ctrl+↑↓ / PgUp PgDn / wheel select, Ctrl+S switches keyword ⇄ AI, Ctrl+/ moves to
-the next view (stream → search → ask), Esc goes back. The query and results are kept, so
-coming back to search returns to them; Tab (room switch) clears them. `//text` posts `/text` to the room; an
-unknown `/word` is refused with a hint instead of being posted.
-
-## Agents
-
-`hyprpi new` runs `<terminal> … pi -e <hyprpi>/pi-extension/index.ts` with
-`HYPRPI_AGENT_ID` set. The extension gives the agent the same tools it has
-under Herdr — `room_read`, `room_post`, `room_reply`, `talk`, `demand` — plus
-`talk_reply` for answering `talk`/`demand`. Herdr's own room/peer-chat
-extensions stay out of the way when `HYPRPI_AGENT_ID` is set.
-
-- `/name` and `rename_self` work as before (name-sync calls `hyprpi name`).
-- `/twin-split` (pi-twin) opens the twin in a new window beside the original,
-  same room, with the parent's icon and colour.
-- `bonk` toasts say "Agent <icon> <Name> needs you".
-- Voice: speaking to agents lives in [voice-routing/](voice-routing/README.md)
-  (push-to-talk, hands-free phrases, the bar widget, `/voice-switch`; install with
-  `voice-routing/install.sh`). With no target, dictation goes to the Thoughts of
-  the world you're on; hyprpi agents (`hp:<id>`) appear in the voice picker, the
-  bar widget and `voice-agent set/add`, and "me" inside a hyprpi agent is itself.
-
-### Restore-all: everything that was open comes back (J8)
-
-The daemon keeps a live map of what is open: agents in the registry (`agents.json`, field
-`open`), panels in `~/.local/state/hyprpi/panels.json` (kind, world, workspace, tiled or floating,
-geometry). Both are written atomically (tmp + rename) with the previous version kept as `.bak`, and
-the panels map is never replaced by an empty one except by a deliberate close.
-
-**The one rule** (Angus, 2026-10-01): something that goes away *on its own* was closed on purpose
-(a window closed by hand, `/quit`, `/handoff`, ^W / ^K) and is dropped from the map after 6 s.
-Something that goes away *together* with others (3+ hyprpi windows within 3 s: a logout, Hyprland
-going down), while the daemon is shutting down, or in a power cut, stays. `hyprpi stop`, SIGTERM
-and SIGHUP save the map and then freeze it, so the windows a shutdown closes don't count; a
-removal within 5 s of the daemon's last beat is undone at the next start. A pi that crashes alone
-counts as closed (it is still in the room panel's closed list).
-
-**Restoring.** When a fresh daemon finds open agents or panels that aren't live, the first
-deliberate entry point (SUPER+A / `hyprpi new`, the panel keys SUPER+ALT+A / R / P / slash, the
-panels' `/agents`-style commands) shows one menu, once per daemon start: *Restore all* · *Restore
-world X only* · *Not now* · *No* (let them go). `hyprpi restore [all|X]` does the same any time
-(`--list` only shows it, `--no` lets it go). Each agent comes back with its own id (name, icon,
-twins), on **its own workspace** (a parked one parked), on the **model and thinking level** of its
-session's last `model_change` (not the config's `--model`), all at once (twins in a second wave, after their
-originals), with one notification counting up and a "hyprpi restore complete" one that stays until dismissed, opened with Hyprland's `exec_cmd … 'N silent'` so your focus never moves
-(`hyprpi new --silent`). Panels come last, the same way. Missing session files are listed and let
-go. One `restored …` line goes to the current world's room. Agents still running (a plain daemon
-restart) are skipped. Nothing is restored automatically at login.
-
-### Resuming agents after a restart (and parked / closed agents)
-
-The room TUI's **Ctrl+O** cycles which greyed (`◌`) agents are listed under the live ones:
-`live` (default: live + agents lost to a reboot/crash) → `+ parked` (also parked windows and
-agents closed or killed while hyprpi ran, for the last `closedHours`, default 24). The status
-bar counts both kinds either way (`1 parked · 2 closed`). Greyed rows use the stream's grey and
-the same columns as a live row (`◌ name · topic · model`). Enter: a closed agent is resumed
-(same id); a **parked** one (Reprieve, SUPER+W: still running, out of rooms) is moved back to
-the current workspace (daemon `agent.unpark`). A parked agent is listed in the room it was
-parked from. An open room TUI re-execs itself when its own code changes, so panels are never
-stale.
-
-Agents that were still open when hyprpi went down (reboot, logout, crash) come
-back as **closed** entries in their world's room TUI (SUPER+ALT+A): greyed
-`◌ name · topic · closed` under the live agents. Select one (↑↓ or click) and
-press Enter to reopen its Pi session in a new window, with the same agent id,
-so its name, icon, room and twin link survive (a twin's `twin_of` still points
-at its parent's id). ^W twice forgets it (the session file stays). Windows are
-never reopened automatically.
-
-How the daemon tells "lost to a restart" from "closed on purpose": it writes
-`daemon.beat` every 10 s (and on exit) and records `connected` / `leftAt` per
-agent in `agents.json`. On start, an agent that was still connected, or left
-at most 30 s before the last beat, and whose process is gone becomes
-`resumable`. A window you close while hyprpi keeps running is not. Only the
-newest entry per session file is listed, and none whose session is open.
-Daemon methods: `agent.resume {agent}`, `agent.forget {agent}`; `list` and
-the `agents` UI event carry `dormant: [...]`. `hyprpi new --id ID --twin-of ID
--- --session FILE` is what a resume runs.
-
-## Panel commands (all four panels)
-
-The agents, room, search and board panels share one command line (`lib/tui/command-line.mjs`):
-the same parsing (a unique prefix runs a command; `//text` is not a command), Tab completion, the
-hint while typing and `/help`. Every panel has:
-
-| Command | Does |
-|---|---|
-| `/agents` `/room` `/search` `/board` | go to that panel for this world: jump to it wherever it is, or open it here (`mockups/panel-here`) |
-| `/search WORDS` · `/ai QUESTION` (`/ask`) | the search panel runs it (from any panel; the search panel's own run it in place) |
-| `/world X` | switch this panel to world X (^Tab steps through them) |
-| `/go @Name` | jump to that agent's window (Tab completes the name; the same as Ctrl+click) |
-| `/new [DIR]` | a new agent (on the board, a new project is `/project @name`) |
-| `/tinker [W:] TEXT` · `/help` · `/quit` | drop a fix off in the workshop · this panel's commands and keys · close the panel |
-
-Panel-specific: room `/messages` (was `/room`) `/stream` `/history`; search `/search /ai /ask`
-(in place); board `/project /todo /note /done /drop /assign …` (see `/help` in each).
-
-## Add-ons
-
-Optional parts, each switched in `~/.config/hyprpi/config.json`. Hyprland picks up a change at its
-next reload (`hyprctl reload`).
-
-### Finder (on by default)
-
-**SUPER+SHIFT+SPACE** opens the Omarchy menu (the same one as the apps menu on SUPER+ALT+SPACE)
-listing every world's live and parked agents, then its open projects, then the hyprpi panels, each
-with where it is: `Sankey · C3`, `@hyprpi · C1` (a project sits where its writer is, else where its
-world's projects panel is), `>Thoughts D · D6`. Panels start with ">" as projects start with "@", so
-">" lists only panels (`>Agents`, `>Stream`, `>Thoughts`, `>Projects` + their world). Type to
-filter, ↑↓, Enter, Esc. Enter on an agent jumps to its window (a parked one is brought back here); on
-a project it opens its card in the projects panel; on a panel it jumps to it. The key again closes it.
-One letter A–I lists that world first (J17, J195): what's on its workspaces (by workspace, name,
-time), then what belongs to it but sits elsewhere (a board-D project whose writer is on C5), then
-names starting with the letter, then the other matches. A digit 1–0 lists every world's workspace N first.
-Also `hyprpi finder` (or `mockups/finder --list` to print the rows).
-
-It takes Omarchy's "Toggle top bar" key, so the bar toggle moves to **SUPER+ALT+B**.
-
-- `"finder": false`: off; SUPER+SHIFT+SPACE toggles the top bar again, as in stock Omarchy.
-- `"finderDetail": true`: a grey line under each row (status and topic; members and where it
-  stands), at the cost of fewer rows on screen (the menu caps itself at 70% of the screen).
-
-## Tinker (the workshop world)
-
-Worlds are projects. Friction work (a panel, a key, the bar: anything that slows your
-thinking) has its own world, the **workshop**. Say which world once, in the drop-off
-itself: `/tinker D: what to fix`. The daemon remembers it (`~/.local/state/hyprpi/workshop.json`,
-which wins over an optional `"workshop"` config key) and announces "the workshop is world D
-now" in your room and in D's room. After that plain `/tinker what to fix` goes there; another
-letter (`/tinker B: …`) moves it. When something bugs you mid-project, drop it off and
-keep going:
-
-- `/tinker what to fix` in any agent window (a Pi command from the hyprpi extension)
-- `/tinker what to fix` in the room panel
-- `hyprpi tinker what to fix` in a terminal
-
-The daemon gives each drop-off to **one** free (idle or done) agent in the workshop's
-room, never the whole room, so two agents don't fix the same thing. If none is free,
-it waits in a queue (`~/.local/state/hyprpi/tinker-queue.json`) and a new agent opens
-on the workshop world's first workspace without taking focus; the queue drains as
-agents there become free. The agent is told where it came from (agent, room, folder),
-to fix and verify it without asking you, and to `room_post` "🔧 done: …" (or
-"🔧 decide: …" / "🔧 stuck: …") in the workshop room. Each hand-off is logged there as "🔧 → Name: …".
-
-Decisions: the agent makes small, reversible ones itself and lists them in its result under
-"Decided for you:" with how to undo each. Ones that are hard to undo or are yours (publishing or
-pushing anywhere public, sending to other people, deleting or rewriting your data, changing how you
-work, choosing between designs you'd see) it does not make: it does everything else and posts
-"🔧 decide: question, options, recommendation", then stops. A thought rather than a fix (how to
-organise something) gets a proposal written to `~/Obsidian/Tinker/<date> <title>.md` (so it isn't
-lost in the room scroll), only the uncontroversial part built, and a "🔧 plan: … (link)" post.
-Every "🔧 done / plan / decide / stuck" post is **copied to the room the drop-off came from** (as
-"(workshop D #seq) …"), so results and questions reach you where you are working. **decide dings
-you, plan and stuck bonk you** (the daemon does it, not the agent: the sound, a toast naming the agent, and
-× on the agent until it works again), so nothing that needs you sits unseen. Answer by talking to
-that agent (or with another /tinker).
-
-### The three agent sounds
-
-Angus's names (2026-09-28), kept clearly distinct:
-
-- **ding**: a decision is needed from you, right away. `ding TEXT` (= `bonk --ding`) plays
-  `~/.local/share/sounds/ding.wav` (a symlink to one of three candidates; see
-  `~/Work/agent-config/helpers/make-ding-sounds.py`), and the toast says "Agent X needs a decision
-  from you" 🔔. Daemon hook (for the board's Decide section): `dingFor(agent, text, { itemId })` when
-  an item is added, `clearDing(agent, itemId)` when you resolve it. The × clears when the agent's
-  last open decision is resolved, unless a plain bonk is also pending. Tinker "🔧 decide:" uses it.
-- **bonk**: you asked to be told, or an agent thinks it's urgent. `bonk TEXT`, two knocks and
-  "Agent X needs you" 👉. Daemon: `bonkFor(agent, text)`. Tinker "🔧 plan:" / "🔧 stuck:" use it.
-- **chime**: an agent went from working to done. The daemon plays herdr's `assets/sounds/done.mp3`
-  itself (`paplay`), whatever panels are open. Every finish chimes, even several at once.
-  Config: `"chime": false` turns it off; `"chimeGapSec": N` limits it to one per N seconds.
-
-## CLI
-
-`hyprpi help` — `new`, `room`, `list`, `post`, `send`, `focus`, `name`,
-`whoami`, `daemon`, `ensure`, `stop`.
-
-## Pieces
-
-- `lib/daemon.mjs` — the daemon: one per Hyprland instance (socket
-  `$XDG_RUNTIME_DIR/hyprpi/<hash>.sock`), started on demand. Maps each agent's
-  pid to its window via `hyprctl clients` + Hyprland's event socket, assigns
-  rooms, stores room conversations in `~/.local/state/hyprpi/rooms/<room>.jsonl`
-  and remembers agents in `~/.local/state/hyprpi/agents.json` (for restarts,
-  later).
-- `pi-extension/index.ts` — the agent side (tools, status, delivery).
-- `ui/` — Quickshell room windows (`qs -p <hyprpi>/ui`, one process per
-  Hyprland instance, started by `hyprpi room`).
-- `bin/hyprpi` — CLI (symlinked into `~/.local/bin`).
-- `hypr/hyprpi.lua` — Hyprland keys, the agent window rule and click-to-mark-seen
-  (symlinked into `~/.config/hypr/`).
-- `docker/` — Pi agents in a Docker container that are still full hyprpi agents (room, board, window,
-  `(🐳 docker)` in the agents panel): images and `run-hyprpi-agent.sh`. See its README.
-- `terminal-helpers/kitty/` — kitty settings for agent windows (`pi.conf`: Ctrl+click links
-  and files, SUPER+C / Ctrl+Shift+A / Shift+Enter for Pi, select-to-copy), loaded after your own
-  `kitty.conf`; `links.conf` can also be included by every kitty window. See its README.
-
-## Remote control (the phone)
-
-`remote-control/`: a small web app to talk to a world's Thoughts from Angus's iPhone (or any
-browser on his tailnet), with world chips to switch. A `systemd --user` service on 127.0.0.1:8897,
-published tailnet-only with `tailscale serve` on :8443; messages go in with `thoughts.send
-{via: "phone"}` (📱 in the thread). Details: [remote-control/README.md](remote-control/README.md).
-
-## MCP gateway (shared, lazy MCP servers)
-
-`mcp-gateway/`: one shared, lazily started copy of each stdio MCP server for all pi agents. pi
-starts every MCP server once per agent; with hyprpi's ~30 parallel agents that was ~100 processes
-and several GB at rest. The gateway runs a server only while it's being used (0 processes idle,
-`perSession` for servers like hyprcu that keep per-agent state). Standalone (plain Node), so it
-works with any pi setup. `hyprpi mcp-gateway install` links and starts its `systemd --user` unit,
-and `hyprpi mcp-gateway status` shows it. Details: [mcp-gateway/README.md](mcp-gateway/README.md).
-
-## The Stream (panel 2, SUPER+ALT+R)
-
-The room panel is now **the Stream** (Angus 2026-09-30, @hyprpi N40; `lib/stream.mjs`): one
-read-only timeline of the world. Header `— stream C`, status bar `hyprpi stream`. (Internal names
-stay: the file is `mockups/room-tui.mjs` and the window title `hyprpi-room C`, because the launchers
-and the daemon find the window by it.)
-
-- **What it shows**, oldest first: agents' posts, per-turn **did** lines, topic changes, agent
-  events (joined, moved, …), agent-to-agent talk and Angus's prompts, **board changes** (📋 @project
-  · who op handle: text; "update where / next step" bookkeeping is left out), project moves,
-  Thoughts' 💭 lines. **Dedupe:** an agent that posted during a turn doesn't also get that turn's
-  did line (the post says it). Each line shows its **project** when known: its own tag, else the one
-  @project its text names, else the agent's only project. `● Name working…` stays at the bottom.
-- **Ctrl+F** cycles the views (the header says which): **full** text → **compact** (one line each:
-  time · who · @project · text) → **topics** (topic changes only, drawn as before the Stream: the
-  agent's name on its own line, its consecutive topics under it, a blank line before the next
-  agent; no times) → **all activity** (J147: full text plus what the others hide: 🧹 upkeep actions
-  (refreshes, reloads, pruning, compaction nudges, pause/resume), the automatic notes a Thoughts
-  thread no longer draws (kind `notice`: 📨 reported, 🌱 spawned, 🍂 closed, ⏳, card care, …), ✓ / ×,
-  and board where / next-step bookkeeping). The `/stream` filters apply in every view.
-- **The Thoughts thread** (J147, Angus: "if you're not commenting on it, don't include it") draws only
-  his lines, Thoughts' replies and their lead lines (↳ actions, ↩ answers), evidence, and the notes
-  that need him (⚠ alerts such as a refresh upkeep gave up on, 🔑 login, ✗ errors, ⏹, a room message
-  handed back, the refresh divider); `lib/thoughts-lines.mjs` quietNote is the rule (desktop and phone).
-  The "since you last spoke" digest no longer lists refresh-due notes or compaction suffixes (world and
-  the upkeep tool still do). An upkeep problem reaches Thoughts as a ⚠ note plus a line with Angus's next
-  message.
-- **Filters**, all combinable, typed as `/stream …`: `@Blink @Sankey @hyprpi` (a union of agents and
-  projects; a project = lines tagged with it or naming it, its board changes, and its members'
-  untagged lines) · `3h` `90m` `2d` `today` `yesterday` `since 9am` `since 14:30` (a time window
-  loads history from then) · other words narrow (every word) · `raw` adds the tool lines. The
-  header shows the filter; `/stream` alone or **Esc** clears it. e.g. `/stream @hyprpi 3h commit`.
-- **The box** still sends (Angus): plain text is a room post (every agent in the room gets it),
-  `@Name text` goes just to them, `@project text` to the project (its owner answers).
-- **`/digest [filter]`** (Thoughts window, or from any panel): the matching Stream lines go to
-  Thoughts as evidence (the newest 30 shown, up to 400 to the model) and it writes a summary by
-  project: done, decided, waiting on Angus. Follow-ups work. Alone: since Angus last looked at that
-  Thoughts window (it reports focus-out; `STATE/thoughts/looked.json`), else the last 12 h; with a
-  filter but no time window, the same default.
-
-The ▸ marks (a shared per-room selection of agents) are **retired** (Angus, 2026-09-30, @hyprpi D4).
-
-## Activity stream
-
-The room TUI shows each room as a **stream**: its messages plus what its agents **did**. When an
-agent finishes a turn, the daemon's small model (the topic model, claude-haiku-4-5) writes one
-**"did" line** (kind `turn`) from that turn's tool calls and final message, e.g. "made the room
-header one line; tested in a hidden pty; committed 161186f" (lib/topics.mjs `turnInput` /
-`summarizeTurn`; config `"turnLines": false` turns them off). Agents mid-turn show as a dim
-"● Name working…" line at the bottom. Ctrl+F cycles the view: **room + stream** (the default:
-room messages, did lines, topics, agent-to-agent messages, joins and moves) · **room** (room and
-agent-to-agent messages) · **stream** (the same without room messages) · **topics** (topic changes
-only). **Raw tool lines** ("$ …", "reading a.ts") are in no view (Angus, 2026-09-30); `/stream raw`
-shows them (again: back). Finishes and "needs you" are logged but not shown: the agent list's ✓ and × show them. Activity is a history for you (and tools
-like dashboards); it is never part of any agent's context.
-
-Files (append-only JSONL, one object per line, under `~/.local/state/hyprpi/`, or `$HYPRPI_STATE`):
-
-- `rooms/<room>.jsonl` — messages: `{ seq, ts, room, author: { kind: "human"|"agent", id?, name, icon?, color?, markup? }, text, reply_to? }`
-- `activity/<room>.jsonl` — activity, schema version 1:
-
-```json
-{ "v": 1, "ts": 1790000000000, "room": "C", "kind": "tool", "text": "editing lib/daemon.mjs",
-  "agent": { "id": "hp-…", "name": "Quartermaster", "icon": "🗃️", "color": "#e0af68", "markup": "" },
-  "to": ["Sankey"] }
-```
-
-| `kind` | `text` | Source |
-|---|---|---|
-| `tool` | one line per tool call, batched ("reading a.ts, b.ts +3", "$ git push", "web search: …") | the agent's Pi extension |
-| `topic` | the new topic label | topic labelling (on the ding) |
-| `turn` | the "did" line: what the agent did in its last turn and how it ended | turn summary (on the ding) |
-| `done` / `blocked` | "finished" / "needs you" | status changes |
-| `talk` / `demand` | "to Name: gist" / "asks Name: gist" (`to`: recipients) | `talk` / `demand` between agents |
-| `reply` | "replies to Name: gist" (`to`: the asker) | `talk_reply` |
-| `prompt` | "Angus → Name: gist" | a direct prompt from the room TUI / `hyprpi send` |
-| `joined` / `left` | "joined · ~/Work" (twins: "· twin of Name") / "left" | agent connects for the first time / is gone |
-| `renamed` | "pi·w96n is now 🗃️ Quartermaster" | a name or icon change |
-| `moved` | "moved to workspace C3", "moved to room A (A2)" (logged in both rooms), "went to Reprieve", "back from Reprieve, to C1" | window moves |
-| `model` | "switched model to claude-opus-5-5" | model change |
-| `aborted` / `error` | "stopped (Esc)" / "error: …" | how a turn ended (the agent's Pi extension) |
-
-`ts` is milliseconds since the epoch. Texts of messages (`talk`, `demand`, `reply`, `prompt`) are kept whole (up to 4000 characters, line breaks kept); all other texts are one line cut to 200 characters. New kinds may be added;
-readers should ignore kinds they don't know. The daemon method `activity.read { room, limit }`
-returns the recent tail; UI connections also get each new event live as `activity`.
-Config: `"activity": false` turns the stream off; `"activityTools": false` keeps it but drops tool lines.
-
-## Ask (one-shot)
-
-The daemon method `ask { room, question }` answers a question about a room in up to three
-sentences, with citations: `{ answer, citations: [{ kind: "msg"|"agent"|"activity", who, ts, text }], model }`.
-It picks entries from the room's agents' conversations, the room log and the activity stream
-(entries sharing words with the question first, Angus's own words ranked higher, then recent ones),
-and makes one small-model call (`askModel`, else `searchModel`, default `claude-haiku-4-5`) with no
-tools and no memory: about 3 s. The room TUI's `/ask` uses it. For real questions, ask a Pi agent.
-
-## Lapsed model login (J136)
-
-When the Claude login lapses (2026-10-06: `OAuth refresh failed for anthropic: … status=400 … "invalid_grant", "Refresh
-token expired"`; a plain API call says `401 … authentication_error … OAuth token has expired`), every agent on it
-stops. The daemon notices it in plain code (`lib/authwatch.mjs`, no model call): when 2 agents, or any Thoughts, end a
-turn on a login error within 2 min (network errors, timeouts, 429/5xx overloads don't count), Angus gets ONE critical
-notification with the fix (`/login` in any agent window, choose Anthropic), a red **󰌾 login** mark on the bar
-(`shell-plugin/agf.hyprpi-login`, which reads `~/.local/state/hyprpi/alert.json`; hidden otherwise), and every world's
-Thoughts one 🔑 line. Every 15 s it looks at pi's `~/.pi/agent/auth.json` (only each login's type and expiry; never a
-token): a new live login (or a stopped agent's next good turn) clears the mark and tells each agent that stopped on the
-error to carry on (a hyprpi prompt; held if it's busy, J133). A login entry vanishing from the file raises the alert at
-once. No early warning for Claude: its 8 h access token renews itself and the refresh token's lifetime isn't stored;
-logins without a refresh token are warned `warnHours` ahead. `hyprpi auth` shows the state; settings: `hyprpi.jsonc`
-section `auth`. The extension sends the fuller error text (token-like strings masked) and the provider with each
-failed turn.
-
-## Config — `~/.config/hyprpi/config.json`
-
-```json
-{
-  "rooms": "world",
-  "groups": {},
-  "follow": true,
-  "cwd": "~/Work",
-  "cwdFromFocused": true,
-  "terminal": "auto",
-  "terminalHelpers": true,
-  "pi": "pi",
-  "piArgs": [],
-  "searchModel": "claude-haiku-4-5",
-  "aiSearchChars": 110000,
-  "aiSearchActivityShare": 0.2
-}
-
-- `dismissCap` (default 4): a window you dismiss (SUPER+D, SUPER+ALT+D, the clear when you
-  summon) goes to the nearest workspace of the world that has room for it, up to this many
-  tiled windows (floating ones don't count); every workspace full: the emptiest one.
-- `offLimitsWorkspaces` (default `["special:reprieve"]`): an agent whose window is
-  on one of these workspaces (Reprieve) leaves its room: not in any room panel, no
-  room messages, can't post to a room. Moving it out puts it back in its world's room.
-- `cwdFromFocused` (default true): SUPER+A / `hyprpi new` starts the agent in the
-  focused window's folder: another agent's folder, or the current directory of
-  whatever runs in a focused terminal (kitty, foot, alacritty, ghostty, wezterm).
-  Other windows (browser etc.) fall back to `cwd`. `hyprpi new --cwd DIR` wins.
-```
-
-- `rooms`: `"world"` (A = ws 1-10, B = 11-20, …), `"workspace"`, or `"single"`.
-- `groups`: named rooms that override the mode, e.g. `{"Research": [1, 2, 13]}`.
-- `follow`: `true` = an agent moved to another world moves to that room;
-  `false` = it stays in the room it was born in.
-- `terminalHelpers` (default true): agent windows also load `terminal-helpers/<terminal>/`
-  settings (kitty only for now: `pi.conf`, after your own `kitty.conf`).
-- `terminal`: `"auto"` (default) uses Omarchy's default terminal (`xdg-terminal-exec --print-id`,
-  i.e. `~/.config/xdg-terminals.list`), else the first of kitty, foot, alacritty, ghostty that's
-  installed (a clear message when none is); or force `"kitty"`, `"foot"`,
-  `"alacritty"`, `"ghostty"`. Windows always get app-id/class `hyprpi.agent`; kitty windows
-  also get `copy_on_select=clipboard`.
-- `terminalCommand`: override for any other terminal, an array with `{class}` `{title}` `{cwd}`
-  placeholders; the pi command is appended. E.g.
-  `["wezterm", "start", "--class", "{class}", "--cwd", "{cwd}", "--"]`.
-- `piArgs`: extra `pi` flags for new agents (e.g. `["--model", "…"]`).
-- `thoughtsModel` (default `claude-opus-5-5`) and `searchModel` (default `claude-haiku-4-5`): the
-  models Thoughts and the search panel's AI mode use; set them to models your pi login has.
-- **Your folders** (J190; the defaults are the author's layout, each with a fallback):
-  - `cwd` (default `~/Work`): where new agents start when the focused window gives no folder; `~`
-    when it doesn't exist.
-  - `screenshotsDir` (default `~/Screenshots`): where panels save pasted images
-    (`pi-clipboard-*.png`); `/tmp` when the folder doesn't exist.
-  - `notesDir` (default `""`): where /tinker agents write proposals; `""` = `~/Obsidian/Tinker` if that
-    folder exists, else `~/.local/share/hyprpi/notes`.
-  - `jotExtension` (default `""`): the pi-jot extension Thoughts loads (`jot_save`) when the file exists;
-    empty = `~/Harness/pi-jot`, else where `pi install` put it (the `pi-packages` integration piece).
-  - `phone.folders` (default `["~/Obsidian", "~/Work", "~/Downloads", "~/Documents", "~/Screenshots",
-    "~/Phone"]`): what the phone app may read; `phone.uploadDir` (default `~/Phone`): the only folder it
-    writes (uploads); `phone.vault` (default `~/Obsidian`): where its `[[wiki links]]` resolve. Read
-    when the phone app starts (`systemctl --user restart hyprpi-remote-control`).
-- **AI search** (search panel, AI mode: a short answer + the evidence it used). One
-  `searchModel` call reads a slice of the room's history: conversations (what was
-  *said*) and the activity stream (what was *done*: tool calls, topics, joins/moves).
-  Both keys are read on every search, so changes apply without a restart.
-  - `aiSearchChars` (default 110000, ~28k tokens): how much text the model reads per
-    search. More = wider coverage, slower and costlier.
-  - `aiSearchActivityShare` (default 0.2): the **cap** on the activity stream's part of
-    that budget, 0..1. Activity lines are many and short (every `ls`, read and edit), so
-    uncapped they would crowd out the conversations, where reasons and decisions are;
-    but without them "who changed bindings.lua?" can't be answered. 0.2 = 22000
-    characters, about 150 activity lines (each trimmed to ~140), roughly a busy hour of
-    tool calls in a room, leaving 80% for conversation. Lines sharing words with the
-    query go in first, then the newest. A cap, not a reservation: unused activity budget
-    goes to conversations. `0` leaves activity out; `1` removes the cap.
-
-## Testing without touching the desktop
-
-Everything was tested in a nested Hyprland on a headless output (see the
-hyprcu notes): set `HYPRLAND_INSTANCE_SIGNATURE`/`WAYLAND_DISPLAY` to the
-nested instance and `HYPRPI_STATE=/tmp/…` so test rooms stay out of the real
-state directory.
-
-## Later
-
-Shift+click (or right-click) a world in the bar to open its room · choosing a search result · restarting agents (crash / after reboot) · master list of all
-rooms · pop-up picker version · flagging an agent's window when it needs you.
+| ALT+SPACE | the current workspace |
+| ALT+CTRL+SPACE | the current world, workspaces side by side |
+| ALT+SHIFT+SPACE | all worlds, one row each |
+
+It needs hyprwrlds and Quickshell (built into Omarchy's shell; there is also a standalone `shell.qml`). Details: [hyprwrlds-vimarchy/README.md](hyprwrlds-vimarchy/README.md).
+
+## Remote control: the π phone app
+
+![The π app on a phone: the projects tab with a decision waiting, linked to the agents on the desktop](docs/img/remote.png)
+
+Remote control is a small web app that lets you reach your hyprpi worlds from a phone, or any browser on your Tailscale network, when you are away from the desk. It runs as a `systemd --user` service that listens on 127.0.0.1 only, and `tailscale serve` publishes it on your tailnet (never to the public internet). Add it to the iPhone Home Screen from Safari and it behaves like an app: no App Store, no developer account.
+
+### What you can do
+
+- Switch between worlds with the chips in the top bar, and chat with a world's Thoughts agent (messages are marked as sent from the phone, so Thoughts knows you are away and won't bring windows up unless asked).
+- Projects tab: read each project's short summary and answer its open Decide items.
+- Agents tab: see the world's agents and read their recent turns from their session files; send an agent a message (queued if it is busy), interrupt it or stop it.
+- Stream tab: the world's Stream, one line per event, with the same filter syntax as the desktop panel.
+- Files tab: browse, view and search the allowed folders, share files with the iOS share sheet, upload photos and files into one upload folder, and send files with a note to Thoughts or a live agent. File links in replies open in the app's own viewer (images, Markdown, PDFs, text, audio and video).
+
+### Security
+
+- Only the tailnet can reach it, and requests must carry your own Tailscale login (more logins can be allowed by setting `HYPRPI_REMOTE_LOGINS`); requests without one must come from the machine itself.
+- The server answers only to its own host names, and POSTs must come from the page itself.
+- Files are read-only and only from the folders you configure; hidden paths and key- or credential-like names are never listed or served. The one write is uploads, into the upload folder, never overwriting.
+- There is no shell access.
+
+### Install / remove
+
+- `hyprpi integration install remote` writes the user service for this checkout and enables it (`hyprpi remote status` shows it).
+- Publish it on your tailnet once: `tailscale serve --bg --https=8443 http://127.0.0.1:8897`
+- `hyprpi integration uninstall remote` stops and removes the service; `tailscale serve --https=8443 off` stops publishing.
+
+Coming soon: an iPad layout, notifications for ding and bonk, and desktop control on request.
+
+Details, the API and the upload limits: [remote-control/README.md](remote-control/README.md).
+
+## MCP gateway: shared, lazy MCP servers
+
+![The MCP gateway: many agents share one set of tool servers, started only when used](docs/img/gateway.png)
+
+The MCP gateway keeps one shared, lazily started copy of each stdio MCP server for all your pi agents. pi starts every enabled MCP server once per agent process, so with many parallel agents the idle server processes and their memory add up quickly. With the gateway a server runs only while it is being used, so at rest no server processes are running. With a few dozen agents that is the difference between dozens of MCP server processes using gigabytes of memory and nothing at all while idle. It is plain Node with no hyprpi dependency, so it also works with any other pi setup.
+
+### What you can do
+
+- Point pi at `http://127.0.0.1:8790/<name>` instead of the server's `command`; connecting and listing tools are answered from a cache and start nothing.
+- The real server starts on the first call that needs it and stops after `idleMin` minutes without calls (default 10).
+- Give a server `"perSession": true` when it keeps per-client state: each agent then gets its own copy, still lazy and stopped when idle.
+- List your servers in `~/.config/mcp-gateway/servers.json` (see `mcp-gateway/servers.example.json`).
+- Check it with `hyprpi mcp-gateway status`, which shows the unit, the service and which servers are running.
+
+### Install / remove
+
+- `hyprpi integration install gateway` writes the user service with this checkout's path and starts it (safe to re-run; it won't overwrite a unit that isn't hyprpi's).
+- `hyprpi integration uninstall gateway` stops it and removes the unit.
+- Restarting it briefly drops in-flight calls; an agent mid-call gets an error and can retry.
+
+Details: [mcp-gateway/README.md](mcp-gateway/README.md).
+
+## Coming soon
+
+- **Dictation routing.** Speak to your desktop and have it go to the right place: the world's Thoughts, a named agent ("Mira, …") or a project. A first version sends dictation to Thoughts or to a named agent; routing everything by voice is still being built.
+- **Sandboxing.** Run agents in containers, so an agent working on untrusted code can't touch the rest of your machine. Agents can already run in a Docker container ([docker/](docker/)); the sandboxing itself is still being designed.
+
+## Commands
+
+### CLI
+
+Run `hyprpi help` for the full text. Skipped as internal: `seen` (called by the Hyprland click hook) and `voice-targets` (JSON for the voice widget; not in the help).
+
+- `hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [--here] [--no-focus] [-- PI_ARGS...]` — open a Pi agent in its own terminal window (SUPER+A); starts in the focused terminal's or agent's folder unless `--cwd`
+- `hyprpi list [--json]` — live agents and rooms
+- `hyprpi room --toggle` — jump to the current world's agents panel, or open it here (what clicking the current world in the bar does)
+- `hyprpi search [ROOM] [--toggle]` — open the search (Thoughts) window for a room
+- `hyprpi find [--room R] [--ai] QUERY` — search from the terminal, by keyword or with `--ai`
+- `hyprpi post [--room R] TEXT` — post to a room as you; every agent there gets it
+- `hyprpi send AGENT TEXT` — prompt one agent directly
+- `hyprpi thoughts [--room R] [--via voice] TEXT` — message a world's Thoughts agent (default: the current world); `--via voice` marks it as dictated
+- `hyprpi thoughts new W [--handoff FILE]` — a fresh Thoughts session for world W (the old one is archived, never deleted)
+- `hyprpi dictate [--to hp:ID|proj:NAME] TEXT` — a dictation: goes to the focused world's Thoughts, or to the agent or project it starts with ("Atlas, …", "project onboarding, …")
+- `hyprpi tinker [W:] TEXT` — drop a friction fix off in the workshop world (one free agent there takes it, or a new one opens); `D: TEXT` also makes world D the workshop
+- `hyprpi focus AGENT` — jump to an agent's window
+- `hyprpi move AGENT... --to WS|WORLD` — move agents' windows (focus stays); a world letter keeps each one's slot; `--room C` moves every live agent in C
+- `hyprpi spinout @PROJECT --to WORLD [--keep-owner]` — move a project (its card and members) to another world
+- `hyprpi restart AGENT [--no-compact] [--wait]` — restart an agent's pi on the same session once it is idle (compacts first)
+- `hyprpi name NAME [--fg #rrggbb]` — set this agent's name
+- `hyprpi whoami` — this agent (inside a hyprpi agent)
+- `hyprpi status STATE [--quiet]` — set this agent's status
+- `hyprpi finder [--list]` — find an agent or project (Omarchy only: the finder add-on, SUPER+SHIFT+SPACE)
+- `hyprpi integration [status|install|uninstall] [NAME…]` — hyprpi's home-folder wiring piece by piece: hypr, path, bar, kitty, gateway, remote, hyprwrlds, hyprwrlds-vimarchy, pi (installs the tested pi version), or `recommended` / `all`
+- `hyprpi mcp-gateway [install|status]` — the shared MCP gateway; `install` writes and starts its systemd user unit
+- `hyprpi remote [install|status]` — the phone app's systemd user unit, the same way
+- `hyprpi daemon` — run the daemon in the foreground
+- `hyprpi daemon restart [--reason R] [--ttl MIN]` — restart the daemon once everyone is idle (returns at once); also `--status` and `--cancel`
+- `hyprpi ensure` — start the daemon if it is not running
+- `hyprpi stop` — stop the daemon (it saves what is open first)
+- `hyprpi restore [all|X] [--list] [--no]` — reopen the agents and panels that were open when hyprpi went down; `--list` only shows them, `--no` lets them go
+- `hyprpi auth [--json]` — the login watch: a lapsed model login, who stopped on it, and the credentials file it watches
+
+### Desktop keys
+
+Installed by `hyprpi integration install hypr` (hypr/hyprpi.lua). The panel keys open the panel for the current world, brought to the workspace you are on.
+
+| Key | Action |
+| --- | --- |
+| SUPER+A | new Pi agent window |
+| SUPER+ALT+A | agents panel |
+| SUPER+ALT+R | Stream panel |
+| SUPER+ALT+P | projects panel |
+| SUPER+ALT+/ | search (Thoughts) window |
+| SUPER+CTRL+ALT+P | all four panels as a 2x2 grid |
+| SUPER+SHIFT+ALT+R | jump to the Stream panel |
+| SUPER+SHIFT+ALT+P | jump to the projects panel |
+| SUPER+SHIFT+ALT+/ | jump to the search / Thoughts panel |
+| SUPER+S | summon this world's agents or projects here |
+| SUPER+D | dismiss the focused agent (a panel is closed) |
+| SUPER+ALT+D | dismiss all but pinned and focused |
+| SUPER+ALT+S | pin / unpin the focused agent or panel |
+| SUPER+SHIFT+SPACE | find an agent or project (Omarchy only) |
+| SUPER+ALT+B | toggle the top bar (Omarchy only; moved here by the finder) |
+| SUPER+SHIFT+/ | monitor scaling down (Omarchy only; moved off SUPER+ALT+/) |
+
+A mouse click in an agent window also marks its "done" as seen (no key).
+
+<details>
+<summary>hyprwrlds keys (worlds of ten workspaces, A to I)</summary>
+
+World X is workspaces 10(X-1)+1 to 10X. Installed by `hyprpi integration install hyprwrlds`.
+
+| Key | Action |
+| --- | --- |
+| SUPER+1..0 | workspace 1..10 of the current world |
+| SUPER+SHIFT+1..0 | move window there, and follow |
+| SUPER+SHIFT+ALT+1..0 | move window there, silently |
+| SUPER+CTRL+1..9 | switch to world A..I |
+| SUPER+CTRL+SHIFT+1..9 | move window to world A..I |
+| SUPER+CTRL+ALT+1..9 | bar panel N (Omarchy only) |
+| SUPER+ALT+TAB | next world (+SHIFT: previous) |
+| SUPER+TAB | next workspace in the world |
+| SUPER+SHIFT+TAB | previous workspace in the world |
+| SUPER+scroll | cycle workspaces in the world |
+| SUPER+ALT+LEFT/RIGHT | previous / next workspace in the world, wraps |
+| SUPER+ALT+UP/DOWN | same workspace in previous / next world, wraps |
+| SUPER+ALT+CTRL+arrows | the same, one by one, creating it |
+| SUPER+SHIFT+ALT+LEFT/RIGHT | swap workspace with its neighbour |
+| SUPER+SHIFT+ALT+UP/DOWN | move this world up / down the order |
+
+</details>
+
+<details>
+<summary>hyprwrlds-vimarchy keys (Omarchy only: overview and window hints)</summary>
+
+Installed by `hyprpi integration install hyprwrlds-vimarchy`. In an overview, type a window's hint to jump to it (a-z, then Shift+A-Z); Escape closes. Repeating the hint key within a moment toggles fullscreen on that window.
+
+| Key | Action |
+| --- | --- |
+| ALT+SPACE | window hints for this workspace |
+| ALT+CTRL+SPACE | overview of this world |
+| ALT+SHIFT+SPACE | overview of all worlds |
+| ALT+SHIFT+CTRL+SPACE | the original Vimarchy window hints |
+
+While an overview is open, the SUPER+ALT(+CTRL/SHIFT)+arrows act inside it instead of switching workspaces.
+
+</details>
+
+### Agent-window slash commands
+
+Registered by pi-extension/ in every hyprpi agent. The `/jot-*` commands (`/jot-note`, `/jot-idea` …) come from the separate pi-jot package, not from hyprpi.
+
+- `/restart [--no-compact]` — restart this agent's pi on the same session (compacts first); `/restart NAME` restarts another agent
+- `/tinker [W:] TEXT` — drop a friction fix off in the workshop world; `W:` also makes world W the workshop
+- `/notnow TEXT` — the agent reads and considers it, builds nothing, and files it on the project board for later (one turn)
+- `/discuss TEXT` — the agent thinks it through (issues, options, plan, questions), files it on the board, and keeps discussing until you clearly want it built
+- `/hp-summon NAME…` — bring agents, `@projects` or panels (agents, stream, search, projects, thoughts; `board:C` for another world) to the workspace you are on, clearing it first of everything not pinned
+- `/hp-dismiss NAME…` — send agents home (a panel is closed); pinned ones stay
+- `/hp-pin NAME…` and `/hp-unpin NAME…` — pin or unpin agents, projects or panels so summon and dismiss leave them
+- `/hp-focus NAME` — jump to an agent's or panel's window
+- `/hyprpi-reload` — reload this window's pi runtime (hyprpi does this itself when the agent-side code changes)
+
+### Panel commands and keys
+
+<details>
+<summary>Commands and keys in the four panels</summary>
+
+Every panel has a message box at the bottom (`/command`, Tab completes, `//text` sends a literal slash). A unique prefix runs a command (`/tin fix x`). Full key lists with source lines are in the [universal keybinding explorer](https://github.com/angusforbes/omarchy-universal-keybinding-explorer), a separate Omarchy plugin (SUPER+ALT+K, if installed).
+
+**Shared commands** (all panels, from lib/tui/command-line.mjs):
+
+- `/help` — list the commands
+- `/agents`, `/room` (or `/stream`), `/board` (or `/projects`), `/search [WORDS]` — go to that panel for this world, opening it here if needed
+- `/world X` — switch this panel to world X (Ctrl+Tab steps through worlds)
+- `/go @Name` — jump to that agent's window
+- `/new [DIR]` — a new agent here
+- `/tinker [W:] TEXT` — as above
+- `/ai QUESTION` (or `/ask`) — ask about this world's history in the Thoughts window
+- `/thought TEXT` — tell this world's Thoughts agent
+- `/digest [@names…] [3h|today|since 9am] [words]` — Thoughts summarises the Stream by project
+- `/quit` — close this panel
+
+The Thoughts window has no `/ai`, `/thought`, `/digest` or `/search` of the shared set; it has its own versions (below).
+
+**Keys in every panel's box:** Enter sends or runs, arrows / Home / End / Ctrl+arrows move, Shift+arrows select, Ctrl+Z / Ctrl+Y undo and redo, Ctrl+U clears (Alt+Z brings it back), Ctrl+W deletes a word, Ctrl+V pastes (a screenshot pastes its path), Ctrl+C copies, Ctrl+Q quits, Ctrl+Tab / Ctrl+Shift+Tab next and previous world, Ctrl+click on an agent name jumps to its window.
+
+**Agents panel**
+
+- `/` commands: the shared set only
+- Enter on an empty box opens the row under the cursor (live: jump · parked: revive · closed: resume · project: its card)
+- Ctrl+Up / Ctrl+Down / Ctrl+Home / Ctrl+End move the cursor; PgUp / PgDn move 5
+- Ctrl+O cycles views (live · plus parked and closed)
+- Ctrl+W closes the agent under the cursor, Ctrl+K kills it (each twice to confirm), Ctrl+N a new agent
+
+**Stream panel**
+
+- `/stream [@names…] [3h|today|since 9am] [words] [raw]` — filter the Stream (alone clears; `raw` adds tool lines)
+- `/history N | all` — how far back the Stream goes (default 200 interactions)
+- Enter sends to the room; Tab completes a `/command` or `@project`, Shift+Tab an `@agent`
+- Ctrl+F cycles the view: full, compact, topics, all activity
+- Alt+Up / Alt+Down pick a Stream row; Ctrl+Up / Ctrl+Down, PgUp / PgDn and Ctrl+Home / Ctrl+End scroll
+- Ctrl+N a new agent
+
+**Projects panel**
+
+- Cards: `/todo @p TEXT` · `/note @p TEXT` · `/done N2 […] [how verified]` · `/drop N2 […]` · `/archive @p N3 […]` · `/unarchive @p N3 […]` · `/clarify D1 QUESTION` · `/fold @p` (or `/open`)
+- Projects: `/project @name [title] [+@Agent …]` · `/assign @p +@A -@B` · `/writer @p @A` · `/rename @p @new` · `/title @p TEXT` · `/icon @p EMOJI` · `/pause @p` · `/activate @p` · `/split @p into @a @b` · `/merge @a [@b …] into @c` · `/move @p [@q …] WORLD`
+- Upkeep: `/tidy [@p]` (the writer tidies the card) · `/refresh [@p]` (members reconcile the card with reality)
+- Ctrl+F switches Cards and Decisions views; Ctrl+Up / Ctrl+Down highlight the previous / next card or item; Ctrl+Space or Ctrl+O folds or opens a card
+- Cards view, on the highlighted item: Ctrl+D drops it (on a project header: archives the project), Ctrl+A archives or unarchives, Ctrl+T marks it done; Ctrl+Z undoes a drop or archive
+- Decisions view: Alt+1..9 answer with that option, Alt+L puts the decision off, Enter on an empty box takes the recommended option
+- Tab completes a `/command`, an item handle or an `@project`; Shift+Tab an `@agent`; Esc never quits
+
+**Thoughts window** (the search panel)
+
+- Enter talks to the Thoughts agent (it remembers, can ask agents and hand them work) or runs a `/command`
+- `/keyword WORDS` (or `/search`) — exact-word search of the world's history, no model: the 10 newest matching turns
+- `/more [N]` — the last `/keyword` again with N (default 20) more older matches
+- `/ask QUESTION` (or `/ai`) — a small model answers from the history and cites the turns
+- `/digest [@names…] [3h|today|since 9am] [words]` — summary by project; alone: since you last looked
+- `/thought TEXT` — the same as typing TEXT
+- `/step` — `A /step B /step C` sends A, then B once Thoughts has answered, and so on; `/steps [cancel]` shows or drops what is still queued
+- `/compact [FOCUS]` — compact Thoughts' conversation now
+- `/model [provider/id]` and `/thinking LEVEL` — Thoughts' model or thinking level until it restarts
+- Esc interrupts what is running (it never touches the box); Ctrl+Up / Ctrl+Down, PgUp / PgDn and Ctrl+Home / Ctrl+End scroll the thread; End on an empty box follows the newest
+
+</details>
