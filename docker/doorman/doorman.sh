@@ -88,13 +88,15 @@ start)
   sbx cp "$H/docker/sbx-dropbox-ext.ts" "$NAME:/home/agent/.pi/agent/extensions/hyprpi-dropbox.ts" >/dev/null
   sbx cp "$H/docker/doorman/doorman-prompt.md" "$NAME:/home/agent/doorman-prompt.md" >/dev/null
   PIRUN="sbx exec -i -w /home/agent -e HYPRPI_DROPBOX=$BOX/.hyprpi-dropbox -e HYPRPI_INBOX=$INBOX -e HYPRPI_DOORMAN=1 $NAME sh -c 'exec /home/agent/.local/bin/pi --mode rpc --no-skills --no-context-files --no-prompt-templates --tools read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request,hyprpi_gpu_lease,hyprpi_task_change,hyprpi_request --system-prompt \"\$(cat /home/agent/doorman-prompt.md)\"'"
-  IN="tail -f /dev/null"; OUT=""
+  OUT=""
   if [[ "$VIS" != strict ]]; then
     mkdir -p "$VSTATE"; chmod 700 "$VSTATE"
     OUT=" | $(command -v node) $VIEW log $NAME"
     rm -f "$VSTATE/input.fifo" # J365: no input path from the window to the Doorman (a fifo left from before is removed)
   fi
-  RUN="set -o pipefail; $PIRUN < <($IN)$OUT" # process substitution: when sbx or the logger ends, the unit ends (and restarts); a pipeline would wait on the idle tail forever
+  # J373 (stateless Doorman): doorman-rpc.mjs runs pi and starts a fresh session after every turn (it also keeps pi's stdin open, as the
+  # idle tail did); the drop-box extension gives each session one message plus the relay's bounded context for that asker.
+  RUN="set -o pipefail; DOORMAN_PIRUN=$(printf %q "$PIRUN") $(command -v node) $(printf %q "$H/docker/doorman/doorman-rpc.mjs")$OUT" # when pi, sbx or the logger ends, the unit ends (and restarts)
   systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M bash -c "$RUN"
   echo "started $UNIT (visibility $VIS)"
   [[ "$VIS" == developer || "$VIS" == observer ]] && [[ -z "${DOORMAN_NO_WINDOW:-}" ]] && "$0" window "$NAME" || true

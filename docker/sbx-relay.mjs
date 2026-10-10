@@ -52,6 +52,7 @@ import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman br
 import { newJob as newHostJob } from "./bridge/core.mjs";
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
+import { openStore as doormanHistory, forDoorman } from "./doorman/history.mjs"; // J373: a Doorman call's only memory
 import { gpuConf, refusal as gpuRefusal, snapshot as gpuSnapshot, runWorker as gpuRun, reconcileSync as gpuReconcile, plain as gpuPlain, LABEL as GPU_LABEL, HARD as GPU_HARD, RUNTIMES as GPU_RUNTIMES } from "./gpu/gpu.mjs"; // J328
 
 const HOME = os.homedir();
@@ -179,7 +180,12 @@ function listNames(dirFd, max) {
   try { let e; while (out.length < max && (e = d.readSync())) out.push(e.name); } finally { d.closeSync(); }
   return out;
 }
+// J373: everything a Doorman receives passes through its history (docker/doorman/history.mjs): a message carries the same
+// asker's bounded context, a receipt is filed with the asker it concerns. (Lazy: the store path needs STATE.)
+let doormanStore = null;
+const dHist = () => (doormanStore ||= doormanHistory(path.join(STATE, "doorman-history.json")));
 function inboxWrite(sb, obj) {
+  if (sb?.doormanFor) { try { obj = forDoorman(dHist(), sb.name, obj); } catch (e) { log({ sb: sb.name, error: `doorman history: ${e.message}` }); } }
   const dirs = pinDirs(sb);
   const have = listNames(dirs.inbox, 5000).filter((n) => /^[0-9]+-[0-9a-f]{8}\.json$/.test(n)).sort();
   const cutoff = Date.now() - LIMITS.inboxKeepMs;
@@ -298,6 +304,14 @@ class Sandbox {
           try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ } // consume before acting (pinned dir, review #1)
           if (/^status-/.test(n) !== (req?.op === "status")) throw new Error("status requests use status-*.json names, and only they do");
           result = await this.handle(req);
+          // J373: the Doorman's answer becomes one exchange in that asker's history; what it drafted while answering is tied
+          // to the asker (req.about = the request_id of the message its fresh call was for, added by the drop-box extension)
+          if (this.doormanFor && result?.ok) {
+            try {
+              if (req.op === "reply") dHist().answered(this.name, req.request_id, req.text);
+              else if (typeof req.about === "string" && Array.isArray(result.pending)) for (const id of result.pending) dHist().link(this.name, id, req.about);
+            } catch (e) { log({ sb: this.name, error: `doorman history: ${e.message}` }); }
+          }
         } catch (e) {
           try { fs.unlinkSync(fdPath(dirs.outbox, n)); } catch { /* gone */ }
           result = { ok: false, error: e.message.slice(0, 200) };
