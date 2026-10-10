@@ -202,7 +202,12 @@ function plan() {
     const o = readJson(path.join(CFG, "worlds", f)); if (o.inbox) prot.add(exp(o.inbox)); if (o.workspace && exp(o.workspace) !== own) prot.add(exp(o.workspace));
   }
   for (const p of [...prot]) { const r = real(p); if (r !== p) { prot.delete(p); prot.add(r); } } // canonical too
-  for (const p of prot) if (mounts.some((m) => !m.ro && under(p, m.host)) || [ROOT].includes(p)) add(p, { ro: true, why: "protected" });
+  // a protected path inside a writable mount gets a read-only overlay at the matching place in that mount, judged by
+  // the mount's REAL path (LevelReview: a share that aliases a parent folder)
+  for (const p of prot) {
+    if (p === ROOT) add(p, { ro: true, why: "protected" });
+    for (const m of [...mounts]) { const r = real(m.host); if (!m.ro && under(p, r)) add(p, { ro: true, why: "protected", at: path.join(m.at, path.relative(r, p)) }); }
+  }
   // (LevelReview) a writable mount INSIDE a protected path (e.g. a listed subfolder of a protected repo) is read-only too
   // (canonical equality counts: a share that is an alias of a protected project is that project)
   for (const m of mounts) if (!m.ro && [...prot].some((p) => under(real(m.host), p))) { m.ro = true; m.why += ", a protected project"; }

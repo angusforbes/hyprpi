@@ -94,7 +94,9 @@ ok("card: level and every shared project by name and mode; unlisted ones absent"
 // (LevelReview) a share that is an alias of a protected project is that project: ro
 const alias = path.join(base, "protAlias"); fs.symlinkSync(path.join(work, "prot-x"), alias);
 r = world({ access: "open", projects: [], shares: [{ path: alias, mode: "rw" }] }); assert.equal(r.mounts[alias], "ro");
-ok("an alias of a protected project is ro");
+const parentAlias = path.join(base, "WorkAlias"); fs.symlinkSync(work, parentAlias);
+r = world({ access: "open", projects: [], shares: [{ path: parentAlias, mode: "rw" }] }); assert.equal(r.mounts[path.join(parentAlias, "prot-x")], "ro", "overlay at the alias's place");
+ok("an alias of a protected project is ro; an alias of its parent gets the ro overlay");
 // addProject (OpenRoute's share_project): within the level, atomically, never wider
 process.env.XDG_CONFIG_HOME = cfg; process.env.XDG_STATE_HOME = st;
 const { addProject } = await import("../docker/world/shares.mjs");
