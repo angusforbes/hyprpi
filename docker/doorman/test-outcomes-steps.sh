@@ -1,6 +1,9 @@
 # J395 (Angus chose a Doorman with no memory at all): the asking agent hears the outcome of every draft from the relay itself, and nothing
 # the Doorman receives carries any earlier exchange. Steps for docker/gateway/e2e.sh (its test daemon + relay, fake sandbox and Doorman):
 #   E2E_STEPS=docker/doorman/test-outcomes-steps.sh bash docker/gateway/e2e.sh
+# (J407/J412: a free-form draft needs a registered host agent, else it is refused at once: register one, and keep it alive while the steps run)
+AT=$(DOORMAN_STATE=$P node $H/docker/bridge/doorman-bridge --json register StepsAgent --harness test | python3 -c "import json,sys;print(json.load(sys.stdin).get('agent_token',''))")
+( while sleep 25; do DOORMAN_STATE=$P node $H/docker/bridge/doorman-bridge --json heartbeat --agent-token "$AT" >/dev/null 2>&1 || break; done ) & HB=$!
 FAILS=0; chk() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; FAILS=$((FAILS+1)); fi; }
 # (J412: a decision reaches the asker as one {type: "receipt", for, text}; shown here as "for: [Outside] text" like the other outcomes)
 G() { python3 -c "import json,glob
@@ -18,7 +21,9 @@ chk "Alpha's outcome never went to Beta and vice versa" "! G | grep -q 'Beta: \[
 echo "== task change for Gamma (J368 route)"; D o3 '{"op":"task_change","task":"Perovskite stability","why":"moved on","for":"Gamma"}'; ID3=$(ls $P/pending/ | sed -n 's/\.json$//p' | head -1); printf 'terminal\n' > $P/decisions/$ID3.approve; sleep 4
 chk "Gamma hears the task change outcome" "G | grep -q 'Gamma: \[Outside\] Angus approved the research task change ($ID3)'"
 echo "== typed request for Alpha (J368 route)"; D o4 '{"op":"request","type":"note_to_owner","for":"Alpha","params":{"text":"render done"}}'; ID4=$(ls $P/pending/ | sed -n 's/\.json$//p' | head -1); printf 'terminal\n' > $P/decisions/$ID4.deny; sleep 4
-chk "Alpha hears the typed request outcome" "G | grep -q 'Alpha: \[Outside\] Angus denied the request.*($ID4)'"
+# (J412: in mode safe a note doesn't wait for Angus: it is approved automatically, and the receipt says so, never "Angus …")
+if [ -n "$ID4" ]; then chk "Alpha hears the typed request outcome" "G | grep -q 'Alpha: \[Outside\] Angus denied the request.*($ID4)'"
+else chk "Alpha hears the automatic outcome of its note (mode safe)" "G | grep -q 'Alpha: \[Outside\] Approved automatically (mode [a-z]*): the request .a note for Angus.'"; fi
 echo "== the Doorman's own inbox: two questions from different agents carry nothing earlier"
 W o5 '{"op":"talk","to":["Doorman-T"],"mode":"demand","text":"[Alpha, in world G] is pypi.org allowed? SECRET-A"}'
 W o6 '{"op":"talk","to":["Doorman-T"],"mode":"demand","text":"[Alpha, in world G] and npm? SECRET-A2"}'
@@ -40,3 +45,4 @@ D o8 '{"op":"draft","for":"Beta","about":"'$RQ'","why":"x","action":"allow foo.o
 chk "the outcome of $ID8 went to Alpha (the asker of $RQ), not to Beta" "G | grep -q 'Alpha: \[Outside\] Angus denied the request drafted for you ($ID8)' && ! G | grep -q 'Beta: \[Outside\] Angus denied the request drafted for you ($ID8)'"
 echo "outcomes: $FAILS failed"
 E2E_RC=$(( FAILS > 0 ))
+kill $HB 2>/dev/null

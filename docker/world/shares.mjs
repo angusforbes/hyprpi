@@ -401,7 +401,7 @@ function writeCard(p = plan(), ports = wantPorts().map((x) => ({ ...x, ok: true 
     ...hostAgentsSection(p.sandbox), // J407
     "## How to ask", "",
     "- Talk to your Doorman (always allowed, no approval needed).",
-    "- Messages to agents in other worlds wait for Angus's approval (a toast and the Thoughts panel); he can allow similar ones for a while.", "",
+    "- Messages to agents in other worlds wait for Angus's approval (a toast and the Thoughts panel); he can allow similar ones for a while. If he denies one, it comes back to you with why it was held (and his text): revise it and send again, or drop it.", "",
     "## Withheld", "",
     "Other folders in the owner's home, credentials, other worlds' conversations, and the hidden gitignored files above.", "",
   ].join("\n");

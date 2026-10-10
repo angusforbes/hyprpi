@@ -31,7 +31,8 @@ ok("held-note: ownerNote, linkable (returnable gone), holdReason for every kind"
 // ---- the relay's methods, the exact source, with IO stubbed
 const src = fs.readFileSync(new URL("./sbx-relay.mjs", import.meta.url), "utf8");
 const cut = (from, to) => { const i = src.indexOf(from); assert.ok(i > 0, from); const j = src.indexOf(to, i + from.length); assert.ok(j > i, to); return src.slice(i, j).trim(); };
-const cls = `(class R { ${cut("  hold(sb, msg) {", "  // J309: run one research")}\n${cut("  askerText(msg, id,", "  // J412 (spec 2.3): every \"2\"")}\n${cut("  returnedAll() {", "  // J308 (design §9")}\n breakerNote() {} agentFree() { return false; } jobRecord() { return true; } typedCtx() { return {}; } saveQueue() {} pumpPlans() {} deliverResearch() { return "research-q1.md"; } })`;
+const helpers = cut("export const said", "// J412: a Doorman entry runs").replace(/^export /gm, "");
+const cls = `${helpers}\n(class R { ${cut("  hold(sb, msg) {", "  // J309: run one research")}\n${cut("  askerText(msg, id,", "  // J412 (spec 2.3): every \"2\"")}\n${cut("  returnedAll() {", "  // J308 (design §9")}\n breakerNote() {} kindOfMsg() { return null; } agentFree() { return false; } jobRecord() { return true; } typedCtx() { return {}; } saveQueue() {} pumpPlans() {} deliverResearch() { return "research-q1.md"; } })`;
 const PENDING = path.join(T, "pending"), DECISIONS = path.join(T, "dec"); fs.mkdirSync(PENDING, { recursive: true }); fs.mkdirSync(DECISIONS, { recursive: true });
 const logs = [], notes = [], inbox = [], rules = [], dropCalls = [], answers = [];
 const clean = (s) => String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, "").trim();
@@ -39,12 +40,12 @@ const ctx = { fs, path, crypto: await import("node:crypto"), PENDING, DECISIONS,
   log: (o) => logs.push(o), heldNote: (sb, msg, via, what, outcome) => notes.push({ what, outcome }), inboxWrite: (sb, o) => inbox.push({ sb: sb.name, ...o }), closeNotif() {}, notifyHeld() { return null; }, clean,
   spawn: () => { throw new Error("no spawn in tests"); }, textMeta: () => ({}), now: () => new Date().toISOString(), fileURLToPath, REQ_TYPES: { send_file: "send a host file" }, reqRun: async () => ({ ok: true, outcome: "sent" }),
   ownerNote: N.ownerNote, holdReason: N.holdReason, linkable: N.linkable, returnKey: N.returnKey, researchLog() {}, researchDropPlan: (rid) => { dropCalls.push(rid); return true; },
-  addRules: (st, o) => { rules.push(o); return [{ n: 1, recipient: "x", until: Date.now() + o.dur.ms }]; }, ALLOW_MAX_MS: 8 * 3600e3, watchReply() {}, researchConf: () => ({ mode: "safe" }), newHostJob: () => ({ history: [] }) };
+  REVIEW_CMD: ["node", "relay", "review"], routeHeld: undefined, addRules: (st, o) => { rules.push(o); return [{ n: 1, recipient: "x", until: Date.now() + o.dur.ms }]; }, ALLOW_MAX_MS: 8 * 3600e3, watchReply() {}, researchConf: () => ({ mode: "safe" }), newHostJob: () => ({ history: [] }) };
 const R = vm.runInNewContext(cls.replace(/import\.meta\.url/g, '"file:///x"'), ctx);
 const relay = new R(), calls = [];
 const sb = { name: "world-t", cfg: {}, conn: { call: async (op, a) => { calls.push(a); return { delivered: ["Lens"], request_id: "rq1" }; } }, research: new Map() };
 const door = { name: "doorman-t", doormanFor: "world-t", cfg: {}, conn: sb.conn };
-relay.sandboxes = [sb, door]; relay.draftAnswers = new Map(); relay.bridge = { answer: (id, n, text) => { answers.push({ id, n, text }); return true; } };
+relay.sandboxes = [sb, door]; relay.draftAnswers = new Map(); relay.bridge = { answer: (id, n, text) => { answers.push({ id, n, text }); return true; }, mode: () => ({ mode: "host agent available", agents: ["Builder"] }) };
 relay.suggestPlan = async () => 'A suggested plan from the Doorman (it passed the host\'s checks; nothing was sent): "perovskite humidity stability".';
 const put = (rec) => fs.writeFileSync(path.join(PENDING, rec.id + ".json"), JSON.stringify(rec));
 const decideFile = (id, verdict, note) => { fs.writeFileSync(path.join(DECISIONS, `${id}.${verdict}`), "doorman window" + (note !== undefined ? `\nnote:${Buffer.from(note).toString("base64")}` : "")); return relay.decide(`${id}.${verdict}`); };

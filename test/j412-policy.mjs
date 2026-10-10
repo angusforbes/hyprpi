@@ -22,7 +22,7 @@ const MODE = { now: "safe" };
 const ctx = { fs, path, PENDING, DECISIONS, STATE: T, LIMITS: { pendingPerSandbox: 50 }, process, Buffer, Date, JSON, Map, Set, String, Array, Number, Object, Math, RegExp, Promise, console, Error,
   crypto: await import("node:crypto"), kindAction, researchConf: () => ({ mode: MODE.now }), now: () => new Date().toISOString(),
   log: (o) => logs.push(o), notifyHeld: (sb, msg) => { shown.push(msg); return null; }, REVIEW_CMD: ["node", "relay", "review"], textMeta: () => ({}),
-  returnable: () => false, returnKey: () => "", fileURLToPath: (u) => String(u) };
+  returnable: () => false, linkable: () => false, returnKey: () => "", fileURLToPath: (u) => String(u) };
 // The methods under test, verbatim; hold()'s tail (toast, room note) is reached only for held items and is stubbed through notifyHeld/conn.
 const body = between("  // J412 (spec 1.5): which request kind", "  // J309: run one research request");
 const decideHead = between("    // J412: the dial at decision time.", "    // (re-review J368 #7)");
