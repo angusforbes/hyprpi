@@ -38,6 +38,7 @@ assert.deepEqual(only("testprov/a**"), ["testprov/a", "testprov/ab", "testprov/a
 assert.deepEqual(only("testprov/a[^b]c"), ["testprov/axc"], "a class never matches /"); assert.deepEqual(only("testprov/**c"), ["testprov/axc"], "**c is segment-local");
 assert.deepEqual(only("nv-inference/**"), ["nv-inference/x/y", "nv-inference/z"], "a whole-segment ** crosses slashes"); assert.deepEqual(only("testprov/**/c"), ["testprov/a/c", "testprov/a/b/c"].filter((m) => only("testprov/**/c").includes(m)), "middle **");
 assert.ok(allowedBy("testprov/a/b/c", ["testprov/**/c"]) && allowedBy("testprov/c", ["testprov/**/c"]) === "" , "** between segments matches several segments");
+setKnownModels(["testprov/a.c", "testprov/a0c", "testprov/a/c"]); assert.equal(allowedBy("testprov/a/c", ["testprov/a[.-0]c"]), "", "a class RANGE spanning / never matches /"); assert.ok(allowedBy("testprov/a0c", ["testprov/a[.-0]c"]) && allowedBy("testprov/a.c", ["testprov/a[!b]c"]));
 setKnownModels(null); process.env.HYPRPI_PI = "/bin/false"; assert.equal(allowedBy("anthropic/evil", ["anthropic/*"]), "", "no registry: fail closed"); delete process.env.HYPRPI_PI;
 setKnownModels(["testprov/a", "testprov/claude-test", "testprov/anthropic/evil", "anthropic/real"]);
 assert.equal(allowedBy("testprov/claude-test", ["a"]), "", "no substring matching of a bare pattern"); assert.equal(allowedBy("testprov/a", ["a"]), "", "and a bare name allows nothing at all (unsupported, never wrongly broad)");
