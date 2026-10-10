@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 
 const BRIDGE = 'docker/bridge/doorman-bridge';
 const TYPES = ['open_for_owner', 'note_to_owner', 'share_project', 'send_file', 'allow_host'];
-const MCP_TOOLS = ['list_jobs', 'show_job', 'claim_job', 'renew_job', 'ask_owner', 'report_job', 'release_job', 'read_settings', 'propose_settings'];
+const MCP_TOOLS = ['list_jobs', 'show_job', 'claim_job', 'renew_job', 'ask_owner', 'report_job', 'release_job', 'read_settings', 'propose_settings', 'register_agent', 'list_agents', 'unregister_agent'];
 const readJson = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { if (e.code === 'ENOENT' || e instanceof SyntaxError) return null; throw e; } };
 const record = (ctx, id) => readJson(path.join(ctx.relayState, 'requests', id + '.json'));
 const fileCopies = ctx => fs.readdirSync(ctx.rig.P('inbox')).filter(n => /^file-/.test(n)).sort();
@@ -58,8 +58,21 @@ function jsonResult(result, expectedStatus = 0) {
   try { return JSON.parse(result.stdout); } catch { assert.fail('product CLI returned non-JSON: ' + result.stdout + result.stderr); }
 }
 async function cli(ctx, args, options = {}, expectedStatus = 0) {
+  // J407: only a registered host agent may claim; the fixture registers each claimer name once (heartbeating) and passes its agent token
+  if (args[0] === 'claim' && !args.includes('--agent-token')) { const k = args.indexOf('--by'); args = [...args, '--agent-token', await agentToken(ctx, k > 0 ? args[k + 1] : 'host agent')]; }
   return jsonResult(await ctx.cli(BRIDGE, ['--json', ...args], options), expectedStatus);
 }
+// J407: registrations for the fixture's host agents (name -> token), kept alive while the bridge suite runs
+const AGENTS = new Map(); let agentBeat = null;
+async function agentToken(ctx, name) {
+  if (!AGENTS.has(name)) {
+    const r = jsonResult(await ctx.cli(BRIDGE, ['--json', 'register', name, '--harness', 'fixture']));
+    assert.equal(r.ok, true, 'fixture host agent registers'); AGENTS.set(name, r.agent_token);
+    if (!agentBeat) { agentBeat = setInterval(() => { for (const t of AGENTS.values()) ctx.cli(BRIDGE, ['--json', 'heartbeat', '--agent-token', t]).catch(() => {}); }, 30000); agentBeat.unref?.(); }
+  }
+  return AGENTS.get(name);
+}
+const stopAgents = () => { if (agentBeat) clearInterval(agentBeat); agentBeat = null; AGENTS.clear(); };
 
 // Both are real served-inbox messages: Name: routes to the asker; the separate unprefixed message routes to its Thoughts.
 // The fixture has no model consuming these messages: verify the actual routing envelope and the private coordinator binding.
@@ -390,10 +403,15 @@ async function proposal(ctx, submit, target) {
 }
 
 export async function runBridge(ctx) {
+  try { await runBridge0(ctx); } finally { stopAgents(); } // (J407: the fixture's heartbeats stop with the bridge suite)
+}
+async function runBridge0(ctx) {
   await ctx.feature('J371', [BRIDGE, 'docker/bridge/core.mjs', 'docker/bridge/mcp.mjs', 'docker/bridge/relay-bridge.mjs'], async () => {
     scratch(ctx);
     await ctx.restartRelay({ hostAgents: 'bridge' });
     await ctx.waitFor('scratch bridge request directory', () => fs.existsSync(path.join(ctx.relayState, 'bridge/in')));
+    // J407: free-form drafts are held only while a host agent is registered (else refused, "no host agent available")
+    stopAgents(); await agentToken(ctx, 'fixture-host');
     await ctx.testcase('J371 CLI list/show/claim/renew/release/ask/report: approved job, exclusive claims, owner follow-up and routed outcome', async () => {
       const { id, job } = await newBridgeJob(ctx, 'CLI');
       assert.ok((await cli(ctx, ['list'])).some(x => x.id === id && x.state === 'waiting'));
@@ -403,7 +421,7 @@ export async function runBridge(ctx) {
         const by = 'fixture-cli-' + i;
         // rig.cli may serialize subprocesses: this checks exclusive claims, not timing/atomicity under contention.
         // Only the successful claimer receives a token; J379 frontends never share a token cache.
-        return ctx.cli(BRIDGE, ['--json', 'claim', id, '--by', by, '--lease', '120']).then(raw => ({ by, raw, result: JSON.parse(raw.stdout) }));
+        return agentToken(ctx, by).then((t) => ctx.cli(BRIDGE, ['--json', 'claim', id, '--by', by, '--lease', '120', '--agent-token', t])).then(raw => ({ by, raw, result: JSON.parse(raw.stdout) })); // (J407: each a registered agent)
       }));
       const winners = claimers.filter(x => x.raw.status === 0 && x.result.ok); assert.equal(winners.length, 1, 'exactly one CLI claimer obtains the job');
       for (const loser of claimers.filter(x => x !== winners[0])) { assert.equal(loser.raw.status, 1); assert.equal(loser.result.ok, false); assert.match(loser.result.text, /claimed by/); }
@@ -438,7 +456,7 @@ export async function runBridge(ctx) {
     let mcp;
     try {
       mcp = startMcp(ctx);
-      await ctx.testcase('J371 MCP initialize/tools/list: all nine supported tools, no owner decision/config-write capability', async () => {
+      await ctx.testcase('J371 MCP initialize/tools/list: all twelve supported tools (J407: + register_agent, list_agents, unregister_agent), no owner decision/config-write capability', async () => {
         const initialized = await mcp.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'gateway-fixture', version: '1' } });
         assert.equal(initialized.error, undefined); assert.equal(initialized.result.serverInfo.name, 'doorman-bridge'); assert.equal(initialized.result.protocolVersion, '2025-06-18');
         mcp.notify();
@@ -450,6 +468,7 @@ export async function runBridge(ctx) {
         const { id, job } = await newBridgeJob(ctx, 'MCP');
         assert.ok((await mcp.tool('list_jobs')).jobs.some(x => x.id === id));
         assert.deepEqual((await mcp.tool('show_job', { id })).approved, job.approved);
+        assert.equal((await mcp.tool('register_agent', { name: 'fixture-mcp', harness: 'fixture' })).ok, true, 'J407: the MCP session registers before claiming');
         assert.equal((await mcp.tool('claim_job', { id, lease_s: 120 })).ok, true);
         assert.equal((await mcp.tool('renew_job', { id, lease_s: 120 })).ok, true);
         assert.equal((await mcp.tool('release_job', { id })).ok, true); assert.equal(record(ctx, id).state, 'waiting');
