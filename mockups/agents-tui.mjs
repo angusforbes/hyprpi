@@ -361,7 +361,7 @@ function draw() {
     + (listTop || hidden > 0 ? ` · ${listTop ? "↑" + listTop + " " : ""}${hidden > 0 ? "↓" + hidden : ""}` : "")));
   listRowAgent = {};
   if (showHelp) {
-    for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ · click", "move the cursor · wheel scrolls"], ["↑↓", "the box: its start / end, then your earlier commands"], ["⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
+    for (const [k, d] of [...cmds.help(), ["", ""], ["^↑↓ · click", "move the cursor · wheel scrolls"], ["↑↓", "the box: its start / end, then your earlier commands"], ["⏎ · ^⏎ · ^click", "live: jump to its window · parked: revive it here · closed: resume it"],
       ["^O", "views: live · + parked / closed (and archived projects)"],
       ["⏎ on @project", "its card in the projects panel (SUPER+ALT+P)"],
       ["^W ^W · ^K ^K", "close / kill (on a closed agent: forget it)"], ["^N · ^Tab ^⇧Tab · ^Q", "new agent here · switch world · quit"],
@@ -474,7 +474,7 @@ function enter() {
   if (pj) return openProject(pj);
   const a = byId(cursorId);
   if (!a || !api) return;
-  const fail = (e) => { note = "✗ " + e.message; render(); };
+  const fail = (e) => { note = /window not found/.test(e.message) ? `✗ ${a.display} has no window to jump to` : "✗ " + e.message; render(); }; // J467 (e.g. a test agent with no window)
   if (a.parked) return api.call("agent.unpark", { agent: a.id }).then(() => { note = "→ " + a.display + " is back"; render(); }).catch(fail), render();
   if (a.dormant) return api.call("agent.resume", { agent: a.id }).then(() => { note = "resuming " + a.display + " …"; render(); }).catch(fail), render();
   api.call("agent.focus", { agent: a.id }).then(() => { note = "→ " + a.display; render(); }).catch(fail);
@@ -561,6 +561,7 @@ function onKey(d) {
   const typing = box.text.length > 0;
   if (d === "\x11") return quit();                            // Ctrl+Q
   if (d === "\x03") { if (box.key(d)) return; return quit(); } // Ctrl+C: the box's copy / clear, else quit
+  if (d === "\x1b[13;5u") d = "\r";                           // J467: Ctrl+Enter does what ⏎ does, as in the other panels (room, search)
   if (d === "\r") {                                           // ⏎: run the command, else open the agent
     if (!typing) { if (showHelp) { showHelp = false; return render(); } return enter(); }
     const t = box.text.trim(); box.take(); // J194: taken to run, not a cleared draft (no ring entry)
