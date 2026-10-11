@@ -396,10 +396,13 @@ async function searchAll(r, q, kinds) {
   const f = parseStreamFilter(q), pool = filterPool(r, projects);
   const res = f.names.length ? resolveFilterNames(f.names, { agents: pool.agents, projects: pool.projects, items: raw }) : null;
   const keep = new Set(filterStream(raw, f, res).map((it) => it.key));
+  const extra = new Set();
   for (const n of f.names) { // the phone's extras (as in the page): Angus's lines, board changes made under a name
-    if (n.toLowerCase() === "angus") for (const it of raw) if (it.who?.human || it.kind === "prompt") keep.add(it.key);
-    for (const it of raw) if (it.kind === "board" && it.who?.name?.toLowerCase() === n.toLowerCase()) keep.add(it.key);
+    if (n.toLowerCase() === "angus") for (const it of raw) if (it.who?.human || it.kind === "prompt") extra.add(it.key);
+    for (const it of raw) if (it.kind === "board" && it.who?.name?.toLowerCase() === n.toLowerCase()) extra.add(it.key);
   }
+  // J446: the extras pass the words and the time too (as in the page)
+  if (extra.size) for (const it of filterStream(raw.filter((x) => extra.has(x.key)), { ...f, names: [] }, null)) keep.add(it.key);
   const ks = new Set(kinds || []);
   const hits = raw.filter((it) => keep.has(it.key) && (!ks.size || ks.has(kindGroup(it.kind))));
   return { total: hits.length, from: raw[0]?.ts || 0, items: hits.slice(-400).map((it) => phoneRow(it, pname)) };

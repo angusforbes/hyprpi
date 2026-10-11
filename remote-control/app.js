@@ -860,10 +860,13 @@ function applyFilter(st, items) {
   const f = parseStreamFilter(st.q), objs = items.map(asStreamItem);
   const r = f.names.length ? resolveFilterNames(f.names, { agents: st.pool.agents, projects: st.pool.projects, items: objs }) : null;
   const keep = new Set(filterStream(objs, f, r).map((o) => o.key));
+  const extra = new Set();
   for (const n of f.names) { // the phone's extras (the same on the server's "all history")
-    if (n.toLowerCase() === "angus") for (const o of objs) if (o.who.human || o.kind === "prompt") keep.add(o.key);
-    for (const o of objs) if (o.kind === "board" && o.who.name.toLowerCase() === n.toLowerCase()) keep.add(o.key);
+    if (n.toLowerCase() === "angus") for (const o of objs) if (o.who.human || o.kind === "prompt") extra.add(o.key);
+    for (const o of objs) if (o.kind === "board" && o.who.name.toLowerCase() === n.toLowerCase()) extra.add(o.key);
   }
+  // J446: the extras pass the words and the time too (only the @Name part is widened), as the desktop's rows do
+  if (extra.size) for (const o of filterStream(objs.filter((x) => extra.has(x.key)), { ...f, names: [] }, null)) keep.add(o.key);
   const unknown = (r?.unknown || []).filter((n) => n.toLowerCase() !== "angus" && !objs.some((o) => o.kind === "board" && o.who.name.toLowerCase() === n.toLowerCase()));
   return { f, unknown, list: items.filter((it) => keep.has(it.k) && (!st.kinds.size || st.kinds.has(kindGroup(it.kind)))) };
 }
