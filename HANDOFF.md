@@ -30,6 +30,7 @@ Herdr and hyprpi run side by side for now; hyprpi is meant to replace Herdr even
     plain merge, no rewrite) only once it's verified, so master never has unverified commits under verified ones.
   - **1c. On shared local master you only append.** Rebases, fixups, amends or any rewrite of commits on
     master need the pusher's OK first (a rewrite changes other agents' hashes).
+  - **1d. One push a day** (Angus 2026-10-11, option 1 of "one push a day: Blink collects every verified job, runs the gate once, then pushes"). Verified work is merged onto master as before and reported to the pusher, but it waits for the daily push: at 17:00 local time (systemd user timer `hyprpi-daily-push.timer`, which `hyprpi send`s the pusher, else tells Thoughts-C) the pusher collects every verified job on hyprpi master, pi-doorman, pi-jot, pi-twin and agent-config, runs the scrub (contents and commit messages) and the full gate (the unit set + `node test/gateway-e2e.mjs --require-complete`) once on the final tip, and pushes all repos together. Exception: Angus can still ask for an immediate push.
   - Safety, every push: scan `git diff @{u}..HEAD` for personal data; author angus.forbes@gmail.com;
     fast-forward only: no force-push, no history rewrite of anything pushed. On a rejection, `git pull
     --rebase` only when trivial and only by the pusher, else stop and report.
