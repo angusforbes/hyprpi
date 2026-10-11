@@ -27,7 +27,8 @@ world("world-x", { host_runner: "aider" }); world("world-b", { host_runner: { ha
 assert.deepEqual(H.runnerChoice("world-d"), { harness: "claude-code", command: ["claude"], model: "", source: "default" });
 assert.equal(H.runnerChoice("world-c").harness, "codex"); assert.deepEqual(H.runnerChoice("world-c").command, ["codex"]);
 assert.deepEqual(H.runnerChoice("world-p"), { harness: "pi", command: [path.join(BIN, "pi2")], model: "nv-inference/x", source: "world-p.json" });
-assert.match(H.runnerChoice("world-x").error, /unknown host_runner harness "aider"/); assert.match(H.runnerChoice("world-b").error, /argv array/); assert.match(H.runnerChoice("world-m").error, /model id/);
+assert.match(H.runnerChoice("world-x").error, /unknown host_runner harness "aider"/);
+for (const m of [false, 0, null, "", "bad model!"]) { world("world-mm", { host_runner: { harness: "codex", model: m } }); assert.match(H.runnerChoice("world-mm").error, /model must be a model id/, `model ${JSON.stringify(m)} refused (Citecheck)`); } fs.unlinkSync(path.join(W, "world-mm.json")); assert.match(H.runnerChoice("world-b").error, /argv array/); assert.match(H.runnerChoice("world-m").error, /model id/);
 assert.equal(H.runnerChoice("world-none").harness, "claude-code", "no worlds file: the default");
 process.env.DOORMAN_RUNNER_CMD = JSON.stringify([path.join(BIN, "claude")]); assert.deepEqual(H.runnerChoice("world-d").command, [path.join(BIN, "claude")]); assert.deepEqual(H.runnerChoice("world-c").command, ["codex"], "DOORMAN_RUNNER_CMD is claude-code's only"); delete process.env.DOORMAN_RUNNER_CMD;
 fs.writeFileSync(path.join(W, "zz.json"), JSON.stringify({ sandbox: "world-c" })); assert.match(H.runnerChoice("world-c").error, /ambiguous/); fs.unlinkSync(path.join(W, "zz.json"));
@@ -90,9 +91,17 @@ assert.deepEqual(modeFor(empty(), "w", { runnerOn: true }).agents, ["the per-job
 const src = fs.readFileSync(new URL("../docker/sbx-relay.mjs", import.meta.url), "utf8");
 assert.match(src, /If approved, a host agent takes it through the bridge: \$\{hm\.agents\.map\(\(x\) => \/\^the per-job runner\/\.test\(x\) \? jobRunner : x\)\.join\(" or "\)/, "the held item names the bridge's agents, the runner as it would run THIS job");
 assert.match(src, /const jr = harnessLabel\(this\.doormanFor, \{ tools: sc\.tools, folders: sc\.folders\.map\(\(x\) => x\.path\), readOnly: [^\n]*hidden: sc\.hidden \|\| \[\] \}\);/, "judged with the draft's own tools, folders, read-only and hidden paths (J428)");
-assert.match(src, /runnerLabel: \(sbName\) => \{[^\n]*\n[^\n]*harnessLabel\(sbName, \{ tools: [^\n]*return r\.ok \? r\.label : null; \}/, "the relay hands the world's label (or null) to the bridge");
+assert.match(src, /runnerLabel: \(sbName\) => \{[^\n]*\n[^\n]*harnessWorldLabel\(sbName, \{ extraTools: [^\n]*return r\.ok \? r\.label : null; \}/, "the relay hands the world's label (judged with a draft's default tools), or null, to the bridge");
 fs.writeFileSync(path.join(cfg, "hyprpi", "sbx-relay.json"), JSON.stringify({ sandboxes: [{ name: "doorman-p", doorman_for: "world-p", bridge: { tools: ["Read", "Write"], folders: [F] } }] }));
-const dw = H.describeWorlds(); assert.ok(dw.some((l) => /^WARNING world-p: pi \(limits advisory/.test(l))); assert.ok(dw.some((l) => /^ok +world-d: claude-code \(limits enforced\)/.test(l))); assert.ok(dw.some((l) => /^ERROR +world-x/.test(l)));
+const dw = H.describeWorlds(); assert.ok(dw.some((l) => /^WARNING world-p: pi \(limits advisory/.test(l))); assert.ok(dw.some((l) => /^ok +world-d: claude-code \(limits enforced; judged with a draft's default tools/.test(l))); assert.ok(dw.some((l) => /^ERROR +world-x/.test(l)));
+// (Citecheck W2) world-level lines are judged with a draft's DEFAULT tools (J428), not the old bridge defaults: pi with none set is advisory
+fs.writeFileSync(path.join(cfg, "hyprpi", "sbx-relay.json"), JSON.stringify({ sandboxes: [] }));
+assert.match(H.worldLabel("world-p").label, /: pi \(limits advisory: folders aren't enforced/); assert.equal(H.worldLabel("world-p").advisory, true);
+assert.ok(H.describeWorlds().some((l) => /^WARNING world-p: pi \(limits advisory/.test(l)), "no bridge defaults: still advisory (the default draft tools)");
+assert.match(H.worldLabel("world-d").label, /: claude-code \(limits enforced; judged/); assert.match(H.worldLabel("world-d", { extraTools: ["Bash"] }).label, /claude-code \(limits advisory/);
+// a corrupt (or non-object) worlds file shows as ERROR, never "(no worlds)"
+{ const C = path.join(base, "cfg-corrupt"); fs.mkdirSync(path.join(C, "worlds"), { recursive: true }); fs.writeFileSync(path.join(C, "worlds", "world-z.json"), "{oops");
+  assert.match(H.describeWorlds(C).join("\n"), /^ERROR +world-z\.json: can't be read or parsed/); fs.writeFileSync(path.join(C, "worlds", "world-z.json"), "[]"); assert.match(H.describeWorlds(C).join("\n"), /^ERROR +world-z\.json: isn't a JSON object/); }
 ok("the held item / card / runner --install name the harness: 'limits enforced' or 'limits advisory: …' (WARNING), an invalid setting is ERROR and not counted");
 
 // 4. argv per adapter (no token in argv)

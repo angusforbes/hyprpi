@@ -52,7 +52,7 @@ import { applyChanges, proposeChange, syncReaderNetwork, validateChanges, digest
 import { startBridge } from "./bridge/relay-bridge.mjs"; // J371: the Doorman bridge for host agents
 import { newJob as newHostJob } from "./bridge/core.mjs";
 import { checkScope, sharesFor } from "./bridge/scope.mjs"; // J428: each job's folders and tools: the sandbox's shares, plus what the draft names beyond them
-import { runnerLabel as harnessLabel } from "./bridge/harness.mjs"; // J425: which harness the per-job runner uses for a world, and its limits
+import { runnerLabel as harnessLabel, worldLabel as harnessWorldLabel } from "./bridge/harness.mjs"; // J425: which harness the per-job runner uses for a world, and its limits
 import { runnerInstalled } from "./bridge/runner.mjs"; // J407: the per-job runner counts as an on-demand host agent
 import { setTask, taskForSandbox, TASK_MAX } from "./research/task.mjs"; // J352: a Doorman-drafted task change, approved by Angus
 import { TYPES as REQ_TYPES, UNSUPPORTED, validate as reqValidate, run as reqRun } from "./gateway/types.mjs"; // J368: the agent-free gateway
@@ -1481,7 +1481,7 @@ class Relay {
       // J425: who that runner is for this world ("…: pi (limits advisory: …)"), judged with the tools and folders its jobs get; null if
       // the world's host_runner is invalid (the runner isn't counted then, so a free-form request is refused at once)
       runnerLabel: (sbName) => { const door = this.sandboxes.find((x) => x.doormanFor === sbName && bridgeOn(x)), b = door?.cfg?.bridge || {};
-        const r = harnessLabel(sbName, { tools: Array.isArray(b.tools) ? b.tools : [], folders: Array.isArray(b.folders) ? b.folders : [] }); return r.ok ? r.label : null; },
+        const r = harnessWorldLabel(sbName, { extraTools: Array.isArray(b.tools) ? b.tools : [] }); return r.ok ? r.label : null; }, // (Citecheck W2: a draft's default tools, J428)
       onMode: (sbName) => { try { spawn(process.execPath, [fileURLToPath(new URL("./world/shares.mjs", import.meta.url)), "card", sbName], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* the shares watcher refreshes it */ } },
       // J428 v3: the folders a scoping run proposes, checked against the served sandbox's shares; and the proposal, held for 1 / 2
       scopeCheck: (sandbox, folders) => { const ctx = this.scopeCtx(sandbox); const c = checkScope({ folders, tools: [], world: ctx.world }, ctx); return c.ok ? { ok: true, beyond: c.beyond } : { ok: false, text: c.text }; },

@@ -82,8 +82,10 @@ export function runnerChoice(sandbox, dir = cfgDir()) {
   if (LEVELS) { const lv = LEVELS.loadLevels(dir); if (!LEVELS.allowedHarness(lv.levels, harness)) return { error: `the host's levels don't allow the ${harness} runner${lv.error ? ` (${String(lv.error).slice(0, 80)})` : ""}` }; }
   // (J425Review #2) the command must be runnable now, else the runner isn't counted (a draft is refused at once, not held for nobody)
   const exe = which(command[0]); if (!exe) return { error: `${harness} isn't installed or runnable here (${String(command[0]).slice(0, 60)} not found on PATH)` };
+  // (Citecheck) a model given in the file must be a real model id: false / 0 / null / "" are refused, never taken as "the default"
+  if (o.model !== undefined && (typeof o.model !== "string" || !MODEL_RE.test(o.model))) return { error: "host_runner.model must be a model id" };
   const model = o.model !== undefined ? o.model : (process.env.DOORMAN_RUNNER_MODEL || "");
-  if (model && (typeof model !== "string" || !MODEL_RE.test(model))) return { error: "host_runner.model must be a model id" };
+  if (model && !MODEL_RE.test(model)) return { error: "DOORMAN_RUNNER_MODEL must be a model id" };
   return { harness, command, model, source: v === undefined ? "default" : hits[0].f };
 }
 
@@ -209,19 +211,28 @@ export function adapterPlan(job, { tmp, work, cli, mcpEnv, choice }) {
 }
 
 // the tools / folders a world's bridge jobs get: its Doorman entry's "bridge" in sbx-relay.json
+// (Citecheck W2) since J428 a job's tools and folders come from its draft; with none named, a draft gets Read, Glob, Grep (+ Write, Edit
+// with a writable folder) over the sandbox's shares. A world-level line (card, runner --install/--status) can't know the draft, so it is
+// judged with that default, plus anything a Doorman entry's old "bridge" defaults still name; each held item judges its own draft.
+export const DRAFT_DEFAULT_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit"];
+export function worldLabel(sandbox, { dir = cfgDir(), extraTools = [] } = {}) {
+  const r = runnerLabel(sandbox, { dir, tools: [...new Set([...DRAFT_DEFAULT_TOOLS, ...extraTools])], folders: ["(the sandbox's shares)"] });
+  return r.ok ? { ...r, label: r.label.replace(/\)$/, "; judged with a draft's default tools, each held item says its own)") } : r;
+}
 function bridgeOf(dir, sandbox) {
   try { const d = (JSON.parse(fs.readFileSync(process.env.HYPRPI_RELAY_CONF || path.join(dir, "sbx-relay.json"), "utf8")).sandboxes || []).find((x) => x && x.doorman_for === sandbox)?.bridge || {};
     return { tools: Array.isArray(d.tools) ? d.tools : [], folders: Array.isArray(d.folders) ? d.folders : [] }; } catch { return { tools: [], folders: [] }; }
 }
 // For `runner --install` / --status: every world's runner and what it enforces; advisory ones are marked with a warning.
 export function describeWorlds(dir = cfgDir()) {
-  let names = []; try { names = fs.readdirSync(path.join(dir, "worlds")).filter((f) => f.endsWith(".json")).sort(); } catch { /* none */ }
+  let names = []; try { names = fs.readdirSync(path.join(dir, "worlds")).filter((f) => f.endsWith(".json")).sort(); } catch (e) { if (e.code !== "ENOENT") return [`ERROR   the worlds folder can't be read (${e.code || e.message}): every world's runner is refused`]; }
   const out = [];
   for (const f of names) {
-    let w; try { w = JSON.parse(fs.readFileSync(path.join(dir, "worlds", f), "utf8")); } catch { continue; }
-    if (!w || typeof w !== "object") continue;
+    // (Citecheck W2) a file that can't be read or parsed, or isn't an object, blocks every world's runner (runnerChoice): say so
+    let w; try { w = JSON.parse(fs.readFileSync(path.join(dir, "worlds", f), "utf8")); } catch (e) { out.push(`ERROR   ${f}: can't be read or parsed (${String(e.code || e.message).slice(0, 60)}): every world's runner is refused until it's fixed`); continue; }
+    if (!w || typeof w !== "object" || Array.isArray(w)) { out.push(`ERROR   ${f}: isn't a JSON object: every world's runner is refused until it's fixed`); continue; }
     const sb = typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5), b = bridgeOf(dir, sb);
-    const r = runnerLabel(sb, { dir, tools: b.tools, folders: b.folders }); // judged with the tools and folders this world's jobs get
+    const r = worldLabel(sb, { dir, extraTools: b.tools }); // judged with a draft's default tools (J428), see worldLabel
     out.push(`${!r.ok ? "ERROR  " : r.advisory ? "WARNING" : "ok     "} ${sb}: ${r.ok ? r.label.replace(/^the per-job runner \(on demand\): /, "") : r.label}`);
   }
   return out;
