@@ -551,6 +551,16 @@ export default function hyprpi(pi: ExtensionAPI) {
   });
 
   pi.on("model_select", async (e: any) => update({ model: e?.model?.id || "" }));
+  // J454: fresh tokens (input + output + cache writes) per finished model call, sent in batches; the daemon adds
+  // them to this agent's running jobs (the job scoreboard's per-job token count). Best effort: never blocks a turn.
+  let usagePending = 0, usageSent = 0;
+  const sendUsage = () => { if (!usagePending || !conn || conn.closed) return; const n = usagePending; usagePending = 0; usageSent = Date.now(); conn.call("agent.usage", { tokens: n }).catch(() => { usagePending += n; }); };
+  pi.on("message_end", async (e: any) => {
+    const m = e?.message; if (m?.role !== "assistant") return;
+    const u = m.usage || {}; usagePending += (u.input || 0) + (u.output || 0) + (u.cacheWrite || 0);
+    if (Date.now() - usageSent > 15000) sendUsage();
+  });
+  pi.on("agent_end", async () => sendUsage());
   pi.on("thinking_level_select", async () => update({ thinking: safe(() => pi.getThinkingLevel()) || "" }));
   pi.on("session_info_changed", async (e: any) => {
     // name-sync publishes the full styled name via `hyprpi name`; this only

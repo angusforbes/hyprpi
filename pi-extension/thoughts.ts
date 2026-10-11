@@ -94,7 +94,7 @@ export default function thoughts(pi: ExtensionAPI) {
     label: "Give work",
     description: "Hand a deliverable to an agent (agent) or to a project (project: its best free member) as a BRIEF (job J<n>, version 1): Angus's words verbatim, a one-sentence goal, context, limits, what to ask first, and the done-when checks its report must answer. Only when Angus asks or agrees, and only when there's a deliverable (not for questions or exploring: use ask_agent). With a project it goes on the card as a Next item showing ⟦J<n> v1 · running⟧. The report comes back to you (a \"[reply from\" message) with a line saying whether the job is done.",
     promptSnippet: "Hand a deliverable to an agent or a project, as a brief",
-    parameters: Type.Object({
+    parameters: Type.Object({ coupling: Type.Optional(Type.String({ description: "J454, for the job scoreboard: how the work splits: independent (parts that can run in parallel) | sequential (each step needs the last) | mixed | single (one piece)" })), 
       angus: Type.String({ description: "Angus's own words for this, VERBATIM (quoted to the agent next to your summary)" }),
       goal: Type.String({ description: "the deliverable, in one sentence" }),
       context: Type.Optional(Type.String({ description: "what the agent needs to know from this conversation (prose)" })),
@@ -230,7 +230,7 @@ export default function thoughts(pi: ExtensionAPI) {
     label: "Revise a brief",
     description: "Issue a NEW VERSION of a brief (job J<n>) when Angus changes a deliverable or says to continue a stopped one. Give only the fields that change (the rest is kept) plus the reason in his words. done_when REPLACES the whole list: resend every earlier check that still applies, plus the new ones; to drop one on purpose, name it in drop_checks (a revision that silently loses checks is refused). The old version's run is stopped and anything still queued for it (including an earlier stop) is dropped; the agent gets the new version with the changed lines marked + / −. Versions only go up, so an older one can never arrive after a newer one. To just stop, use cancel_work (a state change).",
     promptSnippet: "Give a brief a new version",
-    parameters: Type.Object({
+    parameters: Type.Object({ coupling: Type.Optional(Type.String({ description: "J454, for the job scoreboard: how the work splits: independent (parts that can run in parallel) | sequential (each step needs the last) | mixed | single (one piece)" })), cause: Type.Optional(Type.String({ description: "J454: why it is reopened or failed: spec (the brief was unclear or wrong) | misalignment (agents disagreed or worked at cross purposes) | verification (the check itself was wrong or weak) | other" })), 
       job: Type.String({ description: "the job id, e.g. J7" }),
       reason: Type.String({ description: "why, in Angus's words" }),
       angus: Type.Optional(Type.String({ description: "Angus's new words, verbatim" })),
@@ -249,7 +249,7 @@ export default function thoughts(pi: ExtensionAPI) {
     label: "Verify a job",
     description: "Mark a DONE job (its report answered every done-when line) as VERIFIED, once Angus or a second agent has confirmed the proof (not the agent that did it); or, with failed: true, record that the check FAILED (the job reopens and a spawned agent escalates one model step, J140). Ask a second agent with ask_agent first when Angus wants it checked.",
     promptSnippet: "Mark a done job verified",
-    parameters: Type.Object({ job: Type.String(), by: Type.String({ description: "Angus, or the confirming agent's name" }), note: Type.Optional(Type.String()), failed: Type.Optional(Type.Boolean({ description: "the check FAILED (J140): the job is reopened and, for a spawned agent on the routing ladder, it moves one model step up (once per job; routing.escalate.onFailedCheck)" })) }, { additionalProperties: false }),
+    parameters: Type.Object({ coupling: Type.Optional(Type.String({ description: "J454, for the job scoreboard: how the work splits: independent (parts that can run in parallel) | sequential (each step needs the last) | mixed | single (one piece)" })), cause: Type.Optional(Type.String({ description: "J454: why it is reopened or failed: spec (the brief was unclear or wrong) | misalignment (agents disagreed or worked at cross purposes) | verification (the check itself was wrong or weak) | other" })),  job: Type.String(), by: Type.String({ description: "Angus, or the confirming agent's name" }), note: Type.Optional(Type.String()), failed: Type.Optional(Type.Boolean({ description: "the check FAILED (J140): the job is reopened and, for a spawned agent on the routing ladder, it moves one model step up (once per job; routing.escalate.onFailedCheck)" })) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.verify", p);
       if (r.failed) return out(`${r.job} FAILED its check (${r.by}); reopened.${r.escalation?.escalating ? ` ${r.escalation.escalating} was put up for one model step (only if it hasn't moved for this job yet; a ⤴ note in this thread confirms a move).` : r.escalation?.skipped ? ` No escalation: ${r.escalation.skipped}.` : ""}`, { action: `${r.job} failed its check (${r.by})` });
@@ -350,7 +350,7 @@ export default function thoughts(pi: ExtensionAPI) {
     label: "Open an agent",
     description: "Open a NEW hyprpi agent in this world for a deliverable, when no suitable agent is free; it gets a BRIEF (job J<n> v1, same fields as give_work) as its first prompt. At most one per request of Angus's; tell him you did. It reports back to you. ALWAYS give it a name and an icon that reflect its purpose (Angus): a short, distinctive one-word name (e.g. Namesmith, Phoenix) and one fitting emoji (e.g. 🏷️, 🐦‍🔥); it starts with them in its window, the room, the panels and the board (without them it is an unnamed pi·xxxx). The name must be free: not a live agent's or a project's.",
     promptSnippet: "Open a new agent for a deliverable (a brief)",
-    parameters: Type.Object({
+    parameters: Type.Object({ coupling: Type.Optional(Type.String({ description: "J454, for the job scoreboard: how the work splits: independent (parts that can run in parallel) | sequential (each step needs the last) | mixed | single (one piece)" })), 
       angus: Type.String({ description: "Angus's own words for this, VERBATIM (quoted to the agent next to your summary)" }),
       goal: Type.String({ description: "the deliverable, in one sentence" }),
       context: Type.Optional(Type.String({ description: "what the agent needs to know from this conversation (prose)" })),
