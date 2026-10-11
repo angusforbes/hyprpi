@@ -46,6 +46,7 @@ import { modeForSandbox, levelOf, MODE_TEXT, withWorldsLock } from "../research/
 import { taskForSandbox } from "../research/task.mjs"; // J352: the host-set research task in the host card
 
 import { cardSection } from "../gpu/gpu.mjs";
+import { isRunning, ExecProbe } from "../../lib/sbx-cheap.mjs"; // J444: fewer sbx calls (each makes sandboxd hit the keyring)
 import { cardLine } from "../bridge/registry.mjs"; // J407: the host-agent mode line // J328: the card's GPU section
 
 const HOME = os.homedir();
@@ -280,23 +281,24 @@ function current(sandbox) {
 // What the guest really has mounted right now (a guest root can unmount; sbx's saved list wouldn't show that).
 // null when the sandbox isn't running (then sbx restores its saved mounts at start anyway).
 function live(sandbox) {
-  const st = spawnSync("sbx", ["ls"], { encoding: "utf8", timeout: 20000 });
-  if (!new RegExp(`^${sandbox}\\s+\\S+\\s+\\S+\\s+running`, "m").test(st.stdout || "")) return null;
+  if (isRunning(sandbox) !== true) return null; // J444: sandboxd's socket (8 keyring sessions), `sbx ls` (32) only as the fallback
   const r = spawnSync("sbx", ["exec", sandbox, "cat", "/proc/self/mountinfo"], { encoding: "utf8", timeout: 30000 });
   if (r.status !== 0) return null;
-  return new Set((r.stdout || "").split("\n").map((l) => l.split(" ")[4]).filter(Boolean).map((t) => t.replace(/\\040/g, " ")));
+  return mountTargets(r.stdout);
 }
+const mountTargets = (out) => new Set((out || "").split("\n").map((l) => l.split(" ")[4]).filter(Boolean).map((t) => t.replace(/\\040/g, " ")));
 
 function sbx(args) {
   const r = spawnSync("sbx", args, { encoding: "utf8", timeout: 60000 });
   return { ok: r.status === 0, out: ((r.stdout || "") + (r.stderr || "")).trim().split("\n").pop() };
 }
 
+const wanted = (p, ph) => [...p.mounts.map((m) => ({ host: m.host, at: m.at, ro: m.ro, why: m.why })),
+  ...p.hidden.map((h) => ({ host: h.dir ? ph.dir : ph.file, at: h.at, ro: true, why: "hidden" })),
+  { host: cardDir(), at: "/home/agent/.sandbox", ro: true, why: "host card" }];
 function apply() {
   const p = plan(), ph = placeholders();
-  const want = [...p.mounts.map((m) => ({ host: m.host, at: m.at, ro: m.ro, why: m.why })),
-    ...p.hidden.map((h) => ({ host: h.dir ? ph.dir : ph.file, at: h.at, ro: true, why: "hidden" })),
-    { host: cardDir(), at: "/home/agent/.sandbox", ro: true, why: "host card" }];
+  const want = wanted(p, ph);
   const ports = syncPorts(p.sandbox);
   writeCard(p, ports);
   const have = current(p.sandbox), key = (m) => `${m.host}\0${m.at}\0${m.ro}`;
@@ -434,10 +436,36 @@ function fingerprint() {
   for (const f of (g.projectFolders || []).map(exp)) parts.push(subdirs(f).join("\n"));
   return crypto.createHash("sha256").update(parts.join("\0")).digest("hex");
 }
+// J444: with nothing changed, the 10-minute check is a LIGHT one: sbx's saved mount list (its runtime file, free) and
+// the guest's mountinfo through one long-lived `sbx exec` (lib/sbx-cheap.mjs ExecProbe: no keyring sessions once open)
+// instead of `sbx ports`, `sbx policy ls`, `sbx ls` and a fresh `sbx exec` (151 keyring sessions each time). Anything
+// missing in the guest, a stale managed mount, or a probe that can't answer → the full apply(), as before. The full
+// apply() (ports, the card's policy line, removals) still runs on any config change and at least once an hour.
+// 'ok' = nothing to do; otherwise why a full apply is needed.
+async function lightCheck(probe) {
+  const p = plan(), ph = placeholders(), want = wanted(p, ph), key = (m) => `${m.host}\0${m.at}\0${m.ro}`;
+  if (probe.name !== p.sandbox) { probe.close(); probe.name = p.sandbox; }
+  const out = await probe.run("cat /proc/self/mountinfo");
+  if (out === undefined) return "the probe couldn't read the guest's mounts";
+  const have = current(p.sandbox), inGuest = out === null ? null : mountTargets(out);
+  if (inGuest && !inGuest.has("/home/agent/.sandbox")) return "the guest's mount list looks wrong";
+  const haveKeys = new Set(have.filter((m) => !inGuest || inGuest.has(m.at)).map(key));
+  const missing = want.filter((m) => !haveKeys.has(key(m)));
+  if (missing.length) return `${missing.length} mount(s) missing (${missing.slice(0, 3).map((m) => m.at).join(", ")})`;
+  const wantKeys = new Set(want.map(key)), wantAt = new Set(want.map((m) => m.at)), haveAll = new Set(have.map(key));
+  const stale = readJson(path.join(STATE, WORLD, "managed.json"), []).filter((m) => !wantKeys.has(key(m)) && haveAll.has(key(m)) && !wantAt.has(m.at));
+  return stale.length ? `${stale.length} stale mount(s)` : "ok";
+}
 async function watch() {
-  let last = "";
+  let last = "", lastFull = 0;
+  const probe = new ExecProbe("");
   for (;;) {
-    try { const fp = fingerprint(); if (fp !== last) { last = fp; apply(); } else { const t = Date.now(); if (t % 600000 < 30000) apply(); } } catch (e) { log(`watch: ${e.message}`); }
+    try {
+      const fp = fingerprint(), t = Date.now();
+      if (fp !== last) { last = fp; apply(); lastFull = Date.now(); }
+      else if (t - lastFull >= 3600000) { apply(); lastFull = Date.now(); }
+      else if (t % 600000 < 30000) { const why = await lightCheck(probe); if (why !== "ok") { log(`check: ${why}: full apply`); apply(); lastFull = Date.now(); } }
+    } catch (e) { log(`watch: ${e.message}`); }
     await new Promise((r) => setTimeout(r, 30000));
   }
 }
@@ -494,4 +522,5 @@ else if (cmd === "plan" && process.argv.includes("--json")) { // J428: for the r
 } else if (cmd === "apply") process.exit(apply());
 else if (cmd === "card") writeCard();
 else if (cmd === "watch") await watch();
-else die("usage: shares.mjs plan|apply|card|watch [WORLD]");
+else if (cmd === "check") { const pr = new ExecProbe(""); const why = await lightCheck(pr); pr.close(); console.log(why); process.exit(why === "ok" ? 0 : 1); } // J444: one light check (read-only)
+else die("usage: shares.mjs plan|apply|card|watch|check [WORLD]");
