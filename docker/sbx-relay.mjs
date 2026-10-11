@@ -889,6 +889,21 @@ class Relay {
     return id;
   }
   // J412 (HostReview412 #2): where a held item is decided (J363 review_in / review_room); used by hold() and by the stale-auto fallback in decide()
+  // J453 (J453Check): on start, a held item from before J453 whose sandbox now decides in a Doorman window gets that routing too, so nothing is
+  // left in a Thoughts panel that no longer decides it
+  rerouteHeld() {
+    let names = []; try { names = fs.readdirSync(PENDING).filter((n) => n.endsWith(".json")); } catch { return; }
+    for (const n of names) {
+      const pf = path.join(PENDING, n);
+      try {
+        const m = JSON.parse(fs.readFileSync(pf, "utf8")); if (m.reviewIn) continue;
+        const sb = this.sandboxes.find((x) => x.name === m.sandbox); if (!sb) continue;
+        const r = this.routeHeld(sb, m); if (!r.reviewIn) continue;
+        fs.writeFileSync(pf + ".tmp", JSON.stringify(r, null, 2), { mode: 0o600 }); fs.renameSync(pf + ".tmp", pf);
+        log({ note: `held ${m.id}: moved to the Doorman window (${r.reviewIn}) (J453)` });
+      } catch { /* decided meanwhile, or unreadable */ }
+    }
+  }
   routeHeld(sb, msg) {
     // J453 (Angus: "always use the Doorman-G window"; "simplify"): a sandbox with a Doorman window (review_in) has every held item decided
     // there, in every mode; the phone and the toast are remotes for the same queue. No panel path, no mode condition.
@@ -1484,7 +1499,10 @@ class Relay {
       } catch (e) { log({ sb: sb.name, error: `drop-box: ${e.message}` }); }
     }
     this.loadQueue(); for (const sb of this.sandboxes) this.pumpPlans(sb); // J314: approved plans survive a restart
+    this.rerouteHeld(); // J453: items held before (in a Thoughts panel) move to their Doorman's window
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
+    // J453: a backstop for a missed watch event (seen in the window e2e: a decision file sat undecided); decide() is idempotent per file
+    setInterval(() => { let fl = []; try { fl = fs.readdirSync(DECISIONS).filter((f) => !f.startsWith(".")); } catch { return; } for (const f of fl) this.decide(f).catch(() => {}); }, 2000);
     // J371: the Doorman bridge (CLI/MCP for host agents). J412 (spec 4.1): for every Doorman unless its entry says "host_agents": false
     // ("bridge" is the default when unset): an approved free-form request is always a bridge job, never a message to Thoughts-A.
     if (this.sandboxes.some((x) => bridgeOn(x))) this.bridge = startBridge({

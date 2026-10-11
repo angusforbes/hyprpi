@@ -42,3 +42,12 @@ for MODE in strict safe open yolo; do
   L=$(lists); for i in $new; do case "$L" in *"\"$i\""*) fail "$MODE $i still listed after the decision";; esac; done
   ok "$MODE: a decision made in the window cleared the rest from every list within 2 s"
 done
+echo "== an item held before J453 (no reviewIn) moves to the window when the relay restarts; panels never list window items"
+cat > $P/pending/world-t--abc453.json <<J
+{ "id": "world-t--abc453", "sandbox": "world-t", "at": "2026-10-11T00:00:00Z", "to": ["Thoughts-B"], "targets": [{ "kind": "thoughts", "id": "Thoughts-B" }], "shown": ["Thoughts-B"], "rooms": ["B"], "mode": "talk", "text": "[Alpha, in world T] old item" }
+J
+case "$(lists)" in *'"p":['*'"world-t--abc453"'*) ok "before the restart: the old item is in panel B";; *) fail "old item not in a panel: $(lists)";; esac
+for p in $(pgrep -f "sbx-relay.mjs run"); do grep -q bogus-j368 /proc/$p/environ 2>/dev/null && kill $p; done; sleep 1
+setsid -f node $H/docker/sbx-relay.mjs run >> $R/x/relay.out 2>&1; sleep 4
+r=$(python3 -c "import json;d=json.load(open('$P/pending/world-t--abc453.json'));print(d.get('reviewIn'),d.get('rooms'))"); [ "$r" = "doorman-t ['G']" ] && ok "after the restart: routed to the Doorman window" || fail "not rerouted: $r"
+L=$(lists); case "$L" in *'"p":['*'"world-t--abc453"'*) fail "still in a panel: $L";; *) ok "no panel lists it any more; the window does";; esac
