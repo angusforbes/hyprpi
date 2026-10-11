@@ -121,6 +121,12 @@ assert.match((await M.call("reply", { request_id: "req-in-11", text: "x" })).err
 answer = () => ({ ok: true, delivered: true });
 t0 = Date.now(); r = await M.call("reply", { request_id: "req-in-11", text: "now it goes" }); assert.equal(r.ok, true, JSON.stringify(r)); assert.match(r.text, /delivered/); assert.ok(Date.now() - t0 < 5000);
 assert.match((await M.call("reply", { request_id: "req-in-11", text: "again" })).error, /already answered/);
+// (recheck) two concurrent replies to one message: one is published, the other refused; a stale failure can't reopen it
+item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-13", text: "Alpha: race" }); await M.call("inbox", {});
+{ const n0 = taken.length; const [a1, a2] = await Promise.all([M.call("reply", { request_id: "req-in-13", text: "first" }), M.call("reply", { request_id: "req-in-13", text: "second" })]);
+  assert.equal(taken.slice(n0).filter((t) => t.req.request_id === "req-in-13").length, 1, "only one reply published"); assert.ok([a1, a2].filter((x) => x.ok).length === 1 && [a1, a2].some((x) => /already answered/.test(x.error || "")));
+  const st = M._test.loadState(); item({ type: "result", for: "1700000000000-deadbeef.json", op: "reply", ok: false, error: "stale" }); st.files["1700000000000-deadbeef.json"] = { kind: "reply", R: "req-in-13", at: Date.now() }; M._test.saveState(st);
+  await M.call("inbox", {}); assert.match((await M.call("reply", { request_id: "req-in-13", text: "third" })).error, /already answered/, "another attempt's failure doesn't reopen a delivered reply"); }
 // #4: a cancelled wait consumes nothing
 { const ctl = { cancelled: false }; const p = M.call("wait", { seconds: 10 }, ctl); setTimeout(() => { ctl.cancelled = true; }, 200); await new Promise((x) => setTimeout(x, 400));
   item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-12", text: "Alpha: after the cancel" }); assert.equal((await p).text, "cancelled");
