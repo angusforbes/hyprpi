@@ -147,6 +147,10 @@ try {
   ok(`B8 a long single-section report (${lj}) is done and keeps its W lines`, (await job(lj)).state === "done" && /W2 → second PASS/.test(lr), `${(await job(lj)).state} len ${lr.length}`);
   const r8 = await api.call("thoughts.close", { room: "D", job: "J12", state: "done", report: "x".repeat(9000) + "\nproof: W1 → a · W2 → b", evidence: "ev" });
   ok("B8 close_job keeps a 9000-character report whole, evidence included", /evidence: ev$/.test((await job("J12")).report), r8.state);
+  const w4 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "evidence", angus: "x", done_when: ["W1 a", "W2 b"] }); await sleep(300);
+  const ej = w4.job || w4.id;
+  await api.call("thoughts.close", { room: "D", job: ej, state: "done", report: "proof: W1 → a · W2 → b", evidence: "x".repeat(4100) + "important-proof-reference" });
+  ok(`B8 long evidence is kept whole (${ej})`, /important-proof-reference$/.test((await job(ej)).report || ""), ((await job(ej)).report || "").slice(-30));
   api.close?.(); agent.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill(); }
