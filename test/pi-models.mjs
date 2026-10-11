@@ -19,4 +19,9 @@ ok("G before J405 gets exactly the 12 Claude models", r.changes.length === 12 &&
 ok("default model untouched", r.settings.defaultModel === "openai/openai/gpt-6-astra");
 const again = merge(r.models, r.settings);
 ok("up to date: no change", again.changes.length === 0);
+const only = (m) => m.endsWith("anthropic/claude-haiku-4-5") || /gpt-oss/.test(m);
+const hf = merge({ providers: { "nv-inference": { apiKey: "K" } } }, {}, T, { allows: (m) => /anthropic/.test(m) && m.includes("sonnet") });
+const given = hf.models.providers["nv-inference"].models.map((x) => x.id);
+ok("host list: only the template models the host allows are given", given.length > 0 && given.every((id) => id.includes("anthropic") && id.includes("sonnet")) && given.length < 12, `${given.length} of 44`);
+ok("host list: enabledModels is the explicit allowed list, and the cut is explained", hf.settings.enabledModels.length === given.length && hf.settings.enabledModels.every((e) => e.startsWith("nv-inference/")) && hf.changes.some((c) => /not on the host's scoped model list/.test(c)));
 console.log(fails ? `FAIL (${fails})` : "PASS"); process.exit(fails ? 1 : 0);

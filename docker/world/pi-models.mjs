@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // J405: give a sandboxed world the standard model list (docker/world/nv-inference-models.json: NVIDIA Inference
 // Hub's OpenAI and Claude models, each tested under a full agent prompt), without touching its key.
-//   node docker/world/pi-models.mjs SANDBOX [--dry-run]
+//   node docker/world/pi-models.mjs SANDBOX [--dry-run] [--no-host-list]
+// J380 v3: only the template models the HOST's scoped model list allows are given (--no-host-list: the whole template).
 // It reads the sandbox's ~/.pi/agent/models.json and settings.json (sbx exec), adds every template model the
 // provider lacks (same id = left as it is), sets the provider's baseUrl/api if missing, sets enabledModels to
 // the template's when the sandbox has none, keeps a backup (*.bak-J405-<time>) and writes the files back with
@@ -17,7 +18,9 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const T = JSON.parse(fs.readFileSync(path.join(here, "nv-inference-models.json"), "utf8"));
 const sbxCat = (sb, f) => { try { return execFileSync("sbx", ["exec", sb, "sh", "-c", `cat ~/.pi/agent/${f} 2>/dev/null || true`], { encoding: "utf8", maxBuffer: 16 << 20 }); } catch (e) { throw new Error(`can't read ${f} in ${sb}: ${e.message}`); } };
 
-export function merge(models, settings, tpl = T) {
+// J380 v3: the HOST's scoped model list (pi enabledModels; lib/modellist.mjs) decides which of the template's models a sandbox gets: host.allows(
+// "provider/id") -> bool. Without `host` the whole template is used (as before).
+export function merge(models, settings, tpl = T, host = null) {
   const m = models && typeof models === "object" ? structuredClone(models) : {};
   m.providers ||= {};
   const p = (m.providers[tpl.provider] ||= {});
@@ -26,9 +29,11 @@ export function merge(models, settings, tpl = T) {
   if (!p.api) { p.api = tpl.api; changes.push(`api ${tpl.api}`); }
   p.models ||= [];
   const have = new Set(p.models.map((x) => x.id));
-  for (const x of tpl.models) if (!have.has(x.id)) { p.models.push(x); changes.push(`+ ${tpl.provider}/${x.id}`); }
+  const wanted = host ? tpl.models.filter((x) => host.allows(`${tpl.provider}/${x.id}`)) : tpl.models;
+  if (host && wanted.length < tpl.models.length) changes.push(`host list: ${tpl.models.length - wanted.length} of ${tpl.models.length} template models are not on the host's scoped model list and are left out`);
+  for (const x of wanted) if (!have.has(x.id)) { p.models.push(x); changes.push(`+ ${tpl.provider}/${x.id}`); }
   const s = settings && typeof settings === "object" ? structuredClone(settings) : {};
-  if (!Array.isArray(s.enabledModels) && tpl.enabledModels) { s.enabledModels = tpl.enabledModels; changes.push(`enabledModels ${JSON.stringify(tpl.enabledModels)}`); }
+  if (!Array.isArray(s.enabledModels) && tpl.enabledModels) { s.enabledModels = host ? wanted.map((x) => `${tpl.provider}/${x.id}`) : tpl.enabledModels; changes.push(`enabledModels ${JSON.stringify(s.enabledModels).slice(0, 100)}`); }
   return { models: m, settings: s, changes };
 }
 
@@ -37,7 +42,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const dry = rest.includes("--dry-run");
   if (!sb || !/^[\w.-]+$/.test(sb)) { console.error("usage: pi-models.mjs SANDBOX [--dry-run]"); process.exit(2); }
   const models = JSON.parse(sbxCat(sb, "models.json") || "{}"), settings = JSON.parse(sbxCat(sb, "settings.json") || "{}");
-  const r = merge(models, settings);
+  let host = null; if (!rest.includes("--no-host-list")) { try { const { allowedBy, readList } = await import("../../lib/modellist.mjs"); const list = readList(); host = list.length ? { allows: (m) => !!allowedBy(m, list) } : null; } catch (e) { console.error(`pi-models: can't read the host's model list (${e.message}); use --no-host-list to give the whole template`); process.exit(1); } }
+  const r = merge(models, settings, T, host);
   const keyless = !(r.models.providers[T.provider].apiKey) && !/"nv-inference"/.test(sbxCat(sb, "auth.json"));
   console.log(`${sb}: ${r.changes.length ? r.changes.length + " change(s)" : "already up to date"}${dry ? " (dry run)" : ""}`);
   for (const c of r.changes) console.log("  " + c);
