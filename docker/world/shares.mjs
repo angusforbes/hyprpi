@@ -197,6 +197,8 @@ function plan() {
   // worktree of a protected repo is protected too (its edits could be merged and pushed).
   const globRe = (g) => new RegExp("^" + g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
   const prot = new Set([ROOT, exp("~/Harness/agent-config")]);
+  // J465: the host-filed research reports in Angus's vault are read-only for every sandbox (the relay alone writes them)
+  { const v = process.env.HYPRPI_RESEARCH_VAULT || exp("~/Obsidian/Sandbox - Research Reports"); try { fs.mkdirSync(v, { recursive: true }); } catch { /* */ } prot.add(v); }
   for (const e of g.protected || []) {
     if (!/[*?]/.test(e)) { prot.add(exp(e)); continue; }
     const base = /\//.test(e) ? [exp(path.dirname(e))] : pf, re = globRe(path.basename(e));

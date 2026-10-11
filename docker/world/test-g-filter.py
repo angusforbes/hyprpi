@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """node-free tests for g-filter's OSC 8 handling (J359). Run: python3 docker/world/test-g-filter.py
 Uses a throwaway state dir (XDG_STATE_HOME) so no real world state is read."""
-import json, os, sys, tempfile
+import re, json, os, sys, tempfile
 T = tempfile.mkdtemp()
 os.environ["XDG_STATE_HOME"] = T
 share = os.path.join(T, "share"); os.makedirs(os.path.join(share, "sub")); os.makedirs(os.path.join(T, "outside"))
@@ -45,7 +45,8 @@ o = os.path.join(T, "outside", "o.md")
 check("outside-share file link stripped", b"\x1b]8" not in run(link("file://" + o, o.encode())))
 l = os.path.join(share, "link.md")
 check("a symlink inside the share stripped", b"\x1b]8" not in run(link("file://" + l, l.encode())))
-check("file link to another host stripped", b"\x1b]8" not in run(link("file://evil.host" + a, a.encode())))
+o = run(link("file://evil.host" + a, a.encode()))
+check("file link to another host stripped (its visible text, a real shared path, may still be auto-linked to that local file: J465)", b"evil.host" not in o and all(u == b"" or u.startswith(b"file:///") for u in re.findall(rb"\x1b\]8;;([^\x1b]*)", o)))
 check("unknown world (no shares known) stripped", b"\x1b]8" not in run(link("file://" + a, a.encode()), world="world-nope"))
 check("no world set stripped", b"\x1b]8" not in run(link("file://" + a, a.encode()), world=""))
 check("a path with ../ that escapes the share stripped", b"\x1b]8" not in run(link("file://" + share + "/../outside/o.md", (share + "/../outside/o.md").encode())))
@@ -79,4 +80,13 @@ check("C1 OSC (C2 9D) inside a link is dropped", b"\xc2\x9d" not in run(b"\x1b]8
 check("an unterminated OSC then normal text: the filter doesn't swallow the rest forever (bounded)", len(run(b"\x1b]0;" + b"x" * 100 + b"\x1b\\after")) > 0)
 check("SGR conceal (8) inside link text voids the link", b"\x1b]8" not in run(link("file://" + a, b"\x1b[8m" + a.encode() + b"\x1b[28m")))
 check("SGR 38;5;8 (a colour index 8, not conceal) is still fine", run(link("file://" + a, b"\x1b[38;5;8m" + a.encode() + b"\x1b[0m")).count(b"\x1b]8;;") == 2)
+# J465: a bare absolute path printed as plain text becomes a link, but only to an existing file the gate allows
+o = run(b"The report is in " + a.encode() + b".\r\n")
+check("J465: a bare shared path becomes a file:// link (the trailing full stop stays outside)", (b"\x1b]8;;file://" + a.encode() + ST + a.encode() + b"\x1b]8;;" + ST + b".") in o)
+check("J465: a missing file under the share isn't linked", b"\x1b]8" not in run(b"see " + os.path.join(share, "nope.md").encode() + b" x"))
+check("J465: a path outside the shares isn't linked", b"\x1b]8" not in run(b"see /etc/passwd and " + os.path.expanduser("~/.ssh/config").encode() + b" x"))
+check("J465: a path split by a colour change isn't linked (and nothing breaks)", b"\x1b]8" not in run(b"see " + a.encode()[:10] + b"\x1b[31m" + a.encode()[10:] + b"\x1b[0m x"))
+check("J465: a URL's path part isn't treated as a bare path", run(b"go https://example.org" + a.encode() + b" now") == b"go https://example.org" + a.encode() + b" now")
+check("J465: a path inside a vetted link isn't linked twice", run(b"read " + link("file://" + a, a.encode())).count(b"\x1b]8;;") == 2)
+check("J465: no world, no auto-links", b"\x1b]8" not in run(b"see " + a.encode(), world=""))
 print("\n%d failed" % len(fails) if fails else "\nall pass"); sys.exit(1 if fails else 0)

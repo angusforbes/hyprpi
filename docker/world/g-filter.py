@@ -46,6 +46,29 @@ def vet_link(uri: bytes, world: str):
     except Exception:
         return None
 
+# J465 (Angus: "I'd still like to be able to click on this file too": a bare /home/... path): an absolute path printed as plain text
+# becomes a Ctrl+clickable link, but ONLY if g_open_url's own check passes for its file:// form (inside the world's shares, not hidden,
+# no symlinks); the click itself goes through the same gate again. A path split by styling or a read boundary simply isn't linked.
+PATH_RE = re.compile(rb"(?<![A-Za-z0-9_./~%:-])/(?:[A-Za-z0-9._~+%-]+/)+[A-Za-z0-9._~+%-]*[A-Za-z0-9_~+%-]")
+_vet_cache = {}
+def vet_path(path: bytes, world: str):
+    """The canonical file:// URI for a bare absolute path the filter may link (cached 10 s), else None."""
+    now = __import__("time").monotonic(); hit = _vet_cache.get((path, world))
+    if hit and now - hit[0] < 10: return hit[1]
+    try: uri = vet_link(b"file://" + urllib.parse.quote(path.decode("ascii")).encode(), world) if os.path.isfile(path) else None  # (only an existing file)
+    except Exception: uri = None
+    if len(_vet_cache) > 256: _vet_cache.clear()
+    _vet_cache[(path, world)] = (now, uri); return uri
+
+def autolink(seg: bytes, world: str) -> bytes:
+    if not world or b"/" not in seg: return seg
+    out, last = bytearray(), 0
+    for m in PATH_RE.finditer(seg):
+        uri = vet_path(m.group(), world)
+        if not uri: continue
+        out += seg[last:m.start()] + b"\x1b]8;;" + uri.encode() + b"\x1b\\" + m.group() + b"\x1b]8;;\x1b\\"; last = m.end()
+    return bytes(out + seg[last:]) if last else seg
+
 ESC = 0x1b
 KEEP_OSC = {b"0", b"1", b"2", b"4", b"10", b"11", b"12", b"104", b"110", b"111", b"112", b"22", b"30001", b"30101"}
 
@@ -121,7 +144,7 @@ class Filter:
             j = i + 1
             while j < n and b[j] != ESC and b[j] != 0xC2:
                 j += 1
-            put(b[i:j]); i = j
+            put(autolink(b[i:j], self.world) if self.link is None else b[i:j]); i = j  # (J465: bare paths in shares become links)
         self.buf = b[i:]
         return bytes(out)
     def flush_pending(self) -> bytes:

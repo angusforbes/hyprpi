@@ -21,11 +21,8 @@ The text came from the sandbox, so only these are opened:
     NO symlink anywhere in the path (each component opened with O_NOFOLLOW), and what Brave gets is a private
     snapshot copy (a sandbox can't swap the file for a symlink after the check; Lenswatch J320 3a). An HTML page
     is copied with its folder (no symlinks, no node_modules/.git, size-capped) so its scripts and images load.
-J465 (Angus: open a report in the Markdown viewer; "I don't think we need the override"): when ANGUS clicks a file:// link to a
-Markdown document (.md, .markdown, whose CONTENT also sniffs as plain text), the vetted snapshot opens with the host desktop's
-default app for that type (.md → the default for text/markdown, e.g. the host's Markdown viewer; launched with gio). Anything else
-(HTML, SVG, XHTML, other types, a .md that is really HTML) and http(s) still open in the world's own Brave, and an agent's own open (--agent)
-always does (an agent never pops an app onto Angus's screen). The share check comes first: nothing outside the shares opens.
+J465 (Angus: "Sandbox - Research Reports"): when ANGUS clicks a research report (its inbox file, or its copy in his vault), the host's
+vault copy opens in Obsidian (obsidian://open?path=…); everything else as above (an agent's own open always goes to the Brave).
 Refused: other schemes, control/format characters (Unicode Cc/Cf, Zl/Zp), URLs over 8 kB, paths outside the
 shares, hidden files. A refusal shows a short notification. Never raises.
 """
@@ -154,39 +151,37 @@ def snapshot(path, world):
     return os.path.join(dest, name)
 
 
-# J465 (J465Check HIGH): only plain documents open in a host app, and only if their CONTENT is plain too: a sandbox could write HTML (or
-# anything active) into a file called report.md, and the desktop would hand it to its normal browser by content. Everything else
-# (HTML, SVG, XHTML, unknown types, anything whose content isn't plain text) goes to the world's own Brave as before.
-NATIVE = {".md": "text/markdown", ".markdown": "text/markdown"}  # (what Angus asked for: reports; extend deliberately, with a content check)
-PLAIN_CONTENT = {"text/plain", "text/markdown", "text/x-markdown"}
+# J465 (Angus "2 … Sandbox - Research Reports"): a research report is filed by the relay in his vault (docker/research-vault.mjs); his
+# Ctrl+click on the report (its inbox path, or the vault copy itself) opens that vault copy in Obsidian through an obsidian:// URI.
+VAULT_DIR = os.environ.get("HYPRPI_RESEARCH_VAULT") or os.path.join(HOME, "Obsidian", "Sandbox - Research Reports")
+VAULT_INDEX = os.environ.get("HYPRPI_RESEARCH_VAULT_INDEX") or os.path.join(STATE_ROOT, "hyprpi", "sbx-relay", "research-vault.json")
 
-def _desktop_file(name):
-    """The .desktop file for an app id (XDG data dirs), or None."""
-    dirs = [os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")] + (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
-    for d in dirs:
-        f = os.path.join(d, "applications", name)
-        if name.endswith(".desktop") and "/" not in name and os.path.isfile(f):
-            return f
-    return None
-
-def file_opener(path):
-    """J465: the host desktop's default app for this document's TYPE (by its extension: .md → the default for text/markdown), launched
-    with gio; None (→ the world's Brave) unless the extension is a plain-document one, its content sniffs as plain text, and the desktop
-    has a default app for the type. No per-app config (Angus: "I don't think we need the override")."""
-    want = NATIVE.get(os.path.splitext(path)[1].lower())
-    if not want:
-        return None
+def vault_copy(url, world):
+    """The vault copy to open for this (already gate-approved) file link, else None."""
     try:
-        sniff = subprocess.run(["xdg-mime", "query", "filetype", path], capture_output=True, text=True, timeout=5).stdout.strip()
-        if sniff not in PLAIN_CONTENT:
+        p = os.path.realpath(urllib.parse.unquote(urllib.parse.urlsplit(url).path))
+        v = os.path.realpath(VAULT_DIR)
+        if p.startswith(v + os.sep) and p.endswith(".md") and os.path.isfile(p):
+            return p
+        name = os.path.basename(p)
+        if not (name.startswith("research-") and name.endswith(".md")):
             return None
-        if os.environ.get("HYPRPI_G_XDG_OPEN"):
-            return [os.environ["HYPRPI_G_XDG_OPEN"]]  # (tests: a stub, after the same checks)
-        app = subprocess.run(["xdg-mime", "query", "default", want], capture_output=True, text=True, timeout=5).stdout.strip()
-        df = _desktop_file(app) if app else None
-        return ["gio", "launch", df] if df else None
+        ix = json.load(open(VAULT_INDEX))
+        q = ix.get(f"{world}/{name}") if isinstance(ix, dict) else None
+        if not isinstance(q, str): return None
+        q = os.path.realpath(q)
+        # (the index is host-only state; still only a file inside the vault folder) and the clicked file must be that world's inbox copy
+        inbox = None
+        try:
+            for sb in json.load(open(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "hyprpi", "sbx-relay.json"))).get("sandboxes", []):
+                if sb.get("name") == world and sb.get("inbox"): inbox = os.path.realpath(os.path.expanduser(sb["inbox"]))
+        except Exception:
+            pass
+        if inbox and os.path.dirname(p) == inbox and q.startswith(v + os.sep) and os.path.isfile(q):
+            return q
     except Exception:
-        return None
+        pass
+    return None
 
 
 def check(url, world, snap=True):
@@ -391,17 +386,15 @@ def main(argv):
             tell(f"Link from {who} not opened", out + (" (further refusals this minute are not shown)" if agent else ""))
         print(f"g_open_url: refused: {out}", file=sys.stderr)
         return 1
-    # J465: his click on a (non-HTML) file opens the snapshot with the host's own app for its type
-    if not agent and out.startswith("file://"):
-        path = urllib.parse.unquote(out[len("file://"):])
-        opener = file_opener(path)
-        if opener:
-            cmd = opener + [path]
+    # J465: his click on a research report opens its vault copy in Obsidian (an obsidian:// URI; a running Obsidian just shows it)
+    if not agent and url.startswith("file://"):
+        vc = vault_copy(url, world)
+        if vc:
             try:
-                subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                subprocess.Popen([os.environ.get("HYPRPI_G_GIO") or "gio", "open", "obsidian://open?path=" + urllib.parse.quote(vc, safe="/")], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                 return 0
             except Exception as e:
-                tell(f"Link from {who} not opened", f"couldn't start {os.path.basename(cmd[0])} ({e.__class__.__name__})")
+                tell(f"Link from {who} not opened", f"couldn't open Obsidian ({e.__class__.__name__})")
                 return 1
     # J406 (Angus "19 a"): every link from a sandbox window, his click or an agent's, opens in the world's own Brave
     bring_brave_home(world)  # J402: a parked or stray world Brave comes home first, so the new tab is visible there
