@@ -24,7 +24,7 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { connect } from "../lib/client.mjs";
-import { sbxIcon } from "../lib/sandbox-icon.mjs"; // J423
+import { sbxIcon, sbxPlaceholder } from "../lib/sandbox-icon.mjs"; // J423; J455: sbxPlaceholder shared with the finder and π
 import { loadConfig, wsLabel } from "../lib/paths.mjs";
 const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C2" labels)
 import * as hypr from "../lib/hypr.mjs";
@@ -80,9 +80,10 @@ function treeOrder(list) {
   for (const a of list) if (!seen.has(a.id)) { depthOf.set(a.id, 0); out.push(a); } // a link loop: just list it
   return out;
 }
-const hereLive = () => treeOrder(agents.filter((a) => a.room === room));
+// J455 (Angus: "2 y"): a sandboxed world's placeholder agents (world-g, Doorman-G: no window) aren't listed, as in the finder and π
+const hereLive = () => treeOrder(agents.filter((a) => a.room === room && !sbxPlaceholder(a)));
 const hereParked = () => showMode >= 1 ? agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)) : [];
-const hereDormant = () => dormant.filter((a) => a.room === room && (a.kind !== "closed" || showMode >= 1));
+const hereDormant = () => dormant.filter((a) => a.room === room && !sbxPlaceholder(a) && (a.kind !== "closed" || showMode >= 1));
 const listHere = () => [...hereLive(), ...hereParked(), ...hereDormant()];
 const byId = (id) => listHere().find((a) => a.id === id);
 
