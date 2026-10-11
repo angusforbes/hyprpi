@@ -28,6 +28,8 @@ ok("A ## and J400: headers", ids("## J398\nW1 → a\nJ400: plain\nW1 → b") ===
 ok("A a mention mid-line is no header", ids("See J12 for context.\nIt follows J9's fix.") === "");
 ok("A a header inside a code fence doesn't count", ids("example:\n```text\n=== J9 v1 ===\nW1 → x\n```\n=== J10 ===\nW1 → y") === "J10");
 ok("A withoutFences drops code blocks", (await import("../lib/briefs.mjs")).withoutFences("a\n```\nW1 → x\n```\nb").includes("W1") === false);
+ok("A a nested fence (```` around ```) hides the inner header", ids("````markdown\n```text\n=== J16 v2 ===\nW1 → PASS\n```\n````\n=== J17 ===") === "J17");
+ok("A withoutFences keeps text after a nested block", (await import("../lib/briefs.mjs")).withoutFences("````\n```\nW1 → x\n```\n````\nafter").trim() === "after");
 ok("A the header's version is read", reportSections("=== J13 v1 ===\nW1 → x").sections[0].version === 1);
 ok("A each section holds only its own text", reportSections("=== J1 ===\nW1 → one\n=== J2 ===\nW1 → two").sections[0].text.includes("two") === false);
 
@@ -130,6 +132,13 @@ try {
   await agent.call("talk", { to: ["Thoughts-D"], text: "=== J12 v1 ===\nproof: W1 → a · W2 → b" });
   await sleep(300);
   ok("B6 a section sent to Thoughts-D doesn't close a world-E job", (await job("J12")).state === "running");
+  // 7. round 3: a single own section on an old version
+  const w2 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "versioned", angus: "x", done_when: ["W1 a", "W2 b"] }); await sleep(300);
+  const vj = w2.job || w2.id;
+  await api.call("thoughts.revise", { room: "D", job: vj, goal: "versioned v2", reason: "t" }).catch(() => {});
+  const q4 = await reqId(() => api.call("thoughts.ask", { room: "D", agent: "Atlas", question: "report?" }));
+  await agent.call("talk.reply", { request_id: q4, text: `=== ${vj} v1 ===\nproof: W1 → a · W2 → b` }); await sleep(300);
+  ok(`B7 a lone section on v1 doesn't close ${vj} v2`, (await job(vj)).state === "running" && (await job(vj)).version === 2, `${(await job(vj)).state} v${(await job(vj)).version}`);
   api.close?.(); agent.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill(); }
