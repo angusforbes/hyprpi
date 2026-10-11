@@ -172,12 +172,13 @@ function worlds() {
   return [...ids].filter((id) => /^[A-Z]$/.test(id)).sort().map((id) => ({
     id,
     color: "#" + (worldHex(id) || "7aa2f7"),
-    agents: (listing?.agents || []).filter((a) => a.room === id && !sbxPlaceholder(a)).length,
+    // J450 (GCheck): a sandboxed world's agents are its inner daemon's (cached by the Agnt list), not the host's placeholders
+    agents: (listing?.agents || []).filter((a) => a.room === id && !sbxPlaceholder(a)).length + innerCount(id),
     thoughtsBusy: !!busy.get(id),
     // Activity dot (like the agents panel's ● and ×): an agent working, or one blocked on Angus
     // (a bonk or a ding: status "blocked" until it works again).
-    working: (listing?.agents || []).filter((a) => a.room === id && !a.parked && a.status === "working").length,
-    needsYou: (listing?.agents || []).filter((a) => a.room === id && !a.parked && a.status === "blocked").length,
+    working: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "working").length,
+    needsYou: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "blocked").length,
     shown: shownWorlds.includes(id),
     sandboxed: gworld.sandboxOf(id) ? SBX_MARK : "", // J450: G 🐳, as the desktop panels say it
   }));
@@ -195,10 +196,12 @@ async function refreshProjects(room) {
     if (JSON.stringify(next) !== JSON.stringify(projectNames.get(room))) { projectNames.set(room, next); broadcast("state", state()); }
   } catch { /* no board */ }
 }
+// J450: how many agents a sandboxed world's inner daemon listed last (0 until the Agnt list has asked)
+function innerCount(id) { const sb = gworld.sandboxOf(id), c = sb && innerCache.get(sb); return c ? (c.list.agents || []).filter((a) => a.room === id && !a.parked && a.session).length : 0; }
 function directory() {
   const ids = new Set((listing?.rooms || []).map((r) => r.id).filter((id) => /^[A-Z]$/.test(id)));
   const agents = [
-    ...(listing?.agents || []).filter((a) => !a.parked && ids.has(a.room)),
+    ...(listing?.agents || []).filter((a) => !a.parked && ids.has(a.room) && !sbxPlaceholder(a)), // J450: no world-g / Doorman-G links
     ...(listing?.dormant || []).filter((a) => a.kind !== "closed" && ids.has(a.room)),
   ].map((a) => ({ id: a.id, name: a.name || "", display: a.display || a.name || "", room: a.room, color: a.color || "", icon: a.icon || "", live: !a.dormant && !a.kind, kind: "agent" })); // live: can be sent to (J141)
   for (const r of ids) agents.push({ id: "thoughts-" + r, name: "", display: "Thoughts-" + r, room: r, color: "", kind: "thoughts" });
