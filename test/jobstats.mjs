@@ -75,10 +75,18 @@ try {
   const sp = await agent.call("orch.spawn", { prompt: "check one part", complexity: "simple" }).catch((e) => ({ error: e.message }));
   const orch = JSON.parse(fs.readFileSync(path.join(S, "orch.json"), "utf8") || "{}");
   const kid = Object.values(orch.children || {})[0];
-  ok("(2) spawn_agent fills the child's job from its parent's running job", kid?.job === J, sp.error ? `spawn: ${sp.error}` : JSON.stringify({ job: kid?.job }));
+  ok("(2) spawn_agent records the job its child helps (parentJob), and leaves child.job alone (no report check, no escalation)", kid?.parentJob === J && !kid?.job, sp.error ? `spawn: ${sp.error}` : JSON.stringify({ job: kid?.job, parentJob: kid?.parentJob }));
+  // the helper's tokens count for the job it helps
+  const helper = await connect({ path: sock, onEvent: () => {} });
+  await helper.call("agent.hello", { agent_id: kid.id, pid: process.pid, name: "Helper", want_workspace: 34, cwd: S, model: "claude-haiku-4-5", thinking: "low" });
+  await helper.call("agent.usage", { tokens: 700 });
+  ok("(3) a helper's tokens count for the job it helps (helper_tokens)", brief()[J].stats.helper_tokens === 700 && brief()[J].stats.tokens === 2000, JSON.stringify({ t: brief()[J].stats.tokens, h: brief()[J].stats.helper_tokens }));
+  await helper.call("orch.report", { text: "half of it, nine bytes", final: false });
+  ok("(8) report_to_parent counts as a message for the job", brief()[J].stats.msgs.n === 4, JSON.stringify(brief()[J].stats.msgs));
   // report → done
   await agent.call("talk.reply", { request_id: req1, text: "changed: x\nproof: W1 → works · W2 → checked by Bolt\nundo: revert\nsurprises: none\nopen: none" });
   b = brief()[J];
+  ok("(1) thinking at done is the switched one (high)", b.stats.models.at(-1).thinking === "high", JSON.stringify(b.stats.models.at(-1)));
   ok("done: model, elapsed and waiting recorded", b.state === "done" && b.stats.models.at(-1).event === "done" && b.stats.elapsed_ms > 0 && b.stats.waiting_ms === b.stats.elapsed_ms - b.stats.active_ms, JSON.stringify({ e: b.stats.elapsed_ms, a: b.stats.active_ms, w: b.stats.waiting_ms }));
   // a failed check with a cause, then a revise with a cause
   ok("bad cause refused", /cause:/.test(await err(() => api.call("thoughts.verify", { room: "D", job: J, by: "Bolt", failed: true, cause: "bad luck" }))));
@@ -104,6 +112,26 @@ try {
   ok("(1) an agent saying hello with a running job records 'started' (an opened agent's first hello)", brief()[w2.job].stats.models.some((x) => x.event === "started" && x.model === "claude-haiku-4-5"));
   await api.call("thoughts.close", { room: "D", job: w2.job, state: "done", report: "proof: W1 → ok" });
   ok("W2 verify_work without cause works", (await api.call("thoughts.verify", { room: "D", job: w2.job, by: "Atlas" })).state === "verified");
+  // a job created while its agent is mid-turn isn't charged the time before it existed; tokens split between two jobs
+  await agent.call("agent.update", { status: "working" }); await sleep(500);
+  const w3 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "mid-turn job", angus: "x", done_when: ["W1 ok"], urgent: true });
+  const w4 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "second job", angus: "x", done_when: ["W1 ok"], urgent: true });
+  await sleep(150); await agent.call("agent.usage", { tokens: 1000 });
+  await api.call("thoughts.close", { room: "D", job: w3.job, state: "done", report: "proof: W1 → ok" });
+  const b3 = brief()[w3.job], b4 = brief()[w4.job];
+  ok("(4) a job created mid-turn: active ≤ elapsed", b3.stats.active_ms <= b3.stats.elapsed_ms && b3.stats.active_ms < 450, JSON.stringify({ a: b3.stats.active_ms, e: b3.stats.elapsed_ms }));
+  ok("(3) two running jobs share the agent's tokens (sum kept)", b3.stats.tokens + b4.stats.tokens === 1000 && b3.stats.tokens === 500, `${b3.stats.tokens} + ${b4.stats.tokens}`);
+  await agent.call("agent.update", { status: "idle" });
+  await agent.call("agent.usage", { tokens: 300 });
+  ok("(3) tokens after a job is done don't count for it", brief()[w3.job].stats.tokens === 500 && brief()[w4.job].stats.tokens === 800);
+  // an ordinary reply (agent to agent) counts as a message
+  const gotB = []; const bolt = await connect({ path: sock, onEvent: (ev, data) => gotB.push({ ev, data }) });
+  await bolt.call("agent.hello", { agent_id: "hp-bolt", pid: process.pid, name: "Bolt", want_workspace: 33, cwd: S, model: "claude-haiku-4-5", thinking: "low" });
+  const n0 = brief()[w4.job].stats.msgs.n;
+  await agent.call("talk", { to: ["Bolt"], text: "quick question?", mode: "demand" }).catch((e) => console.log("   demand:", e.message));
+  await sleep(300); const bid = (JSON.stringify(gotB).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) || []).pop();
+  if (bid) await bolt.call("talk.reply", { request_id: bid, text: "an answer" }).catch((e) => console.log("   reply:", e.message));
+  ok("(8) an ordinary agent-to-agent demand and its reply both count", brief()[w4.job].stats.msgs.n === n0 + 2, `${n0} → ${brief()[w4.job].stats.msgs.n}`);
   ok("lists stay capped", JSON.stringify(brief()).length < 20000, `${JSON.stringify(brief()).length} bytes`);
   api.close?.(); agent.close?.(); other.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }

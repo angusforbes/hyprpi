@@ -561,6 +561,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     if (Date.now() - usageSent > 15000) sendUsage();
   });
   pi.on("agent_end", async () => sendUsage());
+  pi.on("thinking_level_changed" as any, async (e: any) => { const t = e?.level ?? e?.thinkingLevel; if (typeof t === "string" && t) update({ thinking: t }); }); // J454
   pi.on("thinking_level_select", async () => update({ thinking: safe(() => pi.getThinkingLevel()) || "" }));
   pi.on("session_info_changed", async (e: any) => {
     // name-sync publishes the full styled name via `hyprpi name`; this only
