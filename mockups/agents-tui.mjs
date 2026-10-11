@@ -24,7 +24,8 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { connect } from "../lib/client.mjs";
-import { sbxIcon, sbxPlaceholder } from "../lib/sandbox-icon.mjs"; // J423; J455: sbxPlaceholder shared with the finder and π
+import { sbxIcon, sbxPlaceholder } from "../lib/sandbox-icon.mjs";
+import { shownMembers } from "../lib/tui/members.mjs"; // J457: each member once, by name; // J423; J455: sbxPlaceholder shared with the finder and π
 import { loadConfig, wsLabel } from "../lib/paths.mjs";
 const WORLD_SIZE = loadConfig().worldSize || 10; // workspaces per world (for "C2" labels)
 import * as hypr from "../lib/hypr.mjs";
@@ -304,7 +305,7 @@ function draw() {
     const dot = " · ";
     // Members as the projects panel writes them (lib/tui/board-view.mjs who()): "@Name" in the
     // agent's colour, no icon; bold when it isn't live; space-separated; the writer first (Angus).
-    const ids = [...(p.writer && (p.members || []).includes(p.writer) ? [p.writer] : []), ...(p.members || []).filter((id) => id !== p.writer)];
+    const ids = shownMembers([...(p.writer && (p.members || []).includes(p.writer) ? [p.writer] : []), ...(p.members || []).filter((id) => id !== p.writer)], board, agents.map((a) => ({ ...a, display: a.display || a.name })));
     let x = 4 + ICON_W + width("@" + p.name);
     const spans = [];
     const members = ids.map((id, k) => {
