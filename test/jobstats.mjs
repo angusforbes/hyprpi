@@ -132,6 +132,22 @@ try {
   await sleep(300); const bid = (JSON.stringify(gotB).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) || []).pop();
   if (bid) await bolt.call("talk.reply", { request_id: bid, text: "an answer" }).catch((e) => console.log("   reply:", e.message));
   ok("(8) an ordinary agent-to-agent demand and its reply both count", brief()[w4.job].stats.msgs.n === n0 + 2, `${n0} → ${brief()[w4.job].stats.msgs.n}`);
+  // StatsCheck round 2: started on the first working spell; thinking-only change; resync idle; the closing report counts; caps
+  got.length = 0;
+  const w5 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "fifth", angus: "x", done_when: ["W1 ok"], urgent: true }); await sleep(300); const r5 = rid();
+  await api.call("thoughts.cancel", { room: "D", agent: "Atlas", reason: "test: clear the queue" }).catch(() => {});
+  await agent.call("agent.update", { status: "working" });
+  ok("(1) 'started' on the agent's first working spell on the job", brief()[w5.job].stats.models.some((x) => x.event === "started"));
+  await agent.call("agent.update", { thinking: "xhigh" });
+  ok("(1) the agent's own thinking change is recorded", brief()[w5.job].stats.models.some((x) => x.event === "thinking" && x.thinking === "xhigh"));
+  await sleep(200); await agent.call("agent.update", { status: "idle", resync: true }); const aR = brief()[w5.job].stats.active_ms; await sleep(300);
+  ok("(4) a resync to idle ends the working spell (the idle time after it doesn't count)", aR >= 150 && brief()[w5.job].stats.active_ms === aR, `${aR} → ${brief()[w5.job].stats.active_ms}`);
+  const m5 = brief()[w5.job].stats.msgs.n;
+  await agent.call("talk.reply", { request_id: r5, text: "proof: W1 → ok, closing it" }).catch((e) => console.log("   r5:", e.message));
+  ok("(8) the report that closes the job counts as its message", brief()[w5.job].state === "done" && brief()[w5.job].stats.msgs.n === m5 + 1, `${brief()[w5.job].state} ${m5} → ${brief()[w5.job].stats.msgs.n}`);
+  for (let i = 0; i < 25; i++) await agent.call("agent.update", { thinking: i % 2 ? "low" : "high" });
+  const ms4 = brief()[w4.job].stats.models;
+  ok("caps: model events stop at 20 (oldest dropped)", ms4.length === 20 && ms4.at(-1).event === "thinking", String(ms4.length));
   ok("lists stay capped", JSON.stringify(brief()).length < 20000, `${JSON.stringify(brief()).length} bytes`);
   api.close?.(); agent.close?.(); other.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
