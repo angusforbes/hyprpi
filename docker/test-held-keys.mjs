@@ -189,6 +189,7 @@ assert.equal(N.openPeer(G, D), true); assert.equal(N.openPeer(G, PB), false);
     L({ sb: "doorman-g", op: "host_job_scope", id: "doorman-g--aaa442", job: "doorman-g--dde150", decision: "approve", applied: true, text: "approved: /home/x/Documents/jobs (write); the job waits for its run" }),
     L({ sb: "doorman-g", op: "host_job_answer", id: "doorman-g--bbb442", job: "doorman-g--dde150", n: 1, decision: "approve", applied: true }),
     L({ sb: "doorman-g", op: "host_job_scope", id: "doorman-g--ddd442", job: "doorman-g--eee", decision: "deny", applied: true, text: "declined" }),
+    L({ sb: "doorman-g", op: "host_job_answer", id: "doorman-g--fff442", job: "doorman-g--eee", n: 1, decision: "deny", applied: false }),
   ].join("\n") + "\n");
   const code = `
     import assert from "node:assert/strict"; const H = await import(${JSON.stringify(new URL("../lib/held.mjs", import.meta.url).href)});
@@ -200,8 +201,15 @@ assert.equal(N.openPeer(G, D), true); assert.equal(N.openPeer(G, PB), false);
     const o1 = H.relayOutcome("doorman-g--aaa442"); assert.equal(o1.ok, true); assert.ok(o1.text.startsWith("approved: /home/x/Documents/jobs (write)"), o1.text); assert.ok(!/reached nobody/.test(o1.text));
     const o2 = H.relayOutcome("doorman-g--bbb442"); assert.match(o2.text, /^answered; the host agent's job doorman-g--dde150 gets your answer/);
     const o3 = H.relayOutcome("doorman-g--ddd442"); assert.match(o3.text, /^declined/);
+    // trackHeld / heldStatus once the items are decided (pending files gone): a 2 on folders reads as denied, never "Approved"
+    const fs2 = await import("node:fs"); for (const f of ["doorman-g--aaa442", "doorman-g--bbb442"]) fs2.rmSync(${JSON.stringify("")} + process.env.J442P + "/" + f + ".json", { force: true });
+    const t1 = H.trackHeld("doorman-g--aaa442"); assert.equal(t1.state, "approved"); assert.ok(t1.text.startsWith("approved: /home/x/Documents/jobs (write)"), t1.text);
+    const t3 = H.trackHeld("doorman-g--ddd442"); assert.equal(t3.state, "denied"); assert.ok(t3.text.startsWith("declined"), t3.text);
+    assert.equal(H.heldStatus("doorman-g--ddd442", Date.now(), { fresh: true }).state, "denied", "heldStatus: a 2 is a denial");
+    assert.ok(!/Approved/.test(H.statusText(H.heldStatus("doorman-g--ddd442", Date.now(), { fresh: true }))));
+    assert.equal(H.trackHeld("doorman-g--fff442").text, "the job no longer waited for this answer", "an answer not applied");
     console.log("ok");`;
-  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", env: { ...process.env, XDG_STATE_HOME: X, HYPRPI_SANDBOX_WORLD: "", HYPRPI_G_WORLD: "" } });
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", env: { ...process.env, XDG_STATE_HOME: X, J442P: path.join(S, "pending"), HYPRPI_SANDBOX_WORLD: "", HYPRPI_G_WORLD: "" } });
   assert.equal(r.status, 0, `J442 held items: ${r.stderr}`); assert.match(r.stdout, /ok/);
   fs.rmSync(X, { recursive: true, force: true });
 }
