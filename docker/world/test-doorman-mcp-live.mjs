@@ -18,7 +18,8 @@ let s = {}; try { s = JSON.parse(fs.readFileSync(path.join(real, "settings.json"
 fs.writeFileSync(path.join(agent, "settings.json"), JSON.stringify(Object.fromEntries(["defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels"].filter((k) => k in s).map((k) => [k, s[k]]))));
 const env = Object.fromEntries(["HYPRPI_AGENT_ID", "HYPRPI_DROPBOX", "HYPRPI_INBOX", "HYPRPI_STATE", "HYPRPI_SOCKET", "G_HOST_HYPRPI"].map((k) => [k, `\${${k}}`]));
 fs.writeFileSync(path.join(agent, "mcp.json"), JSON.stringify({ mcpServers: { doorman: { command: "node", args: [MCP], env, exposure: "direct", timeout: 660 } } }));
-const c = await connect({ path: process.env.HYPRPI_SOCKET, onEvent: () => {}, onClose: () => {} });
+const pushed = []; // talks this agent gets from Outside (the gate's push for its adopted MCP requests)
+const c = await connect({ path: process.env.HYPRPI_SOCKET, onEvent: (ev, d) => { if (ev === "talk" && d?.from?.id === "g-outside") pushed.push(String(d.text || "")); }, onClose: () => {} });
 const me = await c.call("agent.hello", { agent_id: ID, name: "J462Test", icon: "🧪", pid: process.pid, cwd: dir, model: "test", acks: false, container: "world-g J462 test" });
 console.log(`joined as ${me.name} (${me.agent_id})`);
 const steps = STEPS.split(",");
@@ -37,4 +38,6 @@ const r = await new Promise((done) => {
 console.log(`--- pi (exit ${r.code}) ---\n${r.out.slice(-6000)}`);
 const AG = path.join(process.env.HYPRPI_STATE, "doorman-mcp", "agents"), st = fs.readdirSync(AG).map((f) => path.join(AG, f)).find((f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")).owner === ID; } catch { return false; } });
 try { if (!st) throw new Error("none for " + ID); const j = JSON.parse(fs.readFileSync(st, "utf8")); fs.unlinkSync(st); /* the test agent's state goes with it */ console.log("--- doorman-mcp state: notices ---"); for (const x of j.notices) console.log(`${x.n} [${x.kind}] ${x.text.replace(/\s+/g, " ").slice(0, 300)}`); } catch (e) { console.log(`no state (${e.message})`); }
+await new Promise((x) => setTimeout(x, 5000));
+console.log(`--- pushed to this agent by Outside (the gate): ${pushed.length} ---`); for (const t of pushed) console.log(t.replace(/\s+/g, " ").slice(0, 300));
 c.close(); fs.rmSync(dir, { recursive: true, force: true }); process.exit(0);
