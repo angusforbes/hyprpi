@@ -27,6 +27,11 @@ fs.symlinkSync(target, path.join(d, `2026-10-11 x (sym1).md`)); assert.throws(()
   fs.mkdirSync(path.join(T2, "Vault2")); fs.symlinkSync(out, path.join(T2, "Vault2", "world-g"));
   const r2 = run({ HYPRPI_RESEARCH_VAULT: path.join(T2, "Vault2"), HYPRPI_RESEARCH_VAULT_INDEX: path.join(T2, "i2.json") }, `const V = await import(${JSON.stringify(new URL("../docker/research-vault.mjs", import.meta.url).href)}); try { V.fileReport({ sandbox: "world-g", rid: "a1", md: "# x" }); console.log("filed"); } catch (e) { console.log("refused " + e.message); }`);
   assert.match(r2, /^refused /); assert.deepEqual(fs.readdirSync(out), [], "nor through a symlinked sandbox folder");
+  // (J465Check2) a swap AFTER the folders are pinned: what is created goes into the pinned (real) folder, never through the new link
+  { const r3 = run({ HYPRPI_RESEARCH_VAULT: path.join(T2, "Vault3"), HYPRPI_RESEARCH_VAULT_INDEX: path.join(T2, "i4.json") }, `import fs from "node:fs"; const V = await import(${JSON.stringify(new URL("../docker/research-vault.mjs", import.meta.url).href)});
+      const fd = V.pinDir("world-g"); fs.renameSync(${JSON.stringify(path.join(T2, "Vault3"))}, ${JSON.stringify(path.join(T2, "Vault3.real"))}); fs.symlinkSync(${JSON.stringify(out)}, ${JSON.stringify(path.join(T2, "Vault3"))});
+      const f = fs.openSync("/proc/self/fd/" + fd + "/r.md", fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644); fs.writeSync(f, "x"); console.log("ok");`);
+    assert.match(r3, /ok/); assert.deepEqual(fs.readdirSync(out), [], "nothing reached the swapped-in link's target"); assert.ok(fs.existsSync(path.join(T2, "Vault3.real", "world-g", "r.md")), "it went into the pinned real folder"); }
   // concurrent filers (relay + backfill): every report indexed
   const code = (i) => `const V = await import(${JSON.stringify(new URL("../docker/research-vault.mjs", import.meta.url).href)}); V.fileReport({ sandbox: "world-c", rid: "c${i}", md: "# c${i}" });`;
   const { spawn } = await import("node:child_process"); const env = { ...process.env, HYPRPI_RESEARCH_VAULT: path.join(T2, "V3"), HYPRPI_RESEARCH_VAULT_INDEX: path.join(T2, "i3.json") };

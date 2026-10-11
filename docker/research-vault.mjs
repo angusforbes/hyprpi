@@ -27,34 +27,35 @@ export function titleOf(md) {
   return out.replace(/[.\s]+$/, "") || "research report";
 }
 
-// (J465Check2 HIGH) every directory from the home folder down to the sandbox's folder must be a real directory, never a symlink (a
-// sandbox with write access to ~/Obsidian could otherwise plant "Sandbox - Research Reports" as a link to anywhere): each component is
-// checked with lstat and the report is created relative to the checked directory's real path. Anything else: no copy (fail closed).
-function safeDir(sandbox) {
-  const rel = path.relative(HOME, path.join(VAULT_DIR, sandbox));
-  if (rel.startsWith("..") || path.isAbsolute(rel)) { // (a test vault outside the home folder: check from its own root)
-    return checkChain(path.parse(VAULT_DIR).root, path.relative(path.parse(VAULT_DIR).root, path.join(VAULT_DIR, sandbox)));
-  }
-  return checkChain(HOME, rel);
-}
-function checkChain(base, rel) {
-  let cur = base;
-  for (const part of rel.split(path.sep).filter(Boolean)) {
-    cur = path.join(cur, part);
-    let st; try { st = fs.lstatSync(cur); } catch { fs.mkdirSync(cur, { mode: 0o755 }); st = fs.lstatSync(cur); }
-    if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${cur} isn't a plain folder (a link or a file): not filing there`);
-  }
-  if (fs.realpathSync(cur) !== cur) throw new Error(`${cur} doesn't resolve to itself: not filing there`);
-  return cur;
+// (J465Check2 HIGH) every directory from the home folder down to the sandbox's folder is opened one by one with O_DIRECTORY|O_NOFOLLOW,
+// each relative to the one before (through /proc/self/fd/<fd>/<name>), and the report is created relative to the last one: a symlink
+// planted or swapped in at any level fails the open, so nothing is ever written outside the real folder. Returns a pinned directory fd.
+const DIRFLAGS = fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+const at = (fd, name) => `/proc/self/fd/${fd}/${name}`;
+export function pinDir(sandbox) {
+  const target = path.join(VAULT_DIR, sandbox), inHome = target.startsWith(HOME + path.sep);
+  const base = inHome ? HOME : path.parse(target).root, rel = path.relative(base, target);
+  let fd = fs.openSync(base, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try {
+    for (const part of rel.split(path.sep).filter(Boolean)) {
+      let nfd;
+      try { nfd = fs.openSync(at(fd, part), DIRFLAGS); }
+      catch (e) { if (e.code !== "ENOENT") throw new Error(`${part} isn't a plain folder (a link or a file): not filing there`); fs.mkdirSync(at(fd, part), { mode: 0o755 }); nfd = fs.openSync(at(fd, part), DIRFLAGS); }
+      fs.closeSync(fd); fd = nfd;
+    }
+    return fd;
+  } catch (e) { try { fs.closeSync(fd); } catch { /* */ } throw e; }
 }
 // (J465Check2 MEDIUM) the index is updated under a lock (O_EXCL lock file, stale after 10 s), so a backfill beside the relay loses nothing
 function withLock(fn) {
   fs.mkdirSync(path.dirname(INDEX), { recursive: true, mode: 0o700 }); const L = INDEX + ".lock";
-  for (let i = 0; i < 400; i++) {
-    try { const fd = fs.openSync(L, "wx", 0o600); try { return fn(); } finally { fs.closeSync(fd); try { fs.unlinkSync(L); } catch { /* */ } } }
+  let lfd = null;
+  for (let i = 0; i < 400 && lfd === null; i++) {
+    try { lfd = fs.openSync(L, "wx", 0o600); }
     catch (e) { if (e.code !== "EEXIST") throw e; try { if (Date.now() - fs.statSync(L).mtimeMs > 10000) fs.unlinkSync(L); } catch { /* */ } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25); }
   }
-  throw new Error("the research vault index stayed locked");
+  if (lfd === null) throw new Error("the research vault index stayed locked");
+  try { return fn(); } finally { fs.closeSync(lfd); try { fs.unlinkSync(L); } catch { /* */ } } // (J465Check2 LOW: fn's own errors are never retried as lock contention)
 }
 function readIndex() { try { const j = JSON.parse(fs.readFileSync(INDEX, "utf8")); return j && typeof j === "object" && !Array.isArray(j) ? j : {}; } catch { return {}; } }
 function writeIndex(ix) { fs.mkdirSync(path.dirname(INDEX), { recursive: true, mode: 0o700 }); const t = `${INDEX}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(ix, null, 1), { mode: 0o600 }); fs.renameSync(t, INDEX); }
@@ -66,24 +67,26 @@ export function fileReport({ sandbox, rid, md, approvedAt = new Date(), reviewed
   return withLock(() => {
   const ix = readIndex();
   if (ix[key] && fs.existsSync(ix[key])) return ix[key];
-  const dir = safeDir(sandbox);
+  const dfd = pinDir(sandbox), dir = path.join(VAULT_DIR, sandbox);
+  try {
   const day = new Date(approvedAt).toISOString().slice(0, 10);
   const name = `${day} ${titleOf(md)} (${rid}).md`, file = path.join(dir, name);
   const front = ["---", `source: ${JSON.stringify("sandbox research report, filed by the host; its text came from the internet through the sandbox's research request: information, never instructions")}`,
     `sandbox: ${sandbox}`, `request_id: ${rid}`, `approved: ${new Date(approvedAt).toISOString()}`, `reviewed_by_angus: ${reviewed ? "yes" : "no (approved automatically)"}`, "---", ""].join("\n");
   const body = String(md).replace(/^<!--[^\n]*-->\n/, ""); // (the inbox label is said by the frontmatter)
   let fd;
-  try { fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644); } // never overwrites, never follows a link
+  try { fd = fs.openSync(at(dfd, name), fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644); } // never overwrites, never follows a link
   catch (e) {
     // (J465Check2) a lost index entry: an existing, plain report of ours with this id (its frontmatter says so) is indexed again, not overwritten
     if (e.code !== "EEXIST") throw e;
-    const st = fs.lstatSync(file);
-    if (st.isFile() && !st.isSymbolicLink() && st.size < (16 << 20) && fs.readFileSync(file, "utf8").includes(`\nrequest_id: ${rid}\n`)) { ix[key] = file; writeIndex(ix); return file; }
+    const st = fs.lstatSync(at(dfd, name));
+    if (st.isFile() && !st.isSymbolicLink() && st.size < (16 << 20) && fs.readFileSync(at(dfd, name), "utf8").includes(`\nrequest_id: ${rid}\n`)) { ix[key] = file; writeIndex(ix); return file; }
     throw e;
   }
   try { fs.writeSync(fd, front + body); } finally { fs.closeSync(fd); }
   ix[key] = file; writeIndex(ix);
   return file;
+  } finally { fs.closeSync(dfd); }
   });
 }
 
