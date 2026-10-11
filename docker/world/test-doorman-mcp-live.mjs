@@ -44,8 +44,9 @@ const r = await new Promise((done) => {
 });
 console.log(`--- pi (exit ${r.code}) ---\n${r.out.slice(-6000)}`);
 const AG = path.join(process.env.HYPRPI_STATE, "doorman-mcp", "agents"), st = fs.readdirSync(AG).map((f) => path.join(AG, f)).find((f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")).owner === ID; } catch { return false; } });
-try { if (!st) throw new Error("none for " + ID); const j = JSON.parse(fs.readFileSync(st, "utf8")); fs.unlinkSync(st); /* the test agent's state goes with it */ console.log("--- doorman-mcp state: notices ---"); for (const x of j.notices) console.log(`${x.n} [${x.kind}] ${x.text.replace(/\s+/g, " ").slice(0, 300)}`); } catch (e) { console.log(`no state (${e.message})`); }
+try { if (!st) throw new Error("none for " + ID); const j = JSON.parse(fs.readFileSync(st, "utf8")); console.log("--- doorman-mcp state: notices ---"); for (const x of j.notices) console.log(`${x.n} [${x.kind}] ${x.text.replace(/\s+/g, " ").slice(0, 300)}`); } catch (e) { console.log(`no state (${e.message})`); }
 await new Promise((x) => setTimeout(x, 5000));
 if (Number(STAY_MIN) > 0) { say(`staying joined up to ${STAY_MIN} min, until the research is decided`); const until = Date.now() + Number(STAY_MIN) * 60000; while (!decided && Date.now() < until) await new Promise((x) => setTimeout(x, 5000)); say(decided ? "research decided: leaving" : "time up: leaving"); }
 console.log(`--- pushed to this agent by Doorman-G (the mailbox): ${pushed.length} ---`); for (const t of pushed) console.log(t.replace(/\s+/g, " ").slice(0, 300));
+try { if (st) fs.unlinkSync(st); } catch { /* */ } // (J464: only when the agent leaves, so a later research decision still finds its token)
 c.close(); fs.rmSync(dir, { recursive: true, force: true }); process.exit(0);
