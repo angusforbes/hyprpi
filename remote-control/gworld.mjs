@@ -90,9 +90,12 @@ export async function call(sb, method, params = {}) {
   if (isList) { const c = listCache.get(sb); if (c && Date.now() - c.at < 3000) return c.v; }
   else { listCache.delete(sb); listGen.set(sb, (listGen.get(sb) || 0) + 1); }
   const gen = listGen.get(sb) || 0;
-  const v = await bridged(sb, { t: "call", m: method, p: params }, 40000, () => callOnce(sb, method, params)).then((m) => (m && typeof m === "object" && "ok" in m && "id" in m ? (m.r ?? null) : m));
-  if (isList && (listGen.get(sb) || 0) === gen) listCache.set(sb, { at: Date.now(), v });
-  return v;
+  const bump = () => { listCache.delete(sb); listGen.set(sb, (listGen.get(sb) || 0) + 1); };
+  try {
+    const v = await bridged(sb, { t: "call", m: method, p: params }, 40000, () => callOnce(sb, method, params)).then((m) => (m && typeof m === "object" && "ok" in m && "id" in m ? (m.r ?? null) : m));
+    if (isList && (listGen.get(sb) || 0) === gen) listCache.set(sb, { at: Date.now(), v });
+    return v;
+  } finally { if (!isList) bump(); } // (J444bcheck) and again when it completes: a list fetched meanwhile isn't kept
 }
 async function callOnce(sb, method, params) {
   const js = 'import(process.argv[1]+"/lib/client.mjs").then(async(c)=>{let b="";for await(const x of process.stdin)b+=x;const q=JSON.parse(b);const k=await c.connect({timeout:5000});try{const r=await k.call(q.m,q.p,{timeoutMs:30000});process.stdout.write(JSON.stringify(r));}finally{k.close();}}).catch((e)=>{process.stderr.write(String(e.message||e));process.exit(1);})';
