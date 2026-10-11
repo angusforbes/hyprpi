@@ -32,6 +32,13 @@ if (fs.existsSync(LEVELS_FILE)) {
   catch (e) { LEVELS_ERR = `levels.mjs doesn't load (${String(e.message).slice(0, 80)})`; }
 }
 
+// J380 (final review): ONE gate for every place that launches a host agent (the runner, the scoper): "" when the host's levels allow this
+// harness, else why not (a broken or lacking levels module refuses everything).
+export function levelsGate(harness, dir = cfgDir()) {
+  if (LEVELS_ERR) return `the host's runner levels can't be checked: ${LEVELS_ERR}`;
+  if (!LEVELS) return "";
+  const lv = LEVELS.loadLevels(dir); return LEVELS.allowedHarness(lv.levels, harness) ? "" : `the host's levels don't allow the ${harness} runner${lv.error ? ` (${String(lv.error).slice(0, 120)})` : ""}`;
+}
 export const HARNESSES = ["claude-code", "codex", "pi"];
 export const BUILTIN = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "Bash", "NotebookEdit", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite"]);
 const TOOL_RE = /^([A-Za-z]{2,20})(\([^()\n,]{0,200}\))?$/;

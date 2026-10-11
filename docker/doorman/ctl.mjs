@@ -180,10 +180,12 @@ export function configRows(world, P = paths()) {
   const rows = Object.keys(KEYS).map((k) => ({ key: k, value: cur[k], range: RANGE(k, levels), where: "worlds/<world>.json gateway block", settable: true }));
   const ro = [["host_agents", dm?.host_agents === undefined ? "(not set: agent-free)" : String(dm.host_agents), "false | bridge", "sbx-relay.json, the Doorman's entry"], ["window", dm?.visibility || "(strict)", "strict | safe | observer | developer", "sbx-relay.json, the Doorman's entry"], ["bridge defaults", dm?.bridge ? JSON.stringify(dm.bridge).slice(0, 80) : "(none)", "tools, folders, time_limit_s", "sbx-relay.json, the Doorman's entry"], ["doorman model", dm?.model || "(default)", "a model id", "sbx-relay.json, the Doorman's entry"]];
   for (const [key, value, range, where] of ro) rows.push({ key, value, range, where, settable: false });
-  // host_runner (J425) is read from the worlds file itself, so a value outside the levels shows even where the setting's own key isn't defined yet
+  // host_runner (J425): the harness that is EFFECTIVE (the file's, else the runner's default claude-code when host agents are on), so a default that
+  // the levels forbid shows too
   let hr = ""; try { const h = worldsFor(P.cfg, sb.name); if (h.length === 1) hr = h[0].w?.gateway?.host_runner ?? ""; } catch { /* none */ }
-  if (hr && !rows.some((r) => r.key === "host_runner")) rows.push({ key: "host_runner", value: typeof hr === "object" ? JSON.stringify(hr).slice(0, 60) : String(hr), range: RANGE("host_runner", levels), where: "worlds/<world>.json gateway block", settable: false });
-  const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, host_runner: hr });
+  const bridgeOn = dm && dm.host_agents === "bridge", effHr = hr || (bridgeOn ? "claude-code" : "");
+  if (effHr) { const shown = typeof hr === "object" && hr ? JSON.stringify(hr).slice(0, 60) : hr ? String(hr) : "claude-code (default)"; const row = rows.find((r) => r.key === "host_runner"); if (row) { row.value = shown; } else rows.push({ key: "host_runner", value: shown, range: RANGE("host_runner", levels), where: "worlds/<world>.json gateway block", settable: false }); }
+  const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, host_runner: effHr });
   return { world: sb.name, rows, levels, levelsError: error, violations: viol, levelsFile: levelsFile(P.cfg) };
 }
 export function renderConfig(c) {

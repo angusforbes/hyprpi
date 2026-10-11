@@ -46,7 +46,7 @@ if (cmd === "mcp") { await import("./mcp.mjs"); }
 else if (cmd === "run-job") { if (!id) usage(); const { runJob } = await import("./runner.mjs"); out(await runJob(id)); }
 else if (cmd === "scope-job") { if (!id) usage(); const { scopeJob } = await import("./scoper.mjs"); out(await scopeJob(id)); } // J428 v3: the read-only scoping run
 else if (cmd === "dispatch") { const { dispatch } = await import("./runner.mjs"); out({ ok: true, text: JSON.stringify(dispatch()) }); }
-else if (cmd === "runner") { const { runnerUnits } = await import("./runner.mjs"); console.log(runnerUnits(id || "")); }
+else if (cmd === "runner") { const { runnerUnits } = await import("./runner.mjs"); { const t = runnerUnits(id || ""); console.log(t); if (/^(refused|couldn't|usage)/.test(String(t))) process.exit(1); } }
 // J407: registration
 else if (cmd === "register") { const r = await register({ name: id || by, harness: opts.harness || "cli", caps: opts.caps || "", scope: opts.scope }); if (r.ok && !opts.json) { console.log(`${r.text}\nagent token: ${r.agent_token}  (pass it with --agent-token to heartbeat, claim and unregister)`); process.exit(0); } out(r); }
 else if (cmd === "heartbeat") out(await heartbeat(opts.agentToken || process.env.DOORMAN_BRIDGE_AGENT_TOKEN || ""));

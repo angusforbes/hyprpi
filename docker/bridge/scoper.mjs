@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { levelsGate } from "./harness.mjs"; // J380: the scoping agent is a host agent too: the host's levels gate it
 import { spawnSync } from "node:child_process";
 import { show, request } from "./client.mjs";
 import { validId } from "./core.mjs";
@@ -57,6 +58,8 @@ export async function scopeJob(id) {
   if (!validId(id)) return { ok: false, text: "bad job id" };
   const job = show(id); if (!job) return { ok: false, text: "no such job" };
   if (job.state !== "scoping") return { ok: false, text: `the job is ${job.state}, not scoping` };
+  const gate = levelsGate("claude-code"); // the scoper always runs a Claude-style agent (Glob-only)
+  if (gate) { const reply = await request({ op: "scope_result", id, folders: [], why: `not scoped: ${gate}` }); return { ok: !!reply.ok, text: reply.text, found: [], refused: gate }; }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "doorman-scope-")), mcp = path.join(tmp, "mcp.json");
   fs.writeFileSync(mcp, JSON.stringify({ mcpServers: {} }), { mode: 0o600 });
   const { argv, prompt } = scopePlan(job, { mcpConfig: mcp });

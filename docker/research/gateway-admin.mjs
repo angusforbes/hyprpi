@@ -49,7 +49,7 @@ const get = (w, k) => {
   const g = w?.gateway && typeof w.gateway === "object" ? w.gateway : {};
   const v = k.startsWith("search.") ? g.search?.[k.slice(7)] : g[k];
   if (k === "phone_decisions" && typeof v === "boolean") return String(v);
-  if (v !== undefined) return String(v);
+  if (v !== undefined) return v && typeof v === "object" ? JSON.stringify(v) : String(v);
   if (k === "mode" && w?.doorman?.mode !== undefined) return String(w.doorman.mode);
   if (k === "level" && w?.access !== undefined) return String(w.access);
   return DEFAULTS[k.replace("search.", "")] && !["level"].includes(k) ? `${DEFAULTS[k.replace("search.", "")]} (default)` : "(default)";

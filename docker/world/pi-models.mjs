@@ -30,6 +30,7 @@ export function merge(models, settings, tpl = T, host = null) {
   p.models ||= [];
   const have = new Set(p.models.map((x) => x.id));
   const wanted = host ? tpl.models.filter((x) => host.allows(`${tpl.provider}/${x.id}`)) : tpl.models;
+  if (host && !wanted.length) throw new Error("none of the template's models are on the host's scoped model list, so there is nothing to give (an empty enabledModels would mean every model is allowed); add them to the host list or use --no-host-list");
   if (host && wanted.length < tpl.models.length) changes.push(`host list: ${tpl.models.length - wanted.length} of ${tpl.models.length} template models are not on the host's scoped model list and are left out`);
   for (const x of wanted) if (!have.has(x.id)) { p.models.push(x); changes.push(`+ ${tpl.provider}/${x.id}`); }
   const s = settings && typeof settings === "object" ? structuredClone(settings) : {};
@@ -43,7 +44,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (!sb || !/^[\w.-]+$/.test(sb)) { console.error("usage: pi-models.mjs SANDBOX [--dry-run]"); process.exit(2); }
   const models = JSON.parse(sbxCat(sb, "models.json") || "{}"), settings = JSON.parse(sbxCat(sb, "settings.json") || "{}");
   let host = null; if (!rest.includes("--no-host-list")) { try { const { allowedBy, readList } = await import("../../lib/modellist.mjs"); const list = readList(); host = list.length ? { allows: (m) => !!allowedBy(m, list) } : null; } catch (e) { console.error(`pi-models: can't read the host's model list (${e.message}); use --no-host-list to give the whole template`); process.exit(1); } }
-  const r = merge(models, settings, T, host);
+  let r; try { r = merge(models, settings, T, host); } catch (e) { console.error(`pi-models: ${e.message}`); process.exit(1); }
   const keyless = !(r.models.providers[T.provider].apiKey) && !/"nv-inference"/.test(sbxCat(sb, "auth.json"));
   console.log(`${sb}: ${r.changes.length ? r.changes.length + " change(s)" : "already up to date"}${dry ? " (dry run)" : ""}`);
   for (const c of r.changes) console.log("  " + c);
