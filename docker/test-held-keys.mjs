@@ -175,6 +175,11 @@ ok("CLI: approve --note / --allow-similar (5 min to 8 h, plain messages only), d
 // J378: only a Doorman and its own sandbox are open peers (kept here from the old J370 test file)
 const G = { name: "world-g", doormanFor: null }, D = { name: "doorman-g", doormanFor: "world-g" }, PB = { name: "probe", doormanFor: null };
 assert.equal(N.openPeer(G, D), true); assert.equal(N.openPeer(G, PB), false);
+// J442 (Harbor LOW): a host job's folders are never linkable (no allow-similar, no revision link) and have their own hold reason
+{ const sc = { mode: "talk", to: ["Angus"], targets: [], hostJobScope: { id: "doorman-g--dde150" } };
+  assert.equal(N.linkable(sc), false, "a hostJobScope item isn't linkable");
+  assert.match(N.holdReason(sc), /^held because \(relay\): a host job needs folders beyond the sandbox's shares/); assert.ok(!/a message from the sandbox/.test(N.holdReason(sc)));
+  assert.equal(N.linkable({ mode: "talk", to: ["Alpha"], targets: [{ id: "x" }] }), true, "a plain message still is"); }
 // J442: a host job's folders (J428 hostJobScope) and a host agent's question: their own title, only 1 / 2, and the outcome from the
 // relay's own log line, never "approved, but it reached nobody". In a child process with a temp XDG_STATE_HOME (lib/held.mjs reads it at import).
 {

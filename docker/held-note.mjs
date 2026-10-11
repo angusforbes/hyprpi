@@ -13,7 +13,7 @@ export function ownerNote(raw) {
 // is denied ("2", sent back), its revision is linked and no allow-similar rule applies meanwhile (J370b). A research plan links separately.
 export function linkable(m) {
   if (!m || typeof m !== "object" || m.research) return false;
-  return !m.gpu && !m.taskChange && !m.draft && !m.typed && !m.gatewayChange && !m.hostJob && (m.mode === "talk" || m.mode === "demand");
+  return !m.gpu && !m.taskChange && !m.draft && !m.typed && !m.gatewayChange && !m.hostJob && !m.hostJobScope && (m.mode === "talk" || m.mode === "demand"); // (J442: a host job's folders are never a message)
 }
 // The asking agent's label from the gate's "[Name, in world G]" prefix (unverified: used only to link a revision and to name it in notes).
 export const senderLabel = (text) => ((/^\[([^\],\n]{1,40}), in world [A-I]\]/.exec(String(text ?? "")) || [])[1] || "").trim();
@@ -32,6 +32,7 @@ export function holdReason(m) {
   } else if (m?.research) { src = "relay"; why = "a research result waits for Angus's review before it reaches the sandbox";
   } else if (m?.gpu) { src = "relay"; why = "a GPU lease needs Angus's approval";
   } else if (m?.taskChange) { src = "relay"; why = "a change of the research task needs Angus's approval";
+  } else if (m?.hostJobScope) { src = "relay"; why = "a host job needs folders beyond the sandbox's shares, and only Angus's 1 can add them"; // (J442)
   } else if (m?.hostJob) { src = "relay"; why = "a host agent's question waits for Angus's answer"; // (Paperwright #7)
   } else if (m?.gatewayChange) { src = "relay"; why = "a change of the research gateway's settings needs Angus's approval";
   } else if (m?.typed) { src = "relay"; why = `a "${one(m.typed.type).replace(/_/g, " ")}" request needs Angus's approval`;
