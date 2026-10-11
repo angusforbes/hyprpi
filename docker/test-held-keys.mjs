@@ -175,5 +175,35 @@ ok("CLI: approve --note / --allow-similar (5 min to 8 h, plain messages only), d
 // J378: only a Doorman and its own sandbox are open peers (kept here from the old J370 test file)
 const G = { name: "world-g", doormanFor: null }, D = { name: "doorman-g", doormanFor: "world-g" }, PB = { name: "probe", doormanFor: null };
 assert.equal(N.openPeer(G, D), true); assert.equal(N.openPeer(G, PB), false);
+// J442: a host job's folders (J428 hostJobScope) and a host agent's question: their own title, only 1 / 2, and the outcome from the
+// relay's own log line, never "approved, but it reached nobody". In a child process with a temp XDG_STATE_HOME (lib/held.mjs reads it at import).
+{
+  const X = fs.mkdtempSync(path.join(os.tmpdir(), "j442-")), S = path.join(X, "hyprpi", "sbx-relay");
+  fs.mkdirSync(path.join(S, "pending"), { recursive: true });
+  const put = (m) => fs.writeFileSync(path.join(S, "pending", `${m.id}.json`), JSON.stringify(m));
+  put({ id: "doorman-g--aaa442", sandbox: "doorman-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Angus"], shown: ["Angus"], targets: [], text: "Job doorman-g--dde150 for Alpha needs, beyond G's shares:\n⚠ /home/x/Documents/jobs (read and WRITE)", hostJobScope: { id: "doorman-g--dde150" } });
+  put({ id: "doorman-g--bbb442", sandbox: "doorman-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Angus"], shown: ["Angus"], targets: [], text: "Question from the host agent", hostJob: { id: "doorman-g--dde150", n: 1 } });
+  put({ id: "doorman-g--ccc442", sandbox: "doorman-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Alpha"], shown: ["Alpha"], targets: [{ kind: "agent", id: "x" }], text: "[Beta, in world G] hi" });
+  const L = (o) => JSON.stringify({ t: "2026-10-11T00:00:01Z", ...o });
+  fs.writeFileSync(path.join(S, "log.jsonl"), [
+    L({ sb: "doorman-g", op: "host_job_scope", id: "doorman-g--aaa442", job: "doorman-g--dde150", decision: "approve", applied: true, text: "approved: /home/x/Documents/jobs (write); the job waits for its run" }),
+    L({ sb: "doorman-g", op: "host_job_answer", id: "doorman-g--bbb442", job: "doorman-g--dde150", n: 1, decision: "approve", applied: true }),
+    L({ sb: "doorman-g", op: "host_job_scope", id: "doorman-g--ddd442", job: "doorman-g--eee", decision: "deny", applied: true, text: "declined" }),
+  ].join("\n") + "\n");
+  const code = `
+    import assert from "node:assert/strict"; const H = await import(${JSON.stringify(new URL("../lib/held.mjs", import.meta.url).href)});
+    const items = H.heldForSandboxes(["doorman-g"]), by = Object.fromEntries(items.map((x) => [x.id, x]));
+    const sc = by["doorman-g--aaa442"]; assert.ok(sc, "the scope item is listed");
+    assert.equal(sc.title, "A host job needs folders beyond G's shares"); assert.equal(sc.kind, "host job folders"); assert.deepEqual(sc.choices, ["1", "2"], "no 1+ on a host job's folders");
+    assert.deepEqual(by["doorman-g--bbb442"].choices, ["1", "2"]); assert.equal(by["doorman-g--bbb442"].title, "A host agent asks you a question");
+    assert.deepEqual(by["doorman-g--ccc442"].choices, ["1", "1+", "2"], "a plain message still offers 1+");
+    const o1 = H.relayOutcome("doorman-g--aaa442"); assert.equal(o1.ok, true); assert.ok(o1.text.startsWith("approved: /home/x/Documents/jobs (write)"), o1.text); assert.ok(!/reached nobody/.test(o1.text));
+    const o2 = H.relayOutcome("doorman-g--bbb442"); assert.match(o2.text, /^answered; the host agent's job doorman-g--dde150 gets your answer/);
+    const o3 = H.relayOutcome("doorman-g--ddd442"); assert.match(o3.text, /^declined/);
+    console.log("ok");`;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", env: { ...process.env, XDG_STATE_HOME: X, HYPRPI_SANDBOX_WORLD: "", HYPRPI_G_WORLD: "" } });
+  assert.equal(r.status, 0, `J442 held items: ${r.stderr}`); assert.match(r.stdout, /ok/);
+  fs.rmSync(X, { recursive: true, force: true });
+}
 fs.rmSync(T, { recursive: true, force: true });
 console.log("held-keys (relay): all pass");

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 import { checkScope } from "../docker/bridge/scope.mjs";
 const H = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "scope-home-")));
-for (const d of ["Work/proj", "Work/free/sub", ".ssh", "keys", "Docs", "Work/.hidden"]) fs.mkdirSync(path.join(H, d), { recursive: true });
+for (const d of ["Work/proj", "Work/free/sub", ".ssh", "keys", "Docs/jobs", "Work/.hidden"]) fs.mkdirSync(path.join(H, d), { recursive: true });
 fs.writeFileSync(path.join(H, "Docs/file.txt"), "x"); fs.symlinkSync(path.join(H, ".ssh"), path.join(H, "Work/sneaky"));
 const W = (p) => path.join(H, p);
 const shares = { mounts: [{ host: W("Work"), ro: false }, { host: W("Work/proj"), ro: true }], hidden: [{ path: W("Work/free/sub") }] };
@@ -16,9 +16,12 @@ assert.match(r.text, /^Folders: T's shares \(2 folders, 1 writable/); assert.ok(
 // a folder inside the shares with the rights it has: nothing extra; beyond them: shown prominently
 ok(checkScope({ folders: [{ path: "~/Work/free", access: "write" }] }, ctx), "inside a writable share");
 assert.equal(checkScope({ folders: [{ path: "~/Work/free", access: "write" }] }, ctx).beyond.length, 0);
-r = checkScope({ world: "world-t", folders: [{ path: "~/Docs", access: "write" }, { path: "~/Work/proj", access: "read" }], tools: ["Read", "Write"] }, ctx); ok(r, "beyond");
-assert.deepEqual(r.beyond.map((x) => [x.path, x.access]), [[W("Docs"), "write"]], "only ~/Docs is beyond (proj is a share, read)");
-assert.match(r.text, /⚠ BEYOND T's SHARES: .*Docs \(read and WRITE\)\nTools: Read, Write$/);
+r = checkScope({ world: "world-t", folders: [{ path: "~/Docs/jobs", access: "write" }, { path: "~/Work/proj", access: "read" }], tools: ["Read", "Write"] }, ctx); ok(r, "beyond");
+assert.deepEqual(r.beyond.map((x) => [x.path, x.access]), [[W("Docs/jobs"), "write"]], "only ~/Docs/jobs is beyond (proj is a share, read)");
+assert.match(r.text, /⚠ BEYOND T's SHARES: .*Docs\/jobs \(read and WRITE\)\nTools: Read, Write$/);
+// J442: never WRITE to a whole top-level folder beyond the shares (read is fine)
+bad(checkScope({ folders: [{ path: "~/Docs", access: "write" }] }, ctx), /whole top-level folder/, "write to ~/Docs");
+ok(checkScope({ folders: [{ path: "~/Docs", access: "read" }] }, ctx), "read ~/Docs");
 bad(checkScope({ folders: [{ path: H, access: "read" }] }, ctx), /never the home folder itself/, "home root");
 bad(checkScope({ folders: [{ path: "/", access: "read" }] }, ctx), /inside the home folder/, "/");
 bad(checkScope({ folders: [{ path: "/etc", access: "read" }] }, ctx), /inside the home folder/, "outside home");
@@ -40,9 +43,9 @@ bad(checkScope({ tools: ["Read"] }, { home: H, shares: { mounts: [] } }), /at le
 r = checkScope({ tools: ["Bash"] }, ctx); ok(r, "Bash"); assert.match(r.text, /isn't limited to these folders/);
 bad(checkScope({ folders: [{ path: "~/Docs\n", access: "read" }] }, ctx), /control characters/, "control chars");
 bad(checkScope({ folders: "~/Docs" }, ctx), /must be lists/, "not a list");
-r = checkScope({ folders: [{ path: "~/Docs", access: "read" }, { path: "~/Docs", access: "write" }] }, ctx); assert.equal(r.beyond.length, 1); assert.equal(r.beyond[0].access, "write", "a repeated folder: one entry, the wider access");
+r = checkScope({ folders: [{ path: "~/Docs/jobs", access: "read" }, { path: "~/Docs/jobs", access: "write" }] }, ctx); assert.equal(r.beyond.length, 1); assert.equal(r.beyond[0].access, "write", "a repeated folder: one entry, the wider access");
 r = checkScope({}, { home: H, shares: null }); ok(r, "shares unknown, nothing named"); assert.deepEqual([r.folders, r.tools], [[], []], "shares unknown: no folders and no file tools (fail closed)");
-bad(checkScope({ folders: [{ path: "~/Docs", access: "write" }] }, { home: H, shares: null }), /protected/, "shares unknown: no write access at all");
+bad(checkScope({ folders: [{ path: "~/Docs/jobs", access: "write" }] }, { home: H, shares: null }), /protected/, "shares unknown: no write access at all");
 fs.rmSync(H, { recursive: true, force: true });
 console.log("bridge-scope: all pass");
 // the runner: exactly the approved folders and tools, read-only ones denied Write/Edit; an answer can't widen it (J428 W2)
@@ -104,4 +107,12 @@ console.log("bridge-scope: all pass");
   assert.equal(d.patch.claimed_at, iso(T0 + 1740e3), "the clock moves on by the scoping wait");
   fs.rmSync(H3, { recursive: true, force: true });
   console.log("bridge-scope J428Check cases: all pass");
+}
+
+// J442: the scoping prompt asks for the deepest existing folder
+{
+  const { scopePlan } = await import("../docker/bridge/scoper.mjs");
+  const p = scopePlan({ approved: { action_line: "x", needs: "y", folders: [] } }, { mcpConfig: "/tmp/m.json" }).prompt;
+  assert.match(p, /DEEPEST EXISTING folder/); assert.match(p, /never a folder directly under the home folder for write access/);
+  console.log("bridge-scope J442: all pass");
 }

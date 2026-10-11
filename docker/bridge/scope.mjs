@@ -68,6 +68,9 @@ export function checkScope(raw = {}, { home = os.homedir(), shares = null } = {}
       if (hit) return no(`${p.slice(0, 120)}: write access refused: ${under(r, hit) ? "the sandbox has it read-only (protected)" : `it holds ${hit}, which the sandbox has read-only (protected)`}; read is fine`);
     }
     if (access === "read" ? readable(r) : writable(r)) continue; // already within the shares with those rights
+    // J442 (Angus "1b yes"): write access beyond the shares is never granted to a whole top-level folder (~/Documents, ~/Work…):
+    // it would cover everything in it. Refused, so the proposal names the subfolder (read stays possible).
+    if (access === "write" && parts.length === 1) return no(`${r}: write access to a whole top-level folder isn't granted; name the subfolder the job writes in (read is fine)`);
     const seen = beyond.find((x) => x.path === r);
     if (seen) { if (access === "write") seen.access = "write"; continue; }
     const st = fs.statSync(r); beyond.push({ path: r, access, share: false, id: `${st.dev}:${st.ino}` }); // (J428Review) its identity: what Angus approves is THIS folder
