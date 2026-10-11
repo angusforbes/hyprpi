@@ -39,7 +39,7 @@ ok("research writes the relay's {op:research, looking_for, depth, from} file, st
 // later: the research is approved → a notice with the file to read, via wait
 setTimeout(() => item({ type: "research", token: "r0a1b2c3d", status: "approved", id: "world-g--aa11", file: "/inbox/research-r0a1b2c3d.md", words: 900 }), 300);
 r = await M.call("wait", { seconds: 5 });
-assert.equal(r.notices.length, 1); assert.match(r.notices[0].text, /^Angus approved your research request \(your words: "damp heat results for perovskite modules"\)\. Read it at file:\/\/\/inbox\/research-r0a1b2c3d\.md \(Ctrl\+click opens it in G's Brave; read-only\)/); assert.equal(r.notices[0].path, "/inbox/research-r0a1b2c3d.md");
+assert.equal(r.notices.length, 1); assert.match(r.notices[0].text, /^Angus approved your research request \(your words: "damp heat results for perovskite modules"\)\. Read it at file:\/\/\/inbox\/research-r0a1b2c3d\.md \(Ctrl\+click opens it in the host's Markdown viewer; read-only\)/); assert.equal(r.notices[0].path, "/inbox/research-r0a1b2c3d.md");
 ok("wait returns the research outcome (with the file to read) as soon as it comes");
 
 // 2. ask_doorman and message: talk files with the stamp; a held message, Angus's decision, the host reply
