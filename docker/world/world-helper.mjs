@@ -27,7 +27,8 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { validateStatus } from "./g-status.mjs"; // J401: the world's agents, reported from inside, shown on the host
+import { validateStatus } from "./g-status.mjs";
+import { panelOpts } from "./panel-opts.mjs"; // J467 // J401: the world's agents, reported from inside, shown on the host
 
 const HOME = os.homedir();
 const [cmd, worldArg] = process.argv.slice(2);
@@ -266,11 +267,12 @@ class Helper {
     try { execFileSync(path.join(H, "docker", "sbx-daemon.sh"), ["ensure"], { stdio: "ignore", timeout: 45000 }); } catch { /* sbx starts it itself */ }
     const kconf = ["--config", this.kittyConf(H)];
     const title = kind === "agent" ? [] : ["--title", `G: hyprpi-${kind} G`];
+    const popts = kind === "agent" ? [] : panelOpts(H, kind).flatMap((o) => ["-o", o]); // J467: the same keys and mouse as the host's panel
     // Review #1: the window gets a locked-down kitty config (no clipboard, links, remote control or host-shell
     // keys) instead of Angus's own, and the program's output passes through g-filter (drops kitty graphics,
     // OSC 52 / 8 / file transfer / notifications, DCS…), so the sandbox can't reach the host through kitty.
     const sh = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-    const argv = ["env", `G_WORLD=${WORLD}`, `G_TOKEN=${r.token}`, "kitty", `--class=${cls}`, ...kconf, ...title, `--directory=${this.cfg.workspace}`, "--",
+    const argv = ["env", `G_WORLD=${WORLD}`, `G_TOKEN=${r.token}`, "kitty", `--class=${cls}`, ...kconf, ...popts, ...title, `--directory=${this.cfg.workspace}`, "--",
       "python3", path.join(H, "docker", "world", "g-filter.py"),
       "systemd-run", "--user", "--scope", "--quiet", `--slice=hyprpi-${WORLD}.slice`, "-p", "MemoryMax=512M", "-p", "TasksMax=64",
       "sbx", "exec", "-it", "-w", this.cfg.workspace, this.cfg.sandbox, path.join(H, "docker", "world", "bin", "g-run"), r.token];
