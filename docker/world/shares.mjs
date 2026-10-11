@@ -198,7 +198,10 @@ function plan() {
   const globRe = (g) => new RegExp("^" + g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
   const prot = new Set([ROOT, exp("~/Harness/agent-config")]);
   // J465: the host-filed research reports in Angus's vault are read-only for every sandbox (the relay alone writes them)
-  { const v = process.env.HYPRPI_RESEARCH_VAULT || exp("~/Obsidian/Sandbox - Research Reports"); try { fs.mkdirSync(v, { recursive: true }); } catch { /* */ } prot.add(v); }
+  { const v = process.env.HYPRPI_RESEARCH_VAULT || exp("~/Obsidian/Sandbox - Research Reports"); try { fs.mkdirSync(v, { recursive: true }); } catch { /* */ }
+    let st = null; try { st = fs.lstatSync(v); } catch { /* */ }
+    // (J465Check2) a symlink planted at that name is never followed into some other folder; the relay refuses to file there too
+    if (st && st.isDirectory() && !st.isSymbolicLink()) prot.add(v); else skipped.push(`${v}: not a plain folder (a link?), so it isn't protected and the relay won't file reports there; remove it`); }
   for (const e of g.protected || []) {
     if (!/[*?]/.test(e)) { prot.add(exp(e)); continue; }
     const base = /\//.test(e) ? [exp(path.dirname(e))] : pf, re = globRe(path.basename(e));

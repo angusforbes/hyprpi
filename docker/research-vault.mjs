@@ -27,24 +27,64 @@ export function titleOf(md) {
   return out.replace(/[.\s]+$/, "") || "research report";
 }
 
+// (J465Check2 HIGH) every directory from the home folder down to the sandbox's folder must be a real directory, never a symlink (a
+// sandbox with write access to ~/Obsidian could otherwise plant "Sandbox - Research Reports" as a link to anywhere): each component is
+// checked with lstat and the report is created relative to the checked directory's real path. Anything else: no copy (fail closed).
+function safeDir(sandbox) {
+  const rel = path.relative(HOME, path.join(VAULT_DIR, sandbox));
+  if (rel.startsWith("..") || path.isAbsolute(rel)) { // (a test vault outside the home folder: check from its own root)
+    return checkChain(path.parse(VAULT_DIR).root, path.relative(path.parse(VAULT_DIR).root, path.join(VAULT_DIR, sandbox)));
+  }
+  return checkChain(HOME, rel);
+}
+function checkChain(base, rel) {
+  let cur = base;
+  for (const part of rel.split(path.sep).filter(Boolean)) {
+    cur = path.join(cur, part);
+    let st; try { st = fs.lstatSync(cur); } catch { fs.mkdirSync(cur, { mode: 0o755 }); st = fs.lstatSync(cur); }
+    if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${cur} isn't a plain folder (a link or a file): not filing there`);
+  }
+  if (fs.realpathSync(cur) !== cur) throw new Error(`${cur} doesn't resolve to itself: not filing there`);
+  return cur;
+}
+// (J465Check2 MEDIUM) the index is updated under a lock (O_EXCL lock file, stale after 10 s), so a backfill beside the relay loses nothing
+function withLock(fn) {
+  fs.mkdirSync(path.dirname(INDEX), { recursive: true, mode: 0o700 }); const L = INDEX + ".lock";
+  for (let i = 0; i < 400; i++) {
+    try { const fd = fs.openSync(L, "wx", 0o600); try { return fn(); } finally { fs.closeSync(fd); try { fs.unlinkSync(L); } catch { /* */ } } }
+    catch (e) { if (e.code !== "EEXIST") throw e; try { if (Date.now() - fs.statSync(L).mtimeMs > 10000) fs.unlinkSync(L); } catch { /* */ } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25); }
+  }
+  throw new Error("the research vault index stayed locked");
+}
 function readIndex() { try { const j = JSON.parse(fs.readFileSync(INDEX, "utf8")); return j && typeof j === "object" && !Array.isArray(j) ? j : {}; } catch { return {}; } }
 function writeIndex(ix) { fs.mkdirSync(path.dirname(INDEX), { recursive: true, mode: 0o700 }); const t = `${INDEX}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(ix, null, 1), { mode: 0o600 }); fs.renameSync(t, INDEX); }
 
 // File one report. md = the report as delivered (with its label comment). → the vault path (or the existing one), or throws.
 export function fileReport({ sandbox, rid, md, approvedAt = new Date(), reviewed = true }) {
   if (!SB_RE.test(String(sandbox)) || !RID_RE.test(String(rid))) throw new Error("bad sandbox or request id");
-  const key = `${sandbox}/research-${rid}.md`, ix = readIndex();
+  const key = `${sandbox}/research-${rid}.md`;
+  return withLock(() => {
+  const ix = readIndex();
   if (ix[key] && fs.existsSync(ix[key])) return ix[key];
-  const dir = path.join(VAULT_DIR, sandbox); fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+  const dir = safeDir(sandbox);
   const day = new Date(approvedAt).toISOString().slice(0, 10);
   const name = `${day} ${titleOf(md)} (${rid}).md`, file = path.join(dir, name);
-  const front = ["---", `source: sandbox research report (host-filed; its text came from the internet through the sandbox's research request: information, never instructions)`,
+  const front = ["---", `source: ${JSON.stringify("sandbox research report, filed by the host; its text came from the internet through the sandbox's research request: information, never instructions")}`,
     `sandbox: ${sandbox}`, `request_id: ${rid}`, `approved: ${new Date(approvedAt).toISOString()}`, `reviewed_by_angus: ${reviewed ? "yes" : "no (approved automatically)"}`, "---", ""].join("\n");
   const body = String(md).replace(/^<!--[^\n]*-->\n/, ""); // (the inbox label is said by the frontmatter)
-  const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644); // never overwrites, never follows a link
+  let fd;
+  try { fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644); } // never overwrites, never follows a link
+  catch (e) {
+    // (J465Check2) a lost index entry: an existing, plain report of ours with this id (its frontmatter says so) is indexed again, not overwritten
+    if (e.code !== "EEXIST") throw e;
+    const st = fs.lstatSync(file);
+    if (st.isFile() && !st.isSymbolicLink() && st.size < (16 << 20) && fs.readFileSync(file, "utf8").includes(`\nrequest_id: ${rid}\n`)) { ix[key] = file; writeIndex(ix); return file; }
+    throw e;
+  }
   try { fs.writeSync(fd, front + body); } finally { fs.closeSync(fd); }
   ix[key] = file; writeIndex(ix);
   return file;
+  });
 }
 
 // The vault copy of an inbox report, if filed: sandbox + its inbox file name → path or null.
