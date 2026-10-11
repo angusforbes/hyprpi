@@ -237,12 +237,25 @@ function renderTop() {
 
 // The top bar is as big as fits on one line: start large, shrink in small steps only while
 // it overflows (more worlds showing, a narrow phone).
+// J448 v2 (Angus: "1 yes drop Strm, or make it an option to include, default off"): the Strm tab is off
+// unless turned on in Agnt's list ("π settings"), kept per device (localStorage). Off: no tab, no
+// "Stream: only X ›" buttons; a Strm view open when it's turned off goes back to Thgt.
+const STRM_KEY = "hyprpi-rc.showStrm";
+let showStrm = (() => { try { return localStorage.getItem(STRM_KEY) === "1"; } catch { return false; } })();
+function applyStrm() {
+  const t = document.querySelector('.tab[data-tab="stream"]'); if (t) t.hidden = !showStrm;
+  document.documentElement.classList.toggle("nostrm", !showStrm);
+  if (!showStrm && typeof view !== "undefined" && view === "stream") setView("thoughts");
+  fitTop();
+}
+function setShowStrm(on) { showStrm = !!on; try { on ? localStorage.setItem(STRM_KEY, "1") : localStorage.removeItem(STRM_KEY); } catch { /* memory only */ } applyStrm(); }
 function fitTop() {
   const top = $("#top"); let s = 0.99; // Angus: bigger, then smaller, then "smaller by 10%": 33.7 px chips at most; shrink to fit
   top.style.setProperty("--s", s);
   while (s > 0.5 && top.scrollWidth > top.clientWidth) { s -= 0.03; top.style.setProperty("--s", s.toFixed(2)); }
 }
 addEventListener("resize", fitTop);
+queueMicrotask(applyStrm); // after the module has set up (view)
 
 // ---- data: every shown world's thread, cached ----------------------------------------------
 // Angus (J37 v4): no "Nothing here yet" flash when switching worlds. Each world's thread is kept in
@@ -695,6 +708,7 @@ function renderAgents({ keepScroll = false } = {}) {
     }
     for (const x of l.agents) html.push(agentRow(x));
     if (!l.agents.length && l.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
+    html.push(`<div class="settings"><span class="small">π settings</span><label><input type="checkbox" id="optstrm"${showStrm ? " checked" : ""}> Show the Strm (Stream) tab</label></div>`); // J448 v2
   } else {
     const sec = (title, inner) => inner ? `<section><h3>${title}</h3>${inner}</section>` : "";
     const status = { "●": "working", "◐": "background (subagents still running)", "×": "needs you", "✓": "finished (not seen yet)", "○": "idle", "◌": a.status }[a.mark] || a.status;
@@ -705,7 +719,7 @@ function renderAgents({ keepScroll = false } = {}) {
       + sec("Model", a.model ? `<div>${esc(a.model)}${a.thinking ? ` <span class="small">· thinking ${esc(a.thinking)}</span>` : ""}</div>` : "")
       // Its last lines in the Stream, any kind (room D #304: Summoner had events but no room posts),
       // then a link to Strm filtered on it.
-      + sec("In the stream", `${(a.recent || []).length ? `<ul class="items">${a.recent.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : `<div class="small">nothing in the last 200 interactions</div>`}${a.mark !== "◌" ? `<button class="tosession" data-a="${esc(a.id)}">Open ${esc(a.name)} session ›</button>` : ""}<button class="tostream" data-name="${esc(a.name)}">Stream: only ${esc(a.name)} ›</button>`)
+      + sec("In the stream", `${(a.recent || []).length ? `<ul class="items">${a.recent.map((m) => `<li><span class="h">${hhmm(m.ts)}</span> <div class="clip">${inline(m.text)}</div></li>`).join("")}</ul>` : `<div class="small">nothing in the last 200 interactions</div>`}${a.mark !== "◌" ? `<button class="tosession" data-a="${esc(a.id)}">Open ${esc(a.name)} session ›</button>` : ""}${showStrm ? `<button class="tostream" data-name="${esc(a.name)}">Stream: only ${esc(a.name)} ›</button>` : ""}`)
       + `</div>`);
   }
   { const i = document.getElementById("heldin"); if (i) heldKeep.value = i.value; }
@@ -737,6 +751,7 @@ function heldWire(l) {
   go.addEventListener("click", () => send());
   inp.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
 }
+agentsEl.addEventListener("change", (e) => { if (e.target.id === "optstrm") setShowStrm(e.target.checked); }); // J448 v2
 agentsEl.addEventListener("click", (e) => {
   const hs = e.target.closest(".phead .aopen"); if (hs) return openSession(hs.closest(".agent").dataset.a); // J236: › at the top right → its session
   if (e.target.closest(".phead")) { openAgent.delete(world); return renderAgents(); } // the header: back to the list (J48)
@@ -835,6 +850,7 @@ function streamOf(w) {
 }
 const streamNearEnd = () => streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 60;
 async function fetchStream(w) {
+  if (!showStrm) return; // J448 v2: Strm off: nothing to keep fresh
   const r = await call("GET", `/api/stream?world=${w}`), st = streamOf(w);
   const next = r.items || [], changed = !st.loaded || next.length !== st.items.length || next.at(-1)?.k !== st.items.at(-1)?.k || next.at(-1)?.text !== st.items.at(-1)?.text;
   st.items = next; st.loaded = true; st.pool = { agents: r.agents || [], projects: r.projects || [] };
