@@ -11,6 +11,7 @@ import { worldsFor, withWorldsLock, modeOf, levelOf, MODES, LEGACY_MODES } from 
 import { SEARCH_PROVIDERS, DEFAULTS, resolveGateway } from "./gateway.mjs";
 import { ownerTtyProblem } from "../agent-guard.mjs";
 import { loadLevels, checkValue } from "./levels.mjs";
+import { RETENTION_KEYS, RETENTION_OK, RETENTION_WHY } from "../inbox-retention.mjs"; // J459
 
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\/:+-]{0,99}$/;
 // key -> [validator, where it lives in the gateway block]. key_file is NOT proposable: a proposal could point it at any file and have the contents
@@ -28,6 +29,9 @@ export const KEYS = {
   // J434 (Angus: "We can add the choice to doorman config file"): may Angus decide this sandbox's held items from the phone app? Default false. Angus
   // only (config-set at his terminal, or editing the file); never proposable, so no agent or sandbox can turn it on, in any mode.
   "phone_decisions": { ok: (v) => v === "true" || v === "false", why: "true or false", proposable: false },
+  // J459 (Angus: inbox retention): how long files live in the sandbox's inbox, per kind. Angus only: never proposable (a sandbox shortening its own
+  // retention could hide what it was sent; lengthening it could fill the disk), in any mode.
+  ...Object.fromEntries(Object.keys(RETENTION_KEYS).map((k) => [k, { ok: RETENTION_OK(k), why: RETENTION_WHY(k), proposable: false }])),
 };
 const RANK = { mode: { strict: 0, safe: 1, open: 2, yolo: 3 }, level: { strict: 0, safe: 1, open: 2 } };
 

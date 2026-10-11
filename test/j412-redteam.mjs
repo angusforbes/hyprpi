@@ -30,7 +30,7 @@ const i = src.indexOf("  deliverGpu(sb, g, res"), body = src.slice(i, src.indexO
 const files = new Map(), inbox = path.join(T, "inbox"); fs.mkdirSync(path.join(T, "g", "out"), { recursive: true });
 const ctx = { path, os, fs, Date, JSON, String, Array, Number, Math, Object,
   pinDirs: () => ({ inbox }), listNames: () => [], createFile: (d, name, data) => files.set(name, String(data)), fdPath: (d, x) => path.join(d, x),
-  gpuPlain: (s) => String(s), LIMITS: { gpuKeepMs: 1 }, inboxWrite() {} };
+  gpuPlain: (s) => String(s), LIMITS: {}, sweepSb: () => [], inboxWrite() {} }; // (J459: the inbox sweep is its own module)
 const R = vm.runInNewContext(`(class R { ${body} })`, ctx), r = new R();
 const g = { lease: "g00000001", job: "tiny", seconds: 10, vramMib: 256, dir: path.join(T, "g") }, res = { status: "done", outputs: [], log: "" };
 r.deliverGpu({ cfg: { inbox } }, g, res, "yolo"); const mdA = files.get("gpu-g00000001.md");
