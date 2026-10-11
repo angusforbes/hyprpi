@@ -59,6 +59,11 @@ ok("W2b over budget: named with its state", r.timed_out && /no report from Delta
 // W2c: idle a minute or more without a report: doesn't hold an "all" wait
 ({ r, ms } = await timed(orch.wait("hp-mom", ["hp-e"], {})));
 ok("W2c idle 2 min without a report: the all-wait ends at once, saying so", ms < 100 && r.still_working[0]?.name === "Echo" && /idle 2 min \(its turn ended without a report\)/.test(r.still_working[0].state), `${ms} ms ${JSON.stringify(r.still_working)}`);
+// W2c': idle only 59 s when the wait starts: the wait ends as soon as the minute is up, not at its limit (StallReview)
+{ const T2 = fs.mkdtempSync(path.join(os.tmpdir(), "j452b-")), idleSince = Date.now() - 59000; fs.writeFileSync(path.join(T2, "orch.json"), JSON.stringify({ children: { "hp-g": kid("hp-g", "Golf") } }));
+  const o2 = createOrch({ stateDir: T2, deps: { send: () => true, note: () => {}, liveAgent: () => null, agentName: () => "Mom", thoughtsReport: () => {}, agentInfo: () => ({ status: "idle", since: idleSince }) } });
+  const { r: r2, ms: ms2 } = await timed(o2.wait("hp-mom", ["hp-g"], { timeoutSec: 3 }));
+  ok("W2c' idle 59 s at the start: ends when the minute is up (~1.5 s), before its limit", !r2.timed_out && ms2 >= 900 && ms2 < 2900 && /^idle/.test(r2.still_working[0]?.state || ""), `${ms2} ms ${JSON.stringify(r2)}`); fs.rmSync(T2, { recursive: true, force: true }); }
 // W2d: closed (crashed or closed) ends it at once
 orch.gone("hp-f");
 ({ r, ms } = await timed(orch.wait("hp-mom", ["hp-f"], {})));
