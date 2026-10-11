@@ -79,8 +79,11 @@ export function fileReport({ sandbox, rid, md, approvedAt = new Date(), reviewed
   catch (e) {
     // (J465Check2) a lost index entry: an existing, plain report of ours with this id (its frontmatter says so) is indexed again, not overwritten
     if (e.code !== "EEXIST") throw e;
-    const st = fs.lstatSync(at(dfd, name));
-    if (st.isFile() && !st.isSymbolicLink() && st.size < (16 << 20) && fs.readFileSync(at(dfd, name), "utf8").includes(`\nrequest_id: ${rid}\n`)) { ix[key] = file; writeIndex(ix); return file; }
+    let rfd; try { rfd = fs.openSync(at(dfd, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); } catch { throw e; } // (J465Check2: never follows a link or blocks on a FIFO)
+    try {
+      const st = fs.fstatSync(rfd);
+      if (st.isFile() && st.size < (16 << 20)) { const buf = Buffer.alloc(st.size); fs.readSync(rfd, buf, 0, st.size, 0); if (buf.toString("utf8").includes(`\nrequest_id: ${rid}\n`)) { ix[key] = file; writeIndex(ix); return file; } }
+    } finally { fs.closeSync(rfd); }
     throw e;
   }
   try { fs.writeSync(fd, front + body); } finally { fs.closeSync(fd); }
