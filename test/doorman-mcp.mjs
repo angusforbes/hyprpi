@@ -161,6 +161,11 @@ ok("the report is a Ctrl+clickable file:// URL (encoded), the plain path kept in
   r = await M.call("inbox", {}); assert.ok(r.notices.some((x) => x.text.includes("file:///inbox/a%23b%3F.md ")), JSON.stringify(r.notices)); }
 item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-30", text: "Alpha: straight into the inbox" }); r = await M.call("inbox", {});
 assert.ok(!r.notices.some((x) => /straight into the inbox/.test(x.text)), "an agent's own scan never takes a name-addressed message: only the notifier's unique resolution does (#4)");
+{ hostMsg({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-40", text: "Alpha: busy lock" }); await M.call("inbox", {});
+  M.setLockWait(40); const rl = path.join(STATE, "doorman-mcp", "rate.lock"); fs.mkdirSync(rl);
+  const r1 = M.replyOut({ id: "hp-alpha01", name: "Alpha" }, "req-in-40", "first"); fs.rmdirSync(rl); M.setLockWait(5000);
+  assert.equal(r1.retry, true, JSON.stringify(r1)); assert.match(r1.error, /busy/);
+  const r2 = M.replyOut({ id: "hp-alpha01", name: "Alpha" }, "req-in-40", "second"); assert.ok(r2.file, "after a busy rate lock the reply is still answerable (recheck #2): " + JSON.stringify(r2)); }
 ok("review fixes: thoughts:G can't be an agent; a reply reserved by another process; a short lock wait fails fast; long text kept; # and ? encoded in the file URL; named items only via the notifier");
 clearInterval(relay); fs.rmSync(T, { recursive: true, force: true });
 console.log(`doorman-mcp: all ${n} pass`); process.exit(0);

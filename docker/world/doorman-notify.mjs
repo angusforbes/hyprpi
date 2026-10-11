@@ -23,6 +23,7 @@ const STATE = process.env.HYPRPI_STATE || path.join(os.homedir(), ".local", "sta
 const THOUGHTS = process.env.HYPRPI_GATE_THOUGHTS || "Thoughts-G";
 const ME = { agent_id: "g-doorman", name: DOORMAN, icon: "🚪" };
 const SEEN = path.join(STATE, "doorman-mcp", "notify.seen");
+const WORLD = /^[A-Z]$/.test(process.env.HYPRPI_SANDBOX_WORLD || "") ? process.env.HYPRPI_SANDBOX_WORLD : "G";
 const TG = "thoughts:G"; // (J464Check #3) the state Thoughts-G's host messages are tracked under: a key no agent id can be (":" isn't allowed) // for the items that go to Thoughts-G
 const L = { innerBytes: 7800, innerPerMin: 30, ttlMs: 12 * 3600e3, cap: 500, perTick: 20, pushTries: 3, replyTries: 120 };
 const log = (...a) => process.stderr.write(`${new Date().toISOString()} doorman-notify: ${a.join(" ")}\n`);
@@ -73,7 +74,7 @@ async function onEvent(ev, d) {
   // the replier must be the one it was given to: that agent, or Thoughts-G (J464Check #3)
   const fromId = String(d?.from?.id || "");
   if (m && fromId !== m.agent.id) { log(`reply re ${short(id)} from someone else; dropped`); return; }
-  if (t && !/^thoughts/i.test(fromId)) { log(`reply re ${short(id)} (for Thoughts-G) from ${fromId}; dropped`); return; }
+  if (t && fromId !== `thoughts:${WORLD}`) { /* (recheck) exactly world G's Thoughts: the daemon's id "thoughts:G" */ log(`reply re ${short(id)} (for Thoughts-G) from ${fromId}; dropped`); return; }
   // (J464Check #2) forwarded through a small retry queue: a rate limit or a busy lock is retried, never lost; cut to the relay's size
   outQ.push({ who: m ? m.agent : { id: TG, name: field(d?.from?.name, 64) || "Thoughts-G" }, R: m ? m.R : t.R, text, tries: 0, tell: m ? m.agent.id : null, inner: id });
   (m ? pushedMsg : toThoughts).delete(id);
@@ -136,8 +137,9 @@ async function tick() {
         const r = await deliver([a.id], `[${DOORMAN}] ${x.text}${extra}`);
         if (r?.request_id && x.request_id) pushedMsg.set(r.request_id, { R: x.request_id, agent: me });
         const give = !r && x.kind === "message" && x.request_id && (x.tries || 0) + 1 >= L.pushTries; // an unreachable agent's host message: to Thoughts-G
-        syncAgent(me, (s) => { const y = s.notices.find((z) => z.n === x.n); if (y) { if (r || give) y.pushed = true; else y.tries = (y.tries || 0) + 1; } });
+        // (J464Check recheck #1) the fallback happens BEFORE the notice is marked done: a blocked fallback throws, the notice stays pending
         if (give) await toThoughtsG({ type: "message", from: x.from, request_id: x.request_id }, x.text.replace(/^\[from [^\]]*\]\s*/, ""), ` (for ${me.name}, who could not be reached)`);
+        syncAgent(me, (s) => { const y = s.notices.find((z) => z.n === x.n); if (y) { if (r || give) y.pushed = true; else y.tries = (y.tries || 0) + 1; } });
       }
     }
   } catch (e) { if (!/^blocked/.test(e.message)) log(`tick: ${e.message}`); }

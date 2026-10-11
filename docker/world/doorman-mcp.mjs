@@ -205,8 +205,11 @@ export function replyOut(me, R, text, { clip = false } = {}) {
   if (res === "none") return { error: "no message to you with that request_id (only messages delivered to you can be answered; see inbox)." };
   if (res === "done") return { error: "you already answered that message (the host takes one reply)." };
   const undo = () => { try { withAgent(me.id, (s) => { delete s.files[name]; if (s.inbound[R]?.file === name) { s.inbound[R].replied = false; delete s.inbound[R].file; } }); } catch { /* */ } };
-  if (!takeRate()) { undo(); return { error: `not sent: rate limit (${L.outPerMin} messages a minute to the outside world); try again in a minute.`, retry: true }; }
-  try { writeOutbox(name, { op: "reply", request_id: R, text: body }); } catch (e) { log(`outbox write: ${e.message}`); undo(); return { error: "not sent: can't write to the drop-box.", retry: true }; }
+  // (J464Check recheck #2) every failure after the reservation (a busy rate lock included) undoes it, so a retry can still send
+  try {
+    if (!takeRate()) { undo(); return { error: `not sent: rate limit (${L.outPerMin} messages a minute to the outside world); try again in a minute.`, retry: true }; }
+    writeOutbox(name, { op: "reply", request_id: R, text: body });
+  } catch (e) { log(`reply ${short(R)}: ${e.message}`); undo(); return { error: /busy/.test(e.message) ? `not sent: ${e.message}` : "not sent: can't write to the drop-box.", retry: true }; }
   return { file: name };
 }
 // (J464Check #4) a host item addressed by name, routed by the notifier to the ONE live agent it names: into that agent's notices
