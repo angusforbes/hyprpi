@@ -195,9 +195,10 @@ function listNames(dirFd, max) {
 }
 // J459: sweep a sandbox's inbox by its world's retention settings (docker/inbox-retention.mjs; a Doorman's inbox uses the sandbox it serves).
 // Through the pinned inbox directory, and only the message / research-report / GPU-result names. room: message items to make room for.
+// (J459Check) The WHOLE inbox is listed (up to 100000 entries, far above the 5000 cap), so nothing beyond a fixed prefix escapes the sweep.
 function sweepSb(sb, room = 0) {
   const dirs = pinDirs(sb), ret = retentionFor(path.dirname(CONFIG), sb.doormanFor || sb.name);
-  const gone = sweepInbox(listNames(dirs.inbox, 5000), { mtimeMs: (n) => fs.statSync(fdPath(dirs.inbox, n)).mtimeMs, unlink: (n) => fs.unlinkSync(fdPath(dirs.inbox, n)) }, ret, { room });
+  const gone = sweepInbox(listNames(dirs.inbox, 100000), { mtimeMs: (n) => fs.statSync(fdPath(dirs.inbox, n)).mtimeMs, unlink: (n) => fs.unlinkSync(fdPath(dirs.inbox, n)) }, ret, { room });
   if (gone.length && !room) log({ sb: sb.name, op: "inbox_sweep", removed: gone.length });
   return gone;
 }

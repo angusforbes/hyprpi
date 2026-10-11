@@ -26,5 +26,11 @@ assert.ok(["notes.txt", "research-x.txt", "research-new1.md", "gpu-g1111abcd.md"
 const many = Array.from({ length: 25 }, (_, i) => msg((25 - i) * 60e3, i + 10)), f2 = Object.fromEntries(many.map((n) => [n, 0])), r2 = [];
 sweepInbox(many, { mtimeMs: () => now, unlink: (n) => r2.push(n) }, { ...ret, maxFiles: 20 }, { now, room: 1 });
 assert.deepEqual(r2, many.slice(0, 6), "25 items, cap 20, room 1 → the 6 oldest go"); void f2;
+// (J459Check) only exact 13-digit message names: "1-deadbeef.json" or a 14-digit one is not a message item and is never removed
+{ const r3 = []; sweepInbox(["1-deadbeef.json", "12345678901234-deadbeef.json"], { mtimeMs: () => 0, unlink: (n) => r3.push(n) }, ret, { now }); assert.deepEqual(r3, []); }
+// (J459Check) a big mixed inbox: the cap and expiry apply to all of it, not to a prefix
+{ const big = [...Array.from({ length: 5200 }, (_, i) => msg((5200 - i) * 1000, i + 100)), ...Array.from({ length: 300 }, (_, i) => `gpu-g${String(i).padStart(8, "0")}.md`), "research-zzz.md"];
+  const r4 = []; sweepInbox(big, { mtimeMs: (n) => (n === "research-zzz.md" ? 0 : now), unlink: (n) => r4.push(n) }, { ...ret, maxFiles: 5000 }, { now });
+  assert.equal(r4.filter((n) => n.endsWith(".json")).length, 200, "5200 items, cap 5000 → 200 removed"); assert.ok(r4.includes("research-zzz.md"), "an old report at the end is reached"); }
 fs.rmSync(T, { recursive: true, force: true });
 console.log("inbox-retention: all pass");

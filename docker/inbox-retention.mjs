@@ -22,7 +22,7 @@ export const RETENTION_KEYS = {
 export const RETENTION_OK = (k) => (v) => { const s = RETENTION_KEYS[k]; return /^[0-9]{1,5}$/.test(String(v)) && Number(v) >= s.min && Number(v) <= s.max; };
 export const RETENTION_WHY = (k) => { const s = RETENTION_KEYS[k]; return `a whole number from ${s.min} to ${s.max}`; };
 
-const MSG_RE = /^[0-9]+-[0-9a-f]{8}\.json$/, REPORT_RE = /^research-[a-z0-9]+\.md$/, GPU_RE = /^gpu-g[0-9a-f]{8}(\.md|-[A-Za-z0-9._-]+)$/;
+const MSG_RE = /^[0-9]{13}-[0-9a-f]{8}\.json$/, REPORT_RE = /^research-[a-z0-9]+\.md$/, GPU_RE = /^gpu-g[0-9a-f]{8}(\.md|-[A-Za-z0-9._-]+)$/;
 
 // The settings in effect for a sandbox: { messagesMs, reportsMs, gpuMs, maxFiles }. A missing, unreadable or out-of-range value is the default.
 export function retentionFor(cfgDir, sandbox) {
