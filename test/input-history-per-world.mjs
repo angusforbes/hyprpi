@@ -51,6 +51,14 @@ room = "B"; sw.key(UP); sw.key(UP); const inB = sw.text; sw.key(UP); const inB2 
 console.log(`   one window: ↑ in C "${inC}", Ctrl+Tab to B, ↑↑ "${inB}", ↑ "${inB2}"`);
 ok("C switching worlds follows the world", inC === "stream C two" && inB === "stream B last" && inB2 === "stream B one");
 
+// C2 (J468Check): a send that awaited (board-tui) and was switched away from meanwhile is kept in the world it was typed in
+room = "B";
+const late = createInputBox({ history: createHistory("projects", { world: () => room }) });
+late.set("/project @x typed in B"); const sentIn = room; room = "C"; late.remember(late.text, sentIn); late.clear();
+const pB = JSON.parse(fs.readFileSync(path.join(dir, "projects-B.json"), "utf8")), pC = JSON.parse(fs.readFileSync(path.join(dir, "projects-C.json"), "utf8"));
+ok("C2 remember(text, world) keeps it in the world it was typed in", pB.at(-1) === "/project @x typed in B" && !pC.includes("/project @x typed in B"));
+ok("C2 board-tui captures the world before its awaits", /async function send\(\) \{\n  const sentIn = room;/.test(fs.readFileSync(path.join(ROOT, "mockups/board-tui.mjs"), "utf8")) && !/box\.remember\(raw\)/.test(fs.readFileSync(path.join(ROOT, "mockups/board-tui.mjs"), "utf8")));
+
 // D
 for (const p of ["thoughts", "stream", "projects", "agents"]) ok(`D legacy ${p}.json untouched`, fs.readFileSync(path.join(dir, `${p}.json`), "utf8") === legacy[p]);
 
