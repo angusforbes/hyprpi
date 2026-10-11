@@ -79,14 +79,14 @@ export async function runResearch(ctx) {
     freshLimits();
     setMode('safe');
     // ---------------- segment A: safe and strict (<= 10 quick requests, <= 3 exceptions) ----------------
-    await ctx.testcase('research (safe): on-task plan goes out unheld; only the summary waits (in the panel, not the window); approval delivers', async () => {
+    await ctx.testcase('research (safe): on-task plan goes out unheld; only the summary waits (in the Doorman window, J453); approval delivers', async () => {
       setMode('safe');
       const n = calls().length, pn = plans().length;
       const { held, result } = await ask('How does humidity degrade perovskite films?');
       assert.equal(calls().length, n + 1);
       assert.deepEqual(calls().at(-1).searches, SEARCH_ON);
       assert.equal(held.research.mode, 'safe');
-      assert.equal(held.reviewIn, undefined, 'safe decides in the panel; only open routes to the Doorman window');
+      assert.equal(held.reviewIn, ctx.rig.doorman, 'J453: safe decides in the Doorman window too');
       assert.ok(!inboxOf(result.research).some(x => x.status === 'planned'), 'safe never holds an on-task plan');
       assert.ok(!rlog().some(x => x.ev === 'flagged' && x.looking_for === ON), 'an on-task request is not flagged');
       const modes = plans().slice(pn).map(x => x.mode);
@@ -99,7 +99,7 @@ export async function runResearch(ctx) {
       const { result, held } = await ask('Why do sea otters hold paws while sleeping?');
       assert.equal(held.research.plan, true);
       assert.equal(held.research.mode, 'safe');
-      assert.equal(held.reviewIn, undefined);
+      assert.equal(held.reviewIn, ctx.rig.doorman);
       assert.match(held.research.exception, /unrelated to this sandbox's task/);
       assert.match(held.text, /Held as an exception[\s\S]*Task: Perovskite/);
       assert.equal(calls().length, n, 'off-task searches have not been sent');
@@ -143,7 +143,7 @@ export async function runResearch(ctx) {
       const { result, held } = await ask('Why do sea otters hold paws while sleeping?');
       assert.equal(held.research.plan, true);
       assert.equal(held.research.mode, 'strict');
-      assert.equal(held.reviewIn, undefined, 'strict decides in the panel');
+      assert.equal(held.reviewIn, ctx.rig.doorman, 'J453: strict decides in the Doorman window too');
       assert.match(held.research.exception, /unrelated to this sandbox's task/);
       assert.match(held.text, /Held as an exception[\s\S]*Task: Perovskite/);
       assert.deepEqual(held.research.searches, SEARCH_OFF);

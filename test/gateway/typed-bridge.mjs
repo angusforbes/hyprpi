@@ -831,12 +831,12 @@ async function modeMatrix(ctx) {
       assert.equal((await cli(ctx, ['settings', ctx.rig.sandbox])).settings.mode, mode, 'the dial in effect is the one just written');
     };
     const ask = (type, p = params[type]) => ctx.ask('doorman', { op: 'request', type, for: 'Alpha', params: p });
-    // HELD: a pending record shown to Angus (in the Doorman window only in open), no decision, nothing run, nothing changed
+    // HELD: a pending record shown to Angus (in the Doorman window, every mode since J453), no decision, nothing run, nothing changed
     const held = async (type, { window }) => {
       const effectsBefore = ctx.effects(), copiesBefore = fileCopies(ctx), worldBefore = fs.readFileSync(ctx.worldFile, 'utf8');
       const result = await ask(type); assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.pending?.length, 1);
       const h = ctx.holdFrom(result); assert.equal(h.typed.type, type); assert.equal(h.draft, true); assert.deepEqual(h.rooms, ['I']); assert.equal(h.auto, undefined);
-      if (window) assert.equal(h.reviewIn, ctx.rig.doorman, 'open: Angus decides in the Doorman window'); else assert.equal(h.reviewIn, undefined, 'strict and safe: the Thoughts panel, no window');
+      assert.equal(h.reviewIn, ctx.rig.doorman, 'J453: Angus decides in the Doorman window in every mode'); void window;
       assert.ok(!fs.existsSync(path.join(ctx.relayState, 'decisions', h.id + '.approve')), 'no decision is made for a held item');
       assert.equal(record(ctx, h.id).state, 'pending');
       assert.deepEqual(ctx.effects(), effectsBefore); assert.deepEqual(fileCopies(ctx), copiesBefore); assert.equal(fs.readFileSync(ctx.worldFile, 'utf8'), worldBefore);
