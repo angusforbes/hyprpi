@@ -786,12 +786,12 @@ Item {
         root.applyDmenuSelection(root.filterText)
         return
       }
-      if (index < 0 || index >= displayModel.count) return
       if (root.dmenuMulti) { // hyprpi: the marked rows, in list order (none: the row under the cursor, below)
-        var ks = [], all = root.parseDmenuOptions(root.dmenuOptions) // J447: every marked row, also ones the typed filter hides
+        var ks = [], all = root.parseDmenuOptions(root.dmenuOptions) // J447: every marked row, also ones the typed filter hides (even when it hides all)
         for (var mi = 0; mi < all.length; mi++) { var mk = all[mi].value || all[mi].label; if (root.dmenuMarked[mk]) ks.push(mk) }
         if (ks.length) { root.applyDmenuSelection(ks.join("\n")); return }
       }
+      if (index < 0 || index >= displayModel.count) return
       var picked = displayModel.get(index)
       root.applyDmenuSelection(picked.path ? picked.path : picked.detail ? picked.label + "\t" + picked.detail : picked.label) // hyprpi: value
       return
@@ -1182,7 +1182,7 @@ Item {
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
             if (root.dmenuActive) {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
-              else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
+              else if (displayModel.count > 0 || (root.dmenuMulti && Object.keys(root.dmenuMarked).length)) root.activateIndex(root.cursorActive ? root.selectedIndex : 0) // J447: marks count even if the filter hides every row
             } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
             else if (displayModel.count > 0) root.cursorActive = true
             event.accepted = true
