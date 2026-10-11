@@ -22,11 +22,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = Date.now();
 
 // ---- A) pure
-const ids = (t) => reportSections(t).map((s) => s.id).join(" ");
+const ids = (t) => reportSections(t).sections.map((s) => s.id).join(" ");
 ok("A === headers", ids("intro\n=== J233 v1: x ===\nW1 → a\n=== J257 v1 ===\nW1 → b") === "J233 J257");
 ok("A ## and J400: headers", ids("## J398\nW1 → a\nJ400: plain\nW1 → b") === "J398 J400");
 ok("A a mention mid-line is no header", ids("See J12 for context.\nIt follows J9's fix.") === "");
-ok("A each section holds only its own text", reportSections("=== J1 ===\nW1 → one\n=== J2 ===\nW1 → two")[0].text.includes("two") === false);
+ok("A a header inside a code fence doesn't count", ids("example:\n```text\n=== J9 v1 ===\nW1 → x\n```\n=== J10 ===\nW1 → y") === "J10");
+ok("A withoutFences drops code blocks", (await import("../lib/briefs.mjs")).withoutFences("a\n```\nW1 → x\n```\nb").includes("W1") === false);
+ok("A the header's version is read", reportSections("=== J13 v1 ===\nW1 → x").sections[0].version === 1);
+ok("A each section holds only its own text", reportSections("=== J1 ===\nW1 → one\n=== J2 ===\nW1 → two").sections[0].text.includes("two") === false);
 
 // ---- B) daemon
 const S = fs.mkdtempSync(path.join(os.tmpdir(), "j440-")), cfg = path.join(S, "cfg"), sock = path.join(S, "d.sock");
@@ -40,7 +43,7 @@ const brief = (id, item, agent, name, state = "running", dw = W2) => [id, { id, 
 fs.writeFileSync(path.join(S, "briefs.json"), JSON.stringify({ next: 20, briefs: Object.fromEntries([
   brief("J1", "N1", "hp-atlas", "Atlas"), brief("J2", "N2", "hp-atlas", "Atlas", "stopped"), brief("J3", "N3", "hp-atlas", "Atlas"),
   brief("J4", "N4", "hp-atlas", "Atlas"), brief("J5", "N5", "hp-atlas", "Atlas"), brief("J6", "N6", "hp-bolt", "Bolt"),
-  brief("J7", "N7", "hp-atlas", "Atlas"), brief("J8", "N8", "hp-atlas", "Atlas"), brief("J9", "N8", "hp-atlas", "Atlas"),
+  brief("J7", "N7", "hp-atlas", "Atlas"), brief("J8", "N8", "hp-atlas", "Atlas"), brief("J9", "N8", "hp-atlas", "Atlas"), ["J10", { ...brief("J10", "N8", "hp-atlas", "Atlas")[1], version: 2 }], brief("J11", "N8", "hp-atlas", "Atlas"),
 ]) }));
 const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j440-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000" };
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
@@ -103,6 +106,21 @@ try {
   await agent.call("talk", { to: ["Thoughts-D"], text: "just a note: W1 → fine · W2 → fine (no section header)" });
   await sleep(300);
   ok("B4 a plain message without sections changes nothing (J9 stays running)", (await job("J9")).state === "running");
+  // 5. CloseCheck's cases (J440 review)
+  const reqId = async (f) => { got.length = 0; await f(); await sleep(500); return (JSON.stringify(got).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/) || [])[1]; };
+  const q2 = await reqId(() => api.call("thoughts.ask", { room: "D", agent: "Atlas", question: "reports?" }));
+  await agent.call("talk.reply", { request_id: q2, text: `=== J10 v1 ===\nproof: W1 → a · W2 → b\n\n=== J11 v1: example only ===\nThis is only a code sample, NOT a report:\n\`\`\`text\n=== J9 v1 ===\nW1 → first PASS · W2 → second PASS\n\`\`\`\n` });
+  await sleep(300);
+  ok("B5 a section on an old version (J10 v1, now v2) isn't counted", (await job("J10")).state === "running");
+  ok("B5 a header inside a code fence isn't counted (J9)", (await job("J9")).state === "running");
+  ok("B5 W lines only inside a code fence don't count (J11 still running)", (await job("J11")).state === "running");
+  const w = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "a new job", angus: "do it", done_when: ["W1 first", "W2 second"] });
+  const newJob = w.job || w.id; await sleep(300);
+  const q3 = (JSON.stringify(got).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/) || [])[1];
+  await agent.call("talk.reply", { request_id: q3, text: `${newJob} unfinished, still needs all checks.\n\n=== J11 v1 ===\nproof: W1 → first PASS · W2 → second PASS` });
+  await sleep(300);
+  ok("B5 another job's section counts for it (J11 done)", (await job("J11")).state === "done");
+  ok(`B5 the request's own job (${newJob}) doesn't borrow J11's proof`, (await job(newJob)).state === "running", (await job(newJob)).state);
   api.close?.(); agent.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill(); }
