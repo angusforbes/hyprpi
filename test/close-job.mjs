@@ -124,7 +124,7 @@ try {
   ok("B5 another job's section counts for it (J11 done)", (await job("J11")).state === "done");
   ok(`B5 the request's own job (${newJob}) doesn't borrow J11's proof`, (await job(newJob)).state === "running", (await job(newJob)).state);
   // 6. CloseCheck round 2
-  ok("B6 a report over 8000 characters is refused, not cut", /8000/.test(await err(() => api.call("thoughts.close", { room: "D", job: "J9", state: "done", report: "x".repeat(8100) + "\nW1 → PASS · W2 → PASS", evidence: "e" }))) && (await job("J9")).state === "running");
+  ok("B6 a report over the 32 KB limit is refused", /32768/.test(await err(() => api.call("thoughts.close", { room: "D", job: "J9", state: "done", report: "x".repeat(33000) + "\nW1 → PASS · W2 → PASS", evidence: "e" }))) && (await job("J9")).state === "running");
   await api.call("thoughts.close", { room: "D", job: "J9", state: "obsolete", reason: "test" });
   await api.call("thoughts.revise", { room: "D", job: "J9", goal: "reopened", reason: "test reopen" }).catch((e) => console.log("   revise:", e.message));
   const j9 = JSON.parse(fs.readFileSync(path.join(S, "briefs.json"), "utf8")).briefs.J9;
@@ -139,6 +139,14 @@ try {
   const q4 = await reqId(() => api.call("thoughts.ask", { room: "D", agent: "Atlas", question: "report?" }));
   await agent.call("talk.reply", { request_id: q4, text: `=== ${vj} v1 ===\nproof: W1 → a · W2 → b` }); await sleep(300);
   ok(`B7 a lone section on v1 doesn't close ${vj} v2`, (await job(vj)).state === "running" && (await job(vj)).version === 2, `${(await job(vj)).state} v${(await job(vj)).version}`);
+  // 8. a long report keeps its W lines (nothing is cut off)
+  const w3 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "long", angus: "x", done_when: ["W1 a", "W2 b"] }); await sleep(300);
+  const lj = w3.job || w3.id, q5 = (JSON.stringify(got).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g) || []).pop();
+  await agent.call("talk.reply", { request_id: q5, text: `=== ${lj} v1 ===\n` + "x".repeat(8100) + "\nW1 → first PASS · W2 → second PASS" }); await sleep(300);
+  const lr = (await job(lj)).report || "";
+  ok(`B8 a long single-section report (${lj}) is done and keeps its W lines`, (await job(lj)).state === "done" && /W2 → second PASS/.test(lr), `${(await job(lj)).state} len ${lr.length}`);
+  const r8 = await api.call("thoughts.close", { room: "D", job: "J12", state: "done", report: "x".repeat(9000) + "\nproof: W1 → a · W2 → b", evidence: "ev" });
+  ok("B8 close_job keeps a 9000-character report whole, evidence included", /evidence: ev$/.test((await job("J12")).report), r8.state);
   api.close?.(); agent.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill(); }
