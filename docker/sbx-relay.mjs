@@ -10,7 +10,7 @@
 //              change or delete inbox items (no forged prompts, approvals or tool results). The sandbox
 //              never deletes them; the relay prunes old ones. Config "inbox"; without it (older setups)
 //              the inbox is <workspace>/.hyprpi-dropbox/inbox/, which the sandbox CAN write.
-// This relay (one host process) watches every outbox, checks each request against a small allowlist,
+// This relay (one host process) polls every outbox (J458: every DROPBOX_POLL_MS, no fs.watch), checks each request against a small allowlist,
 // and carries it to the hyprpi daemon as that sandbox's own agent identity. It never gives a sandbox the
 // daemon socket, never acts as Angus, and only knows these operations:
 //   room.post   post in the sandbox's own room, with a forced "sandboxed" label
@@ -33,6 +33,7 @@
 //   { "sandboxes": [ { "name": "my-box", "workspace": "~/Work/my-box",
 //                      "workspace_num": 61, "container": "pi-sbx:developer" } ] }
 
+import { DROPBOX_POLL_MS } from "./dropbox-poll.mjs"; // J458: one interval for both drop-box folders
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -1465,9 +1466,8 @@ class Relay {
     for (const sb of this.sandboxes) {
       await sb.connect().catch((e) => log({ sb: sb.name, error: `connect: ${e.message}` }));
       try {
-        const dirs = pinDirs(sb); writeReadme(sb, dirs);
-        fs.watch(fdPath(dirs.outbox), () => sb.scan().catch(() => {}));
-      } catch (e) { log({ sb: sb.name, error: `watch: ${e.message}` }); }
+        const dirs = pinDirs(sb); writeReadme(sb, dirs); // J458: no fs.watch on the outbox any more; it is polled (below), as the gate polls the inbox
+      } catch (e) { log({ sb: sb.name, error: `drop-box: ${e.message}` }); }
     }
     this.loadQueue(); for (const sb of this.sandboxes) this.pumpPlans(sb); // J314: approved plans survive a restart
     fs.watch(DECISIONS, (_t, f) => { if (f) this.decide(f).catch(() => {}); });
@@ -1505,7 +1505,7 @@ class Relay {
     setInterval(() => { const o = notifOwner(); if (o && o !== lastOwner) { lastOwner = o; setTimeout(() => reshowAll(this, "shell restarted"), 3000); } else if (o) lastOwner = o; }, 5000);
     for (const f of fs.readdirSync(DECISIONS)) this.decide(f).catch(() => {});
     process.on("unhandledRejection", (e) => log({ error: `unhandled: ${e?.message || e}` }));
-    setInterval(() => { for (const sb of this.sandboxes) sb.scan().catch(() => {}); }, 2000); // backstop for missed events
+    setInterval(() => { for (const sb of this.sandboxes) sb.scan().catch(() => {}); }, DROPBOX_POLL_MS); // J458: the outbox poll, the same interval as the gate's inbox poll
     setInterval(() => this.sweepPending(), 600000);
     for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { log({ note: "relay stopping" }); gpuReconcile(); for (const sb of this.sandboxes) sb.conn?.close(); process.exit(0); });
   }

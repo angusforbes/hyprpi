@@ -27,6 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { DROPBOX_POLL_MS } from "../dropbox-poll.mjs"; // J458
 import crypto from "node:crypto";
 import os from "node:os";
 import { connect } from "../../lib/client.mjs";
@@ -435,6 +436,6 @@ fs.mkdirSync(OUTBOX, { recursive: true });
 loadSeen();
 log(`starting: socket ${SOCKET}, outbox ${OUTBOX}, inbox ${INBOX}, seen ${seen}`);
 connectInner();
-setInterval(() => poll().catch((e) => log(`poll: ${e.message}`)), 1000);
+setInterval(() => poll().catch((e) => log(`poll: ${e.message}`)), DROPBOX_POLL_MS); // J458: the same interval as the relay's outbox poll
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { log("stopping"); try { conn?.close(); } catch { /* */ } process.exit(0); });
 process.on("unhandledRejection", (e) => log(`unhandled: ${e?.message || e}`));
