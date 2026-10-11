@@ -47,7 +47,7 @@ Item {
     // hyprpi: a dry open (tests) only proves the plugin loads and answers; nothing is shown.
     // "dry N rank-d K rank-1 M … top-d-home W": N options (W: the world of the top "d" row, J195), K / M of them for the queries "d" / "1" (FinderRank, J17: proves the loaded QML is current).
     if (payload.dry) {
-      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d").length + " rank-1 " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "1").length + " sub slot multi" + " top-d-home " + (function(p) { var o = FinderRank.rank(p, "d"); return o.length ? (p[o[0]].home || "-") : "-" })(root.parseDmenuOptions(payload.options || []))) + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
+      if (payload.doneFile) { resultProc.command = ["bash", "-c", "printf 'dry %s\\n' " + Util.shellQuote(String((payload.options || []).length) + " rank-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d").length + " rank-1 " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "1").length + " sub slot multi" + " plain-d " + FinderRank.rank(root.parseDmenuOptions(payload.options || []), "d", true).length + " top-d-home " + (function(p) { var o = FinderRank.rank(p, "d"); return o.length ? (p[o[0]].home || "-") : "-" })(root.parseDmenuOptions(payload.options || []))) + " > " + Util.shellQuote(String(payload.selectionFile)) + "; : > " + Util.shellQuote(String(payload.doneFile))]; resultProc.running = true }
       return
     }
 
@@ -84,9 +84,11 @@ Item {
   property string dmenuPrompt: ""
   // hyprpi: the summon pop-up (SUPER+S): multi = Tab / Shift+Tab mark rows (light grey) and ⏎ returns
   // every marked value, one per line (none marked: the row under the cursor, as usual); noFilter =
-  // typing does nothing (no search yet). The finder sets neither, so its path is unchanged.
+  // typing does nothing. plainFilter (J447, the summon pop-up): typing filters the rows (label or detail contains
+  // it) with no world-letter ranking. The finder sets none of them, so its path is unchanged.
   property bool dmenuMulti: false
   property bool dmenuNoFilter: false
+  property bool dmenuPlainFilter: false
   property var dmenuMarked: ({})
   property int dmenuMarkSerial: 0
   property color markBackground: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.10)
@@ -588,7 +590,7 @@ Item {
 
     var query = root.filterText.trim().toLowerCase()
     var parsed = root.parseDmenuOptions(root.dmenuOptions) // hyprpi: parse every option first, then FinderRank orders them (J17)
-    var order = FinderRank.rank(parsed, query) // hyprpi: the usual substring filter; one world letter → that world first
+    var order = FinderRank.rank(parsed, query, root.dmenuPlainFilter) // hyprpi: the usual substring filter; one world letter → that world first
     for (var o = 0; o < order.length; o++) {
       var row = parsed[order[o]], i = row.i, icon = row.icon, label = row.label, detail = row.detail, rich = row.rich, value = row.value // hyprpi
       displayModel.append({
@@ -786,8 +788,8 @@ Item {
       }
       if (index < 0 || index >= displayModel.count) return
       if (root.dmenuMulti) { // hyprpi: the marked rows, in list order (none: the row under the cursor, below)
-        var ks = []
-        for (var mi = 0; mi < displayModel.count; mi++) { var mr = displayModel.get(mi), mk = mr.path || mr.label; if (root.dmenuMarked[mk]) ks.push(mk) }
+        var ks = [], all = root.parseDmenuOptions(root.dmenuOptions) // J447: every marked row, also ones the typed filter hides
+        for (var mi = 0; mi < all.length; mi++) { var mk = all[mi].value || all[mi].label; if (root.dmenuMarked[mk]) ks.push(mk) }
         if (ks.length) { root.applyDmenuSelection(ks.join("\n")); return }
       }
       var picked = displayModel.get(index)
@@ -888,7 +890,7 @@ Item {
     requestSerial += 1
     mode = payload.mode === "input" ? "input" : "select"
     dmenuPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
-    dmenuMulti = !!payload.multi; dmenuNoFilter = !!payload.noFilter; dmenuMarked = ({}); dmenuMarkSerial += 1 // hyprpi
+    dmenuMulti = !!payload.multi; dmenuNoFilter = !!payload.noFilter; dmenuPlainFilter = !!payload.plainFilter; dmenuMarked = ({}); dmenuMarkSerial += 1 // hyprpi
     dmenuOptions = Array.isArray(payload.options) ? payload.options : []
     selectionFile = String(payload.selectionFile || "")
     doneFile = String(payload.doneFile || "")
