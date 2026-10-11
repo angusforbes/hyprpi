@@ -13,7 +13,8 @@ const ok = (c, what) => { console.log(`${c ? "PASS" : "FAIL"} ${what}`); if (!c)
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "j456-"));
 fs.writeFileSync(path.join(dir, "world-g.json"), JSON.stringify({ sandbox: "world-g", workspaces: [61, 69] }));
 const g = (o) => gate({ workspace: 66, noFocus: true, dir, env: {}, ...o });
-const evil = `Odd"$(touch /tmp/x)\`id\`;x'y\nZ` + "L".repeat(70);
+const MARK = path.join(os.tmpdir(), `j456-never-${process.pid}`);
+const evil = `Odd"$(touch ${MARK})\`touch ${MARK}\`;x'y\nZ` + "L".repeat(70);
 
 let r = g({ name: "Foo", icon: "🦊" });
 ok(r.action === "sandbox" && /--name "\$1" --icon "\$2"$/.test(r.argv[4]) && JSON.stringify(r.argv.slice(5)) === '["hyprpi-gate","Foo","🦊"]', "name + icon: $1 / $2, passed as arguments");
@@ -28,7 +29,7 @@ ok(!r.argv[4].includes("touch") && !r.argv[4].includes("Odd"), "the name never a
 ok(r.argv[6] === evil.slice(0, 60) && r.argv[7] === "x".repeat(16), "passed as the host does: name ≤ 60, icon ≤ 16 characters, otherwise byte for byte");
 // The script really takes them verbatim (a local sh stands in for the sandbox's).
 const out = spawnSync("sh", ["-c", 'printf "%s\\0" "$1" "$2"', ...r.argv.slice(5)], { encoding: "utf8" }).stdout.split("\0");
-ok(out[0] === evil.slice(0, 60) && out[1] === "x".repeat(16) && !fs.existsSync("/tmp/x-j456-never"), "sh -c … \"$1\" receives the exact text, nothing runs");
+ok(out[0] === evil.slice(0, 60) && out[1] === "x".repeat(16) && !fs.existsSync(MARK), "sh -c … \"$1\" receives the exact text, nothing runs");
 ok(g({ name: "Foo", wantId: "abc" }).action === "refuse", "a host agent's resume there is still refused (unchanged)");
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(fails ? `${fails} FAILED` : "all passed");
