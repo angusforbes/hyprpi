@@ -588,6 +588,7 @@ function renderProjects({ keepScroll = false } = {}) {
   projectsEl.scrollTop = keepScroll ? was : 0;
 }
 function setView(v) {
+  if (v === "stream" && !showStrm) v = "thoughts"; // J448 v2 (StrmCheck): Strm is off: no way back into it (e.g. Fils' remembered return)
   if (v === "agents" && view === "session") { view = "agents"; sessEl.hidden = true; $("#scomp").hidden = true; sess.agent = null; agentsEl.hidden = false; renderTop(); renderAgents(); return; } // J161: Agnt from a session → its summary
   if (v === view) { // Proj / Agnt again: back to the list
     if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); }
@@ -969,6 +970,7 @@ function streamToEnd(n = 4) {
   if (n > 0) requestAnimationFrame(() => { if (!streamEl.hidden && streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 2500) streamToEnd(n - 1); });
 }
 async function searchAllHistory() {
+  if (!showStrm) return; // J448 v2: Strm off
   const st = streamOf(world), w = world, q = st.q, kinds = [...st.kinds].join(",");
   st.all = { q, kinds, items: [], total: 0, loading: true }; st.pinEnd = true; renderStream();
   try { const r = await call("GET", `/api/stream?world=${w}&all=1&q=${encodeURIComponent(q)}&kinds=${encodeURIComponent(kinds)}`); if (st.all?.q === q && st.all.kinds === kinds) { st.all = { q, kinds, items: r.items || [], total: r.total || 0, from: r.from || 0, loading: false }; st.pinEnd = true; } }
