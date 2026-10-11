@@ -35,9 +35,9 @@ assert.equal(validateChanges({ host_runner: "pi" }).ok, false, "a sandbox can't 
 // (J425Review #2) not installed → unavailable; (#4) an unreadable worlds file that may be this sandbox's → unavailable, not the default
 world("world-gone", { host_runner: { harness: "pi", command: ["/definitely/not-installed"] } }); assert.match(H.runnerChoice("world-gone").error, /isn't installed or runnable/);
 process.env.PATH = REALPATH.split(":").filter((d) => !fs.existsSync(path.join(d, "codex"))).join(":"); world("world-nocodex", { host_runner: "codex" }); assert.match(H.runnerChoice("world-nocodex").error, /codex isn't installed/); process.env.PATH = `${BIN}:${REALPATH}`;
-fs.writeFileSync(path.join(W, "world-bad.json"), '{"sandbox": "world-bad", "gateway": {"host_runner": "pi"'); assert.match(H.runnerChoice("world-bad").error, /world-bad\.json can't be read/);
-fs.writeFileSync(path.join(W, "other-name.json"), '{"sandbox": "world-bad2", "gateway": '); assert.match(H.runnerChoice("world-bad2").error, /other-name\.json can't be read/);
-assert.equal(H.runnerChoice("world-d").harness, "claude-code", "an unrelated unreadable file doesn't affect other worlds");
+fs.writeFileSync(path.join(W, "world-bad.json"), '{"sandbox": "world-bad", "gateway": {"host_runner": "pi"'); assert.match(H.runnerChoice("world-bad").error, /world-bad\.json doesn't parse/);
+fs.writeFileSync(path.join(W, "other-name.json"), '{"sandbox": "world-bad2", "gateway": '); assert.match(H.runnerChoice("world-bad2").error, /other-name\.json doesn't parse/);
+assert.match(H.runnerChoice("world-d").error, /other-name\.json doesn't parse/, "a corrupt file can't be identified: it blocks every world (J425Recheck)");
 fs.unlinkSync(path.join(W, "world-bad.json")); fs.unlinkSync(path.join(W, "other-name.json"));
 // (J425Recheck #2) an unreadable file (its sandbox unknown) or worlds folder, a non-object file, a non-object gateway: all unavailable
 if (process.getuid() !== 0) {
@@ -48,6 +48,8 @@ if (process.getuid() !== 0) {
 }
 fs.writeFileSync(path.join(W, "world-null.json"), "null"); assert.match(H.runnerChoice("world-null").error, /isn't a JSON object/); fs.unlinkSync(path.join(W, "world-null.json"));
 world("world-gs", "pi"); assert.match(H.runnerChoice("world-gs").error, /"gateway" isn't an object/); fs.unlinkSync(path.join(W, "world-gs.json"));
+fs.writeFileSync(path.join(W, "A.json"), '{"sandbox":"world\\u002dg2","gateway":"pi"}'); assert.match(H.runnerChoice("world-g2").error, /A\.json: "gateway" isn't an object/, "judged by the decoded sandbox name, not the raw text"); fs.unlinkSync(path.join(W, "A.json"));
+fs.writeFileSync(path.join(W, "A.json"), '{"sandbox":'); assert.match(H.runnerChoice("world-d").error, /A\.json doesn't parse/); fs.unlinkSync(path.join(W, "A.json"));
 // (J425Recheck #3) the host's levels module: present but broken or incomplete → every runner refused; absent → not checked (this branch)
 for (const [what, body, re] of [["throws", 'throw new Error("boom");', /doesn't load \(boom\)/], ["lacks exports", "export const x = 1;", /lacks loadLevels/],
   ["allows only claude-code", 'export const loadLevels = () => ({ levels: { runner_harnesses: ["claude-code"] } }); export const allowedHarness = (l, h) => l.runner_harnesses.includes(h);', null]]) {

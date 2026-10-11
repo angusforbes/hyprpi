@@ -13,12 +13,13 @@ if (spawnSync("sh", ["-c", "command -v codex"]).status !== 0) { console.log("SKI
 const { adapterPlan } = await import("../docker/bridge/harness.mjs");
 // the folders live under $HOME (codex's sandbox treats /tmp specially); removed at the end
 const root = fs.mkdtempSync(path.join(os.homedir(), ".cache", "j425-cxmock-")), chome = path.join(root, "codex-home"); fs.mkdirSync(chome);
-let cmd = "";
+let cmd = "", calls = 0, outputs = []; // per case: forced calls issued, and the function_call_output codex sent back
 const srv = http.createServer(async (req, res) => {
   let b = ""; for await (const c of req) b += c; let d = {}; try { d = JSON.parse(b); } catch { /* */ }
   if (!req.url.includes("responses")) { res.writeHead(404); res.end("{}"); return; }
   res.writeHead(200, { "content-type": "text/event-stream" });
-  const done = d.input?.some((x) => x.type === "function_call_output");
+  const fco = (d.input || []).filter((x) => x.type === "function_call_output"), done = fco.length > 0;
+  if (done) outputs.push(...fco.map((x) => typeof x.output === "string" ? x.output : JSON.stringify(x.output))); else calls++;
   const response = { id: "resp_1", object: "response", status: "in_progress", model: "mock", output: [] };
   const item = done ? { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "finished", annotations: [] }] }
     : { id: "fc_1", type: "function_call", status: "completed", call_id: "call_1", name: "exec_command", arguments: JSON.stringify({ cmd }) };
@@ -34,11 +35,12 @@ const cli = path.join(root, "bridge"); fs.writeFileSync(cli, "#!/bin/sh\nexit 0\
 async function attempt(job, target) {
   const tmp = fs.mkdtempSync(path.join(root, "run-")), work = path.join(tmp, "work"); fs.mkdirSync(work);
   const p = adapterPlan(job, { tmp, work, cli, mcpEnv: { DOORMAN_BRIDGE_TOKEN: "fake" }, choice: { harness: "codex", command: ["codex"], model: "mock" } });
-  cmd = `printf x > '${target}'`;
+  cmd = `printf x > '${target}'`; calls = 0; outputs = [];
   const args = [...p.argv.slice(1, -1), "-c", 'model_provider="mock"', "-c", `model_providers.mock={name="Mock",base_url="http://127.0.0.1:${srv.address().port}/v1",wire_api="responses",requires_openai_auth=false}`, "-c", "features.shell_snapshot=false", "-"];
   const ch = spawn("codex", args, { env: { PATH: process.env.PATH, HOME: chome, CODEX_HOME: chome, OPENAI_API_KEY: "fake" }, cwd: p.cwd, stdio: ["pipe", "ignore", "ignore"] });
-  ch.stdin.end("do the test"); const t = setTimeout(() => ch.kill("SIGKILL"), 60000); await new Promise((r) => ch.on("close", r)); clearTimeout(t);
-  return { written: fs.existsSync(target), argv: p.argv };
+  let timedOut = false; ch.stdin.end("do the test"); const t = setTimeout(() => { timedOut = true; ch.kill("SIGKILL"); }, 60000);
+  const code = await new Promise((r) => ch.on("close", r)); clearTimeout(t);
+  return { written: fs.existsSync(target), argv: p.argv, code, timedOut, calls, outputs: [...outputs] };
 }
 const mk = (...p) => { const d = path.join(root, ...p); fs.mkdirSync(d, { recursive: true }); return d; };
 const RW = mk("rw"), OUT = mk("outside"), PARENT = mk("ro-parent"), CHILD = mk("ro-parent", "rw-child"), HOLD = mk("rw-holder"), INNER = mk("rw-holder", "ro-inner");
@@ -57,6 +59,10 @@ const cases = [
 let n = 0;
 for (const [what, job, target, want] of cases) {
   const r = await attempt(job, target);
+  // (J425Recheck LOW) evidence per case: codex finished normally, the forced call was issued and its result came back to the provider
+  assert.equal(r.timedOut, false, `${what}: codex timed out`); assert.equal(r.code, 0, `${what}: codex exit ${r.code}`);
+  assert.equal(r.calls, 1, `${what}: the forced exec_command was issued once`); assert.equal(r.outputs.length, 1, `${what}: its result came back`);
+  if (!want) assert.match(r.outputs[0], /Read-only file system|Permission denied|Operation not permitted|denied/i, `${what}: the command's result shows a denial: ${r.outputs[0].slice(0, 300)}`);
   assert.equal(r.written, want, `${what}: ${want ? "should be written" : "WRITTEN, not enforced"} (argv ${r.argv.join(" ")})`);
   console.log(`ok ${what}: ${want ? "written" : "blocked"}`); n++; try { fs.unlinkSync(target); } catch { /* */ }
 }

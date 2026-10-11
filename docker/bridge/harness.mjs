@@ -58,12 +58,13 @@ export function runnerChoice(sandbox, dir = cfgDir()) {
   // Only an absent worlds folder means "no setting".
   let files = [];
   try { files = fs.readdirSync(path.join(dir, "worlds")).filter((x) => x.endsWith(".json")); } catch (e) { if (e.code !== "ENOENT") return { error: `the worlds folder can't be read (${e.code || e.message})` }; }
+  // (J425Recheck) no guessing from the raw text: a file that doesn't parse or isn't an object can't be identified, so it blocks every
+  // world; a parsed world is judged by its DECODED sandbox name
   for (const f of files) {
     let raw; try { raw = fs.readFileSync(path.join(dir, "worlds", f), "utf8"); } catch (e) { return { error: `${f} can't be read (${e.code || e.message}), so which sandbox it sets is unknown` }; }
-    const mine = f.slice(0, -5) === sandbox || raw.includes(JSON.stringify(sandbox));
-    let w; try { w = JSON.parse(raw); } catch (e) { if (mine) return { error: `${f} can't be read (${String(e.message).slice(0, 60)})` }; continue; }
-    if (mine && (!w || typeof w !== "object" || Array.isArray(w))) return { error: `${f} isn't a JSON object` };
-    if (mine && w && typeof w === "object" && (typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox && w.gateway !== undefined && (!w.gateway || typeof w.gateway !== "object" || Array.isArray(w.gateway))) return { error: `${f}: "gateway" isn't an object` };
+    let w; try { w = JSON.parse(raw); } catch (e) { return { error: `${f} doesn't parse (${String(e.message).slice(0, 60)}), so which sandbox it sets is unknown` }; }
+    if (!w || typeof w !== "object" || Array.isArray(w)) return { error: `${f} isn't a JSON object, so which sandbox it sets is unknown` };
+    if ((typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox && w.gateway !== undefined && (!w.gateway || typeof w.gateway !== "object" || Array.isArray(w.gateway))) return { error: `${f}: "gateway" isn't an object` };
   }
   const hits = worldsFor(dir, sandbox);
   if (hits.length > 1) return { error: `ambiguous: ${hits.map((h) => h.f).join(", ")} all name ${sandbox}` };
