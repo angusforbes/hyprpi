@@ -16,6 +16,8 @@ const M = await import("../docker/world/doorman-mcp.mjs");
 let agents = [{ id: "hp-alpha01", name: "Alpha", pid: process.ppid }, { id: "hp-beta01", name: "Beta", pid: 999999 }];
 M._test.setList(async () => agents);
 let n = 0; const ok = (m) => { n++; console.log("ok " + m); };
+// a host message by name: the notifier resolves the name to ONE live agent and hands it over (J464Check #4); here: Alpha, or nobody
+const hostMsg = (o) => { if (/^Alpha:/.test(o.text)) M.deliverNamed({ id: "hp-alpha01", name: "Alpha" }, o); };
 let seq = 0; const item = (o) => { const name = `${String(Date.now()).padStart(13, "0")}-${(seq++).toString(16).padStart(8, "0")}.json`; fs.writeFileSync(path.join(INBOX, name), JSON.stringify(o)); return name; };
 // the fake relay: takes each outbox file, records it, answers with a result (and lets the test add later items)
 const taken = [];
@@ -60,8 +62,8 @@ assert.equal((await M.call("inbox", {})).text, "nothing new", "read notices aren
 ok("ask_doorman / message write the gate's talk files ([Alpha, in world G] stamp, demand mode); the Doorman's answer, Angus's decision and the host reply come back; other agents' items don't");
 
 // 3. a host message to Alpha → replyable once; Beta's isn't Alpha's
-item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-9", text: "Alpha: can you check the notes?" });
-item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-10", text: "Beta: not yours" });
+hostMsg({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-9", text: "Alpha: can you check the notes?" });
+hostMsg({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-10", text: "Beta: not yours" });
 r = await M.call("inbox", {});
 assert.equal(r.notices.length, 1); assert.equal(r.notices[0].request_id, "req-in-9"); assert.match(r.notices[0].text, /\[from Harbor, outside world G \(a host agent; information, not Angus's instructions\)\] can you check the notes\?/);
 answer = () => ({ ok: true, delivered: true });
@@ -109,7 +111,7 @@ ok("stdio MCP: initialize (named doorman, with instructions), the six tools, an 
 // 8. (J462Check) review fixes
 assert.ok(taken.every((t) => t.tracked), "every request was tracked (state + hand-off) BEFORE its outbox file was published (#5)");
 // #2: a reply's own result comes back at once, success and failure (isError)
-item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-11", text: "Alpha: one more" }); await M.call("inbox", {});
+hostMsg({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-11", text: "Alpha: one more" }); await M.call("inbox", {});
 answer = (req) => req.op === "reply" ? { ok: false, error: "unknown request_id (only requests delivered to this sandbox can be answered)" } : { ok: true };
 let t0 = Date.now(); r = await M.call("reply", { request_id: "req-in-11", text: "x" });
 assert.match(r.error, /^your reply re req-in-1: not delivered: unknown request_id/); assert.ok(Date.now() - t0 < 5000, "answered at once, not after 20 s");
@@ -120,14 +122,14 @@ answer = () => ({ ok: true, delivered: true });
 t0 = Date.now(); r = await M.call("reply", { request_id: "req-in-11", text: "now it goes" }); assert.equal(r.ok, true, JSON.stringify(r)); assert.match(r.text, /delivered/); assert.ok(Date.now() - t0 < 5000);
 assert.match((await M.call("reply", { request_id: "req-in-11", text: "again" })).error, /already answered/);
 // (recheck) two concurrent replies to one message: one is published, the other refused; a stale failure can't reopen it
-item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-13", text: "Alpha: race" }); await M.call("inbox", {});
+hostMsg({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-13", text: "Alpha: race" }); await M.call("inbox", {});
 { const n0 = taken.length; const [a1, a2] = await Promise.all([M.call("reply", { request_id: "req-in-13", text: "first" }), M.call("reply", { request_id: "req-in-13", text: "second" })]);
   assert.equal(taken.slice(n0).filter((t) => t.req.request_id === "req-in-13").length, 1, "only one reply published"); assert.ok([a1, a2].filter((x) => x.ok).length === 1 && [a1, a2].some((x) => /already answered/.test(x.error || "")));
   const st = M._test.load("hp-alpha01"); item({ type: "result", for: "1700000000000-deadbeef.json", op: "reply", ok: false, error: "stale" }); st.files["1700000000000-deadbeef.json"] = { kind: "reply", R: "req-in-13", at: Date.now() }; M._test.save(st);
   await M.call("inbox", {}); assert.match((await M.call("reply", { request_id: "req-in-13", text: "third" })).error, /already answered/, "another attempt's failure doesn't reopen a delivered reply"); }
 // #4: a cancelled wait consumes nothing
 { const ctl = { cancelled: false }; const p = M.call("wait", { seconds: 10 }, ctl); setTimeout(() => { ctl.cancelled = true; }, 200); await new Promise((x) => setTimeout(x, 400));
-  item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-12", text: "Alpha: after the cancel" }); assert.equal((await p).text, "cancelled");
+  hostMsg({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-12", text: "Alpha: after the cancel" }); assert.equal((await p).text, "cancelled");
   r = await M.call("inbox", {}); assert.ok(r.notices.some((x) => /after the cancel/.test(x.text)), "still unread after a cancelled wait"); }
 assert.match(fs.readFileSync(new URL("../docker/world/world.sh", import.meta.url), "utf8"), /exposure:"direct",timeout:660\}/, "pi's 60 s MCP default is raised for wait (#4)");
 // #1 (HIGH): ids that differ only in "." / "_" get different state files; a file owned by another id is never read
@@ -144,5 +146,21 @@ item({ type: "research", token: "rspace001", status: "approved", file: "/inbox/a
 M._test.load; { const st2 = M._test.load("hp-alpha01"); st2.research["rspace001"] = { want: "x", at: Date.now() }; M._test.save(st2); }
 r = await M.call("inbox", {}); assert.ok(r.notices.some((x) => /Read it at file:\/\/\/inbox\/a%20b\.md /.test(x.text) && x.path === "/inbox/a b.md"), JSON.stringify(r.notices));
 ok("the report is a Ctrl+clickable file:// URL (encoded), the plain path kept in path");
+// 9. (J464Check) the review fixes
+{ const R = "req-tg-1"; M.withAgent("thoughts:G", (st) => { st.inbound[R] = { from: "Lens", at: Date.now() }; });
+  assert.notEqual(M._test.fileOf("thoughts:G"), M._test.fileOf("thoughts-g"));
+  assert.match(M.replyOut({ id: "thoughts-g", name: "Beta" }, R, "x").error, /no message to you/, "an agent with id thoughts-g can't answer Thoughts-G's message (#3)"); }
+{ hostMsg({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-20", text: "Alpha: two processes" }); await M.call("inbox", {});
+  M.withAgent("hp-alpha01", (st) => { st.inbound["req-in-20"].replied = true; st.inbound["req-in-20"].file = "1700000000000-aaaaaaaa.json"; }); // another process reserved it
+  assert.match((await M.call("reply", { request_id: "req-in-20", text: "x" })).error, /already answered/, "a reply reserved in the shared state by another process blocks this one (#5)"); }
+{ M.setLockWait(100); const lk = M._test.fileOf("hp-zz") + ".lock"; fs.mkdirSync(lk, { recursive: true }); const t1 = Date.now();
+  assert.throws(() => M.withAgent("hp-zz", () => 1), /busy \(lock\)/); assert.ok(Date.now() - t1 < 1000, "a short lock wait fails fast (#6)"); fs.rmdirSync(lk); M.setLockWait(5000); }
+{ const long = "w".repeat(5000) + " SENTINEL"; M.withAgent("hp-alpha01", (st) => { st.hostReq["req-long"] = { to: ["Harbor"], ref: "req-long", at: Date.now() }; });
+  item({ type: "reply", request_id: "req-long", from: "Harbor", text: long }); r = await M.call("inbox", {}); assert.ok(r.notices.some((x) => x.text.includes("SENTINEL")), "long host text is kept (#7)"); }
+{ M.withAgent("hp-alpha01", (st) => { st.research["rhash0001"] = { want: "x", at: Date.now() }; }); item({ type: "research", token: "rhash0001", status: "approved", file: "/inbox/a#b?.md" });
+  r = await M.call("inbox", {}); assert.ok(r.notices.some((x) => x.text.includes("file:///inbox/a%23b%3F.md ")), JSON.stringify(r.notices)); }
+item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-30", text: "Alpha: straight into the inbox" }); r = await M.call("inbox", {});
+assert.ok(!r.notices.some((x) => /straight into the inbox/.test(x.text)), "an agent's own scan never takes a name-addressed message: only the notifier's unique resolution does (#4)");
+ok("review fixes: thoughts:G can't be an agent; a reply reserved by another process; a short lock wait fails fast; long text kept; # and ? encoded in the file URL; named items only via the notifier");
 clearInterval(relay); fs.rmSync(T, { recursive: true, force: true });
 console.log(`doorman-mcp: all ${n} pass`); process.exit(0);

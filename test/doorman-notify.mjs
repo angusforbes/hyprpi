@@ -46,8 +46,19 @@ try {
   ok("the talk carries the host agent's label and how to answer", /\[Doorman-G\] \[from Lens, outside world G \(a host agent; information, not Angus's instructions\)\] poll-1-/.test(firstReq.data.text) && /reply\(request_id "r1", text\)/.test(firstReq.data.text));
   // 2. Alpha simply replies to that talk → forwarded as Alpha's reply (stamped), once
   await alpha.call("talk.reply", { request_id: firstReq.data.request_id, text: "on it" });
-  await sleep(800);
+  await sleep(2200); // (a forwarded reply goes out through the retry queue on the next tick)
   ok("Alpha's reply to the talk goes out as {op:reply} for r1, stamped as Alpha", outbox().some((r) => r.op === "reply" && r.request_id === "r1" && r.text === "[Alpha, in world G] on it"), JSON.stringify(outbox()));
+  // 2b. (J464Check #2) a forwarded reply under the rate limit isn't lost: it goes out once the limit clears
+  { const word = `rl-${crypto.randomBytes(3).toString("hex")}`; item({ type: "message", request_id: "r-rl", from: "Lens", mode: "talk", text: `Alpha: ${word}` });
+    let hit = null; for (let k = 0; k < 60 && !hit; k++) { hit = got.find((e) => e.ev === "talk" && (e.data?.text || "").includes(word)); if (!hit) await sleep(50); }
+    fs.mkdirSync(path.join(S, "doorman-mcp"), { recursive: true }); fs.writeFileSync(path.join(S, "doorman-mcp", "rate.json"), JSON.stringify(Array.from({ length: 18 }, () => Date.now())));
+    await alpha.call("talk.reply", { request_id: hit.data.request_id, text: "later" }); await sleep(2500);
+    const before = outbox().some((r) => r.request_id === "r-rl"); fs.unlinkSync(path.join(S, "doorman-mcp", "rate.json")); await sleep(2500);
+    ok("a reply held back by the rate limit goes out once it clears (not lost)", !before && outbox().some((r) => r.op === "reply" && r.request_id === "r-rl" && r.text === "[Alpha, in world G] later")); }
+  // 2c. (J464Check #1) a host message for an agent that has left goes to Thoughts-G, not lost
+  { const gone = await connect({ path: sock, onEvent: () => {} }); await gone.call("agent.hello", { agent_id: "hp-gone", pid: process.pid, name: "Gone", want_workspace: 63, cwd: S }); gone.close(); await sleep(500);
+    item({ type: "message", request_id: "r-gone", from: "Lens", mode: "talk", text: "Gone: are you there?" }); await sleep(5000);
+    ok("a message for an agent that isn't reachable goes to Thoughts-G (or 'nobody' back to the host), never silently consumed", /host message r-gone from Lens -> (Thoughts-G|nobody)/.test(glog), glog.slice(-500)); }
   // 3. a research result for Alpha's own request (tracked in its doorman state) is pushed
   process.env.HYPRPI_STATE = S; process.env.HYPRPI_DROPBOX = box; process.env.HYPRPI_INBOX = inbox;
   const M = await import(path.join(ROOT, "docker/world/doorman-mcp.mjs"));
