@@ -35,6 +35,6 @@ const r = await new Promise((done) => {
   const t = setTimeout(() => ch.kill("SIGTERM"), 600000); ch.on("exit", (code) => { clearTimeout(t); done({ code, out }); });
 });
 console.log(`--- pi (exit ${r.code}) ---\n${r.out.slice(-6000)}`);
-const st = path.join(process.env.HYPRPI_STATE, "doorman-mcp", "agents", `${ID}.json`);
-try { const j = JSON.parse(fs.readFileSync(st, "utf8")); console.log("--- doorman-mcp state: notices ---"); for (const x of j.notices) console.log(`${x.n} [${x.kind}] ${x.text.replace(/\s+/g, " ").slice(0, 300)}`); } catch (e) { console.log(`no state (${e.message})`); }
+const AG = path.join(process.env.HYPRPI_STATE, "doorman-mcp", "agents"), st = fs.readdirSync(AG).map((f) => path.join(AG, f)).find((f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")).owner === ID; } catch { return false; } });
+try { if (!st) throw new Error("none for " + ID); const j = JSON.parse(fs.readFileSync(st, "utf8")); fs.unlinkSync(st); /* the test agent's state goes with it */ console.log("--- doorman-mcp state: notices ---"); for (const x of j.notices) console.log(`${x.n} [${x.kind}] ${x.text.replace(/\s+/g, " ").slice(0, 300)}`); } catch (e) { console.log(`no state (${e.message})`); }
 c.close(); fs.rmSync(dir, { recursive: true, force: true }); process.exit(0);
