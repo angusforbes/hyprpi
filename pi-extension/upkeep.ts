@@ -13,7 +13,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import path from "node:path";
-import { loadUpkeep, expandHome } from "../lib/upkeep.mjs";
+import { loadUpkeep, expandHome, statePath } from "../lib/upkeep.mjs";
 
 export { pruneMessages } from "../lib/prune.mjs";
 import { pruneMessages } from "../lib/prune.mjs";
@@ -24,7 +24,7 @@ export function upkeepAgent(pi: ExtensionAPI, { call, agentId, idle }: { call: (
   pi.on("context", async (e: any) => {
     let S: any; try { S = loadUpkeep(); } catch { return; }
     if (!S?.prune?.enabled) return;
-    const dir = path.join(expandHome(S.prune.saveDir || "~/.local/state/hyprpi/pruned"), agentId);
+    const dir = path.join(statePath(S.prune.saveDir || "~/.local/state/hyprpi/pruned"), agentId);
     const r = pruneMessages(e?.messages || [], S, { dir, seen });
     if (!r.stats.images && !r.stats.outputs) return;
     // One quiet note to its Thoughts for what was newly pruned, at most every 10 minutes.
