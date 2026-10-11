@@ -21,6 +21,10 @@ The text came from the sandbox, so only these are opened:
     NO symlink anywhere in the path (each component opened with O_NOFOLLOW), and what Brave gets is a private
     snapshot copy (a sandbox can't swap the file for a symlink after the check; Lenswatch J320 3a). An HTML page
     is copied with its folder (no symlinks, no node_modules/.git, size-capped) so its scripts and images load.
+J465 (Angus: open a report in the Markdown viewer; "I don't think we need the override"): when ANGUS clicks a file:// link to a
+non-HTML file, the vetted snapshot opens with the host desktop's default app for its type (xdg-open, the MIME default; e.g. .md →
+the Markdown viewer the host uses). http(s) and HTML pages still open in the world's own Brave, and an agent's own open (--agent)
+always does (an agent never pops an app onto Angus's screen). The share check comes first: nothing outside the shares opens.
 Refused: other schemes, control/format characters (Unicode Cc/Cf, Zl/Zp), URLs over 8 kB, paths outside the
 shares, hidden files. A refusal shows a short notification. Never raises.
 """
@@ -147,6 +151,12 @@ def snapshot(path, world):
     finally:
         os.close(fd)
     return os.path.join(dest, name)
+
+
+def file_opener(path):
+    """J465: the host desktop's default app for this file's type (xdg-open: the MIME default). No per-app config (Angus: "I don't think
+    we need the override"): on another machine it uses whatever that desktop opens the type with."""
+    return [os.environ.get("HYPRPI_G_XDG_OPEN") or "xdg-open"]  # (the env: tests only)
 
 
 def check(url, world, snap=True):
@@ -351,6 +361,17 @@ def main(argv):
             tell(f"Link from {who} not opened", out + (" (further refusals this minute are not shown)" if agent else ""))
         print(f"g_open_url: refused: {out}", file=sys.stderr)
         return 1
+    # J465: his click on a (non-HTML) file opens the snapshot with the host's own app for its type
+    if not agent and out.startswith("file://"):
+        path = urllib.parse.unquote(out[len("file://"):])
+        if os.path.splitext(path)[1].lower() not in (".html", ".htm"):
+            cmd = file_opener(path) + [path]
+            try:
+                subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                return 0
+            except Exception as e:
+                tell(f"Link from {who} not opened", f"couldn't start {os.path.basename(cmd[0])} ({e.__class__.__name__})")
+                return 1
     # J406 (Angus "19 a"): every link from a sandbox window, his click or an agent's, opens in the world's own Brave
     bring_brave_home(world)  # J402: a parked or stray world Brave comes home first, so the new tab is visible there
     cmd = world_brave(world) + ["--", out]

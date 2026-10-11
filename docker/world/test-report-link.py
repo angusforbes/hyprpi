@@ -13,10 +13,13 @@ brave = stub("brave-stub", f'printf "%s\\n" "$*" >> {T}/brave.log')
 hyprctl = stub("hyprctl", 'if [ "$1" = clients ]; then echo "[]"; fi')
 stub("notify-send", "exit 0")
 os.environ["PATH"] = T + ":" + os.environ["PATH"]
-os.environ.update(XDG_RUNTIME_DIR=T, HYPRPI_HYPRCTL=hyprctl, HYPRPI_G_AGENT_OPENER=brave, HYPRPI_G_OPENER=brave)
+# (J465Check) writes (rate stamps, toast markers, snapshots) go to temp: the live world-g share list is copied, read-only use
+LIVE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "hyprpi", "sandboxes", "world-g", "managed.json")
+os.makedirs(f"{T}/state/hyprpi/sandboxes/world-g"); open(f"{T}/state/hyprpi/sandboxes/world-g/managed.json", "w").write(open(LIVE).read())
+os.environ.update(XDG_RUNTIME_DIR=T, XDG_STATE_HOME=f"{T}/state", HYPRPI_HYPRCTL=hyprctl, HYPRPI_G_AGENT_OPENER=brave, HYPRPI_G_OPENER=brave)
 spec = importlib.util.spec_from_file_location("g", os.path.join(os.path.dirname(os.path.abspath(__file__)), "g_open_url.py"))
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
-log = lambda: open(f"{T}/brave.log").read().split("\n") if os.path.exists(f"{T}/brave.log") else []
+log = lambda: [l for l in (open(f"{T}/brave.log").read().split("\n") if os.path.exists(f"{T}/brave.log") else []) if l]
 url = "file://" + urllib.parse.quote(R)
 assert g.main(["g_open_url.py", "--agent", url, "world-g"]) == 0, "the report's file:// link opens"
 time.sleep(0.3); opened = [l for l in log() if l][-1]
@@ -29,4 +32,24 @@ for bad, why in [(R, "a bare path"), ("file://" + os.path.dirname(R) + "/", "the
     assert g.main(["g_open_url.py", "--agent", bad, "world-g"]) == 1, why
     print("ok refused:", why)
 assert len(log()) == n, "nothing else opened"
+# J465 v3: Angus's click on the report opens it with the HOST desktop's default app for .md (xdg-open; no config override),
+# not in Brave; http(s) and an HTML page still go to the world's Brave; an agent's own open always goes to the Brave
+xdg = stub("xdg-open-stub", f'printf "%s\\n" "$*" >> {T}/xdg.log')
+os.environ["HYPRPI_G_XDG_OPEN"] = xdg
+rd = lambda f: [l for l in (open(f"{T}/{f}").read().split("\n") if os.path.exists(f"{T}/{f}") else []) if l]
+nb = len(log()); assert g.main(["g_open_url.py", url, "world-g"]) == 0; time.sleep(0.3)
+x = rd("xdg.log"); assert len(x) == 1 and x[0].startswith(T) and x[0].endswith("/" + os.path.basename(R)), x
+assert open(x[0]).read() == open(R).read() and len(log()) == nb, "the vetted copy goes to the host's default app (xdg-open), not Brave"
+print("ok no config: Ctrl+click on the report opens a vetted copy with the desktop's default app for .md (xdg-open)")
+n0 = 0
+assert g.main(["g_open_url.py", "https://example.org/x", "world-g"]) == 0; time.sleep(0.2); assert log()[-1] == "-- https://example.org/x", log()[-1:]
+html = os.path.expanduser("~/Work/cube-art/index.html")
+if os.path.exists(html):
+    nb = len(log()); assert g.main(["g_open_url.py", "file://" + html, "world-g"]) == 0; time.sleep(0.3); assert len(log()) == nb + 1 and log()[-1].endswith("/index.html"), "an HTML page opens in the world's Brave"
+nb = len(log()); assert g.main(["g_open_url.py", "--agent", url, "world-g"]) == 0; time.sleep(0.3); assert len(log()) == nb + 1 and len(rd("xdg.log")) == 1, "an agent's open goes to the Brave, never an app"
+print("ok http(s) and an HTML page still open in the world's Brave; an agent's own open of the report goes to the Brave, never to an app")
+nb = len(log()); nx = len(rd("xdg.log"))
+for bad in [R, "file://" + os.path.expanduser("~/.ssh/config"), "file:///etc/passwd"]: assert g.main(["g_open_url.py", bad, "world-g"]) == 1
+assert len(log()) == nb and len(rd("xdg.log")) == nx, "refused links reach no app at all"
+print("ok the share check comes first: refused links reach no app")
 print("test-report-link: all pass")
