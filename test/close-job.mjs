@@ -43,7 +43,7 @@ const brief = (id, item, agent, name, state = "running", dw = W2) => [id, { id, 
 fs.writeFileSync(path.join(S, "briefs.json"), JSON.stringify({ next: 20, briefs: Object.fromEntries([
   brief("J1", "N1", "hp-atlas", "Atlas"), brief("J2", "N2", "hp-atlas", "Atlas", "stopped"), brief("J3", "N3", "hp-atlas", "Atlas"),
   brief("J4", "N4", "hp-atlas", "Atlas"), brief("J5", "N5", "hp-atlas", "Atlas"), brief("J6", "N6", "hp-bolt", "Bolt"),
-  brief("J7", "N7", "hp-atlas", "Atlas"), brief("J8", "N8", "hp-atlas", "Atlas"), brief("J9", "N8", "hp-atlas", "Atlas"), ["J10", { ...brief("J10", "N8", "hp-atlas", "Atlas")[1], version: 2 }], brief("J11", "N8", "hp-atlas", "Atlas"),
+  brief("J7", "N7", "hp-atlas", "Atlas"), brief("J8", "N8", "hp-atlas", "Atlas"), brief("J9", "N8", "hp-atlas", "Atlas"), ["J10", { ...brief("J10", "N8", "hp-atlas", "Atlas")[1], version: 2 }], brief("J11", "N8", "hp-atlas", "Atlas"), ["J12", { ...brief("J12", "N8", "hp-atlas", "Atlas")[1], room: "E" }],
 ]) }));
 const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j440-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000" };
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
@@ -121,6 +121,15 @@ try {
   await sleep(300);
   ok("B5 another job's section counts for it (J11 done)", (await job("J11")).state === "done");
   ok(`B5 the request's own job (${newJob}) doesn't borrow J11's proof`, (await job(newJob)).state === "running", (await job(newJob)).state);
+  // 6. CloseCheck round 2
+  ok("B6 a report over 8000 characters is refused, not cut", /8000/.test(await err(() => api.call("thoughts.close", { room: "D", job: "J9", state: "done", report: "x".repeat(8100) + "\nW1 → PASS · W2 → PASS", evidence: "e" }))) && (await job("J9")).state === "running");
+  await api.call("thoughts.close", { room: "D", job: "J9", state: "obsolete", reason: "test" });
+  await api.call("thoughts.revise", { room: "D", job: "J9", goal: "reopened", reason: "test reopen" }).catch((e) => console.log("   revise:", e.message));
+  const j9 = JSON.parse(fs.readFileSync(path.join(S, "briefs.json"), "utf8")).briefs.J9;
+  ok("B6 reopening an obsolete job clears its obsolete reason", j9.state === "running" && !("obsolete_reason" in j9) && j9.version === 2, `${j9.state} v${j9.version} ${j9.obsolete_reason || ""}`);
+  await agent.call("talk", { to: ["Thoughts-D"], text: "=== J12 v1 ===\nproof: W1 → a · W2 → b" });
+  await sleep(300);
+  ok("B6 a section sent to Thoughts-D doesn't close a world-E job", (await job("J12")).state === "running");
   api.close?.(); agent.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill(); }
