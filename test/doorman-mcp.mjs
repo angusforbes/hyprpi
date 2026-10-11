@@ -23,7 +23,8 @@ let answer = (req, file) => ({ ok: true });
 const relay = setInterval(() => {
   for (const f of fs.readdirSync(path.join(BOX, "outbox")).filter((x) => /^[0-9]+-[0-9a-f]{8}\.json$/.test(x))) {
     const req = JSON.parse(fs.readFileSync(path.join(BOX, "outbox", f), "utf8")); fs.unlinkSync(path.join(BOX, "outbox", f));
-    taken.push({ f, req }); item({ type: "result", for: f, op: req.op, ...answer(req, f) });
+    const tracked = fs.existsSync(path.join(STATE, "doorman-mcp", "adopt", f)) && fs.readdirSync(path.join(STATE, "doorman-mcp", "agents")).some((x) => JSON.parse(fs.readFileSync(path.join(STATE, "doorman-mcp", "agents", x), "utf8")).files?.[f]);
+    taken.push({ f, req, tracked }); item({ type: "result", for: f, op: req.op, ...answer(req, f) });
   }
 }, 100);
 
@@ -107,6 +108,33 @@ assert.equal(byId[1].result.serverInfo.name, "doorman"); assert.match(byId[1].re
 assert.deepEqual(byId[2].result.tools.map((t) => t.name), ["research", "ask_doorman", "message", "reply", "inbox", "wait"]);
 assert.equal(byId[3].result.isError, true); assert.match(byId[3].result.content[0].text, /no HYPRPI_AGENT_ID/);
 ok("stdio MCP: initialize (named doorman, with instructions), the six tools, an error as isError (no agent identity → nothing sent)");
+// 8. (J462Check) review fixes
+assert.ok(taken.every((t) => t.tracked), "every request was tracked (state + hand-off) BEFORE its outbox file was published (#5)");
+// #2: a reply's own result comes back at once, success and failure (isError)
+item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-11", text: "Alpha: one more" }); await M.call("inbox", {});
+answer = (req) => req.op === "reply" ? { ok: false, error: "unknown request_id (only requests delivered to this sandbox can be answered)" } : { ok: true };
+let t0 = Date.now(); r = await M.call("reply", { request_id: "req-in-11", text: "x" });
+assert.match(r.error, /^your reply re req-in-1: not delivered: unknown request_id/); assert.ok(Date.now() - t0 < 5000, "answered at once, not after 20 s");
+// #3: a failed / refused reply leaves the message answerable
+fs.writeFileSync(path.join(STATE, "doorman-mcp", "rate.json"), JSON.stringify(Array.from({ length: 18 }, () => Date.now())));
+assert.match((await M.call("reply", { request_id: "req-in-11", text: "x" })).error, /rate limit/); fs.unlinkSync(path.join(STATE, "doorman-mcp", "rate.json"));
+answer = () => ({ ok: true, delivered: true });
+t0 = Date.now(); r = await M.call("reply", { request_id: "req-in-11", text: "now it goes" }); assert.equal(r.ok, true, JSON.stringify(r)); assert.match(r.text, /delivered/); assert.ok(Date.now() - t0 < 5000);
+assert.match((await M.call("reply", { request_id: "req-in-11", text: "again" })).error, /already answered/);
+// #4: a cancelled wait consumes nothing
+{ const ctl = { cancelled: false }; const p = M.call("wait", { seconds: 10 }, ctl); setTimeout(() => { ctl.cancelled = true; }, 200); await new Promise((x) => setTimeout(x, 400));
+  item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-12", text: "Alpha: after the cancel" }); assert.equal((await p).text, "cancelled");
+  r = await M.call("inbox", {}); assert.ok(r.notices.some((x) => /after the cancel/.test(x.text)), "still unread after a cancelled wait"); }
+assert.match(fs.readFileSync(new URL("../docker/world/world.sh", import.meta.url), "utf8"), /exposure:"direct",timeout:660\}/, "pi's 60 s MCP default is raised for wait (#4)");
+// #1 (HIGH): ids that differ only in "." / "_" get different state files; a file owned by another id is never read
+{ const prev = process.env.HYPRPI_AGENT_ID; process.env.HYPRPI_AGENT_ID = "hp.alpha01";
+  const M2 = await import("../docker/world/doorman-mcp.mjs?other"); M2._test.setList(async () => [{ id: "hp.alpha01", name: "Dotted", pid: process.ppid }]);
+  r = await M2.call("inbox", { all: true }); assert.equal(r.notices.length, 0, "the dotted id sees none of hp-alpha01's notices");
+  process.env.HYPRPI_AGENT_ID = prev;
+  const files = fs.readdirSync(path.join(STATE, "doorman-mcp", "agents")); assert.equal(new Set(files).size, files.length); assert.ok(files.length >= 2, files.join(","));
+  for (const f of files) { const j = JSON.parse(fs.readFileSync(path.join(STATE, "doorman-mcp", "agents", f), "utf8")); assert.ok(["hp-alpha01", "hp.alpha01"].includes(j.owner)); } }
+ok("review fixes: tracked before publishing; a reply's result at once with isError on failure; a refused reply stays answerable; a cancelled wait consumes nothing; 660 s timeout; one state file per exact agent id");
+
 // 7. the gate adopts an MCP request once, by its outbox file name (g-gate.mjs adopted(), run verbatim)
 { const vm = await import("node:vm"); const gsrc = fs.readFileSync(new URL("../docker/world/g-gate.mjs", import.meta.url), "utf8");
   const i = gsrc.indexOf("function adopted(file) {"), fn = gsrc.slice(i, gsrc.indexOf("\n}\n", i) + 2);

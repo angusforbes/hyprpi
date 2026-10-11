@@ -17,7 +17,7 @@ for (const f of ["auth.json", "models.json"]) if (fs.existsSync(path.join(real, 
 let s = {}; try { s = JSON.parse(fs.readFileSync(path.join(real, "settings.json"), "utf8")); } catch { /* */ }
 fs.writeFileSync(path.join(agent, "settings.json"), JSON.stringify(Object.fromEntries(["defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels"].filter((k) => k in s).map((k) => [k, s[k]]))));
 const env = Object.fromEntries(["HYPRPI_AGENT_ID", "HYPRPI_DROPBOX", "HYPRPI_INBOX", "HYPRPI_STATE", "HYPRPI_SOCKET", "G_HOST_HYPRPI"].map((k) => [k, `\${${k}}`]));
-fs.writeFileSync(path.join(agent, "mcp.json"), JSON.stringify({ mcpServers: { doorman: { command: "node", args: [MCP], env, exposure: "direct" } } }));
+fs.writeFileSync(path.join(agent, "mcp.json"), JSON.stringify({ mcpServers: { doorman: { command: "node", args: [MCP], env, exposure: "direct", timeout: 660 } } }));
 const c = await connect({ path: process.env.HYPRPI_SOCKET, onEvent: () => {}, onClose: () => {} });
 const me = await c.call("agent.hello", { agent_id: ID, name: "J462Test", icon: "🧪", pid: process.pid, cwd: dir, model: "test", acks: false, container: "world-g J462 test" });
 console.log(`joined as ${me.name} (${me.agent_id})`);
