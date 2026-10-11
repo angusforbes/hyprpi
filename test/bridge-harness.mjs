@@ -55,7 +55,7 @@ fs.writeFileSync(path.join(W, "A.json"), '{"sandbox":'); assert.match(H.runnerCh
 for (const [what, body, re] of [["throws", 'throw new Error("boom");', /doesn't load \(boom\)/], ["lacks exports", "export const x = 1;", /lacks loadLevels/],
   ["allows only claude-code", 'export const loadLevels = () => ({ levels: { runner_harnesses: ["claude-code"] } }); export const allowedHarness = (l, h) => l.runner_harnesses.includes(h);', null]]) {
   const T2 = fs.mkdtempSync(path.join(base, "lv-")); fs.mkdirSync(path.join(T2, "bridge")); fs.mkdirSync(path.join(T2, "research"));
-  fs.copyFileSync(new URL("../docker/bridge/harness.mjs", import.meta.url), path.join(T2, "bridge", "harness.mjs")); fs.copyFileSync(new URL("../docker/research/mode.mjs", import.meta.url), path.join(T2, "research", "mode.mjs"));
+  fs.copyFileSync(new URL("../docker/bridge/harness.mjs", import.meta.url), path.join(T2, "bridge", "harness.mjs")); fs.writeFileSync(path.join(T2, "research", "mode.mjs"), fs.readFileSync(new URL("../docker/research/mode.mjs", import.meta.url), "utf8").replace('from "./levels.mjs"', 'from "./levels-real.mjs"')); fs.copyFileSync(new URL("../docker/research/levels.mjs", import.meta.url), path.join(T2, "research", "levels-real.mjs")); // (J380 v3: mode.mjs itself reads the real levels module; the stub below is only what harness.mjs sees)
   fs.writeFileSync(path.join(T2, "research", "levels.mjs"), body);
   const H2 = await import(path.join(T2, "bridge", "harness.mjs"));
   if (re) assert.match(H2.runnerChoice("world-d").error, re, what);
