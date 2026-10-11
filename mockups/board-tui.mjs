@@ -58,7 +58,7 @@ const box = createInputBox({
   // J165: a "✓ Sent to …" line stays SENT_STICKY_MS even while Angus types on (then the next keystroke clears it).
   onChange: () => { if (box.text !== boxSeen) { boxSeen = box.text; boxEditAt = Date.now(); } note = note.startsWith("✗") || (note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS) ? note : ""; render(); },
   // ↑↓ as in every panel (Angus, N51): the box's start / end, then your earlier entries.
-  history: createHistory("projects"), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
+  history: createHistory("projects", { world: () => room }), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
   copy: (t) => copy(t),
   drafts: `projects-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   tint: atTint((n) => {
@@ -311,6 +311,7 @@ function cycle(dir) {
 
 // ---- sending ---------------------------------------------------------------------------
 async function send() {
+  const sentIn = room; // J468Check: the world it was typed in, for its ↑ history, even if Ctrl+Tab moved on during an await
   const raw = box.text.trim();
   if (!raw) return render();
   // Unchanged sent text: ask before sending it again (a second ⏎ within 4 s resends).
@@ -318,22 +319,22 @@ async function send() {
     if (Date.now() - resendAsk > 4000) { resendAsk = Date.now(); note = "already sent · ⏎ again to send it again · type to change it"; return render(); }
     resendAsk = 0;
   }
-  if (/^\/decisions?$/i.test(raw)) { box.remember(raw); box.clear(); return setMode(mode === "decisions" ? "cards" : "decisions"); }
+  if (/^\/decisions?$/i.test(raw)) { box.remember(raw, sentIn); box.clear(); return setMode(mode === "decisions" ? "cards" : "decisions"); }
   if (mode === "decisions" && !raw.startsWith("/")) { // the answer box: "2⏎" picks option 2, "L⏎" later, other words answer
     if (/^l$/i.test(raw)) { const x = dv.later(); box.clear(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; return render(); }
     const how = /^[1-9]$/.test(raw) ? { option: Number(raw) - 1 } : { text: raw };
-    try { const r = await dv.answer(api, room, how); if (how.text) box.remember(raw); box.clear(); note = r.note; }
+    try { const r = await dv.answer(api, room, how); if (how.text) box.remember(raw, sentIn); box.clear(); note = r.note; }
     catch (e) { note = "✗ " + e.message; }
     return render();
   }
   try {
     const r = await bv.input(raw, { api, room, board: boardHere() || { projects: [] } });
     if (!r) { // not the board's: the commands every panel has (/tinker, /quit; lib/tui/command-line.mjs)
-      if (parseCommand(raw)) { box.remember(raw); box.clear(); cmds.run(raw); return render(); }
+      if (parseCommand(raw)) { box.remember(raw, sentIn); box.clear(); cmds.run(raw); return render(); }
       note = "✗ not a board command · /help"; return render();
     }
     if (r.confirm) note = r.note; // a confirm prompt (/spinout, /merge): not sent yet, ⏎ again runs it
-    else { box.remember(raw); box.clear(); note = r.note; if (String(note || "").startsWith("✓")) { noteSeen = note; noteAt = Date.now(); } } // (J165: stamped per send) Enter clears the box like every panel; ↑ brings it back (Angus, N51)
+    else { box.remember(raw, sentIn); box.clear(); note = r.note; if (String(note || "").startsWith("✓")) { noteSeen = note; noteAt = Date.now(); } } // (J165: stamped per send) Enter clears the box like every panel; ↑ brings it back (Angus, N51)
   } catch (e) { note = "✗ " + e.message; }
   render();
 }

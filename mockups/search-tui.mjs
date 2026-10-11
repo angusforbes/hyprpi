@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { connect } from "../lib/client.mjs";
 import { createSearch } from "../lib/search-view.mjs";
 import { parseAt, resolveAt, completeAt } from "../lib/at-names.mjs";
-import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
+import { createInputBox, createHistory, seedHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 import { jotKinds, jotWhat } from "../lib/jot-kinds.mjs";
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
@@ -636,25 +636,12 @@ let pasting = false;    // inside a bracketed paste
 function boxSel() { if (selA == null || selA === qc) return null; return selA < qc ? [selA, qc] : [qc, selA]; }
 // The editing itself is the shared message box (lib/tui/input-box.mjs), one line here: the panel
 // keeps query / qc / selA and loads them into the box before each edit, then reads them back.
-const thoughtsHistory = createHistory("thoughts");
-// Seed once per world (Blink's test of 32720d3: a lazy "seed when empty" never ran if something was
-// typed first, and lost the earlier messages): the first time a world's thread loads here, its
-// earlier messages ("you" entries, oldest first) go IN FRONT of whatever the list already holds
-// (entries already in it are not repeated), and the world is marked in thoughts.seeded.json.
-function seedThoughtsHistory(r) {
-  const markFile = thoughtsHistory.file.replace(/\.json$/, ".seeded.json");
-  let marks = []; try { marks = JSON.parse(fs.readFileSync(markFile, "utf8")); } catch { /* none yet */ }
-  if (!Array.isArray(marks)) marks = [];
-  if (marks.includes(r)) return;
-  const cur = thoughtsHistory.list(), have = new Set(cur), merged = [];
-  for (const t of [...TH.entries.filter((e) => e.role === "you" && e.text && !have.has(e.text)).map((e) => e.text), ...cur])
-    if (merged[merged.length - 1] !== t) merged.push(t);
-  try {
-    fs.mkdirSync(thoughtsHistory.file.replace(/\/[^/]*$/, ""), { recursive: true });
-    fs.writeFileSync(thoughtsHistory.file + ".tmp", JSON.stringify(merged.slice(-300))); fs.renameSync(thoughtsHistory.file + ".tmp", thoughtsHistory.file);
-    fs.writeFileSync(markFile + ".tmp", JSON.stringify([...marks, r])); fs.renameSync(markFile + ".tmp", markFile);
-  } catch { /* best effort: tried again next time */ }
-}
+const thoughtsHistory = createHistory("thoughts", { world: () => room }); // per world (J468)
+// Seed once per world (Blink's test of 32720d3; per-world files since J468): the first time a world's
+// thread loads here, its earlier messages ("you" entries, oldest first) go IN FRONT of whatever that
+// world's list already holds (entries already in it are not repeated); thoughts-<W>.seeded marks it.
+// Only that world's own thread goes in, so no other world's prompts show up (Angus, J468).
+function seedThoughtsHistory(r) { seedHistory(thoughtsHistory, r, TH.entries.filter((e) => e.role === "you" && e.text).map((e) => e.text)); }
 // The box keeps its state in this panel's variables (query, qc, selA) through bind: every box
 // operation reads them first and writes them back after (Angus, N55: no glue here).
 const box = createInputBox({
@@ -662,8 +649,8 @@ const box = createInputBox({
   drafts: `thoughts-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   bind: { read: () => ({ text: query, cursor: qc, anchor: selA }), write: (st) => { query = st.text; qc = st.cursor; selA = st.anchor; } },
   // Everything typed here, /commands too (Angus: recall /ask, /keyword …), like every panel's box:
-  // STATE/input-history/thoughts.json, one list for every world's Thoughts window; each world's
-  // earlier thread messages are put in front of it once, when its thread loads (seedThoughtsHistory).
+  // STATE/input-history/thoughts-<WORLD>.json, one list per world (J468); each world's earlier
+  // thread messages are put in front of it once, when its thread loads (seedThoughtsHistory).
   history: thoughtsHistory,
   historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
   tint: atTint((name) => { const r = resolveAt([name], hereKnown()), a = r.found[0]; return a ? { agent: a } : r.special ? { special: true } : null; },
@@ -1115,8 +1102,8 @@ async function start() {
     });
     online = true;
     noteReconnect();
-    if (thoughtsOn) loadThoughts();
     applyRooms(await api.call("ui.subscribe", { windows: false }));
+    if (thoughtsOn) loadThoughts(); // after the world is known (J468Check: with no world argument it loaded and seeded room "")
     if (!startRan) { startRan = true; runFrom(startArgs.mode, startArgs.query); } // opened by /search or /ai elsewhere
     render();
   } catch { online = false; render(); setTimeout(start, 1500); }
