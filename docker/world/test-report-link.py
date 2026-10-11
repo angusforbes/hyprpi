@@ -3,7 +3,7 @@
 given as a file:// link, passes the link gate and opens (a vetted copy) in the world's Brave; a bare path, the inbox folder itself and
 anything outside the world's shares are refused. Uses the LIVE world-g config and a real report in its inbox (read-only); the browser,
 Hyprland and toasts are stubs. Run: python3 docker/world/test-report-link.py"""
-import glob, importlib.util, os, shutil, tempfile, time, urllib.parse
+import glob, importlib.util, json, os, shutil, tempfile, time, urllib.parse
 reports = sorted(glob.glob(os.path.expanduser("~/Work/sbx-inbox/world-g/research-*.md")))
 if not reports: print("test-report-link: SKIP (no research report in world-g's inbox)"); raise SystemExit(0)
 R = reports[0]; T = tempfile.mkdtemp(prefix="report-link-")
@@ -53,7 +53,9 @@ for bad in [R, "file://" + os.path.expanduser("~/.ssh/config"), "file:///etc/pas
 assert len(log()) == nb and len(rd("xdg.log")) == nx, "refused links reach no app at all"
 print("ok the share check comes first: refused links reach no app")
 # (J465Check HIGH) only real Markdown opens in a host app: HTML disguised as .md, .svg, .xhtml, .HTML, .txt go to the world's Brave
-F = os.path.expanduser(f"~/Work/j465-fixture-{os.getpid()}"); os.makedirs(F)
+# (J465Check) the fixtures live in the test's own temp dir, added as a share to the COPIED share list: never written into a live share
+F = os.path.join(T, "fixture-share"); os.makedirs(F)
+mj = f"{T}/state/hyprpi/sandboxes/world-g/managed.json"; ms = json.load(open(mj)); ms.append({"host": F, "at": F, "ro": True, "why": "test"}); json.dump(ms, open(mj, "w"))
 try:
     cases = {"plain.md": ("# A report\n\nplain text\n", "app"), "fake.md": ("<!DOCTYPE html><html><body><script>1</script></body></html>", "brave"),
              "pic.svg": ("<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>", "brave"), "page.xhtml": ("<html xmlns='http://www.w3.org/1999/xhtml'></html>", "brave"),
@@ -64,6 +66,22 @@ try:
         got = "app" if len(rd("xdg.log")) == na + 1 and len(log()) == nb else "brave" if len(log()) == nb + 1 and len(rd("xdg.log")) == na else "?"
         assert got == where, (name, got)
         print(f"ok {name}: {'the host app' if where == 'app' else 'the world Brave'}")
+    # (J465Check LOW) the production branch: the desktop's default for text/markdown, launched with gio (stubbed xdg-mime, gio and data dir)
+    del os.environ["HYPRPI_G_XDG_OPEN"]; os.makedirs(f"{T}/data/applications"); open(f"{T}/data/applications/md-viewer.desktop", "w").write("[Desktop Entry]\nExec=true %f\n")
+    os.environ["XDG_DATA_HOME"] = f"{T}/data"; os.environ["XDG_DATA_DIRS"] = f"{T}/none"
+    stub("xdg-mime", f'if [ "$2" = filetype ]; then echo text/plain; elif [ "$3" = text/markdown ]; then cat {T}/default 2>/dev/null; fi')
+    gio = stub("gio", f'printf "%s\\n" "$*" >> {T}/gio.log')
+    open(f"{T}/default", "w").write("md-viewer.desktop\n"); nb = len(log())
+    assert g.main(["g_open_url.py", "file://" + os.path.join(F, "plain.md"), "world-g"]) == 0; time.sleep(0.3)
+    gl = rd("gio.log"); assert len(gl) == 1 and gl[0].startswith(f"launch {T}/data/applications/md-viewer.desktop {T}") and gl[0].endswith("/plain.md") and len(log()) == nb, gl
+    print("ok production branch: gio launch <the desktop's text/markdown default> <the vetted copy>")
+    open(f"{T}/default", "w").write("../evil.desktop\n"); nb = len(log())
+    assert g.main(["g_open_url.py", "file://" + os.path.join(F, "plain.md"), "world-g"]) == 0; time.sleep(0.3)
+    assert len(rd("gio.log")) == 1 and len(log()) == nb + 1, "a bad or missing default → the world's Brave"
+    open(f"{T}/default", "w").write(""); nb = len(log())
+    assert g.main(["g_open_url.py", "file://" + os.path.join(F, "plain.md"), "world-g"]) == 0; time.sleep(0.3)
+    assert len(rd("gio.log")) == 1 and len(log()) == nb + 1
+    print("ok no default app (or a bad id) for text/markdown: the world's Brave")
 finally:
     shutil.rmtree(F, ignore_errors=True)
 print("test-report-link: all pass")
