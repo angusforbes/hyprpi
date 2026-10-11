@@ -184,7 +184,7 @@ export function configRows(world, P = paths()) {
   // the levels forbid shows too
   let hr = ""; try { const h = worldsFor(P.cfg, sb.name); if (h.length === 1) hr = h[0].w?.gateway?.host_runner ?? ""; } catch { /* none */ }
   const bridgeOn = dm && dm.host_agents === "bridge", effHr = hr || (bridgeOn ? "claude-code" : "");
-  if (effHr) { const shown = typeof hr === "object" && hr ? JSON.stringify(hr).slice(0, 60) : hr ? String(hr) : "claude-code (default)"; const row = rows.find((r) => r.key === "host_runner"); if (row) { row.value = shown; } else rows.push({ key: "host_runner", value: shown, range: RANGE("host_runner", levels), where: "worlds/<world>.json gateway block", settable: false }); }
+  if (effHr) { const shown = typeof hr === "object" && hr ? JSON.stringify(hr) : hr ? String(hr) : "claude-code (default)"; const row = rows.find((r) => r.key === "host_runner"); if (row) { row.value = shown; } else rows.push({ key: "host_runner", value: shown, range: RANGE("host_runner", levels), where: "worlds/<world>.json gateway block", settable: false }); }
   const viol = violations(levels, { mode: cur.mode, level: cur.level, phone_decisions: cur.phone_decisions, host_runner: effHr });
   return { world: sb.name, rows, levels, levelsError: error, violations: viol, levelsFile: levelsFile(P.cfg) };
 }
@@ -192,7 +192,7 @@ export function renderConfig(c) {
   if (c.error) return c.error;
   const w = Math.max(...c.rows.map((r) => r.key.length)), v = Math.max(...c.rows.map((r) => String(r.value).length), 8);
   return [`Settings for ${c.world} (change with: doorman config set ${c.world} KEY VALUE, from your own terminal)`, "",
-    ...c.rows.map((r) => `  ${r.key.padEnd(w)}  ${String(r.value).padEnd(Math.min(v, 44))}  ${r.range}${r.settable ? "" : `   [${r.where}]`}`), "",
+    ...c.rows.map((r) => `  ${r.key.padEnd(w)}  ${(String(r.value).length > 70 ? String(r.value).slice(0, 67) + "..." : String(r.value)).padEnd(Math.min(v, 44))}  ${r.range}${r.settable ? "" : `   [${r.where}]`}`), "",
     `The host's levels (${c.levelsFile}${c.levelsError ? ": BROKEN, strictest used" : ""}):`, ...describeLevels(c.levels).map((l) => "  " + l),
     ...(c.violations.length ? ["", "OUTSIDE the levels (clamped or refused):", ...c.violations.map((x) => "  " + x)] : [])].join("\n");
 }
