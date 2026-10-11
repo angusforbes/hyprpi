@@ -33,7 +33,7 @@ run 61; chk "inside G: switch, then focus, nothing else; exit 0" "order 'focus({
 cp "$T/cfg/hyprpi/worlds/world-t.json" "$T/w.bak"; echo '{"sandbox":"world-t"}' > "$T/cfg/hyprpi/worlds/world-t.json"; run 61
 chk "a world file with no workspace range: only home counts as G, so a window on 61 goes home to 68; exit 0" "order 'window.move,focus({ workspace,focus({ window,' && grep -q 'focus({ workspace = \"68\" })' $T/log && [[ \$RC == 0 ]]"
 echo '{not json' > "$T/cfg/hyprpi/worlds/world-t.json"; run 61
-chk "an unreadable world file: the mode can't be read (safe: no window), nothing dispatched, exit 0" "[[ ! -s $T/log && \$RC == 0 ]]"
+chk "an unreadable world file: no workspace range, so the window goes home to 68 and is shown there (J453: a window in every mode); exit 0" "order 'window.move,focus({ workspace,focus({ window,' && [[ \$RC == 0 ]]"
 mv "$T/w.bak" "$T/cfg/hyprpi/worlds/world-t.json"
 echo '[{"address":"0xabc;os.execute(1)","class":"hyprpi-doorman-doorman-t","workspace":{"id":61}}]' > "$T/clients.json"; : > "$T/log"; bash "$H/docker/doorman/doorman.sh" raise doorman-t >/dev/null 2>&1; RC=$?
 chk "a malformed address: nothing dispatched, exit 1" "[[ ! -s $T/log && \$RC == 1 ]]"

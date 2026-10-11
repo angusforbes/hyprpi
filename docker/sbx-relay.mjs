@@ -862,8 +862,7 @@ class Relay {
     // J363 (Angus: approvals happen in the Doorman window): a sandbox configured with "review_in": "<doorman entry>" has its held items
     // reviewed in THAT Doorman's host window; its rooms become the sandbox's own world letter ("review_room", default G) so no other world's
     // Thoughts panel claims them, and the toast's Review raises the window (openReview).
-    // Only when that Doorman exists, serves a sandbox, and its window can take a typed decision (the served sandbox is in mode open); otherwise the
-    // usual routing (the Thoughts panel) stays, so a held item is never left without a place to be decided.
+    // J453: in every mode (it was mode open only). A sandbox without such a Doorman keeps the usual routing (a Thoughts panel).
     msg = this.routeHeld(sb, msg);
     fs.mkdirSync(PENDING, { recursive: true, mode: 0o700 });
     const mine = fs.readdirSync(PENDING).filter((n) => n.startsWith(sb.name + "--"));
