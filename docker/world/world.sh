@@ -55,7 +55,9 @@ case "$CMD" in
     sbx cp "$H/docker/guide/AGENTS-sandbox.md" "$SB:/home/agent/.hyprpi-g/sandbox-note.md" >/dev/null
     sbx exec "$SB" sh -c 'f=~/.pi/agent/AGENTS.md; touch $f; sed -i "/<!-- hyprpi sandbox note/,/<!-- end hyprpi sandbox note -->/d" $f; cat ~/.hyprpi-g/sandbox-note.md >> $f' >/dev/null
     [ -x "$H/docker/world/ro-retest.sh" ] && { "$H/docker/world/ro-retest.sh" --if-new >/dev/null 2>&1 & }   # J307 (7a): re-test read-only after an sbx update
-    in_sb 'hyprpi list' ;;
+    in_sb 'hyprpi list'
+    # J380 v3: the world's settings come from the one source (worlds/<w>.json gateway block, limited by the host's levels): say so, and flag anything outside them
+    node "$H/docker/doorman/doorman" config "$SB" 2>/dev/null | sed -n '/OUTSIDE the levels/,$p' | sed 's/^/world.sh: /' >&2 || true ;;
   new)
     NAME="${2:?usage: world.sh new NAME}"
     [[ "$NAME" =~ ^[A-Za-z][A-Za-z0-9_-]{0,30}$ ]] || { echo "world.sh: bad agent name" >&2; exit 2; }
