@@ -258,6 +258,19 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "close_job",
+    label: "Close a stale job",
+    description: "Close a job stuck at running (or stopped) whose report never arrived as a brief report (J440): state done with report = its report (\"Wn → result\" for every done-when line, e.g. the one its agent sent as a message or answer) and evidence (where the proof is: a file, a checker's verdict); verify_work by a second agent or Angus still follows. Or state obsolete with reason (overtaken, no longer needed). History and versions are kept.",
+    promptSnippet: "Close a stale job as done (with its report) or obsolete",
+    parameters: Type.Object({ job: Type.String(), state: Type.String({ description: "done | obsolete" }), report: Type.Optional(Type.String({ description: "done: the report; must answer every done-when line (W1 → result …)" })), evidence: Type.Optional(Type.String({ description: "done: where the proof is (files, the checker and its verdict)" })), reason: Type.Optional(Type.String({ description: "obsolete: why it is no longer needed" })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.close", p);
+      return r.state === "done" ? out(`${r.job} is done (report on file). Next: verify_work by a second agent or Angus.`, { action: `${r.job} closed as done; to verify` })
+        : out(`${r.job} closed as obsolete.`, { action: `${r.job} closed as obsolete` });
+    },
+  });
+
+  pi.registerTool({
     name: "move_job",
     label: "Move a job",
     description: "Move a job (J<n>) to a project's card, keeping its id, versions and history. A brief given without a project sits on the world's Loose jobs card (a catch-all); Angus's rule: quick one-offs can stay there, but a job that leads to decisions (or more work) belongs in a project, so move it there yourself, without asking him. The old line is marked done \"moved to @x N12\", the new card gets the job's line, and its agent joins the project. (An agent that creates a project takes its running loose jobs along by itself.)",
