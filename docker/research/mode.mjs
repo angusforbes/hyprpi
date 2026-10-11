@@ -29,13 +29,13 @@ export const MODE_TEXT = {
 // checks and is logged (reviewed:false), "refused" is answered at once with a reason.
 const K = (note, message, share_project, task_change, send_file, allow_host, gpu, draft, gateway) => ({ note, message, share_project, task_change, send_file, allow_host, gpu, draft, gateway });
 export const POLICY = {
-  strict: { planHeld: true, exceptionHeld: true, summaryHeld: true, window: false, status: false, digestAll: false,
+  strict: { planHeld: true, exceptionHeld: true, summaryHeld: true, status: false, digestAll: false,
     kinds: K("held", "held", "held", "held", "held", "refused", "refused", "refused", "held") },
-  safe: { planHeld: false, exceptionHeld: true, summaryHeld: true, window: false, status: true, digestAll: false,
+  safe: { planHeld: false, exceptionHeld: true, summaryHeld: true, status: true, digestAll: false,
     kinds: K("auto", "held", "held", "held", "held", "held", "held", "held", "held") },
-  open: { planHeld: false, exceptionHeld: false, summaryHeld: true, window: true, status: true, digestAll: false,
+  open: { planHeld: false, exceptionHeld: false, summaryHeld: true, status: true, digestAll: false,
     kinds: K("auto", "held", "auto", "held", "held", "held", "held", "held", "held") },
-  yolo: { planHeld: false, exceptionHeld: false, summaryHeld: false, window: false, status: true, digestAll: true,
+  yolo: { planHeld: false, exceptionHeld: false, summaryHeld: false, status: true, digestAll: true,
     kinds: K("auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto") },
 };
 // What a mode does with a request kind. The sandbox's OWN mode can never change on its own, even in yolo (Angus's default for the open item).

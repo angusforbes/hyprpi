@@ -890,8 +890,10 @@ class Relay {
   }
   // J412 (HostReview412 #2): where a held item is decided (J363 review_in / review_room); used by hold() and by the stale-auto fallback in decide()
   routeHeld(sb, msg) {
+    // J453 (Angus: "always use the Doorman-G window"; "simplify"): a sandbox with a Doorman window (review_in) has every held item decided
+    // there, in every mode; the phone and the toast are remotes for the same queue. No panel path, no mode condition.
     const rt = typeof sb.cfg?.review_in === "string" ? this.sandboxes.find((x) => x.name === sb.cfg.review_in) : null;
-    const ri = rt && rt.cfg?.doorman_for && (rt.cfg.doorman_for === sb.name || rt === sb) && ((() => { try { return researchConf(rt.cfg.doorman_for).mode === "open"; } catch { return false; } })()) ? rt.name : ""; // J412: the window decides in mode open (was visibility developer)
+    const ri = rt && rt.cfg?.doorman_for && (rt.cfg.doorman_for === sb.name || rt === sb) ? rt.name : "";
     if (ri) msg = { ...msg, rooms: [/^[A-I]$/.test(String(sb.cfg.review_room || "")) ? sb.cfg.review_room : "G"], reviewIn: ri };
     return msg;
   }

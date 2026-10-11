@@ -7,15 +7,12 @@
 #   docker/doorman/doorman.sh create NAME     make the Doorman's sandbox and install Pi + its config in it
 #   docker/doorman/doorman.sh start NAME      run it (systemd user unit hyprpi-doorman-NAME, headless Pi in RPC mode)
 #   docker/doorman/doorman.sh stop NAME | status NAME | rm NAME
-#   docker/doorman/doorman.sh window NAME     (J327) open its live window now (mode open only)
+#   docker/doorman/doorman.sh window NAME     (J327) open its live window now (J453: every mode)
 #   docker/doorman/doorman.sh raise NAME      (J363, J427) take Angus to its window where it is (switch workspace, focus; the window doesn't move)
 #
-# What it shows follows the served sandbox's mode (J412, one dial: worlds/<w>.json "gateway": {"mode"}; the old "visibility" key is ignored):
-#   strict     headless, nothing recorded outside the journal
-#   safe, yolo headless, plus state/status.json (state, last question and answer) for a status row (yolo: testing, no decisions)
-#   open       a live window (kitty on "visibility_workspace", default 68) where Angus DECIDES what is held (1, 1 text, 1+, 2). Nothing else can
-#              be typed there: there is no input path from the window to the Doorman at all (its stdin is never fed by a window)
-# Files for all but strict: ~/.local/state/hyprpi/doormen/NAME/{events.jsonl,status.json,input.fifo (developer)}.
+# J453: in every mode, a live window (kitty on "visibility_workspace", default 68) where Angus DECIDES what is held (1, 1 text, 1+, 2). Nothing else can
+#   be typed there: there is no input path from the window to the Doorman at all (its stdin is never fed by a window)
+# Files: ~/.local/state/hyprpi/doormen/NAME/{events.jsonl,status.json,input.fifo (developer)}.
 #
 # NAME is its entry in ~/.config/hyprpi/sbx-relay.json, e.g.
 #   { "name": "doorman-g", "doorman_for": "world-g", "reports_to": "Thoughts-A", "display": "Doorman-G",
@@ -36,12 +33,8 @@ ENTRY="$(jq -c --arg n "$NAME" '.sandboxes[] | select(.name == $n)' "$CONF")"
 get() { jq -r --arg k "$1" '.[$k] // empty' <<<"$ENTRY" | sed "s#^~#$HOME#"; }
 FOR="$(get doorman_for)"; [[ -n "$FOR" ]] || { echo "doorman: '$NAME' has no doorman_for in $CONF" >&2; exit 2; }
 BOX="$(get workspace)"; INBOX="$(get inbox)"; CARD="$(get card)"; MODEL="$(get model)"; KEYF="$(get key_file)"
-# J412 (the one dial): the window is derived from the served sandbox's mode (worlds/<w>.json "gateway": {"mode"}, resolved by docker/research/mode.mjs),
-# no longer from a "visibility" key: strict headless; safe and yolo headless with a status row; open the window that decides. The old
-# "visibility" key in the entry is ignored (a warning if it differs); the internal names stay: strict / safe / developer.
-MODE="$(HYPRPI_RELAY_CONF="$CONF" node "$H/docker/research/research.mjs" mode --sandbox "$FOR" 2>/dev/null | jq -r '.mode // empty' 2>/dev/null || true)"
-case "$MODE" in strict) VIS=strict ;; safe|yolo) VIS=safe ;; open) VIS=developer ;; *) VIS="$(get visibility)"; VIS="${VIS:-strict}"; case "$VIS" in strict|safe|developer) ;; observer) VIS=safe ;; *) echo "doorman: cannot read the mode of $FOR and visibility '$VIS' is not strict, safe or developer" >&2; exit 2 ;; esac ;; esac
-OLDVIS="$(get visibility)"; [[ -z "$OLDVIS" || -z "$MODE" || "$OLDVIS" == "$VIS" ]] || echo "doorman: note: 'visibility' ($OLDVIS) in $NAME's entry is ignored; the mode of $FOR ($MODE) decides (J412)" >&2
+# J453 (Angus: "always use the Doorman-G window"; "simplify"): in every mode the Doorman logs its archive and has its window, where
+# Angus decides what its sandbox holds (the phone and the toast are remotes for the same queue). The old "visibility" key is ignored.
 WS="$(get visibility_workspace)"; WS="${WS:-68}"; [[ "$WS" =~ ^[0-9]{1,3}$ ]] || { echo "doorman: bad visibility_workspace" >&2; exit 2; }
 VSTATE="${HYPRPI_DOORMEN_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/hyprpi/doormen}/$NAME"
 VIEW="$H/docker/doorman/doorman-view.mjs"
@@ -94,25 +87,22 @@ start)
   sbx cp "$H/docker/doorman/doorman-prompt.md" "$NAME:/home/agent/doorman-prompt.md" >/dev/null
   PIRUN="sbx exec -i -w /home/agent -e HYPRPI_DROPBOX=$BOX/.hyprpi-dropbox -e HYPRPI_INBOX=$INBOX -e HYPRPI_DOORMAN=1 $NAME sh -c 'exec /home/agent/.local/bin/pi --mode rpc --no-skills --no-context-files --no-prompt-templates --tools read,hyprpi_reply,hyprpi_talk,hyprpi_draft_request,hyprpi_gpu_lease,hyprpi_task_change,hyprpi_request --system-prompt \"\$(cat /home/agent/doorman-prompt.md)\"'"
   OUT=""
-  if [[ "$VIS" != strict ]]; then
-    mkdir -p "$VSTATE"; chmod 700 "$VSTATE"
-    OUT=" | $(command -v node) $VIEW log $NAME"
-    rm -f "$VSTATE/input.fifo" # J365: no input path from the window to the Doorman (a fifo left from before is removed)
-  fi
+  mkdir -p "$VSTATE"; chmod 700 "$VSTATE"
+  OUT=" | $(command -v node) $VIEW log $NAME"
+  rm -f "$VSTATE/input.fifo" # J365: no input path from the window to the Doorman (a fifo left from before is removed)
   # J373 (stateless Doorman): doorman-rpc.mjs runs pi and starts a fresh session after every turn (it also keeps pi's stdin open, as the
   # idle tail did); the drop-box extension gives each session one message plus the relay's bounded context for that asker.
   RUN="$(printf %q "$H/docker/sbx-daemon.sh") ensure >/dev/null 2>&1; set -o pipefail; DOORMAN_PIRUN=$(printf %q "$PIRUN") $(command -v node) $(printf %q "$H/docker/doorman/doorman-rpc.mjs")$OUT" # when pi, sbx or the logger ends, the unit ends (and restarts)
   systemd-run --user --unit="$UNIT" --collect --property=Restart=on-failure --property=RestartSec=10 --property=MemoryMax=512M bash -c "$RUN"
-  echo "started $UNIT (visibility $VIS)"
-  [[ "$VIS" == developer || "$VIS" == observer ]] && [[ -z "${DOORMAN_NO_WINDOW:-}" ]] && "$0" window "$NAME" || true
+  echo "started $UNIT"
+  [[ -z "${DOORMAN_NO_WINDOW:-}" ]] && "$0" window "$NAME" || true
   ;;
 window)
-  [[ "$VIS" == developer || "$VIS" == observer ]] || { echo "doorman: $NAME's visibility is $VIS: no window"; exit 0; }
   CLS="hyprpi-doorman-$NAME"
   # focus guard: if Angus is looking at that workspace right now a new window could take his focus, so don't (J327 review)
   [[ -z "${DOORMAN_FORCE_WINDOW:-}" && "$(hyprctl -j activeworkspace | jq -r .id)" == "$WS" ]] && { echo "doorman: you are on workspace $WS; not opening a window under your hands (DOORMAN_FORCE_WINDOW=1 to override)"; exit 0; }
   hyprctl -j clients | jq -e --arg c "$CLS" '.[] | select(.class == $c)' >/dev/null && { echo "doorman: window already open"; exit 0; }
-  ARG=""; MODETXT="ARCHIVE (read-only)"; [[ "$VIS" == developer ]] && { ARG=" --write"; MODETXT="ARCHIVE + DECISIONS"; }
+  ARG=" --write"; MODETXT="ARCHIVE + DECISIONS"
   LABEL="$(get display)"; LABEL="${LABEL:-$NAME}"
   # on its workspace, silently: Angus's focus never moves
   hyprctl dispatch "hl.dsp.exec_cmd(\"env DOORMAN_LABEL='$LABEL' kitty --class $CLS --title '$LABEL · $MODETXT' $(command -v node) $VIEW view $NAME$ARG\", { workspace = \"$WS silent\" })" >/dev/null
@@ -123,7 +113,6 @@ raise)
   # doesn't move: his view switches to its workspace and it is focused. Only if it isn't open is it opened on its home G workspace ($WS) first;
   # one found outside world G's workspace range (or on a special workspace) goes home first, since it never lives on Angus's own workspaces (J363).
   #   doorman.sh raise NAME [ASKER]   (ASKER is accepted and ignored since J427)
-  [[ "$VIS" == developer || "$VIS" == observer ]] || { echo "doorman: $NAME's visibility is $VIS: no window"; exit 0; }
   CLS="hyprpi-doorman-$NAME"
   addr="$(hyprctl -j clients | jq -r --arg c "$CLS" '[.[] | select(.class == $c)][0].address // empty')"
   if [[ -z "$addr" ]]; then

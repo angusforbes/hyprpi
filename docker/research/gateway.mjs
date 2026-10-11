@@ -16,8 +16,8 @@
 // Every key is optional. Precedence for each setting: the "gateway" block, then the older key it replaces (doorman.mode, access, research.json
 // shape_model / key_file), then the built-in default. Nothing here changes any host check: cleaning, the J360 link rules, the number and copy checks and
 // the Doorman's vet run the same whichever provider or model is chosen. A value that isn't valid is ignored (the default is used) and the reason is listed.
-// Not covered: the Doorman's CHAT session model (set when the Doorman sandbox is created: "model" in sbx-relay.json) and its window visibility
-// (developer / observer / safe / strict: "visibility" in sbx-relay.json); they are shown in the summary.
+// Not covered: the Doorman's CHAT session model (set when the Doorman sandbox is created: "model" in sbx-relay.json); it's shown in the summary.
+// (J453: the Doorman's window is the same in every mode, so there's no visibility setting any more.)
 import fs from "node:fs";
 import { modeOf, levelOf, MODES } from "./mode.mjs";
 import os from "node:os";
@@ -57,7 +57,7 @@ export function resolveGateway({ w, research = {}, relay = [], sandbox = "", lev
   if (ambiguous) { mode = "strict"; notes.push("several worlds files name this sandbox: the runner and the card use strict until only one does"); src.mode = "ambiguous worlds files (fail closed)"; }
   return {
     search: { provider, label: SEARCH_PROVIDERS[provider].label, quick_model: quick, deep_model: deep, key_file: searchKeyFile, hosts: SEARCH_PROVIDERS[provider].hosts.slice() },
-    report_model: report, doorman_model: doorman, doorman_chat_model: doormanChat, doorman_visibility: dm.visibility || "",
+    report_model: report, doorman_model: doorman, doorman_chat_model: doormanChat,
     phone_decisions: !ambiguous && (g.phone_decisions === true || g.phone_decisions === "true"), // J434: Angus may decide held items from the phone app
     mode, ...(() => { const l = effectiveLevel({ w, relay, sandbox, mode }); return { level: l.level, levelWhy: l.why }; })(), sources: { ...src, level: null }, notes,
   };
@@ -80,6 +80,5 @@ export function summaryText(e, sandbox) {
     row("report model", e.report_model, e.sources.report_model),
     row("Doorman checks model", e.doorman_model || "(the Doorman sandbox's own)", e.sources.doorman_model), row("Doorman chat model", e.doorman_chat_model || "?", "sbx-relay.json model"),
     row("Doorman mode", e.mode, e.sources.mode), row("phone decisions", e.phone_decisions ? "on" : "off", "gateway.phone_decisions (Angus only)"), row("share level", e.level || "?", e.levelWhy),
-    row("window visibility", e.doorman_visibility || "?", "sbx-relay.json visibility"),
     ...(e.notes.length ? ["  Notes:", ...e.notes.map((n) => `    - ${n}`)] : [])].join("\n");
 }
