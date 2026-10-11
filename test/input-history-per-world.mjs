@@ -54,6 +54,12 @@ ok("C switching worlds follows the world", inC === "stream C two" && inB === "st
 // D
 for (const p of ["thoughts", "stream", "projects", "agents"]) ok(`D legacy ${p}.json untouched`, fs.readFileSync(path.join(dir, `${p}.json`), "utf8") === legacy[p]);
 
+// D2: a panel whose world isn't known yet (room "" before the daemon answers) neither reads nor writes the legacy file
+let early = "";
+const eb = createInputBox({ history: createHistory("stream", { world: () => early }) });
+send(eb, "sent before the world was known"); eb.key(UP);
+ok("D2 no world yet: nothing shown, nothing written", eb.text === "" && fs.readFileSync(path.join(dir, "stream.json"), "utf8") === legacy.stream && !fs.readdirSync(dir).some((f) => /^stream-\.json$|^stream\.json\.tmp/.test(f)));
+
 // E
 const th = createHistory("thoughts", { world: () => "D" });
 send(createInputBox({ history: th }), "typed in D before its thread loaded");
