@@ -135,7 +135,11 @@ try {
   await agent.call("talk", { to: ["Bolt"], text: "quick question?", mode: "demand" }).catch((e) => console.log("   demand:", e.message));
   await sleep(300); const bid = (JSON.stringify(gotB).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) || []).pop();
   if (bid) await bolt.call("talk.reply", { request_id: bid, text: "an answer" }).catch((e) => console.log("   reply:", e.message));
-  ok("(8) an ordinary agent-to-agent demand and its reply both count", brief()[w4.job].stats.msgs.n === n0 + 2, `${n0} → ${brief()[w4.job].stats.msgs.n}`);
+  await agent.call("talk", { to: ["Bolt"], text: "another?", mode: "demand" }); await sleep(300);
+  const bid2 = (JSON.stringify(gotB).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) || []).pop(), nB = brief()[w4.job].stats.msgs.n;
+  await bolt.call("talk.reply", { request_id: bid2, text: "" }).catch(() => {});
+  ok("(8) a rejected (empty) reply isn't counted", brief()[w4.job].stats.msgs.n === nB, `${nB} → ${brief()[w4.job].stats.msgs.n}`);
+  ok("(8) an ordinary agent-to-agent demand and its reply both count (plus the second demand)", brief()[w4.job].stats.msgs.n === n0 + 3, `${n0} → ${brief()[w4.job].stats.msgs.n}`);
   // StatsCheck round 2: started on the first working spell; thinking-only change; resync idle; the closing report counts; caps
   got.length = 0;
   const w5 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "fifth", angus: "x", done_when: ["W1 ok"], urgent: true }); await sleep(300); const r5 = rid();
