@@ -1102,8 +1102,8 @@ async function start() {
     });
     online = true;
     noteReconnect();
-    if (thoughtsOn) loadThoughts();
     applyRooms(await api.call("ui.subscribe", { windows: false }));
+    if (thoughtsOn) loadThoughts(); // after the world is known (J468Check: with no world argument it loaded and seeded room "")
     if (!startRan) { startRan = true; runFrom(startArgs.mode, startArgs.query); } // opened by /search or /ai elsewhere
     render();
   } catch { online = false; render(); setTimeout(start, 1500); }
