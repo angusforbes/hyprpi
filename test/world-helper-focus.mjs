@@ -52,6 +52,19 @@ try {
     const g = await gCall({ op: "dispatch", lua }).catch((e) => ({ ok: false, error: e.message }));
     ok(`refused: ${what} (direct drop-box request)`, g.ok === false && dispatched().length === n, JSON.stringify(g));
   }
+  // J467 v2: Ctrl+click on an agent's name in a G window (the kitten g_agentclick.py runs `world-helper.mjs focus-word`)
+  const fw = (...a) => new Promise((res) => execFile(process.execPath, [path.join(ROOT, "docker/world/world-helper.mjs"), "focus-word", "world-t", ...a], { env, timeout: 15000 }, (e, out) => res({ code: e ? e.code : 0, out: String(out) })));
+  let m = dispatched().length;
+  r = await fw("--line", "○ 🧪 @gtest · @Beta @Alpha · World G sandbox status", "--x", "21"); // the projects panel row, the pointer on "@Alpha"
+  ok("Ctrl+click on @Alpha in a G panel line: Alpha's own window is focused", r.code === 0 && dispatched().length === m + 1 && /address:0xa1/.test(dispatched().at(-1)), JSON.stringify(r));
+  m = dispatched().length;
+  for (const [what, args] of [["a name that is no G agent (another app's window title)", ["--word", "Angus's"]], ["a name of no window at all", ["--word", "@Nobody"]], ["an empty spot", ["--line", "   ", "--x", "2"]]]) {
+    r = await fw(...args); ok(`Ctrl+click on ${what}: nothing focused`, r.code !== 0 && dispatched().length === m, JSON.stringify(r)); }
+  // a G window moved out of G's workspaces, and a window that only CLAIMS to be G's (title, class) without G_WORLD: never targets
+  const fake = spawn("sleep", ["300"], { stdio: "ignore" });
+  fs.writeFileSync(clients, JSON.stringify([win("0xa1", mine.pid, "hyprpi.g-agent", "🐳 G: π - Alpha - world-t", 3), win("0xb2", fake.pid, "hyprpi.g-agent", "🐳 G: π - Beta - world-t", 63)]));
+  for (const w of ["@Alpha", "@Beta"]) { r = await fw("--word", w); ok(`Ctrl+click on ${w}: refused (${w === "@Alpha" ? "its window is outside G's workspaces" : "a look-alike window without G_WORLD"})`, r.code !== 0 && dispatched().length === m, JSON.stringify(r)); }
+  fake.kill();
 } finally {
   helper.kill(); mine.kill(); other.kill(); await sleep(300); fs.rmSync(T, { recursive: true, force: true });
 }
