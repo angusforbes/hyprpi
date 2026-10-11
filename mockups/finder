@@ -41,7 +41,8 @@ const here = new URL(".", import.meta.url).pathname;
 // --summon (SUPER+S; Angus): the same pop-up, as the summon menu: THIS world's agents, hyprpi panels
 // (TUIs) and projects (a project = its live members in this world). Tab toggles a light-grey mark
 // (several come together); ⏎ summons the marked rows, or the one under the cursor if none is marked,
-// to the workspace you're on. No search yet (typing does nothing). A summoned panel isn't a guest:
+// to the workspace you're on. Typing narrows the list (J447: a plain substring filter of the label and detail; Tab marks
+// survive it). A summoned panel isn't a guest:
 // SUPER+D on it closes it, and the next summon / SUPER+ALT+D moves it on unless it is pinned.
 const SUMMON = process.argv.includes("--summon");
 let S = null; // --summon: { room, workspace } (room.current)
@@ -465,7 +466,7 @@ const optionsOf = (rs) => rs.map((r) => ({ icon: r.glyph, label: r.label, detail
 function pluginSelect(rs, onPick) {
   const dir = fs.mkdtempSync(path.join(runtimeDir(), "finder-")), sel = path.join(dir, "pick"), done = path.join(dir, "done");
   const options = optionsOf(rs);
-  const payload = JSON.stringify({ mode: "select", prompt: SUMMON ? `Summon to ${wsLabel(S.workspace, WORLD_SIZE)}` : "Agents", ...(SUMMON ? { multi: true, noFilter: true } : {}), options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
+  const payload = JSON.stringify({ mode: "select", prompt: SUMMON ? `Summon to ${wsLabel(S.workspace, WORLD_SIZE)}` : "Agents", ...(SUMMON ? { multi: true, plainFilter: true } : {}), options, selectionFile: sel, doneFile: done, width: menuWidth(rs), ...(process.env.HYPRPI_FINDER_DRY ? { dry: true } : {}) });
   const clean = () => fs.rmSync(dir, { recursive: true, force: true });
   return new Promise((resolve) => {
     execFile("omarchy-shell", ["shell", "summon", PLUGIN, payload], (err, stdout) => {

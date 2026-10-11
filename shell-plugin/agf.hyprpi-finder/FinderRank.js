@@ -20,11 +20,12 @@ function matches(row, q) {
   return !q || String(row.label || "").toLowerCase().indexOf(q) >= 0 || String(row.detail || "").toLowerCase().indexOf(q) >= 0;
 }
 
-function rank(rows, query) {
+function rank(rows, query, plain) {
   var q = String(query || "").trim().toLowerCase();
   var out = [], i;
-  var world = /^[a-i]$/.test(q) ? q.toUpperCase() : "";
-  var slot = /^[0-9]$/.test(q) ? (q === "0" ? 10 : Number(q)) : 0;
+  // J447: plain (the summon pop-up, all one world): no world-letter / workspace-number ranking, just the matches.
+  var world = !plain && /^[a-i]$/.test(q) ? q.toUpperCase() : "";
+  var slot = !plain && /^[0-9]$/.test(q) ? (q === "0" ? 10 : Number(q)) : 0;
   if (!world && !slot) {
     for (i = 0; i < rows.length; i++) if (matches(rows[i], q)) out.push(i);
     return out;
