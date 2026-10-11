@@ -69,7 +69,8 @@ try {
   ok("B1 not verified by the close itself", j1.state !== "verified");
   ok("B1 verify_work by the agent that did it is refused", /can't verify/.test(await err(() => api.call("thoughts.verify", { room: "D", job: "J1", by: "Atlas" }))));
   ok("B1 verify_work by a second agent works", (await api.call("thoughts.verify", { room: "D", job: "J1", by: "Sweep" })).state === "verified");
-  ok("B1 a stopped job can be closed too", (await api.call("thoughts.close", { room: "D", job: "J2", state: "done", report: goodReport })).state === "done");
+  ok("B1 a stopped job can be closed too", (await api.call("thoughts.close", { room: "D", job: "J2", state: "done", report: goodReport, by: "Pocket" })).state === "done");
+  ok("B1 by names who closed it", (await job("J2")).history.some((h) => /closed by Pocket \(for Thoughts-D\)/.test(h.note || "")));
   // 2. obsolete
   ok("B2 obsolete without a reason is refused", /reason/.test(await err(() => api.call("thoughts.close", { room: "D", job: "J3", state: "obsolete" }))));
   await api.call("thoughts.close", { room: "D", job: "J3", state: "obsolete", reason: "J27 replaced the orange pin colour" });
