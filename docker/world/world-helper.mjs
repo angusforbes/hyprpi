@@ -367,7 +367,9 @@ else if (cmd === "focus-word") { // J467 (Angus: G's panels like the host's): Ct
   if (!word) process.exit(1);
   const all = JSON.parse(execFileSync("hyprctl", ["-j", "clients"]).toString());
   const mine = all.filter((c) => c?.pid && c.class === "hyprpi.g-agent" && Number.isInteger(c.workspace?.id) && c.workspace.id >= c0.lo && c.workspace.id <= c0.hi && envOf(c.pid).includes(`G_WORLD=${WORLD}`))
-    .map((c) => { const m = /π - (.{1,64}?) - [a-z0-9-]{1,32}$/u.exec(String(c.title || "")); return m && AGENT_RE.test(m[1]) ? { id: c.address, name: m[1], display: m[1], address: c.address } : null; }).filter(Boolean);
+    .map((c) => { // the title pi sets: "… π - <name> - <its folder>" (the folder is its cwd's name, not always the world's); the name is what lies between
+      const t = String(c.title || ""), i = t.indexOf("π - "), j = t.lastIndexOf(" - "); const n = i >= 0 && j > i + 3 ? t.slice(i + 4, j).trim() : "";
+      return n && n.length <= 64 && !/[\p{Cc}\p{Cf}]/u.test(n) ? { id: c.address, name: n, display: n, address: c.address } : null; }).filter(Boolean);
   const hit = agentIn(word, mine);
   if (!hit || !ADDR_RE.test(hit.address)) process.exit(1);
   if (process.argv.includes("--dry")) { console.log(hit.name); process.exit(0); }

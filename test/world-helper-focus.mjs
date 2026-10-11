@@ -65,6 +65,10 @@ try {
   fs.writeFileSync(clients, JSON.stringify([win("0xa1", mine.pid, "hyprpi.g-agent", "🐳 G: π - Alpha - world-t", 3), win("0xb2", fake.pid, "hyprpi.g-agent", "🐳 G: π - Beta - world-t", 63)]));
   for (const w of ["@Alpha", "@Beta"]) { r = await fw("--word", w); ok(`Ctrl+click on ${w}: refused (${w === "@Alpha" ? "its window is outside G's workspaces" : "a look-alike window without G_WORLD"})`, r.code !== 0 && dispatched().length === m, JSON.stringify(r)); }
   fake.kill();
+  // (ParityReview) a name AGENT_RE would have refused (an apostrophe), and a title whose folder isn't the world's name (pi's cwd)
+  fs.writeFileSync(clients, JSON.stringify([win("0xa1", mine.pid, "hyprpi.g-agent", "🐳 G: π - O'Neil - Cube Project", 62)]));
+  r = await fw("--line", "@O'Neil · World G", "--x", "3");
+  ok("a name with an apostrophe, its agent working in another folder: found and focused (multi-word names match by one word, as on the host)", r.code === 0 && /address:0xa1/.test(dispatched().at(-1)), JSON.stringify(r));
 } finally {
   helper.kill(); mine.kill(); other.kill(); await sleep(300); fs.rmSync(T, { recursive: true, force: true });
 }
