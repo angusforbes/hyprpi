@@ -41,6 +41,9 @@ const SIGN = process.env.HYPRPI_GATE_SIGN !== "0";
 const WANT_WS = Number(process.env.HYPRPI_GATE_WORKSPACE);
 const ME = { agent_id: "g-outside", name: "Outside", icon: "🚪" };
 const SEEN = path.join(STATE, "gate.seen");
+// J462: requests written by the "doorman" MCP server (docker/world/doorman-mcp.mjs) for an agent; the gate adopts them on their result,
+// so later events (research ready, Angus's decision, a host reply) reach that agent as a talk from Outside, as for the gate's own
+const ADOPT = path.join(STATE, "doorman-mcp", "adopt");
 const OUTBOX = path.join(BOX, "outbox");
 
 const L = {
@@ -147,6 +150,17 @@ async function pushInner(to, text, { mode = "talk", strict = true } = {}) {
 }
 
 // --- the outbox ----------------------------------------------------------------------------------------------
+// J462: an MCP request's hand-off (written by doorman-mcp.mjs as <outbox file name>); used once, then removed
+function adopted(file) {
+  if (!/^[0-9]+-[0-9a-f]{8}\.json$/.test(String(file || ""))) return undefined;
+  const f = path.join(ADOPT, file); let j;
+  try { const st = fs.lstatSync(f); if (!st.isFile() || st.size > 4096) return undefined; j = JSON.parse(fs.readFileSync(f, "utf8")); } catch { return undefined; }
+  try { fs.unlinkSync(f); } catch { /* */ }
+  const asker = j?.asker && typeof j.asker.id === "string" && j.asker.id ? { id: j.asker.id, name: field(j.asker.name, 64) || j.asker.id } : null;
+  if (!asker || !["talk", "research", "reply"].includes(j.kind)) return undefined;
+  return { kind: j.kind, asker, to: Array.isArray(j.to) ? j.to.map((x) => field(x, 64)).slice(0, 5) : [], want: field(j.want, 1200), answered: true, adopted: true };
+}
+setInterval(() => { try { const t = Date.now(); for (const n of fs.readdirSync(ADOPT)) { const f = path.join(ADOPT, n); try { if (t - fs.statSync(f).mtimeMs > L.ttlMs) fs.unlinkSync(f); } catch { /* */ } } } catch { /* none */ } }, 600000).unref();
 function writeOutbox(req) {
   const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`;
   const tmp = path.join(OUTBOX, `.${name}.tmp`);
@@ -275,7 +289,7 @@ const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 async function handleItem(j) {
   const type = String(j.type || "");
   if (type === "result") {
-    const w = typeof j.for === "string" ? outWait.get(j.for) : undefined;
+    const w = typeof j.for === "string" ? (outWait.get(j.for) ?? adopted(j.for)) : undefined;
     if (!w) { log(`result${j.for ? ` for ${field(j.for, 40)}` : ""} matches nothing${j.ok ? "" : " (not ok)"}`); return; }
     if (w.kind === "reply") { outWait.delete(j.for); log(`reply re ${short(w.R)}: ${j.ok ? "delivered" : "failed"}`); return; }
     if (w.kind === "research") {
@@ -283,6 +297,7 @@ async function handleItem(j) {
       const tok = field(j.research, 20);
       if (j.ok && tok) research.set(tok, { asker: w.asker, want: field(w.want, 120) });
       const st = j.ok ? `research started (${field(j.depth, 8) || "quick"}, id ${tok}). The host's Doorman writes its own web searches from your request; a quarantined reader runs them and shapes the result into what you asked for; ${j.mode === "yolo" ? "the Doorman vets it and it comes straight to you WITHOUT human review (mode yolo, testing)" : j.mode === "strict" ? "Angus approves the searches first and then reviews the result (mode strict)" : `Angus reviews it before it reaches you (mode ${j.mode === "open" ? "open" : "safe"})`}. You'll hear from Outside when it's ready or refused (deep research can take many minutes).` : `research not started: ${field(j.error, 300) || "unknown error"}`;
+      if (w.adopted) return; // J462: the MCP tool already told the agent; the gate now follows the token
       if (!w.answered) { w.answered = true; await answerInner(w.innerReq, `Outside: ${st}`); } else await pushInner([w.asker.id], `[Outside] ${st}`);
       return;
     }
@@ -299,6 +314,7 @@ async function handleItem(j) {
       if (pending.length) parts.push(`held for Angus's approval (id ${pending.join(", ")}); you'll hear when he decides`);
       status = parts.join("; ") || `accepted for ${to}`;
     }
+    if (w.adopted) { log(`result for ${field(j.for, 40)} (an MCP request of ${w.asker.name}): ${j.ok ? "ok" : "failed"}`); return; } // J462: answered by the tool
     if (!w.answered) {
       outWait.delete(j.for);
       w.answered = true;

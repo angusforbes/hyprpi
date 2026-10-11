@@ -54,6 +54,9 @@ case "$CMD" in
     sbx cp "$H/docker/guide/SKILL.md" "$SB:/home/agent/.pi/agent/skills/sandbox-guide/SKILL.md" >/dev/null
     sbx cp "$H/docker/guide/AGENTS-sandbox.md" "$SB:/home/agent/.hyprpi-g/sandbox-note.md" >/dev/null
     sbx exec "$SB" sh -c 'f=~/.pi/agent/AGENTS.md; touch $f; sed -i "/<!-- hyprpi sandbox note/,/<!-- end hyprpi sandbox note -->/d" $f; cat ~/.hyprpi-g/sandbox-note.md >> $f' >/dev/null
+    # J462: the "doorman" MCP server for every agent in the world (their pi reads ~/.pi/agent/mcp.json; each agent's pi starts its own copy,
+    # with that agent's HYPRPI_AGENT_ID and the drop-box paths from g-env.sh); only this entry is written, the rest of the file is kept
+    sbx exec "$SB" node -e 'const fs=require("fs"),f=process.env.HOME+"/.pi/agent/mcp.json";let j={};try{j=JSON.parse(fs.readFileSync(f,"utf8"))}catch{};if(!j||typeof j!=="object"||Array.isArray(j))j={};j.mcpServers=j.mcpServers&&typeof j.mcpServers==="object"?j.mcpServers:{};const e={};for(const k of ["HYPRPI_AGENT_ID","HYPRPI_DROPBOX","HYPRPI_INBOX","HYPRPI_STATE","HYPRPI_SOCKET"])e[k]="${"+k+"}";j.mcpServers.doorman={command:"node",args:[process.argv[1]+"/docker/world/doorman-mcp.mjs"],env:e,exposure:"direct"};fs.mkdirSync(process.env.HOME+"/.pi/agent",{recursive:true});fs.writeFileSync(f+".tmp",JSON.stringify(j,null,2));fs.renameSync(f+".tmp",f)' "$H" >/dev/null || echo "world.sh: couldn't write the doorman MCP config" >&2
     [ -x "$H/docker/world/ro-retest.sh" ] && { "$H/docker/world/ro-retest.sh" --if-new >/dev/null 2>&1 & }   # J307 (7a): re-test read-only after an sbx update
     in_sb 'hyprpi list'
     # J380 v3: the world's settings come from the one source (worlds/<w>.json gateway block, limited by the host's levels): say so, and flag anything outside them

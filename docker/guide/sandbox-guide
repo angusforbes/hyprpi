@@ -109,7 +109,7 @@ def why_path(arg):
                 f"That says nothing about the host. Ask the host (the Doorman) whether it exists and whether it can be shared.")
     return (f"{p} isn't here. It is not shared into this sandbox, so this says nothing about the host: the host may well have it. "
             f"This sandbox is like a separate machine; only the folders listed by 'sandbox-guide' are shared.{hint} "
-            f"Next step: ask the host (your Doorman, e.g. 'Doorman-G: ...' to Outside in world G, or your host contact) whether it exists and whether it can be shared.")
+            f"Next step: ask the host (your Doorman: in world G the doorman tool ask_doorman(question); or your host contact) whether it exists and whether it can be shared.")
 
 def why_url(arg):
     u = arg if "://" in arg else "https://" + arg
@@ -158,7 +158,7 @@ def overview():
         try:
             m = re.search(r"^Doorman mode: (doorman-[a-z]+)", open(c).read(), re.M)
             if m:
-                lines.append(f"Web research: ask Outside 'Research: <what you're looking for>' (Doorman mode: {m.group(1)}; the host card's Web research section says what that means).")
+                lines.append(f"Web research: the doorman tool research(question), or ask Outside 'Research: <what you're looking for>' (Doorman mode: {m.group(1)}; the host card's Web research section says what that means).")
             t = re.search(r"^Task(?: \(set by Angus\))?: (.+)$", open(c).read(), re.M)  # J352: the task research is bound to
             if t:
                 lines.append(f"Research task: {t.group(1)[:300]} (research outside it waits for Angus).")
