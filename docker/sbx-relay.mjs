@@ -125,9 +125,21 @@ function bytes(s) { return Buffer.byteLength(s); }
 // deleted one is re-pinned on the next scan.
 const fdPath = (fd, name = "") => `/proc/self/fd/${fd}${name ? "/" + name : ""}`;
 function openDirAt(parentFd, name) { return fs.openSync(parentFd == null ? name : fdPath(parentFd, name), O_RDONLY | O_DIRECTORY | O_NOFOLLOW); }
+// (PollReview, J458) the pinned outbox is still the one at its path: a sandbox that renames the outbox aside (it stays linked)
+// and makes a new one would otherwise have its new requests ignored. The current path is opened the same safe way
+// (O_NOFOLLOW, one component at a time); a different inode means re-pin. Nothing at the path (renamed, not replaced yet): keep the pin.
+function samePinned(sb) {
+  const fds = [];
+  try {
+    const ws = openDirAt(null, String(sb.cfg.workspace || "").replace(/^~(?=\/|$)/, HOME)); fds.push(ws);
+    const base = openDirAt(ws, DROP); fds.push(base); const ob = openDirAt(base, "outbox"); fds.push(ob);
+    const a = fs.fstatSync(ob), b = fs.fstatSync(sb.dirs.outbox);
+    return a.ino === b.ino && a.dev === b.dev;
+  } catch (e) { return e.code === "ENOENT"; } finally { for (const fd of fds) { try { fs.closeSync(fd); } catch { /* */ } } }
+}
 function pinDirs(sb) {
   if (sb.dirs) {
-    try { if (fs.fstatSync(sb.dirs.outbox).nlink > 0 && fs.fstatSync(sb.dirs.inbox).nlink > 0) return sb.dirs; } catch { /* re-pin */ }
+    try { if (fs.fstatSync(sb.dirs.outbox).nlink > 0 && fs.fstatSync(sb.dirs.inbox).nlink > 0 && samePinned(sb)) return sb.dirs; } catch { /* re-pin */ }
     for (const fd of Object.values(sb.dirs)) { try { fs.closeSync(fd); } catch { /* closed */ } }
     sb.dirs = null;
   }
