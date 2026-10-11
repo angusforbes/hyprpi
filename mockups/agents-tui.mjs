@@ -52,10 +52,10 @@ function copy(text) {
   try { const p = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.on("error", () => {}); p.stdin.end(text); note = "copied"; } catch { /* no wl-copy */ }
 }
 // ↑↓ are the box's, as in every panel (Angus, N51): its start / end first, then your earlier
-// commands (STATE/input-history/agents.json); the list cursor moves with Ctrl+↑↓.
+// commands (STATE/input-history/agents-<WORLD>.json, per world: J468); the list cursor moves with Ctrl+↑↓.
 const box = createInputBox({ onChange: () => { if (!note.startsWith("✗")) note = ""; render(); }, copy, multiline: false,
   drafts: `agents-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
-  history: createHistory("agents"), historyNotes: { first: "that's your first command here", none: "no earlier commands yet" } });
+  history: createHistory("agents", { world: () => room }), historyNotes: { first: "that's your first command here", none: "no earlier commands yet" } });
 const cmds = createCommands({
   commands: [],
   ctx: {

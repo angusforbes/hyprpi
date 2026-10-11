@@ -58,7 +58,7 @@ const box = createInputBox({
   // J165: a "✓ Sent to …" line stays SENT_STICKY_MS even while Angus types on (then the next keystroke clears it).
   onChange: () => { if (box.text !== boxSeen) { boxSeen = box.text; boxEditAt = Date.now(); } note = note.startsWith("✗") || (note.startsWith("✓") && Date.now() - noteAt < SENT_STICKY_MS) ? note : ""; render(); },
   // ↑↓ as in every panel (Angus, N51): the box's start / end, then your earlier entries.
-  history: createHistory("projects"), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
+  history: createHistory("projects", { world: () => room }), historyNotes: { first: "that's your first entry here", none: "nothing entered here yet" },
   copy: (t) => copy(t),
   drafts: `projects-${(process.argv[2] || "any").toUpperCase()}`, // J194: unsent draft kept across close/crash, cleared drafts ring (Ctrl+Z / Alt+Z)
   tint: atTint((n) => {

@@ -82,7 +82,7 @@ const box = createInputBox({
     write: (st) => { input = st.text; ic = st.cursor; selA = st.anchor; },
   },
   // ↑↓ as in every panel (Angus, N51): lines, then the start / end, then your earlier messages.
-  history: createHistory("stream"), historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
+  history: createHistory("stream", { world: () => room }), historyNotes: { first: "that's your first message here", none: "no earlier messages yet" },
   tint: atTint((name) => { const r = resolveAt([name], atPool()), a = r.found[0]; return a?.project ? { project: true } : a ? { agent: a } : r.special ? { special: true } : null; },
     { worldFg: (x) => fg(worldFg(room), x), bold, nameFg }),
 });
