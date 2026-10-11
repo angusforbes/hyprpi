@@ -231,7 +231,7 @@ function renderTop() {
   document.querySelector('.tab[data-tab="thoughts"]').classList.toggle("busy", busy);
   for (const t of document.querySelectorAll(".tab")) t.classList.toggle("cur", t.dataset.tab === (view === "session" ? "agents" : view));
   // The desktop bar's worlds (server: shown), plus the one open here even if it's hidden there.
-  $("#worlds").innerHTML = worlds.filter((w) => w.shown || w.id === world).map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.needsYou ? " needs" : w.working || w.thoughtsBusy ? " working" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)} · ${w.agents} agents${w.working ? ` · ${w.working} working` : ""}${w.needsYou ? ` · ${w.needsYou} need you` : ""}">${esc(w.id)}</button>`).join("");
+  $("#worlds").innerHTML = worlds.filter((w) => w.shown || w.id === world).map((w) => `<button class="chip${w.id === world ? " cur" : ""}${w.sandboxed ? " sbx" : ""}${w.needsYou ? " needs" : w.working || w.thoughtsBusy ? " working" : ""}" style="--c:${esc(w.color)}" data-w="${esc(w.id)}" title="world ${esc(w.id)}${w.sandboxed ? " " + esc(w.sandboxed) + " (sandboxed)" : ""} · ${w.agents} agents${w.working ? ` · ${w.working} working` : ""}${w.needsYou ? ` · ${w.needsYou} need you` : ""}">${esc(w.id)}</button>`).join("");
   fitTop();
 }
 
@@ -686,7 +686,7 @@ function ago(ts) {
   const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
   return m < 1 ? "now" : m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
 }
-const agentName = (a) => `<span class="aname"${a.color ? ` style="color:${esc(a.color)}"` : ""}>${esc(a.name)}</span>`;
+const agentName = (a) => `<span class="aname"${a.color ? ` style="color:${esc(a.color)}"` : ""}>${esc(a.name)}</span>${a.sbxMark ? ` <span class="sbxm">${esc(a.sbxMark)}</span>` : ""}`; // J450: "🐧 Alpha 🐳" (the server's mark, lib/sandbox-icon.mjs)
 function agentRow(a, cls = "agent") {
   const meta = [a.ws, a.compactions >= 1 ? `⟳${a.compactions}` : "", a.topic ? `<i>${esc(a.topic)}</i>` : "", a.active ? ago(a.active) : ""].filter(Boolean).join(" · "); // J117 ⟳N: compactions
   return `<button class="${cls}${a.mark === "◌" ? " gone" : ""}" data-a="${esc(a.id)}">${cls === "agent open" ? `<span class="backbtn" aria-label="back to the agents">‹</span>` : ""}<span class="amark m${a.mark === "●" ? "w" : a.mark === "◐" ? "b" : a.mark === "×" ? "x" : a.mark === "✓" ? "d" : "i"}">${esc(a.mark)}</span><span class="pic">${esc(a.icon || "")}</span><span class="pmain"><span class="pname">${agentName(a)}</span><span class="pwhere">${meta}</span></span>${cls === "agent" || (cls === "agent open" && a.mark !== "◌") ? `<span class="chev aopen" title="open its session">›</span>` : ""}</button>`; // J236: the summary's header too
@@ -707,6 +707,7 @@ function renderAgents({ keepScroll = false } = {}) {
           + `<div style="display:flex;gap:6px;margin-top:6px"><input id="heldin" placeholder="1, 1 text, 2 text …" disabled autocomplete="off" style="flex:1"><button id="heldgo" disabled>Decide</button></div><div class="small" id="heldmsg"></div>`
           : `<div class="small">${l.held.phoneDecisions ? "This one (a gateway / mode change) is decided at the laptop only." : "Read-only here: decisions for this world are made at the laptop (phone decisions are off)."}</div>`) + `</div>`);
     }
+    { const wd = worlds.find((x) => x.id === world); if (wd?.sandboxed) html.push(`<div class="small sbxhead">Agents ${esc(world)} ${esc(wd.sandboxed)} · a sandboxed world: its agents run inside the sandbox</div>`); } // J450: as the desktop's "Agents G 🐳"
     for (const x of l.agents) html.push(agentRow(x));
     if (!l.agents.length && l.loaded) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
     html.push(`<div class="settings"><span class="small">π settings</span><label><input type="checkbox" id="optstrm"${showStrm ? " checked" : ""}> Show the Strm (Stream) tab</label></div>`); // J448 v2

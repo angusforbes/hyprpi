@@ -23,7 +23,7 @@ import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib
 import { worldHex, unnamed } from "../lib/tui/term.mjs";
 import { isAppWindow, appLabel, stateNote } from "../lib/apps.mjs";
 import { heldForSandboxes } from "../lib/held.mjs";
-import { sbxIcon } from "../lib/sandbox-icon.mjs"; // J423
+import { sbxIcon, sbxPlaceholder } from "../lib/sandbox-icon.mjs"; // J423; J450: sbxPlaceholder shared with π
 
 // Which pop-up (Angus, @hyprpi D8): "plugin" (default) is our own copy of the Omarchy menu, the
 // omarchy-shell plugin agf.hyprpi-finder (shell-plugin/; the same look, plus colour: names in the
@@ -52,7 +52,6 @@ let S = null; // --summon: { room, workspace } (room.current)
 // window: it is not listed (summoning it brought nothing). Its real windows are listed instead (summon only), marked 🐳
 // (Linkpath's format): the world's agents and panels from its helper's host-only windows.json (trusted only when the live
 // window at that address has the same pid), and a Doorman's window (class hyprpi-doorman-<name>) in place of its app row.
-const sbxPlaceholder = (a) => /^sbx-/.test(a.id || "") && a.model === "sandboxed" && !a.address;
 const safeText = (s, n = 40) => { const t = String(s || "").replace(/[\u0000-\u001f\u007f-\u009f]|\p{Cf}/gu, "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; }; // (untrusted: set inside the sandbox)
 function sandboxWindows(clients) { // address -> { kind, name } for windows a sandboxed world's helper launched (pid-checked)
   const base = path.join(stateDir(), "worlds"), out = {};

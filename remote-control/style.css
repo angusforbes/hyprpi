@@ -351,3 +351,7 @@ ol.opts li.opt:active { background: var(--faint); }
 .settings { margin: 22px 4px 30px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
 .settings label { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .settings input[type=checkbox] { width: 20px; height: 20px; }
+/* J450: a sandboxed world (G 🐳): a small whale on its chip, and a line over its Agnt list */
+.chip.sbx::before { content: "🐳"; position: absolute; left: -4px; bottom: -4px; font-size: calc(var(--s) * 11px); line-height: 1; }
+.sbxhead { margin: 4px 4px 8px; }
+.sbxm { font-size: .9em; }

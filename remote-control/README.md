@@ -44,6 +44,18 @@ The server answers only to its own host names (localhost on its port, this machi
 more with `HYPRPI_REMOTE_HOSTS`), against DNS rebinding. Files from `/file` are never sniffed, and
 anything that could run script (HTML, SVG, …) opens sandboxed.
 
+## Shared with the desktop, and deliberate differences (J450)
+
+Angus worries about the phone drifting from the desktop, so π reuses the desktop's own modules wherever it can: lib/stream.mjs (the Stream and its filter), lib/thoughts-lines.mjs (what the thread shows), lib/tui/agent-click.mjs (name links), lib/sandbox-icon.mjs (a sandboxed world's 🐳 mark, its agents' "<own icon> Name 🐳", and sbxPlaceholder: the relay's host placeholders world-g / Doorman-G are never listed as agents, as in finder and G's own panels). New phone code should import these, not copy them.
+
+Deliberate phone-only differences:
+
+- Strm is off by default (π settings at the end of Agnt; J448 v2).
+- Strm's @Name filter also shows that agent's own board changes, and @Angus his own lines (J53/J60); the desktop Stream panel doesn't (the shared version is paused on job/J448).
+- Strm has kind chips (Posts · Did · Topics · Talk · Board · Other) and "search all history"; the desktop has views (^F) instead.
+- The world chips are in letter order (A–G), not the desktop bar's order (Angus accepted, J37).
+- A sandboxed world's chip carries a small 🐳, and its Agnt list starts with "Agents G 🐳 · a sandboxed world" (the desktop shows that in the panel title).
+
 ## Who can reach it
 
 `tailscale serve` publishes it on the tailnet only (never Funnel):

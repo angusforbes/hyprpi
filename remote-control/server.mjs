@@ -37,6 +37,7 @@ import { worldHex, theme } from "../lib/tui/term.mjs";
 import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
 import * as session from "./session-read.mjs";
 import * as gworld from "./gworld.mjs";
+import { sbxIcon, sbxPlaceholder, SBX_MARK } from "../lib/sandbox-icon.mjs"; // J450: the desktop's sandbox rules (finder, agents panel)
 import { heldForSandboxes, heldDigest, phoneDecision, PHONE_REFUSED_KINDS } from "../lib/held.mjs"; // J434
 import { phoneDecisionsFor } from "../docker/research/mode.mjs"; // J434 v2: per sandbox, gateway.phone_decisions (default off) // J433: a sandboxed world's own agents (its inner daemon, via sbx exec) // an agent's session, tail-read (J161)
 import { shotRoutes } from "./shot.mjs"; // screenshots from the iPhone share sheet (J250)
@@ -171,13 +172,14 @@ function worlds() {
   return [...ids].filter((id) => /^[A-Z]$/.test(id)).sort().map((id) => ({
     id,
     color: "#" + (worldHex(id) || "7aa2f7"),
-    agents: (listing?.agents || []).filter((a) => a.room === id).length,
+    agents: (listing?.agents || []).filter((a) => a.room === id && !sbxPlaceholder(a)).length,
     thoughtsBusy: !!busy.get(id),
     // Activity dot (like the agents panel's ● and ×): an agent working, or one blocked on Angus
     // (a bonk or a ding: status "blocked" until it works again).
     working: (listing?.agents || []).filter((a) => a.room === id && !a.parked && a.status === "working").length,
     needsYou: (listing?.agents || []).filter((a) => a.room === id && !a.parked && a.status === "blocked").length,
     shown: shownWorlds.includes(id),
+    sandboxed: gworld.sandboxOf(id) ? SBX_MARK : "", // J450: G 🐳, as the desktop panels say it
   }));
 }
 // The names the page turns into links (J45): every world's agents as the Agnt tab lists them (live,
@@ -291,7 +293,7 @@ function boardSummary(b) {
 const agentMark = (a) => a.dormant || a.parked ? "◌" : a.status === "working" ? "●" : a.status === "background" ? "◐" : a.status === "blocked" ? "×" : a.status === "done" && !a.seen ? "✓" : "○";
 async function agentsSummary(r) {
   const l = await api.call("list");
-  const here = [...(l.agents || []).filter((a) => a.room === r && !a.parked), ...(l.dormant || []).filter((a) => a.room === r && a.kind !== "closed").map((a) => ({ ...a, dormant: true }))];
+  const here = [...(l.agents || []).filter((a) => a.room === r && !a.parked && !sbxPlaceholder(a)), ...(l.dormant || []).filter((a) => a.room === r && a.kind !== "closed").map((a) => ({ ...a, dormant: true }))];
   const [board, briefs, log] = await Promise.all([
     api.call("board.get", { room: r }).catch(() => ({ projects: [] })),
     api.call("thoughts.briefs", { room: r }).catch(() => ({ briefs: [] })),
@@ -333,11 +335,11 @@ async function innerAgents(r) {
   const sb = gworld.sandboxOf(r); if (!sb) return [];
   const l = await innerList(sb), size = Number(loadConfig()?.worldSize) || 10;
   return (l.agents || []).filter((a) => a.room === r && !a.parked && a.session).map((a) => ({
-    id: `sbx:${sb}:${a.id}`, name: a.display || a.name || a.id, icon: a.icon || "", color: a.color || "", mark: agentMark(a),
+    id: `sbx:${sb}:${a.id}`, name: a.display || a.name || a.id, icon: sbxIcon(a.icon, a.display || a.name || a.id), color: a.color || "", mark: agentMark(a), // J450: its own icon (checked: set inside the sandbox) or the desktop's default
     status: a.status || "idle", helpers: [], compactions: a.compactions || 0, topic: a.topic || "",
     ws: Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, size) : "", active: a.last_did?.ts || null,
     did: a.last_did?.text || "", model: (a.model || "").replace(/^claude-/, ""), thinking: a.thinking || "", job: null, projects: [], posts: [], recent: [],
-    sandboxed: sb,
+    sandboxed: sb, sbxMark: SBX_MARK, // J450: "🐧 Alpha 🐳", as the desktop draws it
   }));
 }
 // "sbx:<sandbox>:<id>" -> { sb, id, a } (the inner listing's agent) or null
