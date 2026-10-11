@@ -79,12 +79,17 @@ const bridged = async (sb, req, timeout, oneShot) => { try { return await viaBri
 export const closeBridges = () => { for (const b of [...bridges.values()]) b.fail?.("closed"); bridges.clear(); };
 
 // One request to the sandbox's inner daemon. "list" is cached 3 s per sandbox (the phone polls it).
-const listCache = new Map();
+// (J444bcheck) any other call clears it BEFORE it is sent, and bumps a generation, so a list that was in flight when a
+// prompt or send went out never fills the cache afterwards.
+const listCache = new Map(), listGen = new Map();
 export async function call(sb, method, params = {}) {
   if (!ALLOWED.has(method)) throw new Error(`not allowed from the phone: ${method}`);
-  if (method === "list" && !Object.keys(params || {}).length) { const c = listCache.get(sb); if (c && Date.now() - c.at < 3000) return c.v; }
+  const isList = method === "list" && !Object.keys(params || {}).length;
+  if (isList) { const c = listCache.get(sb); if (c && Date.now() - c.at < 3000) return c.v; }
+  else { listCache.delete(sb); listGen.set(sb, (listGen.get(sb) || 0) + 1); }
+  const gen = listGen.get(sb) || 0;
   const v = await bridged(sb, { t: "call", m: method, p: params }, 40000, () => callOnce(sb, method, params)).then((m) => (m && typeof m === "object" && "ok" in m && "id" in m ? (m.r ?? null) : m));
-  if (method === "list" && !Object.keys(params || {}).length) listCache.set(sb, { at: Date.now(), v }); else listCache.delete(sb);
+  if (isList && (listGen.get(sb) || 0) === gen) listCache.set(sb, { at: Date.now(), v });
   return v;
 }
 async function callOnce(sb, method, params) {
@@ -93,7 +98,7 @@ async function callOnce(sb, method, params) {
   return JSON.parse(out.toString("utf8") || "null");
 }
 
-const fileOnce = (sb, file) => run(sb, 'f="$1"; case "$(readlink -f "$f")" in /home/agent/.pi/agent/sessions/*.jsonl) cat -- "$f";; *) exit 3;; esac'.replace('"$1"', `'${file.replace(/'/g, "")}'`), null, 20000); // the one-shot way (J444: the fallback)
+const fileOnce = (sb, file) => run(sb, 'f="$1"; case "$(readlink -f "$f")" in /home/agent/.pi/agent/sessions/*.jsonl) [ "$(stat -c %s -- "$f")" -le 24000000 ] || exit 4; cat -- "$f";; *) exit 3;; esac'.replace('"$1"', `'${file.replace(/'/g, "")}'`), null, 20000); // the one-shot way (J444: the fallback)
 // An inner agent's session file, copied to a host temp file (for remote-control/session-read.mjs), cached 3 s.
 const cache = new Map(); // sb:file -> { at, tmp }
 export async function sessionCopy(sb, file) {
