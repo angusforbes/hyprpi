@@ -69,6 +69,7 @@ send(eb, "sent before the world was known"); eb.key(UP);
 ok("D2 no world yet: nothing shown, nothing written", eb.text === "" && fs.readFileSync(path.join(dir, "stream.json"), "utf8") === legacy.stream && !fs.readdirSync(dir).some((f) => /^stream-\.json$|^stream\.json\.tmp/.test(f)));
 
 // E
+ok("E0 seeding with no world yet does nothing (legacy untouched)", seedHistory(createHistory("thoughts", { world: () => "" }), "", ["x"]) === false && fs.readFileSync(path.join(dir, "thoughts.json"), "utf8") === legacy.thoughts && !fs.existsSync(path.join(dir, "thoughts.seeded")));
 const th = createHistory("thoughts", { world: () => "D" });
 send(createInputBox({ history: th }), "typed in D before its thread loaded");
 const seeded = seedHistory(th, "D", ["D thread 1", "D thread 2"]), again = seedHistory(th, "D", ["D thread 3"]);
