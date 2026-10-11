@@ -24,6 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { stateDir } from "../lib/paths.mjs";
 
 const MB = 1e6;
 // Caps (J74, Angus's pick on the card, D3; default a): per file, per batch (one Upload tap), free disk kept.
@@ -37,7 +38,9 @@ const IMG = /\.(png|jpe?g|gif|webp)$/i;
 
 export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refusedPart, underRoot, json, body, log, getApi, room }) {
   const PHONE = UPLOAD_DIR || path.join(HOME, "Phone"); // J190: config.json phone.uploadDir
-  const LOG = path.join(HOME, ".local/state/hyprpi/phone-uploads.log");
+  // J437 (StateCheck437): the upload log follows HYPRPI_STATE / XDG_STATE_HOME (lib/paths.mjs stateDir) when either
+  // is set, so an isolated run never writes the live log; otherwise HOME's, as before (tests pass a scratch HOME).
+  const LOG = path.join(process.env.HYPRPI_STATE || process.env.XDG_STATE_HOME ? stateDir() : path.join(HOME, ".local/state/hyprpi"), "phone-uploads.log");
   const TOKEN = randomBytes(24).toString("hex");
   const batches = new Map(); // id -> { bytes, files, at }
   let reserved = 0, active = 0; // bytes and uploads in flight (the free-disk rule counts them all)
