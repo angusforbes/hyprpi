@@ -188,7 +188,7 @@ assert.equal(N.openPeer(G, D), true); assert.equal(N.openPeer(G, PB), false);
   const put = (m) => fs.writeFileSync(path.join(S, "pending", `${m.id}.json`), JSON.stringify(m));
   put({ id: "doorman-g--aaa442", sandbox: "doorman-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Angus"], shown: ["Angus"], targets: [], text: "Job doorman-g--dde150 for Alpha needs, beyond G's shares:\n⚠ /home/x/Documents/jobs (read and WRITE)", hostJobScope: { id: "doorman-g--dde150" } });
   put({ id: "doorman-g--bbb442", sandbox: "doorman-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Angus"], shown: ["Angus"], targets: [], text: "Question from the host agent", hostJob: { id: "doorman-g--dde150", n: 1 } });
-  put({ id: "doorman-g--rvw453", sandbox: "world-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Thoughts-B"], shown: ["Thoughts-B"], targets: [], rooms: ["G"], reviewIn: "doorman-g", text: "[Alpha, in world G] a window item" });
+  put({ id: "world-g--abc453", sandbox: "world-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Thoughts-B"], shown: ["Thoughts-B"], targets: [], rooms: ["G"], reviewIn: "doorman-g", text: "[Alpha, in world G] a window item" });
   put({ id: "doorman-g--ccc442", sandbox: "doorman-g", at: "2026-10-11T00:00:00Z", mode: "talk", to: ["Alpha"], shown: ["Alpha"], targets: [{ kind: "agent", id: "x" }], text: "[Beta, in world G] hi" });
   const L = (o) => JSON.stringify({ t: "2026-10-11T00:00:01Z", ...o });
   fs.writeFileSync(path.join(S, "log.jsonl"), [
@@ -215,8 +215,8 @@ assert.equal(N.openPeer(G, D), true); assert.equal(N.openPeer(G, PB), false);
     assert.ok(!/Approved/.test(H.statusText(H.heldStatus("doorman-g--ddd442", Date.now(), { fresh: true }))));
     assert.equal(H.trackHeld("doorman-g--fff442").text, "the job no longer waited for this answer", "an answer not applied");
     // J453: an item decided in a Doorman window: no panel lists it (heldFor) and an open Thoughts card can't keep it (heldById → null); the window's provider has it
-    assert.equal(H.heldById("doorman-g--rvw453"), null); assert.ok(!["A", "B", "G"].some((l) => H.heldFor(l).some((x) => x.id === "doorman-g--rvw453")));
-    assert.ok(H.heldForSandboxes(["doorman-g", "world-g"]).some((x) => x.id === "doorman-g--rvw453"));
+    assert.equal(H.heldById("world-g--abc453"), null); assert.ok(!["A", "B", "G"].some((l) => H.heldFor(l).some((x) => x.id === "world-g--abc453")));
+    assert.ok(H.heldForSandboxes(["doorman-g", "world-g"]).some((x) => x.id === "world-g--abc453"));
     console.log("ok");`;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", env: { ...process.env, XDG_STATE_HOME: X, J442P: path.join(S, "pending"), HYPRPI_SANDBOX_WORLD: "", HYPRPI_G_WORLD: "" } });
   assert.equal(r.status, 0, `J442 held items: ${r.stderr}`); assert.match(r.stdout, /ok/);
