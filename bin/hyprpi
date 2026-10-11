@@ -215,7 +215,7 @@ async function cmdNew() {
   { // J403 v2 (Angus): never a host agent on a sandboxed world's workspace: a new one opens inside the sandbox, a host
     // agent's resume / twin / --beside there is refused (lib/sandbox-gate.mjs)
     const { gate, carryOut } = await import("../lib/sandbox-gate.mjs");
-    const g = gate({ workspace, wantId, twinOf, beside, noFocus: args.includes("--no-focus"), silent }); // includes, not flag(): flag() removes it, and line ~271 still needs it
+    const g = gate({ workspace, wantId, twinOf, beside, noFocus: args.includes("--no-focus"), silent, name: wantName, icon: wantIcon }); // J456: the name / icon go in too // includes, not flag(): flag() removes it, and line ~271 still needs it
     if (g) { if (process.env.HYPRPI_GATE_DRYRUN) { console.log(JSON.stringify(g)); process.exit(0); } process.exit(carryOut(g)); }
   }
 
