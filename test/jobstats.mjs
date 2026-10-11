@@ -124,6 +124,10 @@ try {
   await agent.call("agent.update", { status: "idle" });
   await agent.call("agent.usage", { tokens: 300 });
   ok("(3) tokens after a job is done don't count for it", brief()[w3.job].stats.tokens === 500 && brief()[w4.job].stats.tokens === 800);
+  const w6 = await api.call("thoughts.work", { room: "D", agent: "Atlas", goal: "sixth", angus: "x", done_when: ["W1 ok"], urgent: true });
+  const t4 = brief()[w4.job].stats.tokens; await agent.call("agent.usage", { tokens: 123 });
+  ok("(3) an odd count splits in whole tokens, the sum kept (123 → 62 + 61)", (brief()[w4.job].stats.tokens - t4) + (brief()[w6.job].stats.tokens || 0) === 123, `${brief()[w4.job].stats.tokens - t4} + ${brief()[w6.job].stats.tokens}`);
+  await api.call("thoughts.close", { room: "D", job: w6.job, state: "obsolete", reason: "test" });
   // an ordinary reply (agent to agent) counts as a message
   const gotB = []; const bolt = await connect({ path: sock, onEvent: (ev, data) => gotB.push({ ev, data }) });
   await bolt.call("agent.hello", { agent_id: "hp-bolt", pid: process.pid, name: "Bolt", want_workspace: 33, cwd: S, model: "claude-haiku-4-5", thinking: "low" });
