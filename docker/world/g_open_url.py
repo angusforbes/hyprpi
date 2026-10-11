@@ -22,8 +22,9 @@ The text came from the sandbox, so only these are opened:
     snapshot copy (a sandbox can't swap the file for a symlink after the check; Lenswatch J320 3a). An HTML page
     is copied with its folder (no symlinks, no node_modules/.git, size-capped) so its scripts and images load.
 J465 (Angus: open a report in the Markdown viewer; "I don't think we need the override"): when ANGUS clicks a file:// link to a
-non-HTML file, the vetted snapshot opens with the host desktop's default app for its type (xdg-open, the MIME default; e.g. .md →
-the Markdown viewer the host uses). http(s) and HTML pages still open in the world's own Brave, and an agent's own open (--agent)
+Markdown document (.md, .markdown, whose CONTENT also sniffs as plain text), the vetted snapshot opens with the host desktop's
+default app for that type (.md → the default for text/markdown, e.g. the host's Markdown viewer; launched with gio). Anything else
+(HTML, SVG, XHTML, other types, a .md that is really HTML) and http(s) still open in the world's own Brave, and an agent's own open (--agent)
 always does (an agent never pops an app onto Angus's screen). The share check comes first: nothing outside the shares opens.
 Refused: other schemes, control/format characters (Unicode Cc/Cf, Zl/Zp), URLs over 8 kB, paths outside the
 shares, hidden files. A refusal shows a short notification. Never raises.
@@ -153,10 +154,39 @@ def snapshot(path, world):
     return os.path.join(dest, name)
 
 
+# J465 (J465Check HIGH): only plain documents open in a host app, and only if their CONTENT is plain too: a sandbox could write HTML (or
+# anything active) into a file called report.md, and the desktop would hand it to its normal browser by content. Everything else
+# (HTML, SVG, XHTML, unknown types, anything whose content isn't plain text) goes to the world's own Brave as before.
+NATIVE = {".md": "text/markdown", ".markdown": "text/markdown"}  # (what Angus asked for: reports; extend deliberately, with a content check)
+PLAIN_CONTENT = {"text/plain", "text/markdown", "text/x-markdown"}
+
+def _desktop_file(name):
+    """The .desktop file for an app id (XDG data dirs), or None."""
+    dirs = [os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")] + (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
+    for d in dirs:
+        f = os.path.join(d, "applications", name)
+        if name.endswith(".desktop") and "/" not in name and os.path.isfile(f):
+            return f
+    return None
+
 def file_opener(path):
-    """J465: the host desktop's default app for this file's type (xdg-open: the MIME default). No per-app config (Angus: "I don't think
-    we need the override"): on another machine it uses whatever that desktop opens the type with."""
-    return [os.environ.get("HYPRPI_G_XDG_OPEN") or "xdg-open"]  # (the env: tests only)
+    """J465: the host desktop's default app for this document's TYPE (by its extension: .md → the default for text/markdown), launched
+    with gio; None (→ the world's Brave) unless the extension is a plain-document one, its content sniffs as plain text, and the desktop
+    has a default app for the type. No per-app config (Angus: "I don't think we need the override")."""
+    want = NATIVE.get(os.path.splitext(path)[1].lower())
+    if not want:
+        return None
+    try:
+        sniff = subprocess.run(["xdg-mime", "query", "filetype", path], capture_output=True, text=True, timeout=5).stdout.strip()
+        if sniff not in PLAIN_CONTENT:
+            return None
+        if os.environ.get("HYPRPI_G_XDG_OPEN"):
+            return [os.environ["HYPRPI_G_XDG_OPEN"]]  # (tests: a stub, after the same checks)
+        app = subprocess.run(["xdg-mime", "query", "default", want], capture_output=True, text=True, timeout=5).stdout.strip()
+        df = _desktop_file(app) if app else None
+        return ["gio", "launch", df] if df else None
+    except Exception:
+        return None
 
 
 def check(url, world, snap=True):
@@ -364,8 +394,9 @@ def main(argv):
     # J465: his click on a (non-HTML) file opens the snapshot with the host's own app for its type
     if not agent and out.startswith("file://"):
         path = urllib.parse.unquote(out[len("file://"):])
-        if os.path.splitext(path)[1].lower() not in (".html", ".htm"):
-            cmd = file_opener(path) + [path]
+        opener = file_opener(path)
+        if opener:
+            cmd = opener + [path]
             try:
                 subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                 return 0

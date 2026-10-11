@@ -3,7 +3,7 @@
 given as a file:// link, passes the link gate and opens (a vetted copy) in the world's Brave; a bare path, the inbox folder itself and
 anything outside the world's shares are refused. Uses the LIVE world-g config and a real report in its inbox (read-only); the browser,
 Hyprland and toasts are stubs. Run: python3 docker/world/test-report-link.py"""
-import glob, importlib.util, os, tempfile, time, urllib.parse
+import glob, importlib.util, os, shutil, tempfile, time, urllib.parse
 reports = sorted(glob.glob(os.path.expanduser("~/Work/sbx-inbox/world-g/research-*.md")))
 if not reports: print("test-report-link: SKIP (no research report in world-g's inbox)"); raise SystemExit(0)
 R = reports[0]; T = tempfile.mkdtemp(prefix="report-link-")
@@ -52,4 +52,18 @@ nb = len(log()); nx = len(rd("xdg.log"))
 for bad in [R, "file://" + os.path.expanduser("~/.ssh/config"), "file:///etc/passwd"]: assert g.main(["g_open_url.py", bad, "world-g"]) == 1
 assert len(log()) == nb and len(rd("xdg.log")) == nx, "refused links reach no app at all"
 print("ok the share check comes first: refused links reach no app")
+# (J465Check HIGH) only real Markdown opens in a host app: HTML disguised as .md, .svg, .xhtml, .HTML, .txt go to the world's Brave
+F = os.path.expanduser(f"~/Work/j465-fixture-{os.getpid()}"); os.makedirs(F)
+try:
+    cases = {"plain.md": ("# A report\n\nplain text\n", "app"), "fake.md": ("<!DOCTYPE html><html><body><script>1</script></body></html>", "brave"),
+             "pic.svg": ("<svg xmlns='http://www.w3.org/2000/svg'><script>1</script></svg>", "brave"), "page.xhtml": ("<html xmlns='http://www.w3.org/1999/xhtml'></html>", "brave"),
+             "PAGE.HTML": ("<html></html>", "brave"), "notes.txt": ("plain\n", "brave")}
+    for name, (body, where) in cases.items():
+        open(os.path.join(F, name), "w").write(body); na, nb = len(rd("xdg.log")), len(log())
+        assert g.main(["g_open_url.py", "file://" + urllib.parse.quote(os.path.join(F, name)), "world-g"]) == 0, name; time.sleep(0.3)
+        got = "app" if len(rd("xdg.log")) == na + 1 and len(log()) == nb else "brave" if len(log()) == nb + 1 and len(rd("xdg.log")) == na else "?"
+        assert got == where, (name, got)
+        print(f"ok {name}: {'the host app' if where == 'app' else 'the world Brave'}")
+finally:
+    shutil.rmtree(F, ignore_errors=True)
 print("test-report-link: all pass")
