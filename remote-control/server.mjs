@@ -177,8 +177,8 @@ function worlds() {
     thoughtsBusy: !!busy.get(id),
     // Activity dot (like the agents panel's ● and ×): an agent working, or one blocked on Angus
     // (a bonk or a ding: status "blocked" until it works again).
-    working: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "working").length,
-    needsYou: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "blocked").length,
+    working: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "working").length + innerCount(id, "working"),
+    needsYou: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "blocked").length + innerCount(id, "blocked"),
     shown: shownWorlds.includes(id),
     sandboxed: gworld.sandboxOf(id) ? SBX_MARK : "", // J450: G 🐳, as the desktop panels say it
   }));
@@ -197,7 +197,7 @@ async function refreshProjects(room) {
   } catch { /* no board */ }
 }
 // J450: how many agents a sandboxed world's inner daemon listed last (0 until the Agnt list has asked)
-function innerCount(id) { const sb = gworld.sandboxOf(id), c = sb && innerCache.get(sb); return c ? (c.list.agents || []).filter((a) => a.room === id && !a.parked && a.session).length : 0; }
+function innerCount(id, status) { const sb = gworld.sandboxOf(id), c = sb && innerCache.get(sb); return c ? (c.list.agents || []).filter((a) => a.room === id && !a.parked && a.session && (!status || a.status === status)).length : 0; }
 function directory() {
   const ids = new Set((listing?.rooms || []).map((r) => r.id).filter((id) => /^[A-Z]$/.test(id)));
   const agents = [
@@ -332,7 +332,11 @@ async function agentsSummary(r) {
 const innerCache = new Map(); // sandbox -> { at, list }
 async function innerList(sb) {
   const c = innerCache.get(sb); if (c && Date.now() - c.at < 5000) return c.list;
-  const list = await gworld.call(sb, "list"); innerCache.set(sb, { at: Date.now(), list }); return list;
+  const list = await gworld.call(sb, "list");
+  const n = (x) => (x?.agents || []).filter((a) => !a.parked && a.session).map((a) => a.room + a.id + a.status).join(), changed = n(c?.list) !== n(list);
+  innerCache.set(sb, { at: Date.now(), list });
+  if (changed) broadcast("state", state()); // J450 (GCheck): the chip's count and dots follow the inner agents
+  return list;
 }
 async function innerAgents(r) {
   const sb = gworld.sandboxOf(r); if (!sb) return [];

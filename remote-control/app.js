@@ -675,6 +675,9 @@ async function fetchAgents(w) {
   l.agents = r.agents || []; l.loaded = true; l.held = hd && hd.item ? hd : null;
   try { localStorage.setItem(LSA(w), JSON.stringify({ agents: l.agents })); } catch { /* memory only */ }
   if (w === world && view === "agents" && changed) renderAgents({ keepScroll: true });
+  // J450 (GCheck): a sandboxed world's chip counts its inner agents, which the server only knows after this list
+  const wd = worlds.find((x) => x.id === w);
+  if (wd?.sandboxed) { const n = l.agents.filter((a) => a.mark !== "◌").length; if (wd.agents !== n) { wd.agents = n; renderTop(); } }
 }
 let agentsTimer = null;
 function agentsSoon() {
