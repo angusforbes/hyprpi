@@ -42,7 +42,7 @@ for (const h of want) {
   // (J425Review #5) only conclusive when the run did the inside write; "not written" outside may also mean the model never tried: this
   // probe is a smoke check, the enforcement claims rest on the harness flags (README table) and the reviewer's forced-tool-call checks
   const pl = `  probe ${h}: ${!inside ? "INCONCLUSIVE (the inside file wasn't written)" : `inside written, outside ${outside ? "WRITTEN (not enforced)" : "not written (blocked, or not attempted)"}`}; expected ${h === "pi" ? "outside may be written (advisory)" : "outside blocked"}`;
-  res.push(pl); console.log(pl); if (outside && h !== "pi") res.push(`  FAIL ${h}: wrote outside its folder`);
+  res.push(pl); console.log(pl); if (outside && h !== "pi") res.push(`  FAIL ${h}: wrote outside its folder`); if (!inside) res.push(`  FAIL ${h}: the probe was inconclusive (J425Recheck #5: not a pass)`);
   fs.rmSync(O, { recursive: true, force: true });
   fs.rmSync(F, { recursive: true, force: true });
 }

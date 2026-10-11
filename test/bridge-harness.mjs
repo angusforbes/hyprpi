@@ -39,6 +39,25 @@ fs.writeFileSync(path.join(W, "world-bad.json"), '{"sandbox": "world-bad", "gate
 fs.writeFileSync(path.join(W, "other-name.json"), '{"sandbox": "world-bad2", "gateway": '); assert.match(H.runnerChoice("world-bad2").error, /other-name\.json can't be read/);
 assert.equal(H.runnerChoice("world-d").harness, "claude-code", "an unrelated unreadable file doesn't affect other worlds");
 fs.unlinkSync(path.join(W, "world-bad.json")); fs.unlinkSync(path.join(W, "other-name.json"));
+// (J425Recheck #2) an unreadable file (its sandbox unknown) or worlds folder, a non-object file, a non-object gateway: all unavailable
+if (process.getuid() !== 0) {
+  fs.writeFileSync(path.join(W, "A.json"), JSON.stringify({ sandbox: "world-g", gateway: { host_runner: "pi" } })); fs.chmodSync(path.join(W, "A.json"), 0o000);
+  assert.match(H.runnerChoice("world-g").error, /A\.json can't be read/); assert.match(H.runnerChoice("world-d").error, /A\.json can't be read/, "an unreadable file blocks every world (its sandbox is unknown)");
+  fs.chmodSync(path.join(W, "A.json"), 0o600); fs.unlinkSync(path.join(W, "A.json"));
+  fs.chmodSync(W, 0o000); assert.match(H.runnerChoice("world-d").error, /worlds folder can't be read/); fs.chmodSync(W, 0o755);
+}
+fs.writeFileSync(path.join(W, "world-null.json"), "null"); assert.match(H.runnerChoice("world-null").error, /isn't a JSON object/); fs.unlinkSync(path.join(W, "world-null.json"));
+world("world-gs", "pi"); assert.match(H.runnerChoice("world-gs").error, /"gateway" isn't an object/); fs.unlinkSync(path.join(W, "world-gs.json"));
+// (J425Recheck #3) the host's levels module: present but broken or incomplete → every runner refused; absent → not checked (this branch)
+for (const [what, body, re] of [["throws", 'throw new Error("boom");', /doesn't load \(boom\)/], ["lacks exports", "export const x = 1;", /lacks loadLevels/],
+  ["allows only claude-code", 'export const loadLevels = () => ({ levels: { runner_harnesses: ["claude-code"] } }); export const allowedHarness = (l, h) => l.runner_harnesses.includes(h);', null]]) {
+  const T2 = fs.mkdtempSync(path.join(base, "lv-")); fs.mkdirSync(path.join(T2, "bridge")); fs.mkdirSync(path.join(T2, "research"));
+  fs.copyFileSync(new URL("../docker/bridge/harness.mjs", import.meta.url), path.join(T2, "bridge", "harness.mjs")); fs.copyFileSync(new URL("../docker/research/mode.mjs", import.meta.url), path.join(T2, "research", "mode.mjs"));
+  fs.writeFileSync(path.join(T2, "research", "levels.mjs"), body);
+  const H2 = await import(path.join(T2, "bridge", "harness.mjs"));
+  if (re) assert.match(H2.runnerChoice("world-d").error, re, what);
+  else { assert.equal(H2.runnerChoice("world-d").harness, "claude-code"); assert.match(H2.runnerChoice("world-c").error, /host's levels don't allow the codex runner/); }
+}
 ok("host_runner per world: default claude-code, a name or { harness, command, model }; invalid or ambiguous → error; Angus-only (not proposable)");
 
 // 2. what each enforces

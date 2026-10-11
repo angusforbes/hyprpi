@@ -24,7 +24,13 @@ import path from "node:path";
 import { worldsFor } from "../research/mode.mjs";
 // J380 (Pkgsort): the host's gateway-levels.json limits which harnesses a world may use (allowedHarness); a broken levels file allows none.
 // Optional until J380 is on this branch: without levels.mjs every harness is allowed (the same as no levels file).
-let LEVELS = null; try { LEVELS = await import("../research/levels.mjs"); } catch { /* not there yet */ }
+// (J425Recheck #3) only the module being ABSENT counts as "not there yet"; any other load failure, or missing exports, refuses every runner
+const LEVELS_FILE = new URL("../research/levels.mjs", import.meta.url);
+let LEVELS = null, LEVELS_ERR = "";
+if (fs.existsSync(LEVELS_FILE)) {
+  try { LEVELS = await import(LEVELS_FILE.href); if (typeof LEVELS.loadLevels !== "function" || typeof LEVELS.allowedHarness !== "function") LEVELS_ERR = "levels.mjs lacks loadLevels / allowedHarness"; }
+  catch (e) { LEVELS_ERR = `levels.mjs doesn't load (${String(e.message).slice(0, 80)})`; }
+}
 
 export const HARNESSES = ["claude-code", "codex", "pi"];
 export const BUILTIN = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "Bash", "NotebookEdit", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite"]);
@@ -47,10 +53,18 @@ const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\/:+-]{0,99}$/;
 
 // The runner choice for the world that serves `sandbox`: { harness, command, model, source } or { error }.
 export function runnerChoice(sandbox, dir = cfgDir()) {
-  // (J425Review #4) a worlds file that can't be read but may be this sandbox's (its name, or the sandbox named in its text) → unavailable,
-  // never silently "no setting"
-  try { for (const f of fs.readdirSync(path.join(dir, "worlds")).filter((x) => x.endsWith(".json"))) {
-    let raw = ""; try { raw = fs.readFileSync(path.join(dir, "worlds", f), "utf8"); JSON.parse(raw); } catch (e) { if (f.slice(0, -5) === sandbox || raw.includes(JSON.stringify(sandbox))) return { error: `${f} can't be read (${String(e.message).slice(0, 60)})` }; } } } catch { /* no worlds folder */ }
+  // (J425Review #4, J425Recheck #2) fail closed on worlds config that can't be read or has the wrong shape: an unreadable folder, an
+  // unreadable file (whose sandbox we then can't know), or a file that may be this sandbox's but doesn't parse or isn't an object.
+  // Only an absent worlds folder means "no setting".
+  let files = [];
+  try { files = fs.readdirSync(path.join(dir, "worlds")).filter((x) => x.endsWith(".json")); } catch (e) { if (e.code !== "ENOENT") return { error: `the worlds folder can't be read (${e.code || e.message})` }; }
+  for (const f of files) {
+    let raw; try { raw = fs.readFileSync(path.join(dir, "worlds", f), "utf8"); } catch (e) { return { error: `${f} can't be read (${e.code || e.message}), so which sandbox it sets is unknown` }; }
+    const mine = f.slice(0, -5) === sandbox || raw.includes(JSON.stringify(sandbox));
+    let w; try { w = JSON.parse(raw); } catch (e) { if (mine) return { error: `${f} can't be read (${String(e.message).slice(0, 60)})` }; continue; }
+    if (mine && (!w || typeof w !== "object" || Array.isArray(w))) return { error: `${f} isn't a JSON object` };
+    if (mine && w && typeof w === "object" && (typeof w.sandbox === "string" ? w.sandbox : f.slice(0, -5)) === sandbox && w.gateway !== undefined && (!w.gateway || typeof w.gateway !== "object" || Array.isArray(w.gateway))) return { error: `${f}: "gateway" isn't an object` };
+  }
   const hits = worldsFor(dir, sandbox);
   if (hits.length > 1) return { error: `ambiguous: ${hits.map((h) => h.f).join(", ")} all name ${sandbox}` };
   const v = hits[0]?.w?.gateway && typeof hits[0].w.gateway === "object" ? hits[0].w.gateway.host_runner : undefined;
@@ -63,7 +77,8 @@ export function runnerChoice(sandbox, dir = cfgDir()) {
     if (!Array.isArray(o.command) || !o.command.length || o.command.length > 8 || !o.command.every((x) => typeof x === "string" && x && !/[\0\n\r]/.test(x))) return { error: "host_runner.command must be a short argv array of strings" };
     command = o.command;
   } else if (harness === "claude-code" && envCmd()) command = envCmd(); // (J387 DOORMAN_RUNNER_CMD, kept for claude-code)
-  if (LEVELS?.loadLevels && LEVELS?.allowedHarness) { const lv = LEVELS.loadLevels(dir); if (!LEVELS.allowedHarness(lv.levels, harness)) return { error: `the host's levels don't allow the ${harness} runner${lv.error ? ` (${String(lv.error).slice(0, 80)})` : ""}` }; }
+  if (LEVELS_ERR) return { error: `the host's runner levels can't be checked: ${LEVELS_ERR}` };
+  if (LEVELS) { const lv = LEVELS.loadLevels(dir); if (!LEVELS.allowedHarness(lv.levels, harness)) return { error: `the host's levels don't allow the ${harness} runner${lv.error ? ` (${String(lv.error).slice(0, 80)})` : ""}` }; }
   // (J425Review #2) the command must be runnable now, else the runner isn't counted (a draft is refused at once, not held for nobody)
   const exe = which(command[0]); if (!exe) return { error: `${harness} isn't installed or runnable here (${String(command[0]).slice(0, 60)} not found on PATH)` };
   const model = o.model !== undefined ? o.model : (process.env.DOORMAN_RUNNER_MODEL || "");
@@ -167,7 +182,11 @@ export function adapterPlan(job, { tmp, work, cli, mcpEnv, choice }) {
     // writable only: the job's read-write folders (read-only ones are readable anyway: codex doesn't limit reads), and only when it
     // grants a writing tool; the cwd is writable under workspace-write, so it is a read-write folder or the private work folder
     // a read-and-write folder that holds a read-only one can't be fenced by codex's sandbox (it has no deny rule): read-only for codex
-    const rw = sc.rwDirs.filter((d) => !sc.roAll.some((r) => r !== d && r.startsWith(d + "/")));
+    // (J425Recheck HIGH) any overlap with a read-only folder, either way (an ancestor, a descendant or the same folder), compared as
+    // real paths: codex can't fence part of a writable root, so that folder isn't writable for codex at all
+    const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } }, under = (a, b) => a === b || a.startsWith(b + "/");
+    const roReal = sc.roAll.map(real);
+    const rw = sc.rwDirs.filter((d) => { const x = real(d); return !roReal.some((r) => under(x, r) || under(r, x)); });
     const write = l.granted.some((t) => WRITES.has(t)) && rw.length > 0, cwd = write ? rw[0] : (sc.folders[0] || work); // (read-only sandbox: the cwd is not writable)
     return { ...common, cwd, toolsShown: write ? ["shell", "apply_patch (writes only in the read-and-write folders)"] : ["shell (read-only)"], env: {},
       argv: [...cmd, "exec", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--color", "never",
