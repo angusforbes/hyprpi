@@ -21,11 +21,24 @@ for MODE in strict safe open yolo; do
   for i in $new; do r=$(python3 -c "import json;d=json.load(open('$P/pending/$i.json'));print(d.get('reviewIn'),d.get('rooms'))"); [ "$r" = "doorman-t ['G']" ] || fail "$MODE $i not routed to the window: $r"; done
   L=$(lists); for i in $new; do case "$L" in *"\"w\":["*"\"$i\""*"],\"p\""*) ;; *) fail "$MODE $i not in the window's list: $L";; esac; case "$L" in *"\"p\":["*"\"$i\""*) fail "$MODE $i offered in a panel";; esac; done
   ok "$MODE: every held item routed to the Doorman window (reviewIn doorman-t), listed by its provider, in no panel"
+  # the phone: off by default for this sandbox → a phone decision changes nothing (and a second watch event can't turn it into a laptop one)
+  f=$(echo "$new" | head -1); printf 'phone' > $P/decisions/.$f.tmp; mv $P/decisions/.$f.tmp $P/decisions/$f.deny; sleep 2
+  [ -f $P/pending/$f.json ] && ok "$MODE: a phone decision with phone decisions off leaves it held" || fail "$MODE: phone decision applied while off"
+  # with phone decisions on, the phone decides the same item with the window's digest; a gateway / mode change stays laptop-only
+  python3 -c "import json;p='$XDG_CONFIG_HOME/hyprpi/worlds/world-t.json';d=json.load(open(p));d['gateway']['phone_decisions']=True;json.dump(d,open(p,'w'))"
   for i in $new; do
-    printf 'phone' > $P/decisions/.$i.tmp; mv $P/decisions/.$i.tmp $P/decisions/$i.deny; t0=$(date +%s%N)
+    g=$(python3 -c "import json;print('y' if json.load(open('$P/pending/$i.json')).get('gatewayChange') else '')")
+    dg=$(node --input-type=module -e "const H=await import('$H/lib/held.mjs');const d=JSON.parse(require('fs').readFileSync('$P/pending/$i.json','utf8'));console.log(H.heldDigestFor('$i',d.sandbox))" 2>/dev/null || node --input-type=module -e "import fs from 'node:fs';const H=await import('$H/lib/held.mjs');const d=JSON.parse(fs.readFileSync('$P/pending/$i.json','utf8'));console.log(H.heldDigestFor('$i',d.sandbox))")
+    printf 'phone\ndigest:%s' "$dg" > $P/decisions/.$i.tmp; mv $P/decisions/.$i.tmp $P/decisions/$i.deny; sleep 1.5
+    if [ -n "$g" ]; then [ -f $P/pending/$i.json ] && ok "$MODE: the mode change stays laptop-only (phone refused)" || fail "$MODE: phone decided a mode change"
+    else [ -f $P/pending/$i.json ] && fail "$MODE: phone decision (on, right digest) not applied to $i" || ok "$MODE: the phone decided $i (same item, same digest)"; fi
+  done
+  new=$(for i in $new; do [ -f $P/pending/$i.json ] && echo $i; done)
+  for i in $new; do
+    printf 'doorman window' > $P/decisions/.$i.tmp; mv $P/decisions/.$i.tmp $P/decisions/$i.deny; t0=$(date +%s%N)
     while [ -f $P/pending/$i.json ] && [ $(( ($(date +%s%N) - t0) / 1000000 )) -lt 2000 ]; do sleep 0.05; done
     ms=$(( ($(date +%s%N) - t0) / 1000000 )); [ -f $P/pending/$i.json ] && fail "$MODE $i still pending after ${ms} ms" || echo "  $i cleared in ${ms} ms"
   done
   L=$(lists); for i in $new; do case "$L" in *"\"$i\""*) fail "$MODE $i still listed after the decision";; esac; done
-  ok "$MODE: a decision made elsewhere (as the phone/toast write it) cleared every item from the window's list within 2 s"
+  ok "$MODE: a decision made in the window cleared the rest from every list within 2 s"
 done
