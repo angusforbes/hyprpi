@@ -24,7 +24,7 @@ for i in 1 2 3 4 5; do
 done
 [ $worst -le 1400 ] && ok "every outbox file was picked up within ~1 s (worst ${worst} ms)" || fail "slowest pickup ${worst} ms (> 1.4 s)"
 grep -q "fs.watch(fdPath(dirs.outbox)" $H/docker/sbx-relay.mjs && fail "the relay still watches the outbox" || ok "the relay has no fs.watch on an outbox"
-grep -q "DROPBOX_POLL_MS" $H/docker/world/g-gate.mjs && grep -q "DROPBOX_POLL_MS = 1000" $H/docker/dropbox-poll.mjs && ok "one shared interval (1000 ms) for the relay's outbox poll and the gate's inbox poll" || fail "interval not shared"
+grep -q "DROPBOX_POLL_MS" $H/docker/world/doorman-notify.mjs && grep -q "DROPBOX_POLL_MS = 1000" $H/docker/dropbox-poll.mjs && ok "one shared interval (1000 ms) for the relay's outbox poll and the Doorman-G mailbox's inbox poll (J464)" || fail "interval not shared"
 # (PollReview) the sandbox renames its outbox aside (it stays linked) and makes a new one: requests in the new one are still picked up
 mv $OUT $R/x/ws/.hyprpi-dropbox/outbox-aside; mkdir -p $OUT
 echo '{"op":"room.post","text":"J458 after a swapped outbox"}' > $OUT/.swap.tmp && mv $OUT/.swap.tmp $OUT/swap.json; t0=$(ms)

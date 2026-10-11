@@ -158,7 +158,7 @@ def overview():
         try:
             m = re.search(r"^Doorman mode: (doorman-[a-z]+)", open(c).read(), re.M)
             if m:
-                lines.append(f"Web research: the doorman tool research(question), or ask Outside 'Research: <what you're looking for>' (Doorman mode: {m.group(1)}; the host card's Web research section says what that means).")
+                lines.append(f"Web research: the doorman tool research(question) (Doorman mode: {m.group(1)}; the host card's Web research section says what that means).")
             t = re.search(r"^Task(?: \(set by Angus\))?: (.+)$", open(c).read(), re.M)  # J352: the task research is bound to
             if t:
                 lines.append(f"Research task: {t.group(1)[:300]} (research outside it waits for Angus).")

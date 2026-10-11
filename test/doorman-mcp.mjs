@@ -23,7 +23,7 @@ let answer = (req, file) => ({ ok: true });
 const relay = setInterval(() => {
   for (const f of fs.readdirSync(path.join(BOX, "outbox")).filter((x) => /^[0-9]+-[0-9a-f]{8}\.json$/.test(x))) {
     const req = JSON.parse(fs.readFileSync(path.join(BOX, "outbox", f), "utf8")); fs.unlinkSync(path.join(BOX, "outbox", f));
-    const tracked = fs.existsSync(path.join(STATE, "doorman-mcp", "adopt", f)) && fs.readdirSync(path.join(STATE, "doorman-mcp", "agents")).some((x) => JSON.parse(fs.readFileSync(path.join(STATE, "doorman-mcp", "agents", x), "utf8")).files?.[f]);
+    const tracked = fs.readdirSync(path.join(STATE, "doorman-mcp", "agents")).some((x) => JSON.parse(fs.readFileSync(path.join(STATE, "doorman-mcp", "agents", x), "utf8")).files?.[f]);
     taken.push({ f, req, tracked }); item({ type: "result", for: f, op: req.op, ...answer(req, f) });
   }
 }, 100);
@@ -33,13 +33,11 @@ answer = (req) => req.op === "research" ? { ok: true, research: "r0a1b2c3d", dep
 let r = await M.call("research", { question: "damp heat results for perovskite modules", deep: true });
 assert.equal(r.ok, true, JSON.stringify(r)); assert.match(r.text, /research started \(deep, id r0a1b2c3d\): Angus reviews it before it reaches you \(mode open\)/);
 assert.deepEqual(taken.at(-1).req, { op: "research", looking_for: "damp heat results for perovskite modules", depth: "deep", from: "Alpha" });
-const ad = JSON.parse(fs.readFileSync(path.join(STATE, "doorman-mcp", "adopt", taken.at(-1).f), "utf8"));
-assert.deepEqual(ad.asker, { id: "hp-alpha01", name: "Alpha" }); assert.equal(ad.kind, "research");
-ok("research writes the gate's {op:research, looking_for, depth, from} file, stamped with the daemon's name; returns the relay's answer; hands it to the gate");
+ok("research writes the relay's {op:research, looking_for, depth, from} file, stamped with the daemon's name; returns the relay's answer");
 // later: the research is approved → a notice with the file to read, via wait
 setTimeout(() => item({ type: "research", token: "r0a1b2c3d", status: "approved", id: "world-g--aa11", file: "/inbox/research-r0a1b2c3d.md", words: 900 }), 300);
 r = await M.call("wait", { seconds: 5 });
-assert.equal(r.notices.length, 1); assert.match(r.notices[0].text, /^Angus approved your research request \(your words: "damp heat results for perovskite modules"\)\. Read it at \/inbox\/research-r0a1b2c3d\.md/); assert.equal(r.notices[0].path, "/inbox/research-r0a1b2c3d.md");
+assert.equal(r.notices.length, 1); assert.match(r.notices[0].text, /^Angus approved your research request \(your words: "damp heat results for perovskite modules"\)\. Read it at file:\/\/\/inbox\/research-r0a1b2c3d\.md \(Ctrl\+click opens it in G's Brave; read-only\)/); assert.equal(r.notices[0].path, "/inbox/research-r0a1b2c3d.md");
 ok("wait returns the research outcome (with the file to read) as soon as it comes");
 
 // 2. ask_doorman and message: talk files with the stamp; a held message, Angus's decision, the host reply
@@ -125,7 +123,7 @@ assert.match((await M.call("reply", { request_id: "req-in-11", text: "again" }))
 item({ type: "message", mode: "talk", from: "Harbor", request_id: "req-in-13", text: "Alpha: race" }); await M.call("inbox", {});
 { const n0 = taken.length; const [a1, a2] = await Promise.all([M.call("reply", { request_id: "req-in-13", text: "first" }), M.call("reply", { request_id: "req-in-13", text: "second" })]);
   assert.equal(taken.slice(n0).filter((t) => t.req.request_id === "req-in-13").length, 1, "only one reply published"); assert.ok([a1, a2].filter((x) => x.ok).length === 1 && [a1, a2].some((x) => /already answered/.test(x.error || "")));
-  const st = M._test.loadState(); item({ type: "result", for: "1700000000000-deadbeef.json", op: "reply", ok: false, error: "stale" }); st.files["1700000000000-deadbeef.json"] = { kind: "reply", R: "req-in-13", at: Date.now() }; M._test.saveState(st);
+  const st = M._test.load("hp-alpha01"); item({ type: "result", for: "1700000000000-deadbeef.json", op: "reply", ok: false, error: "stale" }); st.files["1700000000000-deadbeef.json"] = { kind: "reply", R: "req-in-13", at: Date.now() }; M._test.save(st);
   await M.call("inbox", {}); assert.match((await M.call("reply", { request_id: "req-in-13", text: "third" })).error, /already answered/, "another attempt's failure doesn't reopen a delivered reply"); }
 // #4: a cancelled wait consumes nothing
 { const ctl = { cancelled: false }; const p = M.call("wait", { seconds: 10 }, ctl); setTimeout(() => { ctl.cancelled = true; }, 200); await new Promise((x) => setTimeout(x, 400));
@@ -141,23 +139,10 @@ assert.match(fs.readFileSync(new URL("../docker/world/world.sh", import.meta.url
   for (const f of files) { const j = JSON.parse(fs.readFileSync(path.join(STATE, "doorman-mcp", "agents", f), "utf8")); assert.ok(["hp-alpha01", "hp.alpha01"].includes(j.owner)); } }
 ok("review fixes: tracked before publishing; a reply's result at once with isError on failure; a refused reply stays answerable; a cancelled wait consumes nothing; 660 s timeout; one state file per exact agent id");
 
-// 7. the gate adopts an MCP request once, by its outbox file name (g-gate.mjs adopted(), run verbatim)
-{ const vm = await import("node:vm"); const gsrc = fs.readFileSync(new URL("../docker/world/g-gate.mjs", import.meta.url), "utf8");
-  const i = gsrc.indexOf("function adopted(file) {"), fn = gsrc.slice(i, gsrc.indexOf("\n}\n", i) + 2);
-  const AD = path.join(T, "adopt-test"); fs.mkdirSync(AD);
-  const field = (s, max = 80) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
-  const adoptedFn = vm.runInNewContext(`${fn}; adopted`, { fs, path, ADOPT: AD, field, JSON, Array, String });
-  const good = "1791700000000-0a0b0c0d.json";
-  fs.writeFileSync(path.join(AD, good), JSON.stringify({ asker: { id: "hp-alpha01", name: "Alpha" }, kind: "research", to: ["research"], want: "w" }));
-  const w = JSON.parse(JSON.stringify(adoptedFn(good))); assert.deepEqual(w, { kind: "research", asker: { id: "hp-alpha01", name: "Alpha" }, to: ["research"], want: "w", answered: true, adopted: true });
-  assert.equal(adoptedFn(good), undefined, "used once: the hand-off is removed");
-  fs.writeFileSync(path.join(AD, "1791700000000-0a0b0c0e.json"), JSON.stringify({ asker: { id: "" }, kind: "research" })); assert.equal(adoptedFn("1791700000000-0a0b0c0e.json"), undefined, "no asker id");
-  fs.writeFileSync(path.join(AD, "1791700000000-0a0b0c0f.json"), JSON.stringify({ asker: { id: "x" }, kind: "rm -rf" })); assert.equal(adoptedFn("1791700000000-0a0b0c0f.json"), undefined, "unknown kind");
-  assert.equal(adoptedFn("../../etc/passwd"), undefined, "only outbox file names");
-  fs.symlinkSync("/etc/hostname", path.join(AD, "1791700000000-0a0b0c10.json")); assert.equal(adoptedFn("1791700000000-0a0b0c10.json"), undefined, "no symlinks");
-  const gsrc2 = gsrc.slice(gsrc.indexOf('if (type === "result") {'), gsrc.indexOf('if (type === "decision")'));
-  assert.match(gsrc2, /outWait\.get\(j\.for\) \?\? adopted\(j\.for\)/); assert.match(gsrc2, /research\.set\(tok[^\n]*\n[^\n]*\n\s*if \(w\.adopted\) return;/, "an adopted research result registers the token, then stays quiet");
-  assert.match(gsrc2, /for \(const id of pending\) held\.set[\s\S]*if \(w\.adopted\) \{ log\(/, "an adopted message result registers held ids and host request ids first, then stays quiet"); }
-ok("the gate adopts an MCP request once (valid hand-off only: an outbox name, an asker id, a known kind, no symlink), follows its token / held ids / request id, and doesn't repeat the tool's answer");
+// 7. (J465) a report path with a space is an encoded file:// URL
+item({ type: "research", token: "rspace001", status: "approved", file: "/inbox/a b.md" });
+M._test.load; { const st2 = M._test.load("hp-alpha01"); st2.research["rspace001"] = { want: "x", at: Date.now() }; M._test.save(st2); }
+r = await M.call("inbox", {}); assert.ok(r.notices.some((x) => /Read it at file:\/\/\/inbox\/a%20b\.md /.test(x.text) && x.path === "/inbox/a b.md"), JSON.stringify(r.notices));
+ok("the report is a Ctrl+clickable file:// URL (encoded), the plain path kept in path");
 clearInterval(relay); fs.rmSync(T, { recursive: true, force: true });
 console.log(`doorman-mcp: all ${n} pass`); process.exit(0);
