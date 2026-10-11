@@ -538,6 +538,25 @@ export default function hyprpi(pi: ExtensionAPI) {
     }
     conn.call("agent.activity", { items: lines.slice(-10).map((text) => ({ text })) }).catch(() => {});
   }
+  // J452: output pulses for the daemon's stall check. Streaming tokens (message_update) and tool output (tool_execution_*)
+  // count as output; at most one pulse every 20 s (a tool start or end goes at once, so "waiting on" stays current). The daemon
+  // alerts the world's Thoughts when a "working" agent sends none for orchestration.stallAlertMinutes.
+  let pulseAt = 0, waitingOn = "";
+  const PULSE_MS = Math.max(200, Number(process.env.HYPRPI_PULSE_MS) || 20000); // (env: tests only)
+  const pulse = (now = false) => { const t = Date.now(); if (!now && t - pulseAt < PULSE_MS) return; pulseAt = t; if (conn && !conn.closed) conn.call("agent.pulse", { waiting: waitingOn }).catch(() => {}); };
+  const onWhat = (name: string, args: any) => {
+    const a = args || {}, s = (v: any, n = 60) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+    if (name === "wait_report") return `wait_report${Array.isArray(a.ids) && a.ids.length ? ` (${s(a.ids.join(", "))})` : " (all children)"}`;
+    if (name === "demand" || name === "talk") return `${name} ${s((a.recipients || []).join(", "))}`;
+    if (name === "bash" || name === "Bash") return `bash: ${s(a.command)}`;
+    return name;
+  };
+  pi.on("message_update", async () => { pulse(); });
+  pi.on("tool_execution_start", async (e: any) => { waitingOn = onWhat(String(e?.toolName || ""), e?.args); pulse(true); });
+  pi.on("tool_execution_update", async () => { pulse(); });
+  pi.on("tool_execution_end", async () => { waitingOn = "the model (its next reply)"; pulse(true); });
+  pi.on("agent_end", async () => { waitingOn = ""; });
+  pi.on("agent_start", async () => { waitingOn = "the model (its reply)"; pulse(true); });
   pi.on("tool_call", async (e: any) => {
     try {
       const d = describe(String(e?.toolName || ""), e?.input);
