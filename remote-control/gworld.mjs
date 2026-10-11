@@ -60,7 +60,9 @@ function bridge(sb) {
       let m; try { m = JSON.parse(line); } catch { return fail("bridge: bad reply"); }
       const x = b.pending.get(m?.id); if (!x) continue; // (a reply for a request that already timed out: dropped)
       b.pending.delete(m.id); clearTimeout(x.timer);
-      if (m.ok === true) x.resolve(m); else x.reject(Object.assign(new Error(String(m.e || "error").slice(0, 300)), { inner: true }));
+      if (m.ok === true) x.resolve(m);
+      else if (m.ok === false) x.reject(Object.assign(new Error(String(m.e || "error").slice(0, 300)), { inner: true }));
+      else { x.reject(new Error("bridge: bad reply")); return fail("bridge: bad reply"); } // (J444bcheck) neither ok:true nor ok:false: fail closed
     }
   });
   bridges.set(sb, b); return b;
@@ -98,7 +100,7 @@ async function callOnce(sb, method, params) {
   return JSON.parse(out.toString("utf8") || "null");
 }
 
-const fileOnce = (sb, file) => run(sb, 'f="$1"; case "$(readlink -f "$f")" in /home/agent/.pi/agent/sessions/*.jsonl) [ "$(stat -c %s -- "$f")" -le 24000000 ] || exit 4; cat -- "$f";; *) exit 3;; esac'.replace('"$1"', `'${file.replace(/'/g, "")}'`), null, 20000); // the one-shot way (J444: the fallback)
+const fileOnce = (sb, file) => run(sb, 'f="$1"; case "$(readlink -f "$f")" in /home/agent/.pi/agent/sessions/*.jsonl) [ "$(stat -L -c %s -- "$f")" -le 24000000 ] || exit 4; cat -- "$f";; *) exit 3;; esac'.replace('"$1"', `'${file.replace(/'/g, "")}'`), null, 20000); // the one-shot way (J444: the fallback)
 // An inner agent's session file, copied to a host temp file (for remote-control/session-read.mjs), cached 3 s.
 const cache = new Map(); // sb:file -> { at, tmp }
 export async function sessionCopy(sb, file) {
