@@ -8,7 +8,12 @@
 #   brev-image on the same GPU, e.g. 0.6 on a 48 GB L40S), TOOL_PARSER (default hermes), VLLM_IMAGE
 # Copy it there: scp brev/serve-model.sh hyprpi-gpu:workspace/  (gated models: HF_TOKEN, else ~/workspace/.secrets/hf_token)
 set -euo pipefail
-W="$HOME/workspace"; LAST="$W/.serve-model.last"; IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:latest}"
+W="$HOME/workspace"; LAST="$W/.serve-model.last"
+# the box's settings (VLLM_IMAGE, GPU_UTIL) are kept in ~/workspace/.serve.env: given once, used by every later start (and by
+# brev-image's serve-image.sh), so a restart after `brev start` needs no environment
+ENVF="$W/.serve.env"; [[ -f "$ENVF" ]] && . "$ENVF"
+for v in VLLM_IMAGE GPU_UTIL; do [[ -n "${!v:-}" ]] && { grep -v "^$v=" "$ENVF" 2>/dev/null; printf '%s=%q\n' "$v" "${!v}"; } > "$ENVF.new" && mv "$ENVF.new" "$ENVF"; done
+IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:latest}"
 if [[ "${1:-}" == stop ]]; then docker rm -f vllm >/dev/null 2>&1 || true; echo "vllm stopped"; exit 0; fi
 if [[ $# -eq 0 ]]; then [[ -f "$LAST" ]] || { echo "usage: serve-model.sh <hf model id> [vllm args]" >&2; exit 2; }; mapfile -t args < "$LAST"; else args=("$@"); fi
 [[ ${#args[@]} -gt 0 && -n "${args[0]}" ]] || { echo "usage: serve-model.sh <hf model id> [vllm args] (no last model saved)" >&2; exit 2; }

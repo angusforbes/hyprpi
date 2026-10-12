@@ -5,6 +5,7 @@
 set -euo pipefail
 W="$HOME/workspace"; D="$W/brev-image"
 mkdir -p "$W/outputs" "$W/.cache/huggingface/hub" "$W/.cache/huggingface/xet"
+[[ -n "${VLLM_IMAGE:-}" || ! -f "$W/.serve.env" ]] || . "$W/.serve.env"  # the box's VLLM_IMAGE, saved by serve-model.sh
 BASE="${VLLM_IMAGE:-vllm/vllm-openai:latest}"  # the same base as vLLM (its torch must suit this box's GPU driver)
 if [[ "$(docker image inspect -f '{{index .Config.Labels "brev.base"}}' brev-image:latest 2>/dev/null)" != "$BASE" ]]; then
   docker build -q -t brev-image:latest - >/dev/null <<EOF

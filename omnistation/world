@@ -135,11 +135,14 @@ case "$cmd" in
     setsid -f node "$H/omnistation/world-status.mjs" "$WL" </dev/null >/dev/null 2>&1 || true
     echo "opened agent $NAME on workspace $WS (world $WL${LABEL:+, $LABEL})" ;;
   images)
-    # J483: copy the remote machine's generated images (~/workspace/outputs: brev-image's PNGs) to ~/Downloads/<label-ish>,
-    # only the ones not here yet; prints each new file as a file:// link
+    # J483: copy the remote machine's new generated images (~/workspace/outputs: brev-image's PNGs) to ~/Downloads/brev and
+    # print each as a file:// link. Only plain names (letters, digits, . _ -; brev-image makes no others) are copied.
     dest="${HYPRPI_IMAGES_DIR:-$HOME/Downloads/brev}"; mkdir -p "$dest"
-    have=$(cd "$dest" && ls -1 2>/dev/null | grep -E '^[A-Za-z0-9._-]+\.png$' | tr '\n' ' ')
-    "${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && for f in *.png; do [ -f \"\$f\" ] || continue; case ' $have ' in *\" \$f \"*) ;; *) echo \"\$f\";; esac; done | tar -cf - -T - 2>/dev/null" | tar -xvf - -C "$dest" 2>/dev/null | while read -r f; do echo "file://$dest/$f"; done ;;
+    names=$("${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && ls -1 | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*\.png\$' || true" 2>/dev/null) || true
+    new=(); while IFS= read -r n; do n="${n%$'\r'}"; [[ "$n" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.png$ && ! -e "$dest/$n" ]] && new+=("$n"); done <<< "$names"
+    (( ${#new[@]} )) || { echo "no new images on world $WL"; exit 0; }
+    "${SSH[@]}" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$dest"
+    for n in "${new[@]}"; do [[ -f "$dest/$n" ]] && echo "file://$dest/$n"; done ;;
   panel)
     # J480 (Angus: "I'm tsh'ing in, why can't I connect to them remotely?"): one of the world's panels (room = Stream,
     # board = Projects, search = Thoughts, agents) in a laptop window; the panel itself runs on the remote machine against the
