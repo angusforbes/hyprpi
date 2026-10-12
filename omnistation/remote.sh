@@ -24,7 +24,7 @@
 set -euo pipefail
 REPO_URL="${HYPRPI_REPO_URL:-https://github.com/angusforbes/hyprpi.git}"
 DIR="${HYPRPI_DIR:-$HOME/hyprpi}"
-ROOT="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+ROOT="$(cd "$(dirname "$0")" && pwd)"  # J476: the logical path (no readlink -f): ~/.hyprpi-<x> may be a link into Brev's ~/workspace
 W="${ROOT##*/.hyprpi-}"
 [[ "$ROOT" == "$HOME/.hyprpi-$W" && "$W" =~ ^[a-i]$ ]] || { echo "remote.sh: run me as ~/.hyprpi-<world letter>/remote.sh (I'm in $ROOT)" >&2; exit 2; }
 [[ -n "${HYPRPI_REMOTE_WS:-}" ]] || HYPRPI_REMOTE_WS=$(cat "$ROOT/ws" 2>/dev/null || true)
@@ -56,7 +56,7 @@ secrets_ok() {
   # (review) their parent folders mustn't be writable by others either (someone could swap a file)
   for d in "$HOME" "$HOME/.config" "$HOME/.pi"; do
     [[ -d "$d" ]] || continue
-    [[ $(( 8#$(stat -c %a "$d") & 022 )) -eq 0 && "$(stat -c %U "$d")" == "$(id -un)" ]] || bad+=("chmod go-w $(printf %q "$d")  # and owned by you")
+    [[ $(( 8#$(stat -L -c %a "$d") & 022 )) -eq 0 && "$(stat -L -c %U "$d")" == "$(id -un)" ]] || bad+=("chmod go-w $(printf %q "$d")  # and owned by you")  # J476: -L, ~/.pi may be a link into Brev's ~/workspace
   done
   (( ${#bad[@]} == 0 )) && return 0
   echo "remote.sh: refusing to start: a secret is readable by others. Fix with:" >&2; printf '  %s\n' "${bad[@]}" >&2; return 1
