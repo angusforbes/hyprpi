@@ -78,13 +78,23 @@ const pickerBox = new Container();
 // pi's own footer, fed from the remote session: cwd, tokens / cost / context, model + thinking, and the extensions' status line
 // (hyprpi's "name · room H" comes from the remote agent's own extension; the link's state is one more entry there)
 const fakeSession = {
-  get state() { return { model: st.model, thinkingLevel: st.thinking }; },
-  get model() { return st.model; }, routedModel: undefined,
+  // the model as host windows show it: its own id ("gpt-6-astra"), not the provider path ("openai/openai/gpt-6-astra")
+  get state() { return { model: st.model && { ...st.model, id: String(st.model.id || "").split("/").pop() }, thinkingLevel: st.thinking }; },
+  get model() { return this.state.model; }, routedModel: undefined,
   modelRuntime: { isUsingSubscription: () => false },
   getContextUsage: () => st.stats?.contextUsage,
   sessionManager: {
     getEntryCount: () => st.statsRev, getSessionId: () => st.sessionId || "", getLeafId: () => String(st.statsRev),
-    getEntries: () => st.stats ? [{ type: "usage", usage: { input: st.stats.tokens?.input || 0, output: st.stats.tokens?.output || 0, cacheRead: st.stats.tokens?.cacheRead || 0, cacheWrite: st.stats.tokens?.cacheWrite || 0, totalTokens: st.stats.tokens?.total || 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: Number(st.stats.cost) || 0 } } }] : [],
+    // the session's totals, split so pi's footer also gets the cache-hit rate (CH…%) from the latest response: totals minus the
+    // latest response as a usage entry, plus the latest response as an assistant message
+    getEntries: () => {
+      if (!st.stats) return [];
+      const t = st.stats.tokens || {}, L = st.lastUsage || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      const u = (o, c) => ({ input: o.input || 0, output: o.output || 0, cacheRead: o.cacheRead || 0, cacheWrite: o.cacheWrite || 0, totalTokens: (o.input || 0) + (o.output || 0) + (o.cacheRead || 0) + (o.cacheWrite || 0), cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: c } });
+      const lastCost = Number(L.cost?.total) || 0;
+      return [{ type: "usage", usage: u({ input: (t.input || 0) - (L.input || 0), output: (t.output || 0) - (L.output || 0), cacheRead: (t.cacheRead || 0) - (L.cacheRead || 0), cacheWrite: (t.cacheWrite || 0) - (L.cacheWrite || 0) }, Math.max(0, (Number(st.stats.cost) || 0) - lastCost)) },
+        ...(st.lastUsage ? [{ type: "message", message: { role: "assistant", usage: u(L, lastCost) } }] : [])];
+    },
     getCwd: () => (st.cwd.startsWith("~") ? (process.env.HOME || "") + st.cwd.slice(1) : st.cwd), getSessionName: () => st.sessionName,
   },
 };
@@ -143,6 +153,7 @@ function renderHistory(messages) {
   for (const m of messages) {
     if (m.role === "user") addUser(m);
     else if (m.role === "assistant") {
+      if (m.usage) st.lastUsage = m.usage;
       chat.addChild(new AssistantMessageComponent(m, settings.hideThinkingBlock ?? false, md()));
       for (const c of m.content || []) if (c.type === "toolCall") {
         const comp = toolComp(c.name, c.id, c.arguments);
@@ -206,6 +217,7 @@ function onEvent1(e) {
     }
     case "message_end":
       if (e.message.role !== "assistant") break;
+      if (e.message.usage) st.lastUsage = e.message.usage;
       if (!st.streamingComp) { // (review) connected mid-message: get_messages had no in-flight message, so show it whole now
         st.streamingComp = new AssistantMessageComponent(undefined, settings.hideThinkingBlock ?? false, md()); chat.addChild(st.streamingComp);
         for (const c of e.message.content || []) if (c.type === "toolCall" && !st.pendingTools.has(c.id)) st.pendingTools.set(c.id, toolComp(c.name, c.id, c.arguments));

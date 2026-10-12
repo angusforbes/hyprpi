@@ -90,7 +90,7 @@ case "$cmd" in
     # its pi session is resumed when it ran before (the newest session of this agent id), else a new one starts
     sess=$(ls -t "$ROOT/sessions/$NAME"/*.jsonl 2>/dev/null | head -1 || true)
     if [[ "${HYPRPI_REMOTE_MIRROR:-}" == 1 ]]; then export HYPRPI_REMOTE_RPC=0; else export HYPRPI_REMOTE_RPC=1; fi
-    tmux new-session -d -s "hyprpi-$W-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT HYPRPI_REMOTE_RPC PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") new --id $W-$NAME --name $NAME --cwd $(printf %q "$WORK") --workspace $(printf %q "$HYPRPI_REMOTE_WS") -- --session-dir $(printf %q "$ROOT/sessions/$NAME") ${sess:+--session $(printf %q "$sess")}"  # (Ledger: every path quoted for the tmux command string)
+    tmux new-session -d -s "hyprpi-$W-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT HYPRPI_REMOTE_RPC PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") new --id $W-$NAME --name $NAME --icon $(printf %q "${HYPRPI_REMOTE_ICON:-🛰}") --cwd $(printf %q "$WORK") --workspace $(printf %q "$HYPRPI_REMOTE_WS") -- --session-dir $(printf %q "$ROOT/sessions/$NAME") ${sess:+--session $(printf %q "$sess")}"  # (Ledger: every path quoted for the tmux command string)
     tmux set-option -t "hyprpi-$W-$NAME" status off >/dev/null 2>&1 || true  # the window looks like any hyprpi agent: no tmux bar
     sleep 2; tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null && echo "agent $NAME started (tmux session hyprpi-$W-$NAME)" || { echo "remote.sh: agent $NAME exited at once" >&2; exit 4; } ;;
   connect)
@@ -103,11 +103,21 @@ case "$cmd" in
     tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null
     tmux set-option -t "hyprpi-$W-$NAME" status off >/dev/null 2>&1 || true
     exec tmux attach -t "hyprpi-$W-$NAME" ;;
+  rename)
+    # J471 v2 (Angus: "maybe they can start with 'omni-'"): agent NAME becomes NEW, keeping its session (stop, move the session
+    # folder, start under the new name); the old id is forgotten by the daemon so lists don't show it twice
+    NEW="${3:-}"; [[ "$NEW" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || { echo "remote.sh: rename NAME NEW (lowercase letters, digits and -)" >&2; exit 2; }
+    [[ -d "$ROOT/sessions/$NAME" ]] || { echo "remote.sh: $NAME has no session here" >&2; exit 3; }
+    [[ ! -e "$ROOT/sessions/$NEW" ]] || { echo "remote.sh: $NEW already exists" >&2; exit 3; }
+    tmux kill-session -t "hyprpi-$W-$NAME" 2>/dev/null || true; sleep 2
+    mv "$ROOT/sessions/$NAME" "$ROOT/sessions/$NEW"
+    [[ -S "$HYPRPI_SOCKET" ]] && node -e 'import(process.argv[1]).then(async (c) => { try { await c.request("agent.forget", { agent: process.argv[2] }); } catch {} process.exit(0); })' "$DIR/lib/client.mjs" "$W-$NAME" >/dev/null 2>&1 || true
+    bash "$ROOT/remote.sh" start "$NEW" ;;
   status)
     tmux ls 2>/dev/null | grep "^hyprpi-$W-" || echo "nothing running"
     [[ -S "$HYPRPI_SOCKET" ]] && hp list 2>/dev/null | head -20 || true ;;
   stop)
     if [[ "$NAME" == all ]]; then for s in $(tmux ls -F '#S' 2>/dev/null | grep "^hyprpi-$W-"); do tmux kill-session -t "$s"; done; echo "stopped all"
     else tmux kill-session -t "hyprpi-$W-$NAME" 2>/dev/null && echo "stopped $NAME (its session stays: start $NAME resumes it)" || echo "$NAME wasn't running"; fi ;;
-  *) echo "usage: remote.sh install | start [NAME] | connect [NAME] | attach [NAME] | status | stop [NAME|all]" >&2; exit 2 ;;
+  *) echo "usage: remote.sh install | start [NAME] | connect [NAME] | attach [NAME] | rename NAME NEW | status | stop [NAME|all]" >&2; exit 2 ;;
 esac
