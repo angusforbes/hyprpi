@@ -53,24 +53,31 @@ case $rc in
   *) why="unison exit $rc: $(grep -v -E '^(Pseudo|Warning: Perm|mux_client|ControlSocket)' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; state "unreachable" "$why" ;;
 esac
 [[ -z "$why" && $prc -ne 0 ]] && { why="pulling new images failed (world $WL images, exit $prc): $(tail -n 2 <<< "$pulled" | tr '\n' ' ' | cut -c1-300)"; state "pull-failed" "$why"; }
+# J497 v2: a run can take minutes; a box that stopped (or is stopping) meanwhile is a pause, not a failure
+if [[ -n "$why" ]]; then
+  now="$(timeout 60 brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
+  if [[ "$now" != RUNNING ]]; then state "paused" "box $BOX went ${now:-unknown (brev ls failed)} during the run"; echo 0 > "$ST/fails"; exit 0; fi
+fi
 
 # J497 (Angus: "shouldn't we notice a failure"): a failure while the box is RUNNING makes this run fail (systemd shows it),
 # and after ALERT_AFTER failures in a row Angus gets ONE alert: a ⚠ line in world ALERT_WORLD's Thoughts thread
 # (hyprpi thoughts alert) and a desktop notification. One "working again" notice when a run succeeds after an alert.
 # A stopped box (above) is a pause, not a failure: it neither counts nor alerts.
 ALERT_AFTER="${BREV_SYNC_ALERT_AFTER:-3}"; ALERT_WORLD="${BREV_SYNC_ALERT_WORLD:-A}"
-alert() { # $1 = text; both channels, each best effort
+alert() { # $1 = text; both channels, each best effort; fails (1) when neither delivered
   local sent=""
   hyprpi thoughts alert "$ALERT_WORLD" "$1" >/dev/null 2>&1 && sent="Thoughts-$ALERT_WORLD"
   notify-send -a brev-sync -u "${2:-critical}" "brev-sync" "$1" >/dev/null 2>&1 && sent="${sent:+$sent + }desktop"
-  log "alert (${sent:-no channel reached}): $1"
+  log "alert (${sent:-NO channel reached; tried Thoughts-$ALERT_WORLD and desktop}): $1"
+  [[ -n "$sent" ]]
 }
 fails="$(cat "$ST/fails" 2>/dev/null || echo 0)"; [[ "$fails" =~ ^[0-9]+$ ]] || fails=0
 if [[ -n "$why" ]]; then
   fails=$((fails + 1)); echo "$fails" > "$ST/fails"
-  if (( fails == ALERT_AFTER )); then
-    alert "brev-sync: ~/Brev <-> $BOX:~/$REMOTE has failed $fails runs in a row while the box is running. Last: $why. Details: brev-sync status, ~/.local/state/brev-sync/."
-    touch "$ST/alerted"
+  # one alert per outage: none again until a run has succeeded (a stopped-box pause in between doesn't end the outage);
+  # "alerted" only once a channel delivered, so an undelivered alert is tried again on the next failed run
+  if (( fails >= ALERT_AFTER )) && [[ ! -f "$ST/alerted" ]]; then
+    alert "brev-sync: ~/Brev <-> $BOX:~/$REMOTE has failed $fails runs in a row while the box is running. Last: $why. Details: brev-sync status, ~/.local/state/brev-sync/." && touch "$ST/alerted"
   fi
   echo "brev-sync: $why" >&2
   exit 1

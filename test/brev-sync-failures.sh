@@ -9,9 +9,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; T="$(mktemp -d)"; fails=0
 ok() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails+1)); fi; }
 mkdir -p "$T/bin" "$T/outputs" "$T/cfg/hyprpi" "$T/Brev"
 printf '#!/bin/sh\necho "NAME STATUS"\necho "j497-box $(cat %s/boxstate)"\n' "$T" > "$T/bin/brev"
-printf '#!/bin/sh\n[ -e %s/broken ] && { echo "ssh: connect to host j497-box: Connection refused" >&2; echo "Fatal error: Lost connection with the server" >&2; exit 3; }\necho "Synchronization complete at 00:00:00  (0 items transferred, 0 skipped, 0 failed)"; exit 0\n' "$T" > "$T/bin/unison"
+printf '#!/bin/sh\n[ -e %s/stopmid ] && echo STOPPING > %s/boxstate\n[ -e %s/broken ] && { echo "ssh: connect to host j497-box: Connection refused" >&2; echo "Fatal error: Lost connection with the server" >&2; exit 3; }\necho "Synchronization complete at 00:00:00  (0 items transferred, 0 skipped, 0 failed)"; exit 0\n' "$T" "$T" "$T" > "$T/bin/unison"
 printf '#!/bin/bash\n[ -e %s/broken ] && { echo "ssh: Connection refused" >&2; exit 255; }\ncmd="${@: -1}"; cmd="${cmd//\\~\\/workspace\\/outputs/%s/outputs}"; exec bash -c "$cmd"\n' "$T" "$T" > "$T/bin/fakessh"
-printf '#!/bin/sh\necho "$*" >> %s/notify.log\n' "$T" > "$T/bin/notify-send"
+printf '#!/bin/sh\n[ -e %s/nochannel ] && exit 1\necho "$*" >> %s/notify.log\n' "$T" "$T" > "$T/bin/notify-send"
 chmod +x "$T"/bin/*
 echo "{\"ssh\":[\"$T/bin/fakessh\",\"host\"]}" > "$T/i.json"
 echo '{"roomToThoughts":false,"pi":"/bin/cat","worldSize":10}' > "$T/cfg/hyprpi/config.json"
@@ -21,7 +21,7 @@ unset HYPRPI_AGENT_ID HYPRPI_WORKSPACE
 node "$ROOT/bin/hyprpi" daemon > "$T/d.log" 2>&1 & D=$!
 trap 'kill $D 2>/dev/null; wait $D 2>/dev/null; [[ $fails -eq 0 ]] && rm -rf "$T"' EXIT
 for _ in $(seq 50); do [[ -S "$T/d.sock" ]] && break; sleep 0.2; done
-run() { PATH="$T/bin:$ROOT/bin:$PATH" XDG_STATE_HOME="$T/xs" BREV_SYNC_BOX=j497-box BREV_SYNC_DIR="$T/Brev" BREV_SYNC_UNISON="$T/bin/unison" \
+run() { [[ -e "$T/nochannel" ]] && local HYPRPI_SOCKET="$T/none.sock"; PATH="$T/bin:$ROOT/bin:$PATH" XDG_STATE_HOME="$T/xs" BREV_SYNC_BOX=j497-box BREV_SYNC_DIR="$T/Brev" BREV_SYNC_UNISON="$T/bin/unison" \
   HYPRPI_REMOTE_CONF="$T/i.json" BREV_SYNC_ALERT_WORLD=Z "$ROOT/brev/sync/brev-sync" 2>/dev/null; }
 alerts() { node -e 'import(process.argv[1]).then(async ({connect}) => { const a = await connect({ path: process.env.HYPRPI_SOCKET, onEvent: () => {} }); const g = await a.call("thoughts.get", { room: "Z", limit: 100 }); console.log(g.entries.filter((e) => e.role === "note" && /brev-sync/.test(e.text)).length); process.exit(0); })' "$ROOT/lib/client.mjs"; }
 
@@ -38,10 +38,21 @@ ok "W2 one desktop notification (critical)" "[[ \$(grep -c critical $T/notify.lo
 run; run; run
 ok "W2 no repeat alert on failures 4-6" "[[ \$(alerts) -eq 1 && \$(wc -l < $T/notify.log) -eq 1 ]]"
 echo STOPPED > "$T/boxstate"; run; ok "W1 box stops mid-outage: exit 0, no alert" "[[ $? -eq 0 && \$(alerts) -eq 1 ]]"
+echo RUNNING > "$T/boxstate"; run; run; run; run
+ok "W4 3+ more failures after a STOPPED pause, no recovery yet: no second alert" "[[ \$(alerts) -eq 1 && \$(wc -l < $T/notify.log) -eq 1 ]]"
+touch "$T/stopmid"; run; rc=$?; rm "$T/stopmid"
+ok "W5 box leaves RUNNING during a failed run: exit 0 (quiet pause)" "[[ $rc -eq 0 ]] && tail -1 $T/xs/brev-sync/sync.log | grep -q 'went STOPPING during the run'"
 echo RUNNING > "$T/boxstate"; rm "$T/broken"; run
 ok "W2 recovery: exit 0, one 'working again'" "[[ $? -eq 0 && \$(alerts) -eq 2 ]] && grep -q 'working again' $T/notify.log"
 run; ok "W2 no repeat recovery notice" "[[ \$(alerts) -eq 2 && \$(wc -l < $T/notify.log) -eq 2 ]]"
 ok "log has no per-run spam while stopped" "[[ \$(grep -c paused $T/xs/brev-sync/sync.log) -le 3 ]]"
+# W6: an outage whose alert reaches no channel: not marked alerted, so the next failed run tries again
+touch "$T/broken" "$T/nochannel"; run; run; run
+ok "W6 no channel delivered: not marked alerted" "[[ ! -e $T/xs/brev-sync/alerted ]] && grep -q 'NO channel reached' $T/xs/brev-sync/sync.log"
+rm "$T/nochannel"; run
+ok "W6 next failed run delivers it (one more alert), then marks alerted" "[[ \$(alerts) -eq 3 && -e $T/xs/brev-sync/alerted ]]"
+run; ok "W6 and doesn't repeat" "[[ \$(alerts) -eq 3 ]]"
+rm "$T/broken"; run; ok "recovery after that: one 'working again'" "[[ \$(alerts) -eq 4 && ! -e $T/xs/brev-sync/alerted ]]"
 echo "--- sync.log"; cat "$T/xs/brev-sync/sync.log"
 [[ $fails -eq 0 ]] && echo "all passed" || echo "$fails FAILED (state $T)"
 exit $fails
