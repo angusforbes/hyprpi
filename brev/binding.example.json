@@ -1,0 +1,5 @@
+{
+  "ssh": ["ssh", "hyprpi-box"],
+  "label": "Brev",
+  "prefix": "brev-"
+}
