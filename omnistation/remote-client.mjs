@@ -100,14 +100,14 @@ const fakeSession = {
   },
 };
 const footerData = { getGitBranch: () => null, getAvailableProviderCount: () => st.providers || 1, getExtensionStatuses: () => {
-  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", everConnected ? `${MARK} reconnecting…` : startFailed ? `${MARK} not started` : `${MARK} starting ${NAME}${conf.label ? ` on ${conf.label}` : ""}…`)); /* J478: the window is up before the agent is */ for (const [k, v] of m) if (!v) m.delete(k); return m; } };
+  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", everConnected ? `${MARK} reconnecting…` : startFailed ? `${MARK} not started` : "" /* J481: the hyprpi line says "starting" */)); /* J478: the window is up before the agent is */ for (const [k, v] of m) if (!v) m.delete(k); return m; } };
 const footer = new FooterComponent(fakeSession, footerData);
 footer.setAutoCompactEnabled?.(true);
 for (const c of [chat, pendingBox, statusLine, workingBox, pickerBox, editor, footer]) ui.addChild(c);
 ui.setFocus(editor);
 // the title as G's windows have it ("🐳 G: π - Beta - world-g"): the world's mark and letter, then pi's own title from the agent
 const setTitle = (t) => process.stdout.write(`\x1b]2;${MARK} ${WL}: ${String(t || `π - ${NAME}`).replace(/[^\p{L}\p{N}\p{P}\p{Zs}π]/gu, "").slice(0, 80)}\x07`);
-setTitle();
+setTitle(`π - ${NAME} - starting`); // J481: hyprpi's own title (the agent's replaces it once it's live)
 
 // ---- state
 const st = { connected: false, conn: null, streaming: false, model: null, thinking: "", cwd: "~", sessionName: "", pending: 0,
@@ -449,8 +449,9 @@ function connect() {
     if (stopped) { st.lastErr = `agent ${NAME} was stopped on the remote machine; close this window, or reopen it with: world ${WL} open ${NAME}`; paintChrome(); return; }
     // (FastOpenReview) only CONSECUTIVE first connects that each said "isn't running" count; a login or network failure resets the count
     if (!everConnected) { startTries = child.notRunning ? startTries + 1 : 0; if (startTries >= 3) startFailed = true; }
-    if (startFailed) { st.lastErr = `agent ${NAME} didn't start on ${conf.label || "the remote machine"} (world ${WL} status shows what runs there; world ${WL} start ${NAME} shows why); close this window, or try again with SUPER+A`; paintChrome(); return; } // J478
+    if (startFailed) { st.extStatus.set("hyprpi", `✗ \x1b[1m${NAME}\x1b[22m ${MARK} \x1b[2m· room ${WL} · didn't start\x1b[22m`); setTitle(`π - ${NAME} - didn't start`); st.lastErr = `agent ${NAME} didn't start on ${conf.label || "the remote machine"} (world ${WL} status shows what runs there; world ${WL} start ${NAME} shows why); close this window, or try again with SUPER+A`; paintChrome(); return; } // J478
     const why = errTail.trim().split("\n").filter(Boolean).pop() || "";
+    if (!everConnected && child.notRunning) { st.lastErr = ""; paintChrome(); setTimeout(connect, 1000); return; } // J481: still starting: no "disconnected" line, try again in 1 s
     const expired = /expired|login|certificate|not logged in|tsh login|permission denied/i.test(errTail);
     st.lastErr = expired ? `the login to the remote machine has run out: run tsh login (or your ssh login), I'll reconnect by myself (${why.slice(0, 120)})`
       : `disconnected${why ? ": " + why.slice(0, 140) : ""}; reconnecting in ${Math.round(backoff / 1000)} s`;
@@ -466,6 +467,13 @@ function quit() { // the group gets SIGTERM now and SIGKILL in 1 s; we leave aft
   ui.stop(); setTimeout(() => { try { if (c) process.kill(-c.pid, "SIGKILL"); } catch {} process.exit(0); }, 1000);
 }
 process.on("SIGTERM", quit); process.on("SIGHUP", quit);
+// J481 (Angus: the window "looks like a normal Pi agent, not hyprpi" while it starts): until the agent is live the window already
+// wears the hyprpi look: the footer's hyprpi line (the agent's own replaces it, same key) and a note in the chat (cleared by the
+// history when it connects)
+if (!everConnected) {
+  st.extStatus.set("hyprpi", `⏳ \x1b[1m${NAME}\x1b[22m ${MARK} \x1b[2m· room ${WL} · starting on ${conf.label || "the remote machine"}…\x1b[22m`);
+  chat.addChild(new Text(T.fg("dim", `${MARK} Starting agent ${NAME} on ${conf.label || "the remote machine"}. This window becomes the agent as soon as it's live (usually a few seconds).`), 1, 0));
+}
 paintChrome();
 ui.start();
 connect();
