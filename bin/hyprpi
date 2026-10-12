@@ -211,6 +211,20 @@ async function cmdNew() {
   if (!workspace && active && Number.isInteger(active.id) && active.id > 0) workspace = active.id;
   // Panel mode (mockups/panels): that workspace is the three floating panels, so a new
   // agent would open behind them. Put it on the next free workspace of the same world.
+  { // J471 v2 (Angus: "SUPER+A didn't open a new agent in H"): a remote world's workspace (bound in ~/.config/hyprpi/remote/<letter>.json)
+    // gets a new agent on its remote machine, with its local window (omnistation/world X new); a resume / twin / --beside stays here
+    const wl = workspace ? "abcdefghi"[Math.floor((workspace - 1) / (Number(cfg.worldSize) || 10))] : "";
+    const bound = wl && path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME, ".config"), "hyprpi", "remote", `${wl}.json`);
+    if (bound && fs.existsSync(bound) && !wantId && !twinOf && !beside && !process.env.HYPRPI_GATE_DRYRUN) {
+      { const why = hypr.hyprBlocked(); if (why) die(`hypr actions disabled (isolated daemon: ${why}): no remote agent started`); } // (review) J333 holds here too
+      // (review) only a plain new (SUPER+A, or with --name) goes remote; pi arguments, a cwd, an icon or a session have no remote
+      // meaning yet, so they are refused rather than silently dropped
+      if (piArgs.length || process.argv.includes("--cwd") || wantIcon) die(`world ${wl.toUpperCase()} is a remote world: its new agents take a name only (omnistation/world ${wl.toUpperCase()} new NAME)`);
+      const nm = /^[a-z][a-z0-9-]{0,30}$/.test(String(wantName).toLowerCase()) ? String(wantName).toLowerCase() : "";
+      const r = spawnSync(path.join(ROOT, "omnistation", "world"), [wl.toUpperCase(), "new", ...(nm ? [nm] : [])], { stdio: "inherit" });
+      process.exit(r.status ?? 1);
+    }
+  }
   if (workspace && !silent && !here) workspace = await awayFromPanels(workspace, cfg);
   { // J403 v2 (Angus): never a host agent on a sandboxed world's workspace: a new one opens inside the sandbox, a host
     // agent's resume / twin / --beside there is refused (lib/sandbox-gate.mjs)

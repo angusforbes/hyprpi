@@ -217,9 +217,10 @@ function reportedRows(r, W) {
   const age = Date.now() - Number(j.at || 0);
   if (!(age < 90000)) return [dim(clip(`  ◇ world ${SAFE(j.room, 1)}'s own agents: not reporting (last ${Math.round(age / 60000)} min ago)`, W))];
   const marks = { working: "●", background: "◐", blocked: "×", done: "✓", idle: "○" };
-  const out = [dim(clip(`  reported by ${SAFE(j.room, 1)} (inside its sandbox, display only):`, W))];
-  for (const a of j.agents.slice(0, 12)) out.push(dim(clip(`   ${marks[a.status] || "○"} ${sbxIcon(a.icon, SAFE(a.name, 31))} ${SAFE(a.name, 31)} 🐳 · ${SAFE(a.status, 12)}${a.ws ? " · " + wsLabel(Number(a.ws), WORLD_SIZE) : ""}${a.model ? " · " + SAFE(a.model, 40) : ""} · reported by ${SAFE(j.room, 1)}`, W)));
-  if (j.thoughts) out.push(dim(clip(`   💭 Thoughts-${SAFE(j.room, 1)} 🐳 · ${SAFE(j.thoughts, 10)} · reported by ${SAFE(j.room, 1)}`, W)));
+  const bd = j.badge === "🛰" ? "🛰" : "🐳"; // J471 v2: a remote world (omnistation/world-status.mjs) vs a sandboxed one
+  const out = [dim(clip(`  reported by ${SAFE(j.room, 1)} (${bd === "🛰" ? "on its remote machine" : "inside its sandbox"}, display only):`, W))];
+  for (const a of j.agents.slice(0, 12)) out.push(dim(clip(`   ${marks[a.status] || "○"} ${sbxIcon(a.icon, SAFE(a.name, 31))} ${SAFE(a.name, 31)} ${bd} · ${SAFE(a.status, 12)}${a.ws ? " · " + wsLabel(Number(a.ws), WORLD_SIZE) : ""}${a.model ? " · " + SAFE(a.model, 40) : ""} · reported by ${SAFE(j.room, 1)}`, W)));
+  if (j.thoughts) out.push(dim(clip(`   💭 Thoughts-${SAFE(j.room, 1)} ${bd} · ${SAFE(j.thoughts, 10)} · reported by ${SAFE(j.room, 1)}`, W)));
   return out;
 }
 function render() { if (restarting) return; if (batching) { dirty = true; return; } draw(); }
