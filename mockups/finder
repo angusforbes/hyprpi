@@ -8,6 +8,8 @@
 //
 //   ~/Work/hyprpi/mockups/finder            open the menu
 //   ~/Work/hyprpi/mockups/finder --list     print the rows instead (tests, a quick look)
+//   ~/Work/hyprpi/mockups/finder --act KEY  run one row's ⏎ (tests; J482)
+//   Enter on an app window  jump to it (J482: every ordinary app window is listed after the panels)
 //
 // Pressing the key again while the menu is open closes it (like the apps menu toggle).
 // omarchy-menu-select waits for the menu to write a "done" file; if the menu goes away without
@@ -21,7 +23,7 @@ import * as hypr from "../lib/hypr.mjs";
 { const why = hypr.hyprBlocked(); if (why) { console.error(`hypr actions disabled (isolated daemon: ${why}); HYPRPI_ALLOW_HYPR=1 allows them`); process.exit(1); } }
 import { runtimeDir, loadConfig, wsLabel, WORLD_LETTERS, stateDir } from "../lib/paths.mjs";
 import { worldHex, unnamed } from "../lib/tui/term.mjs";
-import { isAppWindow, appLabel, stateNote } from "../lib/apps.mjs";
+import { isAppWindow, appLabel, stateNote, isTransient, HYPRPI_CLASS } from "../lib/apps.mjs";
 import { heldForSandboxes } from "../lib/held.mjs";
 import { sbxIcon, sbxPlaceholder, REMOTE_MARK, isRemoteMark } from "../lib/sandbox-icon.mjs"; // J423; J450: sbxPlaceholder shared with π
 
@@ -363,6 +365,28 @@ async function rows() {
         sub: "", worlds: S.room, ws, subtitle: [L.line2, stateNote(c), ws === S.workspace ? "already here" : ""].filter(Boolean).join(" · ") });
     }
   }
+  // J482 (Angus: "i have a brave brwoser i think running, and i can't find wehre it is, is there a pop up that shows all active
+  // windows/apps?"): the finder also lists every ordinary app window, after the panels: "🌐 Brave Work · A7 · 3 mins" with the
+  // window's title as its small line; typing finds it by app or title (the row's `search`, J482), ⏎ jumps to it. Not listed again:
+  // agents (their own window or a plain terminal running one), hyprpi panels and pop-ups, a Doorman window (a panel row), dialogs.
+  // A window on a special workspace (scratchpad, Reprieve-parked) or hidden is shown too, marked "hidden (name)".
+  if (!SUMMON) {
+    const agentAddr = new Set((l.agents || []).map((a) => a.address).filter(Boolean));
+    let used = {}; try { used = (await request("window.recent", {})).used || {}; } catch { /* an older daemon: no ages */ }
+    for (const c of clients) {
+      const wsId = c.workspace?.id, special = !(wsId > 0);
+      if (!c.address || c.mapped === false || isTransient(c) || agentAddr.has(c.address)) continue;
+      if (HYPRPI_CLASS.test(c.class || "") || HYPRPI_CLASS.test(c.initialClass || "") || /^hyprpi-(router|room|search|board|thoughts) /.test(c.title || "") || DOORMAN_CLASS.test(c.class || "")) continue;
+      const L = appLabel(c), t = used[c.address] || 0, age = t ? since(t, "") : "";
+      const wsWorld = special ? "" : WORLD_LETTERS[Math.floor((wsId - 1) / WORLD_SIZE)] || "";
+      const loc = special ? `hidden (${String(c.workspace?.name || "special").replace(/^special:/, "") || "special"})` : c.hidden ? `hidden · ${wsLabel(wsId, WORLD_SIZE)}` : wsLabel(wsId, WORLD_SIZE);
+      const nm = [L.app, L.tag].filter(Boolean).join(" ");
+      out.push({ kind: "app", id: c.address, room: wsWorld, sort: nm, recent: t, mark: "▫", glyph: "▫", label: `${L.icon} ${nm} · ${loc}${age ? " · " + age : ""}`,
+        rich: esc(L.icon) + " " + esc(L.app) + (L.tag ? " " + font("dim", L.tag) : "") + font("dim", " · ") + (special || c.hidden ? font("dim", loc) : font(worldColor(wsWorld), loc)) + (age ? font("dim", " · " + age) : ""),
+        sub: "", worlds: wsWorld, ws: special ? 0 : wsId, subtitle: [L.line2, stateNote(c), c.pinned ? "on every workspace" : ""].filter(Boolean).join(" · "),
+        search: clean([c.class, c.initialClass, L.app, L.tag, c.title].filter(Boolean).join(" ")).slice(0, 300) });
+    }
+  }
   // Agents first, then projects (summon: agents, panels, projects). Within each, by category, then most recent first:
   // × needs you (blocked, a decision, a bonk) · ● working · ✓ finished, not seen yet · ○ idle (a finished one
   // already seen shows ○ too) · ◌ parked / nobody live (Angus, J92: "lets list blocked agents, then working
@@ -371,7 +395,7 @@ async function rows() {
   // their last turn event, projects their card's last change. Ties A–Z. (The SUPER+S pop-up has its own order.)
   const CAT = { "×": 0, "●": 1, "◐": 2, "✓": 3, "○": 4, "◌": 5 }; // ◐ background (J93): its turn ended, subagents still running
   const cat = (r) => CAT[r.mark] ?? 3;
-  const KIND = SUMMON ? { agent: 0, panel: 1, app: 2, project: 3 } : { agent: 0, sbxagent: 0, project: 1, panel: 2 }; // finder: panels last (J195)
+  const KIND = SUMMON ? { agent: 0, panel: 1, app: 2, project: 3 } : { agent: 0, sbxagent: 0, project: 1, panel: 2, remoteopen: 2, app: 3 }; // finder: panels after projects (J195), then app windows (J482). remoteopen (J471) had no entry: NaN in the comparator mixed its rows (and a project) in anywhere
   out.sort((x, y) => KIND[x.sortKind || x.kind] - KIND[y.sortKind || y.kind] || cat(x) - cat(y) || (y.recent || 0) - (x.recent || 0) || x.sort.localeCompare(y.sort, undefined, { sensitivity: "base" }));
   // The menu returns "label<TAB>subtext" (or just the label without a subtext); make every one
   // unique so a pick maps back to one row.
@@ -386,7 +410,7 @@ async function rows() {
 
 async function act(r) {
   if (r.kind === "remoteopen") { const [w, nm] = String(r.id).split(":"); if (/^[A-I]$/.test(w) && /^[a-z][a-z0-9-]{0,30}$/.test(nm)) spawn(here + "../omnistation/world", [w, "open", nm], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); return; }
-  if (r.kind === "panel" || r.kind === "sbxagent") return hypr.focusWindow(r.id); // J195: go to its workspace and focus it (J404: a sandboxed agent's window too)
+  if (r.kind === "panel" || r.kind === "sbxagent" || r.kind === "app") return hypr.focusWindow(r.id); // J482: an app window too (its workspace comes with it) // J195: go to its workspace and focus it (J404: a sandboxed agent's window too)
   if (r.kind === "agent") {
     if (r.parked) return request("agent.unpark", { agent: r.id });
     return request("agent.focus", { agent: r.id });
@@ -437,6 +461,9 @@ const main = async () => {
   try { if (SUMMON) S = await request("room.current", {}); rs = await rows(); } catch (e) { console.error("finder: " + e.message); process.exit(1); }
   const row = (r) => r.sub ? `${r.glyph}\t${r.label}\t${r.sub}` : `${r.glyph}\t${r.label}`; // "" glyph → a row without an icon
   if (list && process.argv.includes("--options")) { console.log(JSON.stringify(optionsOf(rs))); return; }
+  // J482: --act KEY runs a row's ⏎ without the pop-up (tests, with a fake hyprctl): the key as --list prints its label
+  const ai = process.argv.indexOf("--act");
+  if (ai > 0 && !SUMMON) { const k = process.argv[ai + 1] || "", r = rs.find((x) => x.key === k) || rs.find((x) => x.label === k); if (!r) { console.error("finder: no row for " + JSON.stringify(k)); process.exit(1); } await act(r); return; }
   if (list) {
     const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
     for (const r of rs) console.log(row(r) + (process.argv.includes("--ages") ? `\t(${r.recent ? ago(r.recent) : "?"})` : "") + (process.argv.includes("--rich") ? `\n    ${r.rich}` : ""));
@@ -478,7 +505,7 @@ const main = async () => {
 };
 
 // The plugin's options (also --list --options, for tests).
-const optionsOf = (rs) => rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, home: r.ws ? WORLD_LETTERS[Math.floor((r.ws - 1) / WORLD_SIZE)] || "" : "", slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0, subtitle: r.subtitle || "" })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
+const optionsOf = (rs) => rs.map((r) => ({ icon: r.glyph, label: r.label, detail: r.sub || "", rich: r.rich || "", value: r.key, worlds: r.worlds || "", ws: r.ws || 0, home: r.ws ? WORLD_LETTERS[Math.floor((r.ws - 1) / WORLD_SIZE)] || "" : "", slot: r.ws ? ((r.ws - 1) % WORLD_SIZE) + 1 : 0, name: r.sort || "", recent: r.recent || 0, subtitle: r.subtitle || "", search: r.search || "" })); // FinderRank.js: one world letter or workspace digit ranks first (J17)
 
 // The plugin pop-up: omarchy-menu-select's protocol (a selection file, then a done file), with the
 // rows as objects so the label can be coloured; the pick comes back as the row's key. false when

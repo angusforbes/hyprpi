@@ -17,7 +17,8 @@
 // by workspace number, so "@orchestration · C5" (board D, writer on C5: ws 25) beat D1 (ws 31).
 
 function matches(row, q) {
-  return !q || String(row.label || "").toLowerCase().indexOf(q) >= 0 || String(row.detail || "").toLowerCase().indexOf(q) >= 0;
+  // J482: an app window's row also carries `search` (its class and window title), so "brave" finds every Brave window
+  return !q || String(row.label || "").toLowerCase().indexOf(q) >= 0 || String(row.detail || "").toLowerCase().indexOf(q) >= 0 || String(row.search || "").toLowerCase().indexOf(q) >= 0;
 }
 
 function rank(rows, query, plain) {
