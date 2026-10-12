@@ -37,6 +37,10 @@ if (!SSH.length) { console.error(`h-client: "ssh" is empty in ${CONF}`); process
 const DEBUG = !!process.env.HYPRPI_REMOTE_DEBUG;
 const remoteCmd = (first) => `HYPRPI_REMOTE_WS=${WS} bash ~/.hyprpi-${wl}/remote.sh connect ${NAME}${first ? "" : " nostart"}`;
 let everConnected = false, stopped = false, startFailed = false, startTries = 0; // J478
+// J479 (Angus: a window that found its agent stopped gave up for good, his queued message with it): "stopped" and "didn't
+// start" are WAITING states now: the window keeps checking (nostart, 2 s doubling to 30 s), reattaches when the agent is back
+// (`world X start NAME`, `recover`) and then sends what was typed meanwhile. `agentWait` is that state, for the status line.
+let agentWait = false;
 
 const DEPS = process.env.HYPRPI_REMOTE_DEPS || path.join(os.homedir(), ".cache/hyprpi-remote");
 const PKG = path.join(DEPS, "node_modules/@earendil-works");
@@ -100,7 +104,7 @@ const fakeSession = {
   },
 };
 const footerData = { getGitBranch: () => null, getAvailableProviderCount: () => st.providers || 1, getExtensionStatuses: () => {
-  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", everConnected ? `${MARK} reconnecting…` : startFailed ? `${MARK} not started` : "" /* J481: the hyprpi line says "starting" */)); /* J478: the window is up before the agent is */ for (const [k, v] of m) if (!v) m.delete(k); return m; } };
+  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", agentWait ? `${MARK} ${startFailed ? "not started" : "stopped"} · waiting (world ${WL} start ${NAME})` : everConnected ? `${MARK} reconnecting…` : "" /* J481: the hyprpi line says "starting" */)); /* J478: the window is up before the agent is; J479: waiting for a stopped agent */ for (const [k, v] of m) if (!v) m.delete(k); return m; } };
 const footer = new FooterComponent(fakeSession, footerData);
 footer.setAutoCompactEnabled?.(true);
 for (const c of [chat, pendingBox, statusLine, workingBox, pickerBox, editor, footer]) ui.addChild(c);
@@ -407,7 +411,7 @@ const scrub = (v) => typeof v === "string" ? clean(v) : Array.isArray(v) ? v.map
 let backoff = 1000, closing = false;
 function connect() {
   if (closing) return;
-  const child = spawn(SSH[0], [...SSH.slice(1), remoteCmd(!everConnected)], { stdio: ["pipe", "pipe", "pipe"], detached: true }); // detached: no controlling terminal, so a login tool can't prompt on (and garble) this window; it fails and we retry
+  const child = spawn(SSH[0], [...SSH.slice(1), remoteCmd(!everConnected && !startFailed)], { stdio: ["pipe", "pipe", "pipe"], detached: true }); // detached: no controlling terminal, so a login tool can't prompt on (and garble) this window; it fails and we retry
   st.conn = child; let buf = "", errTail = "", hello = false, lastData = Date.now();
   // keepalive: a ping every 15 s; nothing heard for 45 s = a dead link (e.g. the laptop slept), so drop it and reconnect
   const ka = setInterval(() => {
@@ -421,7 +425,7 @@ function connect() {
     while ((i = buf.indexOf("\n")) >= 0) {
       const l = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1); if (!l) continue;
       let r; try { r = scrub(JSON.parse(l)); } catch { continue; }
-      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(async () => { for (const o of outbox.splice(0)) await send(o.text, o.mode); paintChrome(); }); continue; }
+      if (r.type === "broker_hello") { hello = true; everConnected = true; stopped = false; startFailed = false; startTries = 0; agentWait = false; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(async () => { for (const o of outbox.splice(0)) await send(o.text, o.mode); paintChrome(); }); continue; }
       if (r.type === "broker_pong") continue;
       if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
       else if (booting && /^(message_|tool_execution_|turn_|bash_execution)/.test(r.type || "")) continue; // already in the coming snapshot (state events still apply)
@@ -446,10 +450,20 @@ function connect() {
     if (closing) return;
     booting = false; histId = null;
     if (dialog?.id) closeDialogSilently(); dialogQueue.length = 0; // the broker cancels them when no client is left; a new connect replays live ones
-    if (stopped) { st.lastErr = `agent ${NAME} was stopped on the remote machine; close this window, or reopen it with: world ${WL} open ${NAME}`; paintChrome(); return; }
     // (FastOpenReview) only CONSECUTIVE first connects that each said "isn't running" count; a login or network failure resets the count
-    if (!everConnected) { startTries = child.notRunning ? startTries + 1 : 0; if (startTries >= 3) startFailed = true; }
-    if (startFailed) { st.extStatus.set("hyprpi", `✗ \x1b[1m${NAME}\x1b[22m ${MARK} \x1b[2m· room ${WL} · didn't start\x1b[22m`); setTitle(`π - ${NAME} - didn't start`); st.lastErr = `agent ${NAME} didn't start on ${conf.label || "the remote machine"} (world ${WL} status shows what runs there; world ${WL} start ${NAME} shows why); close this window, or try again with SUPER+A`; paintChrome(); return; } // J478
+    if (!everConnected && !startFailed) { startTries = child.notRunning ? startTries + 1 : 0; if (startTries >= 3) startFailed = true; }
+    // J479: the agent isn't running (stopped, or its start failed): wait for it instead of giving up; the machine answered, so
+    // this is cheap polling; anything else (network, login) falls through to the reconnect below
+    if ((stopped || child.notRunning) && (everConnected || startFailed)) {
+      if (!agentWait) backoff = 2000;
+      agentWait = true; stopped = false;
+      const label = conf.label || "the remote machine";
+      if (startFailed) { st.extStatus.set("hyprpi", `✗ \x1b[1m${NAME}\x1b[22m ${MARK} \x1b[2m· room ${WL} · didn't start · waiting\x1b[22m`); setTitle(`π - ${NAME} - didn't start`); } // J481's look, J479's waiting
+      st.lastErr = startFailed ? `agent ${NAME} didn't start on ${label} (world ${WL} start ${NAME} shows why); waiting for it, checking again in ${Math.round(backoff / 1000)} s`
+        : `agent ${NAME} isn't running on ${label} (stopped, or the machine restarted); waiting for it, checking again in ${Math.round(backoff / 1000)} s (world ${WL} start ${NAME} starts it); what you type is sent when it's back`;
+      paintChrome(); setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 30000); return;
+    }
+    agentWait = false;
     const why = errTail.trim().split("\n").filter(Boolean).pop() || "";
     if (!everConnected && child.notRunning) { st.lastErr = ""; paintChrome(); setTimeout(connect, 1000); return; } // J481: still starting: no "disconnected" line, try again in 1 s
     const expired = /expired|login|certificate|not logged in|tsh login|permission denied/i.test(errTail);

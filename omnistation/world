@@ -106,6 +106,9 @@ case "$cmd" in
   new) exec "$0" "$WL" open "$NAME" ;;
   open|open-mirror)
     if [[ "$cmd" == open ]]; then
+      # J479: one window per agent: a window already running for it (its client keeps reconnecting and waits for a stopped agent
+      # by itself) is reused, focusing nothing; recover and SUPER+A go through here too
+      if pgrep -u "$(id -u)" -f "omnistation/remote-client\.mjs $WL $NAME\$" >/dev/null; then echo "agent $NAME already has a window (world $WL); not opening another"; exit 0; fi
       # the client's dependencies: pi's own packages, pinned to the laptop's pi version, in a cache folder
       DEPS="${HYPRPI_REMOTE_DEPS:-$HOME/.cache/hyprpi-remote}"; PIV=$(pi --version 2>/dev/null | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
       PJ="$DEPS/node_modules/@earendil-works/pi-coding-agent/package.json"
