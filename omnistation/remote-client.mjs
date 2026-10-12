@@ -30,7 +30,9 @@ const CONF = process.env.HYPRPI_REMOTE_CONF || path.join(process.env.XDG_CONFIG_
 const conf = JSON.parse(fs.readFileSync(CONF, "utf8"));
 const SSH = (conf.ssh || []).filter((a) => a !== "-t" && a !== "-tt"); // a pipe, not a terminal: no -t
 if (!SSH.length) { console.error(`h-client: "ssh" is empty in ${CONF}`); process.exit(2); }
-const REMOTE_CMD = `HYPRPI_REMOTE_WS=${WS} bash ~/.hyprpi-${wl}/remote.sh connect ${NAME}`;
+// the first connect starts the agent if it isn't running; a reconnect doesn't (review: `world X stop NAME` must stay stopped)
+const remoteCmd = (first) => `HYPRPI_REMOTE_WS=${WS} bash ~/.hyprpi-${wl}/remote.sh connect ${NAME}${first ? "" : " nostart"}`;
+let everConnected = false, stopped = false;
 
 const DEPS = process.env.HYPRPI_REMOTE_DEPS || path.join(os.homedir(), ".cache/hyprpi-remote");
 const PKG = path.join(DEPS, "node_modules/@earendil-works");
@@ -175,7 +177,11 @@ function onEvent1(e) {
       ui.requestRender(); break;
     }
     case "message_end":
-      if (e.message.role !== "assistant" || !st.streamingComp) break;
+      if (e.message.role !== "assistant") break;
+      if (!st.streamingComp) { // (review) connected mid-message: get_messages had no in-flight message, so show it whole now
+        st.streamingComp = new AssistantMessageComponent(undefined, settings.hideThinkingBlock ?? false, md()); chat.addChild(st.streamingComp);
+        for (const c of e.message.content || []) if (c.type === "toolCall" && !st.pendingTools.has(c.id)) st.pendingTools.set(c.id, toolComp(c.name, c.id, c.arguments));
+      }
       if (e.message.stopReason === "aborted" && !e.message.errorMessage) e.message.errorMessage = "Operation aborted";
       st.streamingComp.updateContent(e.message, false);
       if (e.message.stopReason === "aborted" || e.message.stopReason === "error") {
@@ -252,7 +258,10 @@ async function refreshState() {
   } catch {}
   paintChrome();
 }
-async function reloadHistory() { try { const d = await rpc({ type: "get_messages" }, 60000); renderHistory(d.messages || []); } catch (e) { st.lastErr = `history: ${e.message}`; } paintChrome(); }
+// history is rendered synchronously from inside the read loop (see connect): events after its response line are newer than it,
+// events before it are already in it. (review: rendering it a microtask later let it wipe newer live events)
+let histId = null, booting = false;
+async function reloadHistory() { try { const p = rpc({ type: "get_messages" }, 60000); histId = `r${reqN}`; booting = true; await p; } catch (e) { st.lastErr = `history: ${e.message}`; } paintChrome(); }
 async function pickModel(filter = "") {
   let models; try { models = (await rpc({ type: "get_available_models" })).models || []; } catch (e) { st.lastErr = `models: ${e.message}`; return paintChrome(); }
   const items = models.map((m) => ({ value: `${m.provider}\u0000${m.id}`, label: `${m.provider}/${m.id}`, description: m.name || "" }));
@@ -303,25 +312,52 @@ ui.addInputListener((data) => {
   return undefined;
 });
 
+// ---- the remote machine's text is untrusted: keep colour (SGR) only; drop every other escape / control sequence (OSC 52
+// clipboard writes, title changes, hyperlinks, cursor moves, C1 controls), so an agent's output can't drive this terminal
+const SGR = /^\x1b\[[0-9;:]*m/;
+function clean(str) {
+  let out = "";
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i], c = ch.charCodeAt(0);
+    if (ch === "\x1b") {
+      const m = str.slice(i).match(SGR);
+      if (m) { out += m[0]; i += m[0].length - 1; continue; }
+      const nx = str[i + 1];
+      if (nx === "[") { const r = str.slice(i + 2).match(/^[0-9;:?<>=!]*[ -\/]*[@-~]/); i += 1 + (r ? r[0].length : 0); continue; }
+      if (nx === "]" || nx === "P" || nx === "_" || nx === "^" || nx === "X") { // string sequences up to BEL or ST
+        const rest = str.slice(i + 2); const j = rest.search(/\x07|\x1b\\/); i += 1 + (j < 0 ? rest.length : j + (rest[j] === "\x07" ? 1 : 2)); continue; }
+      i += 1; continue; // ESC + one char
+    }
+    if ((c < 0x20 && ch !== "\n" && ch !== "\t") || c === 0x7f || (c >= 0x80 && c < 0xa0)) continue;
+    out += ch;
+  }
+  return out;
+}
+const scrub = (v) => typeof v === "string" ? clean(v) : Array.isArray(v) ? v.map(scrub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)])) : v;
+
 // ---- connection: one ssh per connect; reconnect with backoff after a drop or an expired login
 let backoff = 1000, closing = false;
 function connect() {
   if (closing) return;
-  const child = spawn(SSH[0], [...SSH.slice(1), REMOTE_CMD], { stdio: ["pipe", "pipe", "pipe"], detached: true }); // detached: no controlling terminal, so a login tool can't prompt on (and garble) this window; it fails and we retry
+  const child = spawn(SSH[0], [...SSH.slice(1), remoteCmd(!everConnected)], { stdio: ["pipe", "pipe", "pipe"], detached: true }); // detached: no controlling terminal, so a login tool can't prompt on (and garble) this window; it fails and we retry
   st.conn = child; let buf = "", errTail = "", hello = false, lastData = Date.now();
   // keepalive: a ping every 15 s; nothing heard for 45 s = a dead link (e.g. the laptop slept), so drop it and reconnect
   const ka = setInterval(() => {
     if (Date.now() - lastData > 45000) { errTail += "\nno answer for 45 s"; child.kill("SIGKILL"); return; }
     if (hello) sendRaw({ type: "broker_ping", t: Date.now() });
   }, 15000);
+  child.stdout.setEncoding("utf8"); // (review) whole characters, even when a chunk ends mid-character
   child.stdout.on("data", (chunk) => {
     lastData = Date.now();
-    buf += chunk.toString("utf8"); let i;
+    buf += chunk; let i;
     while ((i = buf.indexOf("\n")) >= 0) {
       const l = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1); if (!l) continue;
-      let r; try { r = JSON.parse(l); } catch { continue; }
-      if (r.type === "broker_hello") { hello = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory); continue; }
+      let r; try { r = scrub(JSON.parse(l)); } catch { continue; }
+      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory); continue; }
       if (r.type === "broker_pong") continue;
+      if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
+      else if (booting && r.type !== "response" && r.type !== "extension_ui_request") continue; // already in the coming snapshot
+      if (r.type === "broker_error" && /isn't running/.test(r.error || "") && everConnected) { stopped = true; }
       if (r.type === "response" && r.id && waiting.has(r.id)) { const f = waiting.get(r.id); waiting.delete(r.id); f(r); continue; }
       onEvent(r);
     }
@@ -334,6 +370,8 @@ function connect() {
     st.connected = false; setWorking(false);
     for (const [id, f] of waiting) { waiting.delete(id); f({ success: false, error: "connection lost" }); }
     if (closing) return;
+    booting = false; histId = null;
+    if (stopped) { st.lastErr = `agent ${NAME} was stopped on the remote machine; close this window, or reopen it with: world ${WL} open ${NAME}`; paintChrome(); return; }
     const why = errTail.trim().split("\n").filter(Boolean).pop() || "";
     const expired = /expired|login|certificate|not logged in|tsh login|permission denied/i.test(errTail);
     st.lastErr = expired ? `the login to the remote machine has run out: run tsh login (or your ssh login), I'll reconnect by myself (${why.slice(0, 120)})`

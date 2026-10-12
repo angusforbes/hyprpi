@@ -13,7 +13,7 @@
 #                                The agent's pi runs in RPC mode behind omnistation/hbroker.mjs (J471): a laptop window draws pi's
 #                                interface locally and sends only finished messages. HYPRPI_REMOTE_MIRROR=1 starts it the old way
 #                                (pi's own terminal UI in tmux, for `attach`)
-#   remote.sh connect [NAME]     pipe this ssh's stdin/stdout to agent NAME's RPC socket (what a laptop window runs)
+#   remote.sh connect NAME [nostart]  pipe this ssh's stdin/stdout to agent NAME's RPC socket (what a laptop window runs)
 #   remote.sh attach [NAME]      attach this terminal to a mirror-mode agent's tmux (the old window); detach = close the window
 #   remote.sh status             daemon and agents, as hyprpi sees them
 #   remote.sh stop [NAME|all]    stop an agent (its session file stays, so `start NAME` resumes it), or everything
@@ -49,7 +49,7 @@ secrets_ok() {
     [[ -e "$f" ]] || continue
     [[ $(( 8#$(stat -c %a "$f") & 077 )) -eq 0 ]] || bad+=("chmod 600 $(printf %q "$f")")
   done
-  for d in "$HOME/.config/hyprpi-secrets" "$HOME/.ai-pim-utils"; do
+  for d in "$HOME/.config/hyprpi-secrets" "$HOME/.ai-pim-utils" "$HOME/.pi/agent"; do
     [[ -d "$d" ]] || continue
     [[ $(( 8#$(stat -c %a "$d") & 077 )) -eq 0 ]] || bad+=("chmod 700 $(printf %q "$d")")
   done
@@ -90,7 +90,8 @@ case "$cmd" in
     sleep 2; tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null && echo "agent $NAME started (tmux session hyprpi-$W-$NAME)" || { echo "remote.sh: agent $NAME exited at once" >&2; exit 4; } ;;
   connect)
     # (no output of our own on stdout: it carries the RPC stream)
-    tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null 2>&1 || true
+    # a window's reconnect passes "nostart": an agent stopped on purpose stays stopped
+    [[ "${3:-}" == nostart ]] || tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null 2>&1 || true
     for _ in $(seq 20); do [[ -S "$ROOT/run/$NAME.rpc.sock" ]] && break; sleep 0.5; done
     exec node "$ROOT/hbroker.mjs" connect "$NAME" ;;
   attach)

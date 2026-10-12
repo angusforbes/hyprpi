@@ -46,7 +46,9 @@ case "$cmd" in
     "${SSH[@]}" "cat > ~/.hyprpi-$wl/hbroker.mjs.new && mv ~/.hyprpi-$wl/hbroker.mjs.new ~/.hyprpi-$wl/hbroker.mjs" < "$H/omnistation/hbroker.mjs"
     # hyprpi itself: this checkout's committed master as a tar (the remote may not reach the git host); a git clone there is updated
     # instead. (Ledger) ~/hyprpi is replaced only on an explicit "copy" answer: a failed probe (ssh error) changes nothing
-    kind=$("${SSH[@]}" 'if [ -d ~/hyprpi/.git ]; then echo git; else echo copy; fi' 2>/dev/null | tr -d '\r' | tail -1) || kind=""
+    # (review) "copy" only for an empty place or a copy this script made (its .version marker); anything else there is left alone
+    kind=$("${SSH[@]}" 'if [ -d ~/hyprpi/.git ]; then echo git; elif [ ! -e ~/hyprpi ] || [ -f ~/hyprpi/.version ]; then echo copy; else echo foreign; fi' 2>/dev/null | tr -d '\r' | tail -1) || kind=""
+    [[ "$kind" != foreign ]] || { echo "world: ~/hyprpi on the remote machine is neither a git clone nor a copy made by this script; move it away first" >&2; exit 3; }
     [[ "$kind" == git || "$kind" == copy ]] || { echo "world: couldn't reach the remote machine (is the login still valid?); nothing changed" >&2; exit 3; }
     if [[ "$kind" == copy ]]; then
       ver=$(git -C "$H" rev-parse --short master)

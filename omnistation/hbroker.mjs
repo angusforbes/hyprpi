@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 const [, , cmd, NAME, ...rest] = process.argv;
 if (!/^[a-z][a-z0-9-]{0,30}$/.test(NAME || "")) { console.error("hbroker: usage: hbroker.mjs serve|connect NAME"); process.exit(2); }
@@ -28,9 +29,9 @@ const SOCK = path.join(RUN, `${NAME}.rpc.sock`);
 
 // LF-only JSONL splitter (pi's RPC framing: never split on U+2028/2029, which readline does)
 function lines(onLine) {
-  let buf = "";
+  let buf = ""; const dec = new StringDecoder("utf8"); // (review) a multibyte character split across chunks stays whole
   return (chunk) => {
-    buf += chunk.toString("utf8");
+    buf += typeof chunk === "string" ? chunk : dec.write(chunk);
     let i;
     while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1); if (l) onLine(l); }
   };
