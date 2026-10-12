@@ -62,7 +62,7 @@ path_unsafe() {
 }
 # Secrets must be private (Ledger, J469/J471): files 600 or tighter, their folders 700, else nothing starts
 secrets_ok() {
-  local bad=() f d
+  local bad=() f d r
   for f in "$HOME/.config/hyprpi-secrets"/* "$HOME/.pi/agent/auth.json" "$HOME/.pi/agent/models.json" "$HOME/.ai-pim-utils/tokens.toml"; do
     [[ -e "$f" ]] || continue
     [[ $(( 8#$(stat -c %a "$f") & 077 )) -eq 0 ]] || bad+=("chmod 600 $(printf %q "$f")")
