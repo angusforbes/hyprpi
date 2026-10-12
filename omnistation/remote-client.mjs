@@ -427,7 +427,7 @@ function connect() {
       else if (booting && /^(message_|tool_execution_|turn_|bash_execution)/.test(r.type || "")) continue; // already in the coming snapshot (state events still apply)
       if (r.type === "broker_error" && /isn't running/.test(r.error || "") && everConnected) { stopped = true; }
       // J478: the FIRST connect starts the agent; if it's still not running after that, the start failed: say so, don't retry forever
-      if (r.type === "broker_error" && /isn't running/.test(r.error || "") && !everConnected) { child.notRunning = true; } // (counted when the connection closes, after all its output: a slow start gets 3 tries)
+      if (r.type === "broker_error" && /isn't running/.test(r.error || "") && !everConnected) { child.notRunning = true; continue; } // (counted when the connection closes, after all its output: a slow start gets 3 tries; J481: not shown, the hyprpi line says "starting")
       if (r.type === "response" && r.id && waiting.has(r.id)) { const f = waiting.get(r.id); waiting.delete(r.id); f(r); continue; }
       onEvent(r);
     }
