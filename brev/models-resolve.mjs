@@ -38,8 +38,18 @@ if (cfg.preset === "short") ids = list("short");
 else if (cfg.preset === "custom") ids = list("custom");
 else if (cfg.preset === "laptop") {
   const scoped = (readJson(path.join(PI, "settings.json"))?.enabledModels || []).map(String);
-  const pats = scoped.filter((p) => p.startsWith("nv-inference/")).map((p) => scopeGlob(p.slice("nv-inference/".length)));
-  ids = (lap.models || []).map((m) => m.id).filter((id) => pats.some((re) => re.test(id.toLowerCase())));
+  // (review) pi's own scope resolver, so the box gets exactly what pi on this laptop scopes (its patterns, braces, case, suffixes);
+  // from the client packages `world X open` keeps (~/.cache/hyprpi-remote); the approximation below only if they aren't there
+  const lapModels = (lap.models || []).map((m) => ({ ...m, provider: "nv-inference", api: m.api || lapApi, baseUrl: lap.baseUrl }));
+  const deps = process.env.HYPRPI_REMOTE_DEPS || path.join(os.homedir(), ".cache/hyprpi-remote");
+  const mr = path.join(deps, "node_modules/@earendil-works/pi-coding-agent/dist/core/model-resolver.js");
+  let piScope = null; try { piScope = (await import(mr)).resolveModelScopeFromModels; } catch { /* not installed */ }
+  if (piScope) ids = [...new Set(piScope(scoped, lapModels).scopedModels.map((x) => x.model.id))];
+  else {
+    console.error(`models-resolve: pi's model resolver isn't at ${mr} (run world X open once); matching the scope approximately`);
+    const pats = scoped.filter((p) => p.toLowerCase().startsWith("nv-inference/")).map((p) => scopeGlob(p.slice("nv-inference/".length)));
+    ids = lapModels.map((m) => m.id).filter((id) => pats.some((re) => re.test(id.toLowerCase())));
+  }
 } else die(`"preset" must be short, laptop or custom (it is ${JSON.stringify(cfg.preset)})`);
 const def = String(cfg.default || ids[0] || "");
 ids = [...new Set([def, ...ids, ...list("add")])].filter((id) => id && !list("exclude").includes(id));
