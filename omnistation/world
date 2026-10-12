@@ -52,7 +52,7 @@ case "$cmd" in
     [[ "$kind" == git || "$kind" == copy ]] || { echo "world: couldn't reach the remote machine (is the login still valid?); nothing changed" >&2; exit 3; }
     if [[ "$kind" == copy ]]; then
       ver=$(git -C "$H" rev-parse --short master)
-      { git -C "$H" archive --format=tar master; } | "${SSH[@]}" "rm -rf ~/hyprpi.new && mkdir -p ~/hyprpi.new && tar -x -C ~/hyprpi.new && test -f ~/hyprpi.new/bin/hyprpi && echo $ver > ~/hyprpi.new/.version && rm -rf ~/hyprpi.old && { [ ! -e ~/hyprpi ] || mv ~/hyprpi ~/hyprpi.old; } && mv ~/hyprpi.new ~/hyprpi && rm -rf ~/hyprpi.old"
+      { git -C "$H" archive --format=tar master; } | "${SSH[@]}" "rm -rf ~/hyprpi.new && mkdir -p ~/hyprpi.new && tar -x -C ~/hyprpi.new && test -f ~/hyprpi.new/bin/hyprpi && echo $ver > ~/hyprpi.new/.version && rm -rf ~/hyprpi.old && { [ ! -e ~/hyprpi ] || mv ~/hyprpi ~/hyprpi.old; } && mv ~/hyprpi.new ~/hyprpi"  # (review) the previous copy stays as ~/hyprpi.old until the next setup
     fi
     "${SSH[@]}" "$R install" ;;
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;

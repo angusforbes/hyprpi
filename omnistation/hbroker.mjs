@@ -64,7 +64,8 @@ if (cmd === "connect") {
 
   pi.stdout.on("data", lines((l) => {
     let r; try { r = JSON.parse(l); } catch { return; }
-    if (r.type === "response" && typeof r.id === "string" && /^c\d+:/.test(r.id)) {
+    // a command's response, and command-scoped events (bash_execution_update), go only to the client that asked (review)
+    if ((r.type === "response" || r.type === "bash_execution_update") && typeof r.id === "string" && /^c\d+:/.test(r.id)) {
       const n = Number(r.id.slice(1, r.id.indexOf(":"))); const sock = clients.get(n);
       if (sock) send(sock, { ...r, id: r.id.slice(r.id.indexOf(":") + 1) });
       return;
@@ -73,10 +74,14 @@ if (cmd === "connect") {
       if (DIALOG.has(r.method)) {
         if (!clients.size) { toPi({ type: "extension_ui_response", id: r.id, cancelled: true }); return; }
         pendingUi.set(r.id, r);
+        // (review) pi resolves a dialog with a timeout by itself: forget it then, and close it in the windows
+        if (r.timeout) setTimeout(() => { if (pendingUi.delete(r.id)) for (const s of clients.values()) send(s, { type: "extension_ui_closed", id: r.id }); }, r.timeout + 1000).unref();
       } else if (r.method !== "notify") sticky.set(`${r.method}:${r.statusKey || r.widgetKey || ""}`, r);
     }
     for (const sock of clients.values()) send(sock, r);
   }));
+  pi.on("error", (e) => { log(`couldn't start pi: ${e.message}`); try { fs.unlinkSync(SOCK); } catch {} process.exit(3); });
+  pi.stdin.on("error", () => {});
   pi.on("exit", (code, sig) => {
     log(`pi exited (${sig || code}); closing`);
     for (const s of clients.values()) { send(s, { type: "broker_error", error: `pi exited (${sig || code})` }); s.end(); }

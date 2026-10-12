@@ -53,6 +53,11 @@ secrets_ok() {
     [[ -d "$d" ]] || continue
     [[ $(( 8#$(stat -c %a "$d") & 077 )) -eq 0 ]] || bad+=("chmod 700 $(printf %q "$d")")
   done
+  # (review) their parent folders mustn't be writable by others either (someone could swap a file)
+  for d in "$HOME" "$HOME/.config" "$HOME/.pi"; do
+    [[ -d "$d" ]] || continue
+    [[ $(( 8#$(stat -c %a "$d") & 022 )) -eq 0 && "$(stat -c %U "$d")" == "$(id -un)" ]] || bad+=("chmod go-w $(printf %q "$d")  # and owned by you")
+  done
   (( ${#bad[@]} == 0 )) && return 0
   echo "remote.sh: refusing to start: a secret is readable by others. Fix with:" >&2; printf '  %s\n' "${bad[@]}" >&2; return 1
 }

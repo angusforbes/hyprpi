@@ -14,6 +14,8 @@
 // Ctrl+C clears the editor (twice on an empty one quits; the agent keeps running), Ctrl+L picks the model, Ctrl+O expands tool
 // output. Commands handled here: /model [filter], /quit; anything else starting with / goes to the agent as a prompt (its
 // extension commands, skills and templates run there).
+// keys typed while the modules load must not echo raw onto the screen: raw mode at once (the TUI takes over below)
+if (process.stdin.isTTY) { try { process.stdin.setRawMode(true); } catch {} }
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -31,6 +33,7 @@ const conf = JSON.parse(fs.readFileSync(CONF, "utf8"));
 const SSH = (conf.ssh || []).filter((a) => a !== "-t" && a !== "-tt"); // a pipe, not a terminal: no -t
 if (!SSH.length) { console.error(`h-client: "ssh" is empty in ${CONF}`); process.exit(2); }
 // the first connect starts the agent if it isn't running; a reconnect doesn't (review: `world X stop NAME` must stay stopped)
+const DEBUG = !!process.env.HYPRPI_REMOTE_DEBUG;
 const remoteCmd = (first) => `HYPRPI_REMOTE_WS=${WS} bash ~/.hyprpi-${wl}/remote.sh connect ${NAME}${first ? "" : " nostart"}`;
 let everConnected = false, stopped = false;
 
@@ -72,7 +75,7 @@ process.stdout.write(`\x1b]2;🛰 ${WL}: ${NAME}\x07`);
 // ---- state
 const st = { connected: false, conn: null, streaming: false, model: null, thinking: "", cwd: "~", sessionName: "", pending: 0,
   lastErr: "", expanded: false, streamingComp: null, pendingTools: new Map(), quitArmed: 0, extStatus: new Map() };
-let reqN = 0; const waiting = new Map();
+let reqN = 0; const waiting = new Map(); const outbox = [];
 const sendRaw = (obj) => { if (!st.conn) return false; st.conn.stdin.write(JSON.stringify(obj) + "\n"); return true; };
 const rpc = (obj, timeoutMs = 30000) => new Promise((resolve, reject) => {
   const id = `r${++reqN}`;
@@ -89,7 +92,7 @@ function paintChrome() {
   footer.setText(T.fg("dim", `${st.cwd}${st.sessionName ? " · " + st.sessionName : ""}`) + "\n" +
     T.fg("dim", `${modelLabel()}${st.thinking ? " · " + st.thinking : ""}${ext ? "  " + ext : ""}`));
   statusLine.setText(st.lastErr ? T.fg("warning", st.lastErr) : "");
-  pendingBox.setText(st.pending ? T.fg("dim", `${st.pending} message(s) queued`) : "");
+  pendingBox.setText([st.pending ? `${st.pending} message(s) queued` : "", outbox.length ? `${outbox.length} message(s) waiting for the connection: ${outbox.map((t) => t.slice(0, 40)).join(" | ")}` : ""].filter(Boolean).map((t) => T.fg("dim", t)).join("\n"));
   ui.requestRender();
 }
 
@@ -135,6 +138,7 @@ function renderHistory(messages) {
   ui.requestRender();
 }
 function onEvent(e) {
+  if (DEBUG && !["message_update", "tool_execution_update"].includes(e.type)) process.stderr.write(`event ${e.type} ${e.type === "extension_ui_request" ? e.method : ""} ${e.type === "queue_update" ? JSON.stringify(e).slice(0, 200) : ""}\n`);
   try { onEvent1(e); } catch (err) { st.lastErr = `couldn't show a ${e?.type} event: ${err.message}`; paintChrome(); }
 }
 function onEvent1(e) {
@@ -207,16 +211,17 @@ function onEvent1(e) {
     case "compaction_end": st.lastErr = ""; reloadHistory(); break;
     case "session_info_changed": case "thinking_level_changed": case "model_changed": refreshState(); break;
     case "extension_ui_request": onUiRequest(e); break;
-    case "extension_ui_closed": if (dialog?.id === e.id) closeDialog(); break;
+    case "extension_ui_closed": { const i = dialogQueue.findIndex((q) => q.id === e.id); if (i >= 0) dialogQueue.splice(i, 1); if (dialog?.id === e.id) closeDialog(); break; }
     case "broker_error": st.lastErr = e.error; paintChrome(); break;
     case "extension_error": st.lastErr = `extension: ${e.error}`; paintChrome(); break;
   }
 }
 
 // ---- extension UI from the remote (status, notify, simple dialogs)
-let dialog = null;
-function closeDialog() { pickerBox.clear(); dialog = null; ui.setFocus(editor); ui.requestRender(); }
+let dialog = null; const dialogQueue = []; // (review) one dialog at a time; later ones wait their turn
+function closeDialog() { pickerBox.clear(); dialog = null; ui.setFocus(editor); ui.requestRender(); const next = dialogQueue.shift(); if (next) onUiRequest(next); }
 function onUiRequest(r) {
+  if (["select", "confirm", "input", "editor"].includes(r.method) && dialog) { if (dialog.id !== r.id && !dialogQueue.some((q) => q.id === r.id)) dialogQueue.push(r); return; }
   if (r.method === "setStatus") { st.extStatus.set(r.statusKey, r.statusText || ""); paintChrome(); return; }
   if (r.method === "notify") { chat.addChild(new Spacer(1)); chat.addChild(new Text(T.fg(r.notifyType === "error" ? "error" : r.notifyType === "warning" ? "warning" : "dim", r.message || ""), 1, 0)); ui.requestRender(); return; }
   if (r.method === "setTitle") return;
@@ -276,26 +281,34 @@ async function setModel(v) {
   refreshState();
 }
 async function submit(text) {
+  if (dialog?.kind === "text") { sendRaw({ type: "extension_ui_response", id: dialog.id, value: text }); closeDialog(); return; } // (review) before the empty check: "" is an answer
   const t = text.trim(); if (!t) return;
-  if (dialog?.kind === "text") { sendRaw({ type: "extension_ui_response", id: dialog.id, value: text }); closeDialog(); return; }
   if (t === "/quit" || t === "/exit") return quit();
   const m = t.match(/^\/model(?:\s+(.*))?$/); if (m) return pickModel((m[1] || "").trim());
   editor.addToHistory?.(t);
-  if (!st.connected) { st.lastErr = "not connected yet: the message is back in the editor"; editor.setText(text); return paintChrome(); }
+  if (!st.connected) { outbox.push(text); paintChrome(); return; } // sent as soon as the link is up (the first connect takes seconds)
   try {
     const r = await rpc(st.streaming ? { type: "prompt", message: text, streamingBehavior: "steer" } : { type: "prompt", message: text });
     if (r?.disposition === "queued") { st.pending++; paintChrome(); }
-  } catch (e) { st.lastErr = `not sent (${e.message}); it's back in the editor`; editor.setText(text); paintChrome(); }
+  } catch (e) {
+    // (review) a dropped link after pi accepted it but before the answer came back: it may have been sent; never call it "not sent"
+    st.lastErr = e.message === "connection lost" ? "the connection dropped while sending: it may have arrived (the history shows it after the reconnect); it's also back in the editor, don't resend blindly"
+      : `not sent (${e.message}); it's back in the editor`;
+    editor.setText(text); paintChrome();
+  }
 }
 editor.onSubmit = (text) => { if (DEBUG) process.stderr.write(`submit ${JSON.stringify(text)}\n`); editor.setText(""); submit(text); };
 editor.onEscape = () => {
   if (dialog?.kind === "text") { sendRaw({ type: "extension_ui_response", id: dialog.id, cancelled: true }); return closeDialog(); }
-  if (st.streaming) { rpc({ type: "abort" }).catch(() => {}); st.lastErr = "interrupting…"; paintChrome(); setTimeout(() => { if (st.lastErr === "interrupting…") { st.lastErr = ""; paintChrome(); } }, 3000); }
+  if (st.streaming) {
+    // as pi does: take the queued messages back into the editor first, so the abort doesn't run them next (review)
+    rpc({ type: "clear_queue" }).then((q) => { const back = [...(q?.steering || []), ...(q?.followUp || [])]; if (back.length) editor.setText([...back, editor.getText()].filter(Boolean).join("\n\n")); st.pending = 0; paintChrome(); }, () => {})
+      .finally(() => rpc({ type: "abort" }).catch(() => {})); st.lastErr = "interrupting…"; paintChrome(); setTimeout(() => { if (st.lastErr === "interrupting…") { st.lastErr = ""; paintChrome(); } }, 3000); }
 };
 editor.onAction("app.model.select", () => pickModel());
 editor.onAction("app.tools.expand", () => { st.expanded = !st.expanded; for (const c of chat.children) c.setExpanded?.(st.expanded); ui.requestRender(); });
 editor.onAction("app.thinking.cycle", () => rpc({ type: "cycle_thinking_level" }).then(refreshState, () => {}));
-editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (!t.trim()) return; editor.setText(""); rpc({ type: "prompt", message: t, ...(st.streaming ? { streamingBehavior: "followUp" } : {}) }).catch((e) => { st.lastErr = e.message; editor.setText(t); paintChrome(); }); });
+editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (dialog?.kind === "text") { editor.setText(""); return submit(t); } if (!t.trim()) return; editor.setText(""); rpc({ type: "prompt", message: t, ...(st.streaming ? { streamingBehavior: "followUp" } : {}) }).catch((e) => { st.lastErr = e.message; editor.setText(t); paintChrome(); }); });
 editor.onAction("app.clear", () => {
   if (editor.getText()) { editor.setText(""); st.quitArmed = 0; ui.requestRender(); return; }
   if (Date.now() - st.quitArmed < 1500) return quit();
@@ -303,7 +316,6 @@ editor.onAction("app.clear", () => {
 });
 editor.onCtrlD = () => quit();
 // a picker (model / dialog) takes the keys while open; typing filters it
-const DEBUG = !!process.env.HYPRPI_REMOTE_DEBUG;
 ui.addInputListener((data) => {
   if (DEBUG) process.stderr.write(`key ${JSON.stringify(data)} focus=${dialog?.kind || "editor"}\n`);
   if (dialog?.kind !== "list") return undefined;
@@ -343,7 +355,7 @@ function connect() {
   st.conn = child; let buf = "", errTail = "", hello = false, lastData = Date.now();
   // keepalive: a ping every 15 s; nothing heard for 45 s = a dead link (e.g. the laptop slept), so drop it and reconnect
   const ka = setInterval(() => {
-    if (Date.now() - lastData > 45000) { errTail += "\nno answer for 45 s"; child.kill("SIGKILL"); return; }
+    if (Date.now() - lastData > 45000) { errTail += "\nno answer for 45 s"; killGroup(child); return; }
     if (hello) sendRaw({ type: "broker_ping", t: Date.now() });
   }, 15000);
   child.stdout.setEncoding("utf8"); // (review) whole characters, even when a chunk ends mid-character
@@ -353,7 +365,7 @@ function connect() {
     while ((i = buf.indexOf("\n")) >= 0) {
       const l = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1); if (!l) continue;
       let r; try { r = scrub(JSON.parse(l)); } catch { continue; }
-      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory); continue; }
+      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(() => { for (const t of outbox.splice(0)) submit(t); paintChrome(); }); continue; }
       if (r.type === "broker_pong") continue;
       if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
       else if (booting && r.type !== "response" && r.type !== "extension_ui_request") continue; // already in the coming snapshot
@@ -364,7 +376,10 @@ function connect() {
   });
   child.stderr.on("data", (d) => { errTail = (errTail + d.toString()).slice(-400); });
   child.stdin.on("error", () => {});
+  child.on("error", (e) => { errTail += `\n${e.message}`; }); // (review) a missing ssh tool: shown, then retried; "exit" may not follow
+  child.on("error", () => setTimeout(() => { if (st.conn === child) child.emit("exit", null, null); }, 100));
   child.on("exit", () => {
+    if (child.hDone) return; child.hDone = true;
     clearInterval(ka);
     if (st.conn === child) st.conn = null;
     st.connected = false; setWorking(false);
@@ -381,7 +396,9 @@ function connect() {
     if (!hello) return;
   });
 }
-function quit() { closing = true; try { st.conn?.stdin.end(); st.conn?.kill(); } catch {} ui.stop(); process.exit(0); }
+// the ssh runs in its own process group (detached): end the whole group, so wrappers and proxies go too (review)
+function killGroup(c) { try { process.kill(-c.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-c.pid, "SIGKILL"); } catch {} }, 2000).unref(); }
+function quit() { closing = true; try { st.conn?.stdin.end(); if (st.conn) killGroup(st.conn); } catch {} ui.stop(); process.exit(0); }
 process.on("SIGTERM", quit); process.on("SIGHUP", quit);
 paintChrome();
 ui.start();
