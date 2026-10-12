@@ -91,7 +91,7 @@ function paintChrome() {
   const ext = [...st.extStatus.values()].filter(Boolean).join("  ");
   footer.setText(T.fg("dim", `${st.cwd}${st.sessionName ? " · " + st.sessionName : ""}`) + "\n" +
     T.fg("dim", `${modelLabel()}${st.thinking ? " · " + st.thinking : ""}${ext ? "  " + ext : ""}`));
-  statusLine.setText(st.lastErr ? T.fg("warning", st.lastErr) : "");
+  statusLine.setText(st.lastErr ? T.fg("warning", clean(st.lastErr).replace(/\x1b\[[0-9;:]*m/g, "")) : "");
   pendingBox.setText([st.pending ? `${st.pending} message(s) queued` : "", outbox.length ? `${outbox.length} message(s) waiting for the connection: ${outbox.map((t) => t.slice(0, 40)).join(" | ")}` : ""].filter(Boolean).map((t) => T.fg("dim", t)).join("\n"));
   ui.requestRender();
 }
@@ -379,7 +379,8 @@ function connect() {
       onEvent(r);
     }
   });
-  child.stderr.on("data", (d) => { errTail = (errTail + d.toString()).slice(-400); });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (d) => { errTail = clean(errTail + d).slice(-400); }); // (review) stderr is remote-derived too: scrubbed
   child.stdin.on("error", () => {});
   child.on("error", (e) => { errTail += `\n${e.message}`; }); // (review) a missing ssh tool: shown, then retried; "exit" may not follow
   child.on("error", () => setTimeout(() => { if (st.conn === child) child.emit("exit", null, null); }, 100));
