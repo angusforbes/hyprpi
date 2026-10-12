@@ -516,6 +516,7 @@ const heldShown = new Map(); // digest -> when the phone was shown it (the 2 s r
 // ---- http ------------------------------------------------------------------------------------
 // A world letter that exists (one of the daemon's rooms); anything else is refused, so a stray POST
 // can't start a Thoughts for a world that isn't there (J161: a test to "Z" did).
+const sentOnce = new Map(); // J474: message id -> Promise of its first answer
 const room = (w) => /^[A-Z]$/.test(String(w || "")) && (!listing?.rooms || allRooms().includes(String(w))) ? String(w) : null; // (J472: a remote world counts)
 const json = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
 async function body(req, max = 1e6) {
@@ -693,21 +694,26 @@ const server = http.createServer(async (req, res) => {
     // POST /api/agent/stop {agent}: stop its turn (like Esc).
     if (req.method === "POST" && /^\/api\/agent\/(send|interrupt|stop)$/.test(url.pathname)) {
       const b = await body(req), id = String(b.agent || ""), what = url.pathname.split("/").pop();
+      // J474: a message id (from the page) is delivered once: a repeat of the same id within 10 min gets the first answer, nothing is sent again
+      const mid = /^[\w-]{8,64}$/.test(String(b.id || "")) ? `${what}:${id}:${b.id}` : "";
+      if (mid && sentOnce.has(mid)) { const p = sentOnce.get(mid); log("phone", what, "repeat of", String(b.id).slice(0, 12), "ignored"); return json(res, 200, { ...((await p.catch(() => null)) || {}), repeat: true }); }
+      let settle = null; if (mid) { sentOnce.set(mid, new Promise((r) => { settle = r; })); if (sentOnce.size > 500) sentOnce.delete(sentOnce.keys().next().value); setTimeout(() => sentOnce.delete(mid), 600e3).unref?.(); }
+      const done = (code, obj) => { settle?.(code === 200 ? obj : null); if (code !== 200 && mid) sentOnce.delete(mid); return json(res, code, obj); }; // a failed send may be tried again with the same id
       // J433: an agent of a sandboxed world goes to its inner daemon, as typed at its window (owner input).
       if (/^(sbx|rmt):/.test(id)) { // (J472: and a remote world's agent, on its own machine's daemon)
-        const ia = await innerAgent(id).catch(() => null); if (!ia) return json(res, 404, { error: "no such live agent" });
+        const ia = await innerAgent(id).catch(() => null); if (!ia) return done( 404, { error: "no such live agent" });
         const text = String(b.text || "").trim().slice(0, 8000), slash = text.startsWith("/");
         const msg = !text ? "" : slash ? text : `[Angus, from his phone]\n${text}`;
         try {
-          if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → inner agent", ia.sb, ia.a.name); innerCache.delete(ia.sb); return json(res, 200, { ...(await ia.be.call("agent.prompt", { agent: ia.id, text: msg, via: "phone" })), queued: ia.a.status === "working" }); }
-          if (what === "interrupt" && !text) return json(res, 400, { error: "empty" });
+          if (what === "send") { if (!text) return done( 400, { error: "empty" }); log("phone → inner agent", ia.sb, ia.a.name); innerCache.delete(ia.sb); return done( 200, { ...(await ia.be.call("agent.prompt", { agent: ia.id, text: msg, via: "phone" })), queued: ia.a.status === "working" }); }
+          if (what === "interrupt" && !text) return done( 400, { error: "empty" });
           log("phone", what, "sandboxed", ia.a.name); innerCache.delete(ia.sb);
-          return json(res, 200, await ia.be.call("agent.interrupt", { agent: ia.id, text: what === "interrupt" ? msg : "", via: "phone" }));
-        } catch (e) { return json(res, 409, { error: e.message }); }
+          return done( 200, await ia.be.call("agent.interrupt", { agent: ia.id, text: what === "interrupt" ? msg : "", via: "phone" }));
+        } catch (e) { return done( 409, { error: e.message }); }
       }
       const a = (listing?.agents || []).find((x) => x.id === id && !x.parked);
-      if (!a) return json(res, 404, { error: "no such live agent" });
-      if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      if (!a) return done( 404, { error: "no such live agent" });
+      if (!api) return done( 503, { error: "hyprpi daemon not reachable" });
       const text = String(b.text || "").trim().slice(0, 8000);
       // "/ignore …" (Angus's signpost, N52) goes as typed: the agent's extension files it as a note with no
       // turn. The phone label in front used to hide the /ignore, so it became a prompt (Pocket, from Angus).
@@ -717,12 +723,12 @@ const server = http.createServer(async (req, res) => {
       const slash = text.startsWith("/") || /(^|\s)\/step(\s|$)/.test(text); // also "A /step B" (Pocket's J163 check)
       const msg = !text ? "" : slash ? text : `[Angus, from his phone]\n${text}`;
       try {
-        if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → agent", a.name || id, a.status, slash ? text.split(/\s/)[0] : ""); return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working", ...(slash ? { slash: true } : {}) }); }
-        if (what === "interrupt" && !text) return json(res, 400, { error: "empty" });
-        if (what === "interrupt" && slash) return json(res, 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working", slash: true }); // a command (or a note) interrupts nothing: it waits for the turn
+        if (what === "send") { if (!text) return done( 400, { error: "empty" }); log("phone → agent", a.name || id, a.status, slash ? text.split(/\s/)[0] : ""); return done( 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working", ...(slash ? { slash: true } : {}) }); }
+        if (what === "interrupt" && !text) return done( 400, { error: "empty" });
+        if (what === "interrupt" && slash) return done( 200, { ...(await api.call("agent.prompt", { agent: id, text: msg, via: "phone" })), queued: a.status === "working", slash: true }); // a command (or a note) interrupts nothing: it waits for the turn
         log("phone", what, a.name || id);
-        return json(res, 200, await api.call("agent.interrupt", { agent: id, text: what === "interrupt" ? msg : "", via: "phone" }, { timeoutMs: 30000 }));
-      } catch (e) { return json(res, 409, { error: e.message }); }
+        return done( 200, await api.call("agent.interrupt", { agent: id, text: what === "interrupt" ? msg : "", via: "phone" }, { timeoutMs: 30000 }));
+      } catch (e) { return done( 409, { error: e.message }); }
     }
     // GET /api/held?world=G: the first held item of a sandboxed world, in full (the relay's own record, as the Doorman window shows it).
     // POST /api/held/decide {world, id, digest, choice, confirm?}: Angus's choice, typed after reading it (J434).

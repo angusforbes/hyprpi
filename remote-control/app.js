@@ -1082,18 +1082,24 @@ async function openSession(id) {
   } catch (e) { sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">✗ ${esc(e.message)}</div>`; }
   clearInterval(sess.timer); sess.timer = setInterval(pollSession, 1500);
 }
+// J474 (Angus: a send to a world H agent showed TWICE): a remote world's session read can take longer than the 1.5 s poll, so two
+// polls overlapped, both asked "after" the same byte and both appended the same new turn. Now one poll at a time, and an answer
+// counts only if it still continues exactly where the page is (its "after" is the page's end).
+let sessPolling = false;
 async function pollSession() {
-  if (view !== "session" || !sess.agent || document.hidden || sess.loading) return;
-  const id = sess.agent;
+  if (view !== "session" || !sess.agent || document.hidden || sess.loading || sessPolling) return;
+  const id = sess.agent, from = sess.end;
+  sessPolling = true;
   try {
-    const r = await call("GET", `/api/session?agent=${encodeURIComponent(id)}&after=${sess.end}`);
-    if (sess.agent !== id) return;
+    const r = await call("GET", `/api/session?agent=${encodeURIComponent(id)}&after=${from}`);
+    if (sess.agent !== id || sess.end !== from) return;
     renderSessionHead();
     if (!r.items.length) { sess.end = r.end; return; }
     sess.items.push(...r.items); sess.end = r.end;
     addSession(r.items, "end"); // J230: added in place (was: the whole page redrawn every poll, images and all)
     if (!splace.pinned && r.items.some((it) => it.k !== "result")) $("#snew").hidden = false; // he's reading further up: don't move him
   } catch { /* the next poll tries again */ }
+  finally { sessPolling = false; }
 }
 async function loadOlder() {
   if (!sess.more || sess.loading) return;
@@ -1264,18 +1270,22 @@ async function sessStop() {
 async function sessSend(how) {
   const text = sinput.value.trim();
   if (!text && how === "interrupt") return sessStop();
-  if (!text || !sess.agent) return;
+  if (!text || !sess.agent || sessSending) return; // J474: one send at a time (a double tap or Enter + tap sent it twice)
+  sessSending = true;
   ssend.disabled = sint.disabled = true;
   try {
     // J163: a slash command runs as if typed in its window (after a running turn); Interrupt doesn't stop for it.
-    const r = await call("POST", how === "interrupt" ? "/api/agent/interrupt" : "/api/agent/send", { agent: sess.agent, text });
+    // J474: each message carries an id; the server delivers an id once, whatever reaches it twice.
+    const r = await call("POST", how === "interrupt" ? "/api/agent/interrupt" : "/api/agent/send", { agent: sess.agent, text, id: sendId() });
     note(r.slash ? (r.queued ? `${text.split(/\s/)[0]}: runs when its turn ends` : `${text.split(/\s/)[0]}: sent as typed`)
       : how === "interrupt" ? "interrupted: your message is its next turn" : r.queued ? "queued: it reads this after its current turn" : "sent");
     sinput.value = ""; dropDraft(sdraftKey(sess.agent)); sinput.style.height = "auto"; sintLabel(); setTimeout(() => note(""), 3000);
     if (touch) sinput.blur();
   } catch (err) { note("✗ not sent: " + err.message); }
-  finally { ssend.disabled = sint.disabled = false; }
+  finally { ssend.disabled = sint.disabled = false; sessSending = false; }
 }
+let sessSending = false;
+const sendId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
 ssend.addEventListener("click", () => sessSend("send"));
 sint.addEventListener("click", () => sessSend("interrupt"));
 sinput.addEventListener("input", sintLabel);
