@@ -338,9 +338,10 @@ async function rows() {
       let j; try { j = JSON.parse(fs.readFileSync(path.join(base, n, "agents.json"), "utf8")); } catch { continue; }
       if (!j || j.badge !== "🛰" || !/^[A-I]$/.test(j.room || "") || !(Date.now() - Number(j.at || 0) < 90000) || !Array.isArray(j.agents)) continue;
       for (const a of j.agents.slice(0, 12)) {
-        const nm = String(a?.name || ""); if (!/^[a-z][a-z0-9-]{0,30}$/.test(nm) || (a.address && clients.some((c) => c.address === a.address))) continue;
+        // (review) opened by its launch name (from its immutable id); its display name is only shown
+        const launch = String(a?.launch || ""), nm = safeText(a?.name || launch, 31); if (!/^[a-z][a-z0-9-]{0,30}$/.test(launch) || (a.address && clients.some((c) => c.address === a.address))) continue;
         const ic = sbxIcon(a.icon, nm);
-        out.push({ kind: "remoteopen", id: `${j.room}:${nm}`, room: j.room, sort: nm, recent: 0, mark: "○", glyph: "○", sandboxed: true,
+        out.push({ kind: "remoteopen", id: `${j.room}:${launch}`, room: j.room, sort: nm, recent: 0, mark: "○", glyph: "○", sandboxed: true,
           label: `${ic} ${nm} 🛰 · ${j.room}`, rich: esc(ic) + " " + font(worldColor(j.room), nm) + " 🛰" + font("dim", " · ") + font(worldColor(j.room), j.room), sub: "",
           worlds: j.room, ws: 0, subtitle: "remote agent · no window yet: ⏎ opens it" });
       }

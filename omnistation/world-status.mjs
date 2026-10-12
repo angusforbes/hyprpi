@@ -28,14 +28,22 @@ const SIZE = Number(loadConfig().worldSize) || 10, idx = WL.charCodeAt(0) - 64, 
 const DIR = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "worlds", `world-${wl}`);
 fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
 
-// one per world: a lock with our pid (a stale one, whose process is gone, is taken over)
+// one per world (review): the lock file is created atomically ("wx"); a lock whose pid isn't a world-status.mjs for this world
+// any more (gone, or the pid reused by something else) is stale and taken over once
 const LOCK = path.join(DIR, "status.pid");
-try { const old = Number(fs.readFileSync(LOCK, "utf8")); if (old && old !== process.pid) { process.kill(old, 0); process.exit(0); } } catch { /* free */ }
-fs.writeFileSync(LOCK, String(process.pid), { mode: 0o600 });
+const isHelper = (pid) => { try { const a = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0"); return a.some((x) => x.endsWith("/world-status.mjs")) && a.includes(WL); } catch { return false; } };
+for (let tries = 0; ; tries++) {
+  try { const fd = fs.openSync(LOCK, "wx", 0o600); fs.writeSync(fd, String(process.pid)); fs.closeSync(fd); break; }
+  catch (e) {
+    if (e.code !== "EEXIST" || tries > 0) process.exit(0);
+    const old = Number(fs.readFileSync(LOCK, "utf8")); if (old && old !== process.pid && isHelper(old)) process.exit(0);
+    try { fs.unlinkSync(LOCK); } catch { /* another one took it: the next try decides */ }
+  }
+}
 const bye = () => { try { if (Number(fs.readFileSync(LOCK, "utf8")) === process.pid) fs.unlinkSync(LOCK); } catch {} rworld.closeBridges?.(); process.exit(0); };
 for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, bye);
 
-const write = (name, obj) => { const f = path.join(DIR, name); fs.writeFileSync(f + ".tmp", JSON.stringify(obj), { mode: 0o600 }); fs.renameSync(f + ".tmp", f); };
+const write = (name, obj) => { const f = path.join(DIR, name); fs.writeFileSync(`${f}.${process.pid}.tmp`, JSON.stringify(obj), { mode: 0o600 }); fs.renameSync(`${f}.${process.pid}.tmp`, f); };
 const clients = () => new Promise((res) => execFile("hyprctl", ["clients", "-j"], { timeout: 5000, maxBuffer: 8e6 }, (e, out) => { try { res(e ? null : JSON.parse(out)); } catch { res(null); } }));
 // the agent a window shows: its kitty's command line (local, so trusted) ends in remote-client.mjs <LETTER> <NAME>
 function windowAgent(pid) {
@@ -60,7 +68,10 @@ async function tick() {
     const l = await rworld.call(w, "list", {});
     const raw = { agents: (l.agents || []).filter((a) => a && !a.parked).map((a) => ({ id: String(a.id || ""), name: String(a.name || ""), status: String(a.status || "idle"), model: a.model, ...(a.icon ? { icon: a.icon } : {}) })), thoughts: "off" };
     const ok = validateStatus(raw);
-    const agents = ok.agents.map((a) => { const m = mine.find((x) => x.name === a.name); return { ...a, ws: m ? m.c.workspace.id : 0, ...(m ? { address: m.c.address } : {}) }; });
+    // (review) a window, its socket and tmux session go by the LAUNCH name, which only the immutable id carries ("h-omni-alpha"
+    // -> "omni-alpha"); the display name can be changed by the agent itself, so it is shown but never used to match or open
+    const launchOf = (id) => { const n = String(id).startsWith(`${wl}-`) ? String(id).slice(2) : ""; return /^[a-z][a-z0-9-]{0,30}$/.test(n) ? n : ""; };
+    const agents = ok.agents.map((a) => { const launch = launchOf(a.id), m = launch && mine.find((x) => x.name === launch); return { ...a, ...(launch ? { launch } : {}), ws: m ? m.c.workspace.id : 0, ...(m ? { address: m.c.address } : {}) }; });
     lastList = { world: `world-${wl}`, room: WL, at: Date.now(), agents, thoughts: ok.thoughts, dropped: ok.dropped, badge: "🛰", where: "remote" };
     write("agents.json", lastList);
   } catch { /* offline or slow: the report ages */ }

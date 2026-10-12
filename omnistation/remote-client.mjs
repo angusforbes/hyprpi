@@ -178,9 +178,9 @@ function onEvent(e) {
 }
 function onEvent1(e) {
   switch (e.type) {
-    case "agent_start": st.streaming = true; st.pendingTools.clear(); setWorking(true); break;
+    case "agent_start": st.stateGen = (st.stateGen || 0) + 1; st.streaming = true; st.pendingTools.clear(); setWorking(true); break;
     case "turn_start": setWorking(true); break;
-    case "queue_update": st.pending = (e.steering?.length || 0) + (e.followUp?.length || 0); paintChrome(); break;
+    case "queue_update": st.stateGen = (st.stateGen || 0) + 1; st.pending = (e.steering?.length || 0) + (e.followUp?.length || 0); paintChrome(); break;
     case "message_start":
       if (e.message.role === "user") addUser(e.message);
       else if (e.message.role === "custom" && e.message.display) { const t = userText(e.message); if (t) { chat.addChild(new Spacer(1)); chat.addChild(new Text(T.fg("dim", t), 1, 0)); } }
@@ -238,7 +238,7 @@ function onEvent1(e) {
     case "tool_execution_update": { const c = st.pendingTools.get(e.toolCallId); if (c) { c.updateResult({ ...e.partialResult, isError: false }, true); ui.requestRender(); } break; }
     case "tool_execution_end": { const c = st.pendingTools.get(e.toolCallId); if (c) { c.updateResult({ ...e.result, isError: e.isError }); st.pendingTools.delete(e.toolCallId); ui.requestRender(); } break; }
     case "agent_end":
-      st.streaming = false; setWorking(false);
+      st.stateGen = (st.stateGen || 0) + 1; st.streaming = false; setWorking(false);
       if (st.streamingComp) { chat.removeChild(st.streamingComp); st.streamingComp = null; }
       st.pendingTools.clear(); refreshState(); break;
     case "auto_retry_start": st.lastErr = `retrying (${e.attempt}/${e.maxAttempts})…`; paintChrome(); break;
@@ -296,8 +296,12 @@ function drawPicker() { // (SelectList's own filter is a prefix match on the val
 
 // ---- commands
 async function refreshState() {
+  // (review) a state event (agent_start / agent_end / queue_update) that came after this request is newer than its answer:
+  // then the answer's busy / queued fields are stale and skipped
+  const gen = st.stateGen || 0;
   try { const s = await rpc({ type: "get_state" }); st.model = s.model || null; st.thinking = s.thinkingLevel || ""; st.sessionName = s.sessionName || "";
-    st.streaming = !!s.isStreaming; st.pending = s.pendingMessageCount || 0; st.sessionId = s.sessionId || ""; setWorking(st.streaming);
+    st.sessionId = s.sessionId || "";
+    if ((st.stateGen || 0) === gen) { st.streaming = !!s.isStreaming; st.pending = s.pendingMessageCount || 0; setWorking(st.streaming); }
   } catch {}
   try { st.stats = await rpc({ type: "get_session_stats" }); st.statsRev++; } catch {}
   if (!st.providersAt) { st.providersAt = 1; rpc({ type: "get_available_models" }).then((d) => { st.providers = new Set((d.models || []).map((m) => m.provider)).size || 1; paintChrome(); }, () => {}); }
