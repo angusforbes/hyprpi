@@ -1,8 +1,8 @@
 // docker/world/models.jsonc: which NVIDIA Inference Hub ("nv-inference") models the sandboxed world (world G, sandbox world-g)
 // offers (J500). Edit freely, then run `node docker/world/pi-models.mjs world-g` (add --dry-run first to see the change). The
 // sandbox keeps its own key in its pi auth.json; nothing here touches it. lib/models-resolve.mjs turns this file into the model
-// list on the laptop; lib/nv-models.mjs's applyModels writes it into the sandbox's pi (through sbx). The setting below reproduces
-// what G ran on 2026-10-12: the standard list (preset "catalog"), gpt-6-astra as the default and as Thoughts-G's model.
+// list on the laptop; lib/nv-models.mjs's applyModels writes it into the sandbox's pi (through sbx). Until 2026-10-12 G ran the standard list (preset "catalog") with gpt-6-astra as
+// default and Thoughts; Angus then chose claude3gpt3 with Opus 5.5 as default and Thoughts (J500).
 // (The Doorman's own sandbox, doorman-g, has its own single model and isn't set from here.)
 {
   // Which set to start from (the same choices in omnistation/models.jsonc and docker/world/models.jsonc; lib/models-resolve.mjs):
@@ -13,10 +13,10 @@
   //   "custom" = the "custom" list below
   //   "catalog" = every model on hyprpi's standard tested list (docker/world/nv-inference-models.json: 32 OpenAI + 12 Claude)
   // "add" and "exclude" then apply on top of any preset, and "default" is always included.
-  "preset": "catalog",
+  "preset": "claude3gpt3",
 
   // pi's default model for new agents
-  "default": "openai/openai/gpt-6-astra",
+  "default": "azure/anthropic/claude-opus-5-5",
 
   "short": [
     "azure/anthropic/claude-opus-5-5",

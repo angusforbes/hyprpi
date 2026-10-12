@@ -13,9 +13,10 @@ const res = (f) => resolveModels(path.join(R, f), { piDir: lapDir });
 // the three config files
 const b = await res("brev/models.jsonc"), h = await res("omnistation/models.jsonc"), g = await res("docker/world/models.jsonc");
 ok("brev: claude3gpt3, 6 models, Opus 5.5 default", b.preset === "claude3gpt3" && b.models.length === 6 && b.default === "azure/anthropic/claude-opus-5-5" && !b.thoughts);
-ok("H: catalog + 2 Sonar = 46, astra default, Thoughts Opus", h.models.length === 46 && h.default === "openai/openai/gpt-6-astra" && h.thoughts === "azure/anthropic/claude-opus-5-5" && h.models.slice(-2).every((m) => m.id.includes("sonar")));
-ok("G: the whole catalog in its order, astra default", JSON.stringify(g.models.map((m) => m.id)) === JSON.stringify(T.models.map((m) => m.id)) && g.default === "openai/openai/gpt-6-astra");
-ok("catalog entries are passed on whole (api made explicit)", JSON.stringify({ ...T.models[0], api: "openai-responses" }) === JSON.stringify(g.models[0]));
+ok("H: claude3gpt3 + 2 Sonar = 8, Opus default, Thoughts Opus", h.models.length === 8 && h.default === "azure/anthropic/claude-opus-5-5" && h.thoughts === "azure/anthropic/claude-opus-5-5" && h.models.slice(-2).every((m) => m.id.includes("sonar")));
+ok("G: claude3gpt3, Opus 5.5 default", g.preset === "claude3gpt3" && g.models.length === 6 && g.default === "azure/anthropic/claude-opus-5-5");
+{ const f = path.join(lapDir, "cat.jsonc"); fs.writeFileSync(f, '{"preset":"catalog","default":"openai/openai/gpt-6-astra"}'); const c = await resolveModels(f, { piDir: lapDir });
+  ok("catalog: the whole standard list in its order, entries passed on whole (api made explicit)", JSON.stringify(c.models.map((m) => m.id)) === JSON.stringify(T.models.map((m) => m.id)) && JSON.stringify({ ...T.models[0], api: "openai-responses" }) === JSON.stringify(c.models[0])); }
 
 // JSONC, presets, deny
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mc-"));
@@ -34,7 +35,7 @@ const a1 = applyModels(before, h, { keyCmd: "!new" });
 const nv = a1.models.providers["nv-inference"];
 ok("other providers, an existing apiKey and other settings are kept", a1.models.providers.other.x === 1 && nv.apiKey === "!keep-me" && a1.settings.theme === "t");
 ok("per-model api only where it differs from the provider's", nv.models.every((m) => (m.id.includes("openai/") ? !("api" in m) : m.api === "openai-completions")));
-ok("enabledModels: explicit nv-inference entries replaced, globs and other providers kept", a1.settings.enabledModels[0] === "other/a" && a1.settings.enabledModels[1] === "nv-inference/openai/**" && !a1.settings.enabledModels.includes("nv-inference/old/one") && a1.settings.enabledModels.length === 2 + 46);
+ok("enabledModels: explicit nv-inference entries replaced, globs and other providers kept", a1.settings.enabledModels[0] === "other/a" && a1.settings.enabledModels[1] === "nv-inference/openai/**" && !a1.settings.enabledModels.includes("nv-inference/old/one") && a1.settings.enabledModels.length === 2 + h.models.length);
 ok("enabledModels with nv-inference/**: nothing added", applyModels({ ...before, settings: { enabledModels: ["nv-inference/**"] } }, h).settings.enabledModels.length === 1);
 ok("defaults: pi's default and the list's Thoughts", a1.settings.defaultModel === h.default && a1.config.thoughtsModel === h.thoughts);
 ok("Thoughts: nv-inference/<default> without a list Thoughts; an override leaves it alone", applyModels({ models: {}, settings: {}, config: {} }, b).config.thoughtsModel === "nv-inference/" + b.default && applyModels({ models: {}, settings: {}, config: { thoughtsModel: "z" } }, b, { thoughtsOverride: "y" }).config.thoughtsModel === "z");

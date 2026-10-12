@@ -2,9 +2,9 @@
 // then run `omnistation/world H setup` to apply it there (the binding ~/.config/hyprpi/remote/h.json names this file and the key
 // file). Omnistation uses ITS OWN key, ~/.config/hyprpi-secrets/nvidia_inference_hub_key on that machine (already there, 600 in a
 // 700 folder); pi reads it by a !command and it never leaves the machine. lib/models-resolve.mjs turns this file into the model
-// list on the laptop; lib/nv-models.mjs writes it into Omnistation's pi. The setting below reproduces what H ran on 2026-10-12:
-// the standard list (preset "catalog") plus the two Perplexity Sonar web-search models, gpt-6-astra as the default, Thoughts-H on
-// Opus 5.5.
+// list on the laptop; lib/nv-models.mjs writes it into Omnistation's pi. Until 2026-10-12 H ran the standard list (preset "catalog") plus the two
+// Perplexity Sonar web-search models with gpt-6-astra as default; Angus then chose claude3gpt3 + Sonar with Opus 5.5 as default
+// (J500). Thoughts-H stays on Opus 5.5.
 {
   // Which set to start from (the same choices in omnistation/models.jsonc and docker/world/models.jsonc; lib/models-resolve.mjs):
   //   "short"  = the short list below
@@ -14,10 +14,10 @@
   //   "custom" = the "custom" list below
   //   "catalog" = every model on hyprpi's standard tested list (docker/world/nv-inference-models.json: 32 OpenAI + 12 Claude)
   // "add" and "exclude" then apply on top of any preset, and "default" is always included.
-  "preset": "catalog",
+  "preset": "claude3gpt3",
 
   // pi's default model for new agents
-  "default": "openai/openai/gpt-6-astra",
+  "default": "azure/anthropic/claude-opus-5-5",
 
   // Thoughts-H's model (the binding's "thoughtsModel", when it has one, wins over this)
   "thoughts": "azure/anthropic/claude-opus-5-5",
