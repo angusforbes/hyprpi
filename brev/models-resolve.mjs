@@ -8,8 +8,19 @@ const cfgFile = args.includes("--config") ? args[args.indexOf("--config") + 1] :
 const PI = process.env.HYPRPI_LAPTOP_PI_DIR || path.join(os.homedir(), ".pi/agent");
 const die = (s) => { console.error(`models-resolve: ${s}`); process.exit(2); };
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
-// JSONC: drop // comments outside strings, and trailing commas
-const jsonc = (t) => { let o = "", s = false; for (let i = 0; i < t.length; i++) { const c = t[i]; if (s) { o += c; if (c === "\\") o += t[++i]; else if (c === '"') s = false; } else if (c === '"') { s = true; o += c; } else if (c === "/" && t[i + 1] === "/") { while (i < t.length && t[i] !== "\n") i++; o += "\n"; } else o += c; } return JSON.parse(o.replace(/,(\s*[}\]])/g, "$1")); };
+// JSONC: drop // comments and trailing commas, both only outside strings
+const jsonc = (t) => {
+  let o = "", s = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (s) { o += c; if (c === "\\") o += t[++i] ?? ""; else if (c === '"') s = false; continue; }
+    if (c === '"') { s = true; o += c; continue; }
+    if (c === "/" && t[i + 1] === "/") { while (i < t.length && t[i] !== "\n") i++; o += "\n"; continue; }
+    if (c === ",") { let j = i + 1; while (j < t.length && /\s/.test(t[j])) j++; if (t[j] === "/" && t[j + 1] === "/") { let k = j; while (k < t.length && t[k] !== "\n") k++; j = k; while (j < t.length && /\s/.test(t[j])) j++; } if (t[j] === "}" || t[j] === "]") continue; }
+    o += c;
+  }
+  return JSON.parse(o);
+};
 let cfg; try { cfg = jsonc(fs.readFileSync(cfgFile, "utf8")); } catch (e) { die(`can't read ${cfgFile}: ${e.message}`); }
 const list = (k) => (Array.isArray(cfg[k]) ? cfg[k] : []).map(String);
 const glob = (p) => new RegExp("^" + String(p).toLowerCase().replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
