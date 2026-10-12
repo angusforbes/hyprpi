@@ -68,7 +68,8 @@ async function configMode(sb, rest) {
   if (dry || !changed.length) return;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-models-")), stamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
   try {
-    execFileSync("sbx", ["exec", sb, "sh", "-c", `cd ~/.pi/agent && for f in models.json settings.json; do [ -f $f ] && cp -p $f $f.bak-J500-${stamp}; done; [ -f ~/.config/hyprpi/config.json ] && cp -p ~/.config/hyprpi/config.json ~/.config/hyprpi/config.json.bak-J500-${stamp}; true`]);
+    // (review) fail closed: a backup that can't be made stops the run before anything is overwritten (execFileSync throws)
+    execFileSync("sbx", ["exec", sb, "sh", "-ec", `cd ~/.pi/agent; for f in models.json settings.json; do if [ -f $f ]; then cp -p $f $f.bak-J500-${stamp}; fi; done; if [ -f ~/.config/hyprpi/config.json ]; then cp -p ~/.config/hyprpi/config.json ~/.config/hyprpi/config.json.bak-J500-${stamp}; fi`]);
     for (const [f, o] of changed) {
       fs.writeFileSync(path.join(tmp, f), txt(o), { mode: 0o600 });
       execFileSync("sbx", ["cp", path.join(tmp, f), `${sb}:/home/agent/${f === "config.json" ? ".config/hyprpi" : ".pi/agent"}/${f}`]);
