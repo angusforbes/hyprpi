@@ -57,6 +57,14 @@ How it differs from the Omnistation world (H):
 - Qwen2.5-3B-Instruct answers in about 1-2 s and makes simple tool calls (it ran `nvidia-smi -L` through pi's bash tool), but it is weak as an agent. A 7B AWQ model (or a bigger GPU) is the next step.
 - pi's system prompt alone is about 7k tokens, so keep the context at 32k or more.
 
+## Notes for long jobs (e.g. RL training, J512)
+
+- Stop the box with `brev stop NAME` only. Never shut it down from inside (`sudo shutdown -h now`): tested 2026-10-12 on the Crusoe L40S, Brev listed it STOPPED after about 3 minutes, but its control plane kept it as "running", so `brev start` failed ("invalid environment status transition from running to starting"). After a `brev stop` it was stuck in "stopping_failed" and still couldn't be started. So an in-box idle shutdown is not a safe backstop.
+- The laptop's auto-stop (brev/autostop, every 5 min) stops the box after 45 idle minutes. Idle means no change to the world's sessions, Thoughts thread, boards, brev-image outputs or the shared folder, and no vLLM request. A training job writes none of these, so pause it for the job: `brev-autostop pause 12h` (or `pause` until `brev-autostop resume`). `brev-autostop status` shows what it saw last.
+- An idle hyprpi there doesn't keep the box busy. Its Thoughts may act once after a start (e.g. tidy a card), which counts as activity once, then it stays quiet.
+- Keep checkpoints, datasets and logs under /home/ubuntu/workspace (a stop keeps it), and copy results to the laptop with the shared folder (brev/sync) or `omnistation/world X images`.
+- Ask Angus before `brev create` or `brev start` (type, $/h, stoppable), and stop the box when the job ends.
+
 ## Rules for this world
 
 1. Personal experiments and public work only.
