@@ -114,7 +114,7 @@ function addUser(m) {
   chat.addChild(new UserMessageComponent(t, md()));
 }
 function renderHistory(messages) {
-  chat.clear(); st.pendingTools.clear(); st.streamingComp = null;
+  chat.clear(); st.pendingTools.clear(); st.streamingComp = null; st.streamMsg = null; st.argBuf = new Map();
   const tools = new Map();
   for (const m of messages) {
     if (m.role === "user") addUser(m);
@@ -219,6 +219,7 @@ function onEvent1(e) {
 
 // ---- extension UI from the remote (status, notify, simple dialogs)
 let dialog = null; const dialogQueue = []; // (review) one dialog at a time; later ones wait their turn
+function closeDialogSilently() { pickerBox.clear(); dialog = null; ui.setFocus(editor); ui.requestRender(); }
 function closeDialog() { pickerBox.clear(); dialog = null; ui.setFocus(editor); ui.requestRender(); const next = dialogQueue.shift(); if (next) onUiRequest(next); }
 function onUiRequest(r) {
   if (["select", "confirm", "input", "editor"].includes(r.method) && dialog) { if (dialog.id !== r.id && !dialogQueue.some((q) => q.id === r.id)) dialogQueue.push(r); return; }
@@ -241,6 +242,7 @@ function onUiRequest(r) {
   }
 }
 function showPicker(title, items, done, id = null, filterable = false) {
+  if (dialog && !id) { st.lastErr = "answer the open question first"; return paintChrome(); } // a model picker never covers an agent's question
   dialog = { id, kind: "list", filter: filterable ? "" : undefined, all: items, title, done };
   drawPicker();
 }
@@ -266,7 +268,7 @@ async function refreshState() {
 // history is rendered synchronously from inside the read loop (see connect): events after its response line are newer than it,
 // events before it are already in it. (review: rendering it a microtask later let it wipe newer live events)
 let histId = null, booting = false;
-async function reloadHistory() { try { const p = rpc({ type: "get_messages" }, 60000); histId = `r${reqN}`; booting = true; await p; } catch (e) { st.lastErr = `history: ${e.message}`; } paintChrome(); }
+async function reloadHistory() { try { const p = rpc({ type: "get_messages" }, 60000); histId = `r${reqN}`; booting = true; await p; } catch (e) { st.lastErr = `history: ${e.message}`; } finally { booting = false; histId = null; } paintChrome(); }
 async function pickModel(filter = "") {
   let models; try { models = (await rpc({ type: "get_available_models" })).models || []; } catch (e) { st.lastErr = `models: ${e.message}`; return paintChrome(); }
   const items = models.map((m) => ({ value: `${m.provider}\u0000${m.id}`, label: `${m.provider}/${m.id}`, description: m.name || "" }));
@@ -373,7 +375,7 @@ function connect() {
       if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(async () => { for (const t of outbox.splice(0)) await send(t); paintChrome(); }); continue; }
       if (r.type === "broker_pong") continue;
       if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
-      else if (booting && r.type !== "response" && r.type !== "extension_ui_request") continue; // already in the coming snapshot
+      else if (booting && /^(message_|tool_execution_|turn_|bash_execution)/.test(r.type || "")) continue; // already in the coming snapshot (state events still apply)
       if (r.type === "broker_error" && /isn't running/.test(r.error || "") && everConnected) { stopped = true; }
       if (r.type === "response" && r.id && waiting.has(r.id)) { const f = waiting.get(r.id); waiting.delete(r.id); f(r); continue; }
       onEvent(r);
@@ -392,6 +394,7 @@ function connect() {
     for (const [id, f] of waiting) { waiting.delete(id); f({ success: false, error: "connection lost" }); }
     if (closing) return;
     booting = false; histId = null;
+    if (dialog?.id) closeDialogSilently(); dialogQueue.length = 0; // the broker cancels them when no client is left; a new connect replays live ones
     if (stopped) { st.lastErr = `agent ${NAME} was stopped on the remote machine; close this window, or reopen it with: world ${WL} open ${NAME}`; paintChrome(); return; }
     const why = errTail.trim().split("\n").filter(Boolean).pop() || "";
     const expired = /expired|login|certificate|not logged in|tsh login|permission denied/i.test(errTail);
@@ -404,7 +407,10 @@ function connect() {
 }
 // the ssh runs in its own process group (detached): end the whole group, so wrappers and proxies go too (review)
 function killGroup(c) { try { process.kill(-c.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-c.pid, "SIGKILL"); } catch {} }, 2000).unref(); }
-function quit() { closing = true; try { st.conn?.stdin.end(); if (st.conn) killGroup(st.conn); } catch {} ui.stop(); process.exit(0); }
+function quit() { // the group gets SIGTERM now and SIGKILL in 1 s; we leave after that
+  closing = true; const c = st.conn; try { c?.stdin.end(); if (c) process.kill(-c.pid, "SIGTERM"); } catch {}
+  ui.stop(); setTimeout(() => { try { if (c) process.kill(-c.pid, "SIGKILL"); } catch {} process.exit(0); }, 1000);
+}
 process.on("SIGTERM", quit); process.on("SIGHUP", quit);
 paintChrome();
 ui.start();
