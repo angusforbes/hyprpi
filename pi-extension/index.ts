@@ -156,7 +156,10 @@ export default function hyprpi(pi: ExtensionAPI) {
       }
     } else name = fgHex(d.color, d.display || d.name || "");
     const where = d.parked ? "in Reprieve · out of rooms" : d.room ? `room ${d.room}` : "no room";
-    try { ctx.ui.setStatus?.("hyprpi", `${d.icon ? d.icon + " " : ""}\x1b[1m${name}\x1b[22m \x1b[2m· ${where}\x1b[22m`); } catch { /* no footer */ }
+    // J471 v2 (Angus: "all sandboxed agent windows … should have an extra icon, ie how they look in Summon"): the agent's own icon,
+    // its name, then its world's mark: 🐳 inside a sandboxed world, 🛰 on a remote world's machine ("🐧 Alpha 🐳 · room G")
+    const mark = process.env.HYPRPI_SANDBOX_WORLD ? " 🐳" : process.env.HYPRPI_REMOTE_WORLD ? " 🛰" : "";
+    try { ctx.ui.setStatus?.("hyprpi", `${d.icon ? d.icon + " " : ""}\x1b[1m${name}\x1b[22m${mark} \x1b[2m· ${where}\x1b[22m`); } catch { /* no footer */ }
     // Window title: the bare name only (no icon, colour tags or emoji).
     const plain = String(d.name || d.display || "").replace(/\{#[0-9a-fA-F]{6}\}/g, "").replace(/[^\p{L}\p{N}\s\-_.']/gu, "").replace(/\s+/g, " ").trim();
     // J403 v3 (Angus): a host agent moved or summoned onto a sandboxed world's workspace says so in its title

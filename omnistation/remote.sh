@@ -89,8 +89,11 @@ case "$cmd" in
     if tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
     # its pi session is resumed when it ran before (the newest session of this agent id), else a new one starts
     sess=$(ls -t "$ROOT/sessions/$NAME"/*.jsonl 2>/dev/null | head -1 || true)
+    # its icon: a normal agent icon, steady for its name (the world's 🛰 goes after the name, like 🐳 for a sandbox: J471 v2)
+    icon=$(node -e 'import(process.argv[1]).then((m) => console.log(m.sbxIcon(undefined, process.argv[2])))' "$DIR/lib/sandbox-icon.mjs" "$NAME" 2>/dev/null || true)
+    export HYPRPI_REMOTE_WORLD="${W^^}"
     if [[ "${HYPRPI_REMOTE_MIRROR:-}" == 1 ]]; then export HYPRPI_REMOTE_RPC=0; else export HYPRPI_REMOTE_RPC=1; fi
-    tmux new-session -d -s "hyprpi-$W-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT HYPRPI_REMOTE_RPC PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") new --id $W-$NAME --name $NAME --icon $(printf %q "${HYPRPI_REMOTE_ICON:-🛰}") --cwd $(printf %q "$WORK") --workspace $(printf %q "$HYPRPI_REMOTE_WS") -- --session-dir $(printf %q "$ROOT/sessions/$NAME") ${sess:+--session $(printf %q "$sess")}"  # (Ledger: every path quoted for the tmux command string)
+    tmux new-session -d -s "hyprpi-$W-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT HYPRPI_REMOTE_RPC HYPRPI_REMOTE_WORLD PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") new --id $W-$NAME --name $NAME --icon $(printf %q "$icon") --cwd $(printf %q "$WORK") --workspace $(printf %q "$HYPRPI_REMOTE_WS") -- --session-dir $(printf %q "$ROOT/sessions/$NAME") ${sess:+--session $(printf %q "$sess")}"  # (Ledger: every path quoted for the tmux command string)
     tmux set-option -t "hyprpi-$W-$NAME" status off >/dev/null 2>&1 || true  # the window looks like any hyprpi agent: no tmux bar
     sleep 2; tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null && echo "agent $NAME started (tmux session hyprpi-$W-$NAME)" || { echo "remote.sh: agent $NAME exited at once" >&2; exit 4; } ;;
   connect)
