@@ -339,3 +339,9 @@ The Thoughts window has no `/ai`, `/thought`, `/digest` or `/search` of the shar
 - Esc interrupts what is running (it never touches the box); Ctrl+Up / Ctrl+Down, PgUp / PgDn and Ctrl+Home / Ctrl+End scroll the thread; End on an empty box follows the newest
 
 </details>
+
+## License
+
+MIT: see [LICENSE](LICENSE). Copyright (c) 2026 Angus Forbes. The hyprwrlds, hyprwrlds-vimarchy and voice-routing folders carry the same MIT licence in their own LICENSE files.
+
+Third-party material keeps its own licence: two sounds from [herdr](https://github.com/herdrdev/herdr) (Apache-2.0) and parts of hyprwrlds-vimarchy's overview adapted from [Vimarchy](https://github.com/clickety-clacks/vimarchy) (MIT, Copyright (c) 2026 Mike Manzano). See [THIRD_PARTY.md](THIRD_PARTY.md) and [licenses/](licenses/).

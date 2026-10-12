@@ -4,6 +4,7 @@
   "name": "Voice",
   "version": "0.1.0",
   "author": "hyprpi voice-routing",
+  "license": "MIT",
   "description": "Voice dictation to hyprpi agents and Thoughts: hands-free toggle, target picker, command phrases.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "Panel.qml" },
