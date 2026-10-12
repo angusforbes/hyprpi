@@ -53,10 +53,17 @@ secrets_ok() {
     [[ -d "$d" ]] || continue
     [[ $(( 8#$(stat -c %a "$d") & 077 )) -eq 0 ]] || bad+=("chmod 700 $(printf %q "$d")")
   done
-  # (review) their parent folders mustn't be writable by others either (someone could swap a file)
-  for d in "$HOME" "$HOME/.config" "$HOME/.pi"; do
+  # (review) their parent folders mustn't be writable by others either (someone could swap a file). J476: ~/.pi and
+  # ~/.hyprpi-<x> may be links into Brev's ~/workspace, so every folder on the RESOLVED path up to / is checked: owned by
+  # you or root, and not writable by group or others (a link's own mode means nothing; its target's ancestry does)
+  local me r; me=$(id -un)
+  for d in "$HOME" "$HOME/.config" "$HOME/.pi" "$ROOT"; do
     [[ -d "$d" ]] || continue
-    [[ $(( 8#$(stat -L -c %a "$d") & 022 )) -eq 0 && "$(stat -L -c %U "$d")" == "$(id -un)" ]] || bad+=("chmod go-w $(printf %q "$d")  # and owned by you")  # J476: -L, ~/.pi may be a link into Brev's ~/workspace
+    r=$(readlink -f "$d")
+    while :; do
+      [[ $(( 8#$(stat -c %a "$r") & 022 )) -eq 0 && "$(stat -c %U "$r")" =~ ^($me|root)$ ]] || { bad+=("chmod go-w $(printf %q "$r")  # and owned by you (on the way to $(printf %q "$d"))"); break; }
+      [[ "$r" == / ]] && break; r=$(dirname "$r")
+    done
   done
   (( ${#bad[@]} == 0 )) && return 0
   echo "remote.sh: refusing to start: a secret is readable by others. Fix with:" >&2; printf '  %s\n' "${bad[@]}" >&2; return 1

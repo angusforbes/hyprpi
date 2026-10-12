@@ -9,6 +9,7 @@ set -euo pipefail
 W="$HOME/workspace"; LAST="$W/.serve-model.last"; IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:latest}"
 if [[ "${1:-}" == stop ]]; then docker rm -f vllm >/dev/null 2>&1 || true; echo "vllm stopped"; exit 0; fi
 if [[ $# -eq 0 ]]; then [[ -f "$LAST" ]] || { echo "usage: serve-model.sh <hf model id> [vllm args]" >&2; exit 2; }; mapfile -t args < "$LAST"; else args=("$@"); fi
+[[ ${#args[@]} -gt 0 && -n "${args[0]}" ]] || { echo "usage: serve-model.sh <hf model id> [vllm args] (no last model saved)" >&2; exit 2; }
 MODEL="${args[0]}"; printf '%s\n' "${args[@]}" > "$LAST"
 mkdir -p "$W/.cache/huggingface"
 # a gated model's token: Angus's read-only "brev" token, if he put one in ~/workspace/.secrets/hf_token (600, folder 700)
@@ -37,7 +38,8 @@ M="$HOME/.pi/agent/models.json"; mkdir -p "$(dirname "$M")"; chmod 700 "$(dirnam
 node -e '
 const fs=require("fs"),[f,id,ctx]=process.argv.slice(1); const j=JSON.parse(fs.readFileSync(f,"utf8")); j.providers??={};
 const p=j.providers["local-vllm"]??={baseUrl:"http://127.0.0.1:8000/v1",api:"openai-completions",apiKey:"local",models:[]};
-if(!p.models.some(m=>m.id===id)) p.models.push({id,name:`${id} (local vLLM)`,contextWindow:+ctx,maxTokens:4096});
+// the server serves exactly one model: list only it (a model swapped out is no longer selectable), with its current context
+p.models=[{...(p.models.find(m=>m.id===id)??{}),id,name:`${id} (local vLLM)`,contextWindow:+ctx,maxTokens:4096}];
 fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$M" "$MODEL" "${MAX_LEN:-32768}"
 chmod 600 "$M"
 echo "serving $MODEL on 127.0.0.1:8000; in pi: /model, then local-vllm/$MODEL"
