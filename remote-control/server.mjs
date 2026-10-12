@@ -37,6 +37,7 @@ import { worldHex, theme } from "../lib/tui/term.mjs";
 import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
 import * as session from "./session-read.mjs";
 import * as gworld from "./gworld.mjs";
+import * as rworld from "./rworld.mjs"; // J472: a remote world (world H: headless hyprpi on another machine, over ssh / tsh)
 import { sbxIcon, sbxPlaceholder, SBX_MARK } from "../lib/sandbox-icon.mjs"; // J450: the desktop's sandbox rules (finder, agents panel)
 import { heldForSandboxes, heldDigest, phoneDecision, PHONE_REFUSED_KINDS } from "../lib/held.mjs"; // J434
 import { phoneDecisionsFor } from "../docker/research/mode.mjs"; // J434 v2: per sandbox, gateway.phone_decisions (default off) // J433: a sandboxed world's own agents (its inner daemon, via sbx exec) // an agent's session, tail-read (J161)
@@ -168,7 +169,7 @@ refreshShown();
 setInterval(refreshShown, 30000); // a safety net (shell.json edits, a new Hyprland login)
 
 function worlds() {
-  const ids = new Set((listing?.rooms || []).map((r) => r.id));
+  const ids = new Set(allRooms());
   return [...ids].filter((id) => /^[A-Z]$/.test(id)).sort().map((id) => ({
     id,
     color: "#" + (worldHex(id) || "7aa2f7"),
@@ -180,7 +181,8 @@ function worlds() {
     working: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "working").length + innerCount(id, "working"),
     needsYou: (listing?.agents || []).filter((a) => a.room === id && !a.parked && !sbxPlaceholder(a) && a.status === "blocked").length + innerCount(id, "blocked"),
     shown: shownWorlds.includes(id),
-    sandboxed: gworld.sandboxOf(id) ? SBX_MARK : "", // J450: G 🐳, as the desktop panels say it
+    sandboxed: gworld.sandboxOf(id) ? SBX_MARK : rworld.remoteOf(id) ? REMOTE_MARK : "", // J450: G 🐳, as the desktop panels say it; J472: a remote world 🛰
+    offline: rworld.remoteOf(id) ? rworld.offline(rworld.remoteOf(id).name) : "", // J472: e.g. "the Teleport login has expired: run `tsh login` on the laptop"
   }));
 }
 // The names the page turns into links (J45): every world's agents as the Agnt tab lists them (live,
@@ -196,10 +198,22 @@ async function refreshProjects(room) {
     if (JSON.stringify(next) !== JSON.stringify(projectNames.get(room))) { projectNames.set(room, next); broadcast("state", state()); }
   } catch { /* no board */ }
 }
+// J472: a world served by ANOTHER hyprpi daemon: sandboxed (inside its sandbox, gworld, J433) or remote (another machine, rworld).
+// -> { key, prefix, call(method, params), session(file), mark, offline() } or null. Ids on the phone: "<prefix>:<key>:<agent id>".
+function backendOf(r) {
+  const sb = gworld.sandboxOf(r);
+  if (sb) return { key: sb, prefix: "sbx", call: (m, p) => gworld.call(sb, m, p), session: (f) => gworld.sessionCopy(sb, f), mark: SBX_MARK, sandboxed: sb, offline: () => "" };
+  const w = rworld.remoteOf(r);
+  if (w) return { key: w.name, prefix: "rmt", call: (m, p) => rworld.call(w, m, p), session: (f) => rworld.sessionCopy(w, f), mark: REMOTE_MARK, remote: w.name, offline: () => rworld.offline(w.name) };
+  return null;
+}
+const REMOTE_MARK = "🛰";
+// every world letter: the host daemon's rooms, plus the remote worlds (the host daemon has no room for them until a window appears)
+const allRooms = () => [...new Set([...(listing?.rooms || []).map((r) => r.id), ...rworld.remoteWorlds().map((w) => w.letter)])].filter((id) => /^[A-Z]$/.test(id));
 // J450: how many agents a sandboxed world's inner daemon listed last (0 until the Agnt list has asked)
-function innerCount(id, status) { const sb = gworld.sandboxOf(id), c = sb && innerCache.get(sb); return c ? (c.list.agents || []).filter((a) => a.room === id && !a.parked && a.session && (!status || a.status === status)).length : 0; }
+function innerCount(id, status) { const be = backendOf(id), c = be && innerCache.get(be.key); return c ? (c.list.agents || []).filter((a) => a.room === id && !a.parked && a.session && (!status || a.status === status)).length : 0; }
 function directory() {
-  const ids = new Set((listing?.rooms || []).map((r) => r.id).filter((id) => /^[A-Z]$/.test(id)));
+  const ids = new Set(allRooms());
   const agents = [
     ...(listing?.agents || []).filter((a) => !a.parked && ids.has(a.room) && !sbxPlaceholder(a)), // J450: no world-g / Doorman-G links
     ...(listing?.dormant || []).filter((a) => a.kind !== "closed" && ids.has(a.room)),
@@ -304,9 +318,11 @@ async function agentsSummary(r) {
   ]);
   const size = Number(loadConfig()?.worldSize) || 10;
   const st = streams.get(r) || await buildStreamFor(r).catch(() => null);
-  const inner = await innerAgents(r).catch((e) => { log("sandboxed world", r, e.message); return []; });
+  let offline = "";
+  const inner = await innerAgents(r).catch((e) => { process.stderr.write(`inner world ${r}: ${e.message}\n`); if (backendOf(r)?.remote) offline = e.message; return []; }); // (J472: `log` is the room log here; the old call threw)
+  if (!offline && backendOf(r)?.remote) offline = backendOf(r).offline();
   return {
-    room: r,
+    room: r, ...(offline ? { offline } : {}), // J472: a remote world that can't be reached: why, and what to do
     agents: [...inner, ...here.map((a) => {
       const name = a.display || a.name || a.id;
       const job = [...(briefs.briefs || [])].reverse().find((b) => b.agent === name && /^(running|queued|stopped)$/.test(b.state || ""));
@@ -330,32 +346,32 @@ async function agentsSummary(r) {
 }
 // J433: a sandboxed world's agents, from its inner daemon (cached 5 s). Their ids here: "sbx:<sandbox>:<id>".
 const innerCache = new Map(); // sandbox -> { at, list }
-async function innerList(sb) {
-  const c = innerCache.get(sb); if (c && Date.now() - c.at < 5000) return c.list;
-  const list = await gworld.call(sb, "list");
+async function innerList(be) {
+  const sb = be.key, c = innerCache.get(sb); if (c && Date.now() - c.at < 5000) return c.list;
+  const list = await be.call("list");
   const n = (x) => (x?.agents || []).filter((a) => !a.parked && a.session).map((a) => a.room + a.id + a.status).join(), changed = n(c?.list) !== n(list);
   innerCache.set(sb, { at: Date.now(), list });
   if (changed) broadcast("state", state()); // J450 (GCheck): the chip's count and dots follow the inner agents
   return list;
 }
 async function innerAgents(r) {
-  const sb = gworld.sandboxOf(r); if (!sb) return [];
-  const l = await innerList(sb), size = Number(loadConfig()?.worldSize) || 10;
+  const be = backendOf(r); if (!be) return [];
+  const sb = be.key, l = await innerList(be), size = Number(loadConfig()?.worldSize) || 10;
   return (l.agents || []).filter((a) => a.room === r && !a.parked && a.session).map((a) => ({
-    id: `sbx:${sb}:${a.id}`, name: a.display || a.name || a.id, icon: sbxIcon(a.icon, a.display || a.name || a.id), color: a.color || "", mark: agentMark(a), // J450: its own icon (checked: set inside the sandbox) or the desktop's default
+    id: `${be.prefix}:${sb}:${a.id}`, name: a.display || a.name || a.id, icon: sbxIcon(a.icon, a.display || a.name || a.id), color: a.color || "", mark: agentMark(a), // J450: its own icon (checked: set inside the sandbox) or the desktop's default
     status: a.status || "idle", helpers: [], compactions: a.compactions || 0, topic: a.topic || "",
     ws: Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, size) : "", active: a.last_did?.ts || null,
     did: a.last_did?.text || "", model: (a.model || "").replace(/^claude-/, ""), thinking: a.thinking || "", job: null, projects: [], posts: [], recent: [],
-    sandboxed: sb, sbxMark: SBX_MARK, // J450: "🐧 Alpha 🐳", as the desktop draws it
+    sandboxed: sb, sbxMark: be.mark, // J450: "🐧 Alpha 🐳", as the desktop draws it (J472: 🛰 for a remote world)
   }));
 }
 // "sbx:<sandbox>:<id>" -> { sb, id, a } (the inner listing's agent) or null
 async function innerAgent(ref) {
-  const m = /^sbx:([\w.-]+):([\w.-]+)$/.exec(String(ref || "")); if (!m) return null;
-  const [, sb, id] = m;
-  if (!fs.existsSync(path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "hyprpi", "worlds")) || !Object.values("ABCDEFGHI").some((w) => gworld.sandboxOf(w) === sb)) return null;
-  const a = (await innerList(sb)).agents?.find((x) => x.id === id && !x.parked);
-  return a ? { sb, id, a } : null;
+  const m = /^(sbx|rmt):([\w.-]+):([\w.-]+)$/.exec(String(ref || "")); if (!m) return null;
+  const [, prefix, sb, id] = m;
+  const be = [..."ABCDEFGHI"].map(backendOf).find((x) => x && x.prefix === prefix && x.key === sb); if (!be) return null; // only a configured world
+  const a = (await innerList(be)).agents?.find((x) => x.id === id && !x.parked);
+  return a ? { sb, id, a, be } : null;
 }
 
 // ---- the Strm tab (J49): the world's Stream, as the desktop Stream panel (room-tui) builds it ---
@@ -500,7 +516,7 @@ const heldShown = new Map(); // digest -> when the phone was shown it (the 2 s r
 // ---- http ------------------------------------------------------------------------------------
 // A world letter that exists (one of the daemon's rooms); anything else is refused, so a stray POST
 // can't start a Thoughts for a world that isn't there (J161: a test to "Z" did).
-const room = (w) => /^[A-Z]$/.test(String(w || "")) && (!listing?.rooms || listing.rooms.some((r) => r.id === String(w))) ? String(w) : null;
+const room = (w) => /^[A-Z]$/.test(String(w || "")) && (!listing?.rooms || allRooms().includes(String(w))) ? String(w) : null; // (J472: a remote world counts)
 const json = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
 async function body(req, max = 1e6) {
   let s = ""; for await (const c of req) { s += c; if (s.length > max) throw new Error("too large"); }
@@ -644,7 +660,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/thoughts") {
       const r = room(url.searchParams.get("world")); if (!r) return json(res, 400, { error: "world?" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
-      { const sb = gworld.sandboxOf(r); if (sb) return json(res, 200, await gworld.call(sb, "thoughts.get", { room: r, limit: 300 }).catch((e) => ({ room: r, entries: [], error: e.message }))); } // J433: its real Thoughts
+      { const be = backendOf(r); if (be) return json(res, 200, await be.call("thoughts.get", { room: r, limit: 300 }).catch((e) => ({ room: r, entries: [], error: e.message, ...(be.remote ? { offline: e.message } : {}) }))); } // J433: its real Thoughts (J472: a remote world's too)
       return json(res, 200, await api.call("thoughts.get", { room: r, limit: 300 }));
     }
     if (req.method === "GET" && url.pathname === "/api/board") {
@@ -657,8 +673,8 @@ const server = http.createServer(async (req, res) => {
     // what came after BYTE), read from the tail of its session file only. Only a listed agent's own
     // session file, and only under ~/.pi/agent/sessions.
     if (req.method === "GET" && (url.pathname === "/api/session" || url.pathname === "/api/session/img")) {
-      const ref = String(url.searchParams.get("agent") || ""), ia = ref.startsWith("sbx:") ? await innerAgent(ref).catch(() => null) : null;
-      const file = ia ? await gworld.sessionCopy(ia.sb, ia.a.session).catch(() => null) : sessionFile(ref);
+      const ref = String(url.searchParams.get("agent") || ""), ia = /^(sbx|rmt):/.test(ref) ? await innerAgent(ref).catch(() => null) : null;
+      const file = ia ? await ia.be.session(ia.a.session).catch(() => null) : sessionFile(ref);
       if (!file) return json(res, 404, { error: "no such agent or session" });
       if (url.pathname === "/api/session/img") {
         const im = session.image(file, url.searchParams.get("at"), url.searchParams.get("i"));
@@ -667,7 +683,8 @@ const server = http.createServer(async (req, res) => {
         return res.end(im.data);
       }
       const after = url.searchParams.get("after"), before = url.searchParams.get("before");
-      const r = after != null ? session.since(file, after) : session.tail(file, { turns: 10, end: before != null ? before : null });
+      const hostFiles = !ia; // J472 (RemoteReview MED): an inner (sandboxed / remote) session's paths aren't laptop paths
+      const r = after != null ? session.since(file, after, { hostFiles }) : session.tail(file, { turns: 10, end: before != null ? before : null, hostFiles });
       return json(res, 200, r);
     }
     // POST /api/agent/send {agent, text}: a message from the phone. Queued if it's working (the
@@ -677,15 +694,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && /^\/api\/agent\/(send|interrupt|stop)$/.test(url.pathname)) {
       const b = await body(req), id = String(b.agent || ""), what = url.pathname.split("/").pop();
       // J433: an agent of a sandboxed world goes to its inner daemon, as typed at its window (owner input).
-      if (id.startsWith("sbx:")) {
+      if (/^(sbx|rmt):/.test(id)) { // (J472: and a remote world's agent, on its own machine's daemon)
         const ia = await innerAgent(id).catch(() => null); if (!ia) return json(res, 404, { error: "no such live agent" });
         const text = String(b.text || "").trim().slice(0, 8000), slash = text.startsWith("/");
         const msg = !text ? "" : slash ? text : `[Angus, from his phone]\n${text}`;
         try {
-          if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → sandboxed agent", ia.sb, ia.a.name); innerCache.delete(ia.sb); return json(res, 200, { ...(await gworld.call(ia.sb, "agent.prompt", { agent: ia.id, text: msg, via: "phone" })), queued: ia.a.status === "working" }); }
+          if (what === "send") { if (!text) return json(res, 400, { error: "empty" }); log("phone → inner agent", ia.sb, ia.a.name); innerCache.delete(ia.sb); return json(res, 200, { ...(await ia.be.call("agent.prompt", { agent: ia.id, text: msg, via: "phone" })), queued: ia.a.status === "working" }); }
           if (what === "interrupt" && !text) return json(res, 400, { error: "empty" });
           log("phone", what, "sandboxed", ia.a.name); innerCache.delete(ia.sb);
-          return json(res, 200, await gworld.call(ia.sb, "agent.interrupt", { agent: ia.id, text: what === "interrupt" ? msg : "", via: "phone" }));
+          return json(res, 200, await ia.be.call("agent.interrupt", { agent: ia.id, text: what === "interrupt" ? msg : "", via: "phone" }));
         } catch (e) { return json(res, 409, { error: e.message }); }
       }
       const a = (listing?.agents || []).find((x) => x.id === id && !x.parked);
@@ -771,10 +788,10 @@ const server = http.createServer(async (req, res) => {
       log("send", r, JSON.stringify(text.slice(0, 80))); shots.sawWorld(r); // J250: a Shortcut screenshot with no world goes here
       // "/ignore …": a signpost in the thread, given to Thoughts with his next message; no reply now (N52).
       if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 200, { ...(await api.call("thoughts.ignore", { room: r, text })), ignored: true });
-      { const sb = gworld.sandboxOf(r); if (sb) { // J433: Thoughts-G itself, inside its sandbox (host photos aren't visible there)
+      { const be = backendOf(r), sb = be?.key; if (be) { // J433: Thoughts-G itself, inside its sandbox (host photos aren't visible there); J472: a remote world's Thoughts
         if (images.length) return json(res, 400, { error: `world ${r} is sandboxed: photos can't go in from the phone yet (text only)` });
         if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 400, { error: "/ignore isn't supported for a sandboxed world yet" });
-        return json(res, 200, await gworld.call(sb, "thoughts.send", { room: r, text, via: "phone" })); } }
+        return json(res, 200, await be.call("thoughts.send", { room: r, text, via: "phone" }).catch((e) => ({ error: e.message }))); } }
       return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone", ...(images.length ? { images } : {}) }));
     }
     // J219 (b): answer a decide item from the phone, as the desktop panel does (board.item decide; this
