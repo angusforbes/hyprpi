@@ -8,7 +8,7 @@
 //   ~/.local/state/hyprpi/worlds/world-<x>/agents.json    the agents as the remote world's own daemon lists them (through
 //        remote-control/rworld.mjs, the phone server's bridge: one source for "the world's agents"), passed through the same
 //        strict schema as a sandbox's report (docker/world/g-status.mjs validateStatus), with OUR window for each
-// Both carry "badge": "🛰" and "where": "remote" so the lists say "remote" where a sandbox says 🐳. Read-only: nothing here sends
+// Both carry "badge": REMOTE_MARK (📡) and "where": "remote" so the lists say "remote" where a sandbox says 🐳. Read-only: nothing here sends
 // to an agent (a send goes one way, through the window's own link or the phone's bridge).
 //
 //   node world-status.mjs LETTER          run (one per world: a lock file keeps a second one out)
@@ -22,6 +22,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WL = String(process.argv[2] || "").toUpperCase(), wl = WL.toLowerCase();
 if (!/^[A-I]$/.test(WL)) { console.error("usage: world-status.mjs LETTER"); process.exit(2); }
 const { loadConfig } = await import(path.join(HERE, "../lib/paths.mjs"));
+const { REMOTE_MARK } = await import(path.join(HERE, "../lib/sandbox-icon.mjs"));
 const { validateStatus } = await import(path.join(HERE, "../docker/world/g-status.mjs"));
 const rworld = await import(path.join(HERE, "../remote-control/rworld.mjs"));
 const SIZE = Number(loadConfig().worldSize) || 10, idx = WL.charCodeAt(0) - 64, LO = (idx - 1) * SIZE + 1, HI = idx * SIZE;
@@ -62,7 +63,7 @@ async function tick() {
   if (mine.length) lastSeenWindow = Date.now();
   const windows = Object.fromEntries(mine.map(({ c, name }) => [c.address, { kind: "agent", home: c.workspace?.id || LO, pid: c.pid, name }]));
   const v = JSON.stringify(windows);
-  if (v !== lastWin) { write("windows.json", { world: `world-${wl}`, lo: LO, hi: HI, badge: "🛰", where: "remote", windows }); lastWin = v; }
+  if (v !== lastWin) { write("windows.json", { world: `world-${wl}`, lo: LO, hi: HI, badge: REMOTE_MARK, where: "remote", windows }); lastWin = v; }
   // the agents, from the remote daemon (at most every 6 s; while the world is offline the old report ages into "not reporting")
   const w = rworld.remoteOf(WL);
   if (!w || Date.now() - listAt < 6000 || rworld.offline(w.name)) return;
@@ -75,7 +76,7 @@ async function tick() {
     // -> "omni-alpha"); the display name can be changed by the agent itself, so it is shown but never used to match or open
     const launchOf = (id) => { const n = String(id).startsWith(`${wl}-`) ? String(id).slice(2) : ""; return /^[a-z][a-z0-9-]{0,30}$/.test(n) ? n : ""; };
     const agents = ok.agents.map((a) => { const launch = launchOf(a.id), m = launch && mine.find((x) => x.name === launch); return { ...a, ...(launch ? { launch } : {}), ws: m ? m.c.workspace.id : 0, ...(m ? { address: m.c.address } : {}) }; });
-    lastList = { world: `world-${wl}`, room: WL, at: Date.now(), agents, thoughts: ok.thoughts, dropped: ok.dropped, badge: "🛰", where: "remote" };
+    lastList = { world: `world-${wl}`, room: WL, at: Date.now(), agents, thoughts: ok.thoughts, dropped: ok.dropped, badge: REMOTE_MARK, where: "remote" };
     write("agents.json", lastList);
   } catch { /* offline or slow: the report ages */ }
 }

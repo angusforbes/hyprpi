@@ -711,7 +711,7 @@ function renderAgents({ keepScroll = false } = {}) {
           : `<div class="small">${l.held.phoneDecisions ? "This one (a gateway / mode change) is decided at the laptop only." : "Read-only here: decisions for this world are made at the laptop (phone decisions are off)."}</div>`) + `</div>`);
     }
     { const wd = worlds.find((x) => x.id === world); if (wd?.sandboxed) html.push(`<div class="small sbxhead">Agents ${esc(world)} ${esc(wd.sandboxed)} · a sandboxed world: its agents run inside the sandbox</div>`); } // J450: as the desktop's "Agents G 🐳"
-    if (l.offline) html.push(`<div class="psum" style="margin:8px 0"><h3>🛰 World ${esc(world)} is offline</h3><div class="small">${esc(l.offline)}. Its agents keep running there; this list comes back by itself.</div></div>`); // J472
+    if (l.offline) html.push(`<div class="psum" style="margin:8px 0"><h3>📡 World ${esc(world)} is offline</h3><div class="small">${esc(l.offline)}. Its agents keep running there; this list comes back by itself.</div></div>`); // J472
     for (const x of l.agents) html.push(agentRow(x));
     if (!l.agents.length && l.loaded && !l.offline) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
     html.push(`<div class="settings"><span class="small">π settings</span><label><input type="checkbox" id="optstrm"${showStrm ? " checked" : ""}> Show the Strm (Stream) tab</label></div>`); // J448 v2

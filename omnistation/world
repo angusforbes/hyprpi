@@ -116,10 +116,10 @@ case "$cmd" in
       run="$(printf '%q ' "${SSHT[@]}")$(printf '%q' "$R attach $NAME")"
     fi
     # (J471 v2) the same kitty setup as every hyprpi agent window (lib/terminal.mjs: your kitty.conf, then hyprpi's pi.conf); the
-    # open-url world map knows the window by its class. The local window sets its own title ("🛰 H: π - alpha - work", like G's)
+    # open-url world map knows the window by its class. The local window sets its own title ("📡 H: π - alpha - work", like G's)
     kc=(); uk="${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}/kitty.conf"; [[ -f "$uk" ]] && kc+=(--config "$uk")
     [[ -f "$H/terminal-helpers/kitty/pi.conf" ]] && kc+=(--config "$H/terminal-helpers/kitty/pi.conf")
-    [[ "$cmd" == open ]] && ttl=() || ttl=(--title "🛰 $WL: $NAME")
+    [[ "$cmd" == open ]] && ttl=() || ttl=(--title "📡 $WL: $NAME")
     line="kitty --class=hyprpi.$wl-agent $(printf '%q ' "${kc[@]}" "${ttl[@]}")-- $run"
     [[ "$line" != *"]]"* ]] || { echo "world: can't open: the command contains ]]" >&2; exit 2; }
     hyprctl dispatch "hl.dsp.exec_cmd([[${line}]], { workspace = \"$WS silent\" })" >/dev/null

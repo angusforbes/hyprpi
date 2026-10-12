@@ -13,6 +13,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
 import { ROOT } from "../lib/paths.mjs";
+import { SBX_MARK, REMOTE_MARK } from "../lib/sandbox-icon.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { laterModes } from "./later.ts";
 import { upkeepAgent } from "./upkeep.ts";
@@ -157,8 +158,8 @@ export default function hyprpi(pi: ExtensionAPI) {
     } else name = fgHex(d.color, d.display || d.name || "");
     const where = d.parked ? "in Reprieve · out of rooms" : d.room ? `room ${d.room}` : "no room";
     // J471 v2 (Angus: "all sandboxed agent windows … should have an extra icon, ie how they look in Summon"): the agent's own icon,
-    // its name, then its world's mark: 🐳 inside a sandboxed world, 🛰 on a remote world's machine ("🐧 Alpha 🐳 · room G")
-    const mark = process.env.HYPRPI_SANDBOX_WORLD ? " 🐳" : process.env.HYPRPI_REMOTE_WORLD ? " 🛰" : "";
+    // its name, then its world's mark: 🐳 inside a sandboxed world, 📡 on a remote world's machine ("🐧 Alpha 🐳 · room G")
+    const mark = process.env.HYPRPI_SANDBOX_WORLD ? ` ${SBX_MARK}` : process.env.HYPRPI_REMOTE_WORLD ? ` ${REMOTE_MARK}` : "";
     try { ctx.ui.setStatus?.("hyprpi", `${d.icon ? d.icon + " " : ""}\x1b[1m${name}\x1b[22m${mark} \x1b[2m· ${where}\x1b[22m`); } catch { /* no footer */ }
     // Window title: the bare name only (no icon, colour tags or emoji).
     const plain = String(d.name || d.display || "").replace(/\{#[0-9a-fA-F]{6}\}/g, "").replace(/[^\p{L}\p{N}\s\-_.']/gu, "").replace(/\s+/g, " ").trim();

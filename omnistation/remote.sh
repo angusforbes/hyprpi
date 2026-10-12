@@ -89,7 +89,7 @@ case "$cmd" in
     if tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
     # its pi session is resumed when it ran before (the newest session of this agent id), else a new one starts
     sess=$(ls -t "$ROOT/sessions/$NAME"/*.jsonl 2>/dev/null | head -1 || true)
-    # its icon: a normal agent icon, steady for its name (the world's 🛰 goes after the name, like 🐳 for a sandbox: J471 v2)
+    # its icon: a normal agent icon, steady for its name (the world's 📡 goes after the name, like 🐳 for a sandbox: J471 v2)
     icon=$(node -e 'import(process.argv[1]).then((m) => console.log(m.sbxIcon(undefined, process.argv[2])))' "$DIR/lib/sandbox-icon.mjs" "$NAME" 2>/dev/null || true)
     export HYPRPI_REMOTE_WORLD="${W^^}"
     if [[ "${HYPRPI_REMOTE_MIRROR:-}" == 1 ]]; then export HYPRPI_REMOTE_RPC=0; else export HYPRPI_REMOTE_RPC=1; fi

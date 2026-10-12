@@ -38,7 +38,7 @@ import { filesRoutes } from "./files-routes.mjs"; // the Files app (J74)
 import * as session from "./session-read.mjs";
 import * as gworld from "./gworld.mjs";
 import * as rworld from "./rworld.mjs"; // J472: a remote world (world H: headless hyprpi on another machine, over ssh / tsh)
-import { sbxIcon, sbxPlaceholder, SBX_MARK } from "../lib/sandbox-icon.mjs"; // J450: the desktop's sandbox rules (finder, agents panel)
+import { sbxIcon, sbxPlaceholder, SBX_MARK, REMOTE_MARK } from "../lib/sandbox-icon.mjs"; // J450: the desktop's sandbox rules (finder, agents panel)
 import { heldForSandboxes, heldDigest, phoneDecision, PHONE_REFUSED_KINDS } from "../lib/held.mjs"; // J434
 import { phoneDecisionsFor } from "../docker/research/mode.mjs"; // J434 v2: per sandbox, gateway.phone_decisions (default off) // J433: a sandboxed world's own agents (its inner daemon, via sbx exec) // an agent's session, tail-read (J161)
 import { shotRoutes } from "./shot.mjs"; // screenshots from the iPhone share sheet (J250)
@@ -207,7 +207,6 @@ function backendOf(r) {
   if (w) return { key: w.name, prefix: "rmt", call: (m, p) => rworld.call(w, m, p), session: (f) => rworld.sessionCopy(w, f), mark: REMOTE_MARK, remote: w.name, offline: () => rworld.offline(w.name) };
   return null;
 }
-const REMOTE_MARK = "🛰";
 // every world letter: the host daemon's rooms, plus the remote worlds (the host daemon has no room for them until a window appears)
 const allRooms = () => [...new Set([...(listing?.rooms || []).map((r) => r.id), ...rworld.remoteWorlds().map((w) => w.letter)])].filter((id) => /^[A-Z]$/.test(id));
 // J450: how many agents a sandboxed world's inner daemon listed last (0 until the Agnt list has asked)
@@ -362,7 +361,7 @@ async function innerAgents(r) {
     status: a.status || "idle", helpers: [], compactions: a.compactions || 0, topic: a.topic || "",
     ws: Number.isInteger(a.workspace) && a.workspace > 0 ? wsLabel(a.workspace, size) : "", active: a.last_did?.ts || null,
     did: a.last_did?.text || "", model: (a.model || "").replace(/^claude-/, ""), thinking: a.thinking || "", job: null, projects: [], posts: [], recent: [],
-    sandboxed: sb, sbxMark: be.mark, // J450: "🐧 Alpha 🐳", as the desktop draws it (J472: 🛰 for a remote world)
+    sandboxed: sb, sbxMark: be.mark, // J450: "🐧 Alpha 🐳", as the desktop draws it (J472: REMOTE_MARK, 📡, for a remote world)
   }));
 }
 // "sbx:<sandbox>:<id>" -> { sb, id, a } (the inner listing's agent) or null

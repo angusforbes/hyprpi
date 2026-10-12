@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 const WL = String(process.argv[2] || "").toUpperCase(), wl = WL.toLowerCase();
 if (!/^[A-I]$/.test(WL)) { console.error("remote-client: usage: remote-client.mjs LETTER NAME"); process.exit(2); }
@@ -52,6 +52,7 @@ const { UserMessageComponent } = await imp(`${agentDist}/modes/interactive/compo
 const { ToolExecutionComponent } = await imp(`${agentDist}/modes/interactive/components/tool-execution.js`);
 const { withBuiltInRenderers } = await imp(`${agentDist}/core/tools/renderers/index.js`);
 const { WorkingStatusIndicator } = await imp(`${agentDist}/modes/interactive/components/status-indicator.js`);
+const { REMOTE_MARK: MARK } = await import(pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "../lib/sandbox-icon.mjs")).href); // 📡
 const { FooterComponent } = await imp(`${agentDist}/modes/interactive/components/footer.js`);
 const { Container, Text, Spacer, SelectList, ProcessTerminal, TuiMainScreen, setKeybindings, matchesKey } = tui;
 
@@ -99,13 +100,13 @@ const fakeSession = {
   },
 };
 const footerData = { getGitBranch: () => null, getAvailableProviderCount: () => st.providers || 1, getExtensionStatuses: () => {
-  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", "🛰 reconnecting…")); for (const [k, v] of m) if (!v) m.delete(k); return m; } };
+  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", `${MARK} reconnecting…`)); for (const [k, v] of m) if (!v) m.delete(k); return m; } };
 const footer = new FooterComponent(fakeSession, footerData);
 footer.setAutoCompactEnabled?.(true);
 for (const c of [chat, pendingBox, statusLine, workingBox, pickerBox, editor, footer]) ui.addChild(c);
 ui.setFocus(editor);
 // the title as G's windows have it ("🐳 G: π - Beta - world-g"): the world's mark and letter, then pi's own title from the agent
-const setTitle = (t) => process.stdout.write(`\x1b]2;🛰 ${WL}: ${String(t || `π - ${NAME}`).replace(/[^\p{L}\p{N}\p{P}\p{Zs}π]/gu, "").slice(0, 80)}\x07`);
+const setTitle = (t) => process.stdout.write(`\x1b]2;${MARK} ${WL}: ${String(t || `π - ${NAME}`).replace(/[^\p{L}\p{N}\p{P}\p{Zs}π]/gu, "").slice(0, 80)}\x07`);
 setTitle();
 
 // ---- state
