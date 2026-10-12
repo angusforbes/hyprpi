@@ -27,27 +27,54 @@ state() { local was; was="$(cat "$ST/state" 2>/dev/null)"; [[ "$was" == "$1" ]] 
 [[ -f "$LOG" ]] && (( $(wc -l < "$LOG") > 2000 )) && { tail -n 1000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; }
 
 if [[ "${1:-}" == status ]]; then
-  echo "box $BOX: $(brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"; echo "last state: $(cat "$ST/state" 2>/dev/null)"
+  echo "box $BOX: $(brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"; echo "last state: $(cat "$ST/state" 2>/dev/null), failures in a row: $(cat "$ST/fails" 2>/dev/null || echo 0)$([[ -f "$ST/alerted" ]] && echo ", alerted")"
   echo "--- log (last 10)"; tail -n 10 "$LOG" 2>/dev/null; echo "--- $LOCAL"; ls -la "$LOCAL"; exit 0
 fi
 
 exec 9>"$ST/lock"; flock -n 9 || exit 0   # a run still going (slow network): skip this one
 
 status="$(timeout 60 brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
-if [[ "$status" != RUNNING ]]; then state "paused" "box $BOX is ${status:-unknown (brev ls failed)}"; exit 0; fi
+if [[ "$status" != RUNNING ]]; then state "paused" "box $BOX is ${status:-unknown (brev ls failed)}"; echo 0 > "$ST/fails"; exit 0; fi
 
 SSHARGS="-o ConnectTimeout=20 -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 # 2. new generated images (world <letter> images skips names already in ~/Brev)
-pulled="$(HYPRPI_IMAGES_DIR="$LOCAL" timeout 300 "$H/omnistation/world" "$WL" images 2>/dev/null)"; prc=$?
+pulled="$(HYPRPI_IMAGES_DIR="$LOCAL" timeout 300 "$H/omnistation/world" "$WL" images 2>&1)"; prc=$?
 [[ $prc -eq 0 ]] && grep -q "^file://" <<< "$pulled" && log "pulled from outputs: $(grep -c '^file://' <<< "$pulled") image(s)"
 # 3. two-way
 out="$(timeout 900 "$UNISON" "$LOCAL" "ssh://$BOX/$REMOTE" -batch -auto -times -prefer newer -copyonconflict \
   -backup 'Name *' -maxbackups 3 -confirmbigdel -ignore 'Name .*.unison.tmp' -ignore 'Name .unison.*' \
   -servercmd .local/bin/unison -sshargs "$SSHARGS" -logfile "$ST/unison.log" -ui text 2>&1)"; rc=$?
-# Unison: 0 = nothing to do or all done, 1 = all done but some skipped, 2 = non-fatal failures, 3 = fatal (e.g. no connection)
+# Unison: 0 = nothing to do or all done, 1 = all done but some skipped, 2 = non-fatal failures, 3 = fatal (e.g. no connection).
+# Conflicts aren't failures (-prefer newer settles them and -copyonconflict keeps the other copy), so 1 and 2 are real problems.
+why=""
 case $rc in
   0) state "ok"; c="$(grep -E 'Synchronization complete' <<< "$out" | tail -1)"; [[ -n "$c" ]] && log "$c" ;;
-  1|2) state "partial" "unison exit $rc"; log "$(tail -n 5 <<< "$out" | tr '\n' ' ' | cut -c1-600)" ;;
-  *) state "unreachable" "unison exit $rc: $(tail -n 3 <<< "$out" | tr '\n' ' ' | cut -c1-300)" ;;
+  1|2) why="unison exit $rc (some files not synced): $(grep -E 'failed|Error|skipped' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; state "partial" "$why"; log "$(tail -n 5 <<< "$out" | tr '\n' ' ' | cut -c1-600)" ;;
+  *) why="unison exit $rc: $(grep -v -E '^(Pseudo|Warning: Perm|mux_client|ControlSocket)' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; state "unreachable" "$why" ;;
 esac
+[[ -z "$why" && $prc -ne 0 ]] && { why="pulling new images failed (world $WL images, exit $prc): $(tail -n 2 <<< "$pulled" | tr '\n' ' ' | cut -c1-300)"; state "pull-failed" "$why"; }
+
+# J497 (Angus: "shouldn't we notice a failure"): a failure while the box is RUNNING makes this run fail (systemd shows it),
+# and after ALERT_AFTER failures in a row Angus gets ONE alert: a ⚠ line in world ALERT_WORLD's Thoughts thread
+# (hyprpi thoughts alert) and a desktop notification. One "working again" notice when a run succeeds after an alert.
+# A stopped box (above) is a pause, not a failure: it neither counts nor alerts.
+ALERT_AFTER="${BREV_SYNC_ALERT_AFTER:-3}"; ALERT_WORLD="${BREV_SYNC_ALERT_WORLD:-A}"
+alert() { # $1 = text; both channels, each best effort
+  local sent=""
+  hyprpi thoughts alert "$ALERT_WORLD" "$1" >/dev/null 2>&1 && sent="Thoughts-$ALERT_WORLD"
+  notify-send -a brev-sync -u "${2:-critical}" "brev-sync" "$1" >/dev/null 2>&1 && sent="${sent:+$sent + }desktop"
+  log "alert (${sent:-no channel reached}): $1"
+}
+fails="$(cat "$ST/fails" 2>/dev/null || echo 0)"; [[ "$fails" =~ ^[0-9]+$ ]] || fails=0
+if [[ -n "$why" ]]; then
+  fails=$((fails + 1)); echo "$fails" > "$ST/fails"
+  if (( fails == ALERT_AFTER )); then
+    alert "brev-sync: ~/Brev <-> $BOX:~/$REMOTE has failed $fails runs in a row while the box is running. Last: $why. Details: brev-sync status, ~/.local/state/brev-sync/."
+    touch "$ST/alerted"
+  fi
+  echo "brev-sync: $why" >&2
+  exit 1
+fi
+echo 0 > "$ST/fails"
+if [[ -f "$ST/alerted" ]]; then rm -f "$ST/alerted"; alert "brev-sync: working again (~/Brev <-> $BOX:~/$REMOTE synced)." normal; fi
 exit 0

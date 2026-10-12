@@ -22,6 +22,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi post [--room R] TEXT post to a room as you (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
   hyprpi thoughts new W [--handoff FILE]   a fresh session for world W's Thoughts (the old one archived, never deleted)
+  hyprpi thoughts alert W TEXT   a ⚠ line in world W's Thoughts thread (no turn; for background jobs, once per problem)
   hyprpi thoughts [--room R] [--via voice] TEXT   a message to a world's Thoughts (default: the world you're on); --via voice marks it 🎤 (dictation)
   hyprpi dictate [--to hp:ID|proj:NAME] TEXT   a dictation: the focused world's Thoughts (🎤), or the agent /
                               project it starts with ("Atlas, …", "project onboarding, …")
@@ -546,6 +547,14 @@ const commands = {
       const handoff = opt("--handoff") || "";
       const r = await request("thoughts.fresh", { room: args[1].toUpperCase(), ...(args.includes("--force") ? { force: true } : {}), ...(handoff ? { handoff: path.resolve(handoff.replace(/^~(?=\/)/, process.env.HOME)) } : {}) }, { timeoutMs: 20000 });
       console.log(`Thoughts-${r.room}: new session; ${r.files} file(s) archived in ${r.archived}${r.carried ? `; the last ${r.carried} turn(s) still shown above the divider` : ""}${r.handoff ? `; reading ${r.handoff}` : ""}`);
+      return;
+    }
+    // J497: hyprpi thoughts alert W TEXT: a ⚠ line in world W's Thoughts thread (no turn); for background jobs.
+    if (args[0] === "alert" && /^[A-Za-z][A-Za-z0-9]*$/.test(args[1] || "")) {
+      const text = args.slice(2).join(" ");
+      if (!text.trim()) die("usage: hyprpi thoughts alert W TEXT");
+      const r = await request("thoughts.alert", { room: args[1].toUpperCase(), text });
+      console.log(`⚠ → Thoughts-${r.room}`);
       return;
     }
     const room = opt("--room"), via = opt("--via") || "";
