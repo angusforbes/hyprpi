@@ -49,6 +49,10 @@ export function imgSize(b) {
   } catch { /* truncated */ }
   return null;
 }
+// J472 (RemoteReview MED): a session copied from ANOTHER machine or a sandbox names paths there, not here: its tool calls' image
+// paths must never be opened (or linked) on the laptop. tail / since / run under { hostFiles: false } for those.
+let hostFiles = true;
+const withHostFiles = (on, fn) => { const was = hostFiles; hostFiles = on !== false; try { return fn(); } finally { hostFiles = was; } };
 const sizeCache = new Map(); // path → { key: mtime:size, dim }
 function fileDims(p) {
   try {
@@ -93,7 +97,7 @@ function itemsOf(e, at) {
         if (c.type === "text" && c.text?.trim()) out.push({ k: "text", text: clip(c.text, 12000), ts });
         else if (c.type === "toolCall") {
           const args = c.arguments || {}, p = args.path || args.file_path;
-          const file = p && IMG_FILE.test(String(p)) ? String(p).replace(/^~/, home) : "", d = file ? fileDims(file) : null;
+          const file = hostFiles && p && IMG_FILE.test(String(p)) ? String(p).replace(/^~/, home) : "", d = file ? fileDims(file) : null;
           out.push({ k: "tool", id: c.id, name: c.name, line: toolLine(c.name, args), args: clip(JSON.stringify(args, null, 1), 1200), file, ...(d ? { fw: d.w, fh: d.h } : {}), ts });
         }
       }
@@ -128,7 +132,8 @@ function parseLines(buf, base) {
 }
 
 // The last `turns` turns before byte `end` (default: the end of the file).
-export function tail(file, { turns = 10, end = null } = {}) {
+export function tail(file, { turns = 10, end = null, hostFiles: hf = true } = {}) { return withHostFiles(hf, () => tailIn(file, { turns, end })); }
+function tailIn(file, { turns = 10, end = null } = {}) {
   const fd = fs.openSync(file, "r");
   try {
     const size = fs.fstatSync(fd).size;
@@ -157,7 +162,8 @@ export function tail(file, { turns = 10, end = null } = {}) {
 }
 
 // Everything after byte `after` (the live updates), at most MAX_READ; only whole lines.
-export function since(file, after) {
+export function since(file, after, { hostFiles: hf = true } = {}) { return withHostFiles(hf, () => sinceIn(file, after)); }
+function sinceIn(file, after) {
   const fd = fs.openSync(file, "r");
   try {
     const size = fs.fstatSync(fd).size;

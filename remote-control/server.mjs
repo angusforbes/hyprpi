@@ -683,7 +683,8 @@ const server = http.createServer(async (req, res) => {
         return res.end(im.data);
       }
       const after = url.searchParams.get("after"), before = url.searchParams.get("before");
-      const r = after != null ? session.since(file, after) : session.tail(file, { turns: 10, end: before != null ? before : null });
+      const hostFiles = !ia; // J472 (RemoteReview MED): an inner (sandboxed / remote) session's paths aren't laptop paths
+      const r = after != null ? session.since(file, after, { hostFiles }) : session.tail(file, { turns: 10, end: before != null ? before : null, hostFiles });
       return json(res, 200, r);
     }
     // POST /api/agent/send {agent, text}: a message from the phone. Queued if it's working (the

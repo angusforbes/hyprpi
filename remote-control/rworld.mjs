@@ -83,7 +83,7 @@ async function makeBridge(w) {
     b.pending.set(0, { resolve: () => { clearTimeout(t); resolve(); }, reject: (e) => { clearTimeout(t); reject(Object.assign(e, { offline: true })); }, timer: t });
   });
   p.stderr.setEncoding("utf8"); p.stderr.on("data", (d) => { if (err.length < 2000) err += d; });
-  p.on("error", () => fail(`${w.ssh[0]} didn't start`));
+  p.on("error", () => { markDown(w.name, `${w.ssh[0]} didn't start`); fail(`${w.ssh[0]} didn't start`); }); // (RemoteReview LOW) back off too
   p.on("exit", () => { const why = `connection to ${w.name} ended${err.trim() ? `: ${err.trim().split("\n").pop().slice(0, 160)}` : ""}`; if (!b.readyDone) markDown(w.name, why); fail(why); });
   p.stdin.on("error", () => fail("stdin closed"));
   p.stdout.setEncoding("utf8");
