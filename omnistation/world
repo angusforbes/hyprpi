@@ -131,5 +131,11 @@ case "$cmd" in
     # (J471 v2) the world's agents listed on the laptop like any world's (summon, pop-ups, agents panel): one status helper per world
     setsid -f node "$H/omnistation/world-status.mjs" "$WL" </dev/null >/dev/null 2>&1 || true
     echo "opened agent $NAME on workspace $WS (world $WL${LABEL:+, $LABEL})" ;;
+  images)
+    # J483: copy the remote machine's generated images (~/workspace/outputs: brev-image's PNGs) to ~/Downloads/<label-ish>,
+    # only the ones not here yet; prints each new file as a file:// link
+    dest="${HYPRPI_IMAGES_DIR:-$HOME/Downloads/brev}"; mkdir -p "$dest"
+    have=$(cd "$dest" && ls -1 2>/dev/null | grep -E '^[A-Za-z0-9._-]+\.png$' | tr '\n' ' ')
+    "${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && for f in *.png; do [ -f \"\$f\" ] || continue; case ' $have ' in *\" \$f \"*) ;; *) echo \"\$f\";; esac; done | tar -cf - -T - 2>/dev/null" | tar -xvf - -C "$dest" 2>/dev/null | while read -r f; do echo "file://$dest/$f"; done ;;
   *) echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding|recover [NAME]" >&2; exit 2 ;;
 esac

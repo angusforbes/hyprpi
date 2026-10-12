@@ -4,6 +4,8 @@
 #   serve-model.sh <hf model id> [extra vllm args...]   replace the running model (a T4 holds one small model at a time)
 #   serve-model.sh                                       restart the last model (after `brev start`)
 #   serve-model.sh stop                                  stop the server (the GPU's memory is freed)
+#   env: MAX_LEN (context, default 32768), GPU_UTIL (share of GPU memory vLLM takes, default 0.9; lower it to leave room for
+#   brev-image on the same GPU, e.g. 0.6 on a 48 GB L40S), TOOL_PARSER (default hermes), VLLM_IMAGE
 # Copy it there: scp brev/serve-model.sh hyprpi-gpu:workspace/  (gated models: HF_TOKEN, else ~/workspace/.secrets/hf_token)
 set -euo pipefail
 W="$HOME/workspace"; LAST="$W/.serve-model.last"; IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:latest}"
@@ -11,7 +13,7 @@ if [[ "${1:-}" == stop ]]; then docker rm -f vllm >/dev/null 2>&1 || true; echo 
 if [[ $# -eq 0 ]]; then [[ -f "$LAST" ]] || { echo "usage: serve-model.sh <hf model id> [vllm args]" >&2; exit 2; }; mapfile -t args < "$LAST"; else args=("$@"); fi
 [[ ${#args[@]} -gt 0 && -n "${args[0]}" ]] || { echo "usage: serve-model.sh <hf model id> [vllm args] (no last model saved)" >&2; exit 2; }
 MODEL="${args[0]}"; printf '%s\n' "${args[@]}" > "$LAST"
-mkdir -p "$W/.cache/huggingface"
+mkdir -p "$W/.cache/huggingface/hub" "$W/.cache/huggingface/xet"  # yours, before the root container writes there (brev-image runs as you and shares the cache)
 # a gated model's token: Angus's read-only "brev" token, if he put one in ~/workspace/.secrets/hf_token (600, folder 700)
 TF="$W/.secrets/hf_token"
 if [[ -z "${HF_TOKEN:-}" && -f "$TF" ]]; then
@@ -22,9 +24,11 @@ fi
 cap=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1); dtype=auto; [[ "${cap%%.*}" -ge 8 ]] || dtype=half
 docker rm -f vllm >/dev/null 2>&1 || true
 # no --restart: the server comes back only when asked (a stopped box shouldn't wake up into a half-set-up state)
+# VLLM_IMAGE: a GPU driver older than the newest
+# vLLM's CUDA (e.g. Crusoe's 565 / CUDA 12.7 vs vLLM 0.31's cu130) needs an older tag, e.g. vllm/vllm-openai:v0.10.1.1 (cu128)
 docker run -d --name vllm --gpus all --ipc=host -p 127.0.0.1:8000:8000 \
-  -v "$W/.cache/huggingface:/root/.cache/huggingface" -e HF_HOME=/root/.cache/huggingface ${HF_TOKEN:+-e HF_TOKEN} \
-  "$IMAGE" "$MODEL" --dtype "$dtype" --max-model-len "${MAX_LEN:-32768}" --gpu-memory-utilization 0.9 \
+  -v "$W/.cache/huggingface:/hf" -e HF_HOME=/hf ${HF_TOKEN:+-e HF_TOKEN} \
+  "$IMAGE" --model "$MODEL" --dtype "$dtype" --max-model-len "${MAX_LEN:-32768}" --gpu-memory-utilization "${GPU_UTIL:-0.9}" \
   --enable-auto-tool-choice --tool-call-parser "${TOOL_PARSER:-hermes}" "${args[@]:1}" >/dev/null
 echo "starting $MODEL (dtype $dtype); waiting for http://127.0.0.1:8000 ..."
 for _ in $(seq 1 120); do

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# brev-image "<prompt>" [steps] [size]: text to image on this Brev box's GPU (SDXL-Turbo, brev/image/server.py). Prints the
+# PNG's path and the seconds it took. Made for agents: pi's bash tool runs it. The laptop copies new images to ~/Downloads/brev
+# with `omnistation/world X images`.
+set -euo pipefail
+[[ -n "${1:-}" ]] || { echo 'usage: brev-image "<prompt>" [steps 1-8, default 4] [size 256-1024, default 512]' >&2; exit 2; }
+body=$(python3 -c 'import json,sys; print(json.dumps({"prompt":sys.argv[1],"steps":int(sys.argv[2]),"size":int(sys.argv[3])}))' "$1" "${2:-4}" "${3:-512}")
+r=$(curl -sS --max-time 120 -H 'Content-Type: application/json' -d "$body" 127.0.0.1:8001/generate) || { echo "brev-image: the image service isn't running (start it: ~/workspace/brev-image/serve-image.sh)" >&2; exit 3; }
+python3 -c 'import json,sys
+r=json.loads(sys.argv[1])
+if "error" in r: sys.exit("brev-image: " + r["error"])
+print(r["path"].replace("/outputs", sys.argv[2], 1)); print("%s s, %s steps, %sx%s, %s" % (r["seconds"], r["steps"], r["size"], r["size"], r["model"]), file=sys.stderr)' "$r" "$HOME/workspace/outputs"
