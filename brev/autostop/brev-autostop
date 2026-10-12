@@ -40,11 +40,11 @@ rows() { awk 'h && NF>=2 {print $1, $2} $1=="NAME" && $2=="STATUS" {h=1}' <<<"$1
 
 # --- config ------------------------------------------------------------------------------------------------------------------
 ensure_conf() { [[ -f "$CONF" ]] || { mkdir -p "$(dirname "$CONF")" && cp "$HERE/brev-autostop.conf.example" "$CONF" && log "made $CONF from the example"; }; }
-cfg() { grep -v '^[[:space:]]*#' "$CONF" 2>/dev/null; } # (a missing config: built-in defaults, and nemoclaw excluded below)
-DEFAULT_IDLE="$(cfg | awk '$1=="default_idle_min" && $2~/^[0-9]+$/{v=$2} END{print v}')"; DEFAULT_IDLE="${DEFAULT_IDLE:-45}"
-GPU_BUSY="$(cfg | awk '$1=="gpu_busy_pct" && $2~/^[0-9]+$/{v=$2} END{print v}')"; GPU_BUSY="${GPU_BUSY:-10}"
+cfg() { [[ -f "$CONF" ]] && tr -d '\r' < "$CONF" | grep -v '^[[:space:]]*#'; } # (CRLF-safe) # (a missing config: built-in defaults, and nemoclaw excluded below)
+DEFAULT_IDLE="$(cfg | awk '$1=="default_idle_min" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; DEFAULT_IDLE="${DEFAULT_IDLE:-45}"
+GPU_BUSY="$(cfg | awk '$1=="gpu_busy_pct" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; GPU_BUSY="${GPU_BUSY:-10}"
 excluded() { [[ ! -f "$CONF" && "$1" == nemoclaw-8917fb ]] && return 0; cfg | awk -v b="$1" '$1=="exclude" && $2==b{f=1} END{exit !f}'; }
-idle_min() { local v; v="$(cfg | awk -v b="$1" '$1=="idle" && $2==b && $3~/^[0-9]+$/{v=$3} END{print v}')"; echo "${v:-$DEFAULT_IDLE}"; }
+idle_min() { local v; v="$(cfg | awk -v b="$1" '$1=="idle" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo "${v:-$DEFAULT_IDLE}"; }
 
 # --- per-box state: $ST/boxes/<name>/ ------------------------------------------------------------------------------------------
 D=""; BOX=""
@@ -53,18 +53,24 @@ get() { cat "$D/$1" 2>/dev/null; }
 put() { printf '%s\n' "$2" > "$D/$1"; }
 state() { [[ "$(get state)" == "$1" ]] || { put state "$1"; log "$2"; }; } # one log line per change of state, not one per run
 paused_until() { local p; for p in "$(cat "$ST/pause" 2>/dev/null)" "$(get pause)"; do [[ -n "$p" ]] && [[ "$p" == 0 || "$p" -gt "$(now)" ]] && { echo "$p"; return 0; }; done; return 1; }
-dur() { local n="${1%[mhd]}" u="${1: -1}" s; [[ "$n" =~ ^[0-9]+$ ]] || return 1; case "$u" in m) s=60;; h) s=3600;; d) s=86400;; *) s=60;; esac; echo $(( $(now) + n * s )); }
+dur() { local n="${1%[mhd]}" u="${1: -1}" s; [[ "$n" =~ ^[0-9]+$ ]] || return 1; n=$((10#$n)); case "$u" in m) s=60;; h) s=3600;; d) s=86400;; *) s=60;; esac; echo $(( $(now) + n * s )); }
 
 case "${1:-run}" in
   pause|resume)
-    # pause [NAME] [N(m|h|d)]: a NAME protects just that box (e.g. a training run); none = every box. No time = until resume.
-    who=""; t="${2:-}"
-    if [[ -n "$t" ]] && ! dur "$t" >/dev/null; then [[ "$t" =~ $NAME_RE ]] || { echo "usage: brev-autostop $1 [NAME] [N(m|h|d)]" >&2; exit 2; }; who="$t"; t="${3:-}"; fi
+    # pause [NAME|all] [N(m|h|d)|forever]: a NAME protects just that box (e.g. a training run); none or "all" = every box; no time or
+    # "forever" = until resume. With one argument, a duration means all boxes, anything else a box name; a box whose name looks
+    # like a duration needs both: `pause 24h forever`. resume [NAME|all].
+    who=""; t=""
+    if [[ "$1" == resume ]]; then who="${2:-}"
+    elif [[ $# -ge 3 ]]; then who="$2"; t="$3"
+    elif [[ -n "${2:-}" ]]; then if dur "$2" >/dev/null; then t="$2"; else who="$2"; fi; fi
+    [[ "$who" == all ]] && who=""; [[ "$t" == forever ]] && t=""
+    [[ -z "$who" || "$who" =~ $NAME_RE ]] || { echo "usage: brev-autostop $1 [NAME|all] [N(m|h|d)|forever]" >&2; exit 2; }
     f="$ST/pause"; [[ -n "$who" ]] && { use "$who"; f="$D/pause"; }
     if [[ "$1" == resume ]]; then rm -f "$f"; log "resumed by hand${who:+: $who}"; echo "brev-autostop resumed${who:+ for $who}"; exit 0; fi
-    until=0; if [[ -n "$t" ]]; then until="$(dur "$t")" || { echo "usage: brev-autostop pause [NAME] [N(m|h|d)]" >&2; exit 2; }; fi
+    until=0; if [[ -n "$t" ]]; then until="$(dur "$t")" || { echo "usage: brev-autostop pause [NAME|all] [N(m|h|d)|forever]" >&2; exit 2; }; fi
     printf '%s\n' "$until" > "$f"; log "paused by hand${who:+: $who} $([[ -n "$t" ]] && echo "for $t" || echo "until resume")"
-    echo "brev-autostop paused${who:+ for $who} $([[ $until -gt 0 ]] && date -d "@$until" '+until %a %H:%M' || echo "until: brev-autostop resume${who:+ $who}")"; exit 0;;
+    echo "brev-autostop paused ${who:-all boxes} $([[ $until -gt 0 ]] && date -d "@$until" '+until %a %H:%M' || echo "until: brev-autostop resume${who:+ $who}")"; exit 0;;
   config) ensure_conf; echo "$CONF"; exit 0;;
   install)
     # J516 (Angus: "part of our hyprpi brev install when we first set up a brev instance"): idempotent; prints one line per change.
@@ -76,7 +82,10 @@ case "${1:-run}" in
       "$SYSTEMCTL" --user link "$HERE/brev-autostop.service" "$HERE/brev-autostop.timer" >/dev/null 2>&1
       "$SYSTEMCTL" --user enable --now brev-autostop.timer >/dev/null 2>&1 || { echo "auto-stop: couldn't enable brev-autostop.timer (see systemctl --user status brev-autostop.timer)" >&2; exit 1; }
       echo "auto-stop: enabled the laptop timer brev-autostop.timer (every 5 min)"; log "install: timer enabled"
-    elif ! "$SYSTEMCTL" --user is-active --quiet brev-autostop.timer 2>/dev/null; then "$SYSTEMCTL" --user start brev-autostop.timer >/dev/null 2>&1 && echo "auto-stop: started brev-autostop.timer"; fi
+    elif ! "$SYSTEMCTL" --user is-active --quiet brev-autostop.timer 2>/dev/null; then
+      "$SYSTEMCTL" --user start brev-autostop.timer >/dev/null 2>&1 || { echo "auto-stop: brev-autostop.timer is enabled but won't start (see systemctl --user status brev-autostop.timer)" >&2; exit 1; }
+      echo "auto-stop: started brev-autostop.timer"
+    fi
     if [[ -n "$name" ]]; then
       if excluded "$name"; then echo "auto-stop: $name is EXCLUDED in $CONF (never stopped automatically)"; exit 0; fi
       cfg | awk -v b="$name" '($1=="box"||$1=="idle") && $2==b{f=1} END{exit !f}' || { printf 'box %s\n' "$name" >> "$CONF"; log "install: registered $name"; }
@@ -163,7 +172,7 @@ check_box() { # $1 = a RUNNING instance; never exits the script (each box on its
     elif [[ -n "$prev" && "$vt" != "$prev" ]]; then best=0; why="vLLM requests ($prev → $vt)"; fi
     put vllm_total "$vt"
   fi
-  gu="$(val gpu)"; if [[ "$gu" =~ ^[0-9]+$ ]] && (( gu > GPU_BUSY )); then best=0; why="GPU busy (${gu}%)"; fi
+  gu="$(val gpu)"; if [[ "$gu" =~ ^[0-9]+$ ]] && (( 10#$gu > GPU_BUSY )); then best=0; why="GPU busy (${gu}%)"; fi
   la="$(get last_act)"; [[ -n "$la" ]] || la=0 # the latest real activity seen so far (kept: a vLLM count change is seen only once)
   if [[ -n "$best" && $(( T - best )) -gt "$la" ]]; then la=$(( T - best )); put last_act "$la"; put last_why "$why"; fi
   rs="$(get running_since)"; from="$la"; ref="$(get last_why)"

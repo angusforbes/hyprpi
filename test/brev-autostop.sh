@@ -38,7 +38,7 @@ EOF
 printf '#!/usr/bin/env bash\necho "notify $*" >> "%s/calls"\n' "$F" > "$F/bin/notify-send"
 printf '#!/usr/bin/env bash\necho "hyprpi $*" >> "%s/calls"\n' "$F" > "$F/bin/hyprpi"
 chmod +x "$F/bin/"*
-export BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
+export BREV_AUTOSTOP_CONFIG="$F/no-config" BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
 H="$F/home"
 fixture() { # every activity file N minutes old
   rm -rf "$H"; mkdir -p "$H/.hyprpi-i/sessions/s1" "$H/.hyprpi-i/state/thoughts" "$H/.hyprpi-i/state/boards" "$H/workspace/outputs" "$H/workspace/shared"
@@ -212,6 +212,32 @@ w4="$(env "${envi[@]}" HYPRPI_REMOTE_CONF="$F/b4.json" "$HERE/omnistation/world"
 ok "world I setup (scratch) prints 'auto-stop is on for math-a100' before reaching the box" 'grep -q "auto-stop is on for math-a100" <<<"$w4" && grep -qx "box math-a100" "$IC"'
 w5="$(env "${envi[@]}" HYPRPI_REMOTE_CONF="$F/b4.json" "$HERE/omnistation/world" I setup 2>&1)"
 ok "…run again: same one line, nothing re-enabled or duplicated" '[[ $(grep -c "auto-stop" <<<"$w5") == 1 && $(grep -c "^box math-a100" "$IC") == 1 && $(grep -c "enable --now" "$F/syscalls") == 1 ]]'
+
+# 25. (FleetStopCheck) a CRLF config still excludes and sets limits; "08" is decimal
+printf 'default_idle_min 90\r\nexclude protected\r\nexclude nemoclaw-8917fb\r\n' > "$CF"
+fresh; echo STOPPED > "$F/status"; printf 'protected RUNNING X\nother RUNNING X\n' > "$F/more"; fixture_for protected 300; fixture_for other 300
+BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for protected 300; started_ago_for other 50; BREV_AUTOSTOP_CONFIG="$CF" run
+ok "CRLF config: excluded box never probed or stopped; default 90 holds (other at 50 min kept)" '[[ $(stops) == 0 ]] && ! grep -q protected "$F/sshcalls"'
+printf 'default_idle_min 08\ngpu_busy_pct 08\n' > "$CF"
+fresh; echo STOPPED > "$F/status"; echo "box8 RUNNING X" > "$F/more"; fixture_for box8 300; gpu_on; printf '90\n' > "$F/gpu-box8"
+BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for box8 60; BREV_AUTOSTOP_CONFIG="$CF" run 2>"$F/err"
+ok "'08' settings are decimal: GPU 90% > 8 keeps the box, no arithmetic error" '[[ $(stops) == 0 && ! -s "$F/err" ]]'
+printf '3\n' > "$F/gpu-box8"; BREV_AUTOSTOP_NOW=$(( $(date +%s) + 9*60 )) BREV_AUTOSTOP_CONFIG="$CF" run 2>"$F/err"
+ok "…GPU idle 9 min later, limit 08 = 8 min → stopped" '[[ $(stops) == 1 && ! -s "$F/err" ]]'
+# 26. a box whose name looks like a duration: `pause 24h 1h` pauses THAT box; `pause 24h forever` too; one argument = all
+fresh; fixture 120; echo RUNNING > "$F/status"; echo "24h RUNNING X" > "$F/more"; fixture_for 24h 120
+run; started_ago 120; started_ago_for 24h 120; "$S" pause 24h 1h >/dev/null
+ok "pause 24h 1h → a pause file for the box '24h', no global pause" '[[ -f "$F/state/boxes/24h/pause" && ! -f "$F/state/pause" ]]'
+run
+ok "…box 24h kept, hyprpi-l40s still stopped" '[[ $(stops) == 1 ]] && grep -qx "stop hyprpi-l40s" "$F/calls"'
+"$S" pause 3h >/dev/null; "$S" resume all >/dev/null
+ok "pause 3h = all boxes; resume all clears it" '[[ ! -f "$F/state/pause" ]]'
+# 27. install with the timer enabled but not running: started; if it won't start, a failure (not "auto-stop is on")
+printf '#!/usr/bin/env bash\nF="%s"; echo "systemctl $*" >> "$F/syscalls"\ncase "$*" in *is-enabled*) exit 0;; *is-active*) exit 3;; *start*) [[ -f "$F/startok" ]];; esac\n' "$F" > "$SC"
+rm -f "$F/startok"; i4="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install z9 2>&1)"; rc4=$?
+ok "install: timer enabled but won't start → exit 1, says so, no 'auto-stop is on'" '[[ $rc4 == 1 ]] && grep -q "won.t start" <<<"$i4" && ! grep -q "auto-stop is on" <<<"$i4"'
+touch "$F/startok"; i5="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install z9 2>&1)"
+ok "…when it starts: 'started brev-autostop.timer' + 'auto-stop is on for z9'" 'grep -q "started brev-autostop.timer" <<<"$i5" && grep -q "auto-stop is on for z9" <<<"$i5"'
 
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
