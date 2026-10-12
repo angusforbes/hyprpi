@@ -42,6 +42,24 @@ cmd="${1:-status}"; NAME="${2:-alpha}"
 [[ "$NAME" =~ ^[a-z][a-z0-9-]{0,30}$ || "$NAME" == all ]] || { echo "remote.sh: a name is lowercase letters, digits and -" >&2; exit 2; }
 mkdir -p "$ROOT/state" "$ROOT/run" "$WORK"; chmod 700 "$ROOT" "$ROOT/run"
 hp() { node "$DIR/bin/hyprpi" "$@"; }
+# J476: prints the first folder on the way to $1 (links followed component by component) that isn't owned by you or root or is
+# writable by group/others, and fails; succeeds silently when every folder on the way is safe
+path_unsafe() {
+  local me cur=/ rest="$1" comp next t hops=0; me=$(id -un)
+  _pu_ok() { [[ $(( 8#$(stat -c %a "$1") & 022 )) -eq 0 && "$(stat -c %U "$1")" =~ ^($me|root)$ ]]; }
+  _pu_ok / || { echo /; return 1; }
+  while [[ -n "$rest" ]]; do
+    comp="${rest%%/*}"; [[ "$rest" == */* ]] && rest="${rest#*/}" || rest=""
+    case "$comp" in ""|.) continue ;; ..) cur=$(dirname "$cur"); continue ;; esac
+    next="${cur%/}/$comp"
+    if [[ -L "$next" ]]; then
+      (( ++hops <= 40 )) || { echo "$next"; return 1; }
+      t=$(readlink "$next"); [[ "$t" == /* ]] && cur=/; rest="$t${rest:+/$rest}"; continue
+    fi
+    [[ -d "$next" ]] || { echo "$next"; return 1; }
+    cur="$next"; _pu_ok "$cur" || { echo "$cur"; return 1; }
+  done
+}
 # Secrets must be private (Ledger, J469/J471): files 600 or tighter, their folders 700, else nothing starts
 secrets_ok() {
   local bad=() f d
@@ -54,16 +72,12 @@ secrets_ok() {
     [[ $(( 8#$(stat -c %a "$d") & 077 )) -eq 0 ]] || bad+=("chmod 700 $(printf %q "$d")")
   done
   # (review) their parent folders mustn't be writable by others either (someone could swap a file). J476: ~/.pi and
-  # ~/.hyprpi-<x> may be links into Brev's ~/workspace, so every folder on the RESOLVED path up to / is checked: owned by
-  # you or root, and not writable by group or others (a link's own mode means nothing; its target's ancestry does)
-  local me r; me=$(id -un)
+  # ~/.hyprpi-<x> may be links into Brev's ~/workspace, so the path is walked one component at a time, following every link
+  # by hand: every folder entered (including those that only hold an intermediate link) must be owned by you or root and not
+  # writable by group or others. A link's own mode means nothing; the folders it passes through do.
   for d in "$HOME" "$HOME/.config" "$HOME/.pi" "$ROOT"; do
     [[ -d "$d" ]] || continue
-    r=$(readlink -f "$d")
-    while :; do
-      [[ $(( 8#$(stat -c %a "$r") & 022 )) -eq 0 && "$(stat -c %U "$r")" =~ ^($me|root)$ ]] || { bad+=("chmod go-w $(printf %q "$r")  # and owned by you (on the way to $(printf %q "$d"))"); break; }
-      [[ "$r" == / ]] && break; r=$(dirname "$r")
-    done
+    r=$(path_unsafe "$d") || bad+=("chmod go-w $(printf %q "$r")  # and owned by you (on the way to $(printf %q "$d"))")
   done
   (( ${#bad[@]} == 0 )) && return 0
   echo "remote.sh: refusing to start: a secret is readable by others. Fix with:" >&2; printf '  %s\n' "${bad[@]}" >&2; return 1
