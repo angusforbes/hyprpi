@@ -67,6 +67,34 @@ const clients = () => hypr.clients().catch(() => []);
   }
 }
 
+// J480: a REMOTE world's workspaces (~/.config/hyprpi/remote/<letter>.json binds that world to another machine, e.g. world H =
+// Omnistation, I = a Brev GPU box): its panels run on that machine, against its own daemon and Thoughts, each in a laptop window
+// that omnistation/world L panel KIND opens (class hyprpi.<l>-panel, title "hyprpi-room L" etc.). Bring those here; open the
+// missing ones here.
+{
+  const cdir = `${process.env.XDG_CONFIG_HOME || process.env.HOME + "/.config"}/hyprpi/remote`;
+  const aw = wantWs || (await hypr.activeWorkspace().catch(() => null))?.id;
+  let size = 10; try { size = (await import("./../lib/paths.mjs")).loadConfig().worldSize || 10; } catch { /* default */ }
+  const fromWs = Number.isInteger(aw) && aw > 0 ? String.fromCharCode(64 + Math.ceil(aw / size)) : "";
+  const L = ((args[0] || "").toUpperCase() || fromWs);
+  const bound = /^[A-I]$/.test(L) && (fs.existsSync(`${cdir}/${L.toLowerCase()}.json`) || fs.existsSync(`${cdir}/world-${L.toLowerCase()}.json`));
+  if (bound && Number.isInteger(aw) && aw > 0) {
+    const KIND = { "1": "agents", "2": "room", "4": "board", "3": "search" };
+    const TITLE = { agents: "router", room: "room", board: "board", search: "search" };
+    const mine = (await clients()).filter((c) => c.class === `hyprpi.${L.toLowerCase()}-panel`);
+    let last = null;
+    for (const n of only) {
+      const kind = KIND[n]; if (!kind) continue;
+      const c = mine.find((x) => (x.title || "") === `hyprpi-${TITLE[kind]} ${L}`);
+      if (c) { if (c.workspace?.id !== aw) await hypr.moveWindow(c.address, String(aw)).catch(() => {}); last = c; continue; }
+      const env = { ...process.env, HYPRPI_PANEL_WS: String(aw) }; delete env.HYPRPI_AGENT_ID;
+      spawn(`${here}../omnistation/world`, [L, "panel", kind], { detached: true, stdio: "ignore", env }).unref();
+    }
+    if (last && only.length === 1) await hypr.focusWindow(last.address).catch(() => {});
+    process.exit(0);
+  }
+}
+
 // Window titles: "hyprpi-router C" (panel 1), "hyprpi-room C" (2), "hyprpi-search C" (3)
 // — that is how an existing window is recognised. Deliberately no " · <ROOM>" ending: the
 // daemon reads titles ending that way as its own room windows and repositions them.

@@ -100,6 +100,11 @@ case "$cmd" in
     [[ -f "$ROOT/hbroker.mjs" ]] || { echo "remote.sh: $ROOT/hbroker.mjs is missing (world-h setup copies it)" >&2; exit 3; }
     printf '#!/usr/bin/env bash\n# hyprpi'"'"'s pi command on this machine (omnistation/remote.sh, J471)\nif [[ "${HYPRPI_REMOTE_RPC:-}" == 1 && -n "${HYPRPI_NAME:-}" ]]; then exec node %q serve "$HYPRPI_NAME" -- "$@"; fi\nexec pi "$@"\n' "$ROOT/hbroker.mjs" > "$ROOT/pi-entry"; chmod 755 "$ROOT/pi-entry"
     node -e 'const fs=require("fs"),[c,e]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(c,"utf8"));j.pi=e;fs.writeFileSync(c,JSON.stringify(j,null,2)+"\n")' "$c" "$ROOT/pi-entry"
+    # J480: the world's Thoughts model (the binding's "thoughtsModel", e.g. a model served on this machine) and the human's
+    # name for the panels (the laptop's; else the panels here would say the remote login's name, e.g. "Ubuntu")
+    if [[ "${HYPRPI_REMOTE_THOUGHTS_MODEL:-}" =~ ^[A-Za-z0-9._/:-]+$ ]]; then node -e 'const fs=require("fs"),[c,m]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(c,"utf8"));j.thoughtsModel=m;fs.writeFileSync(c,JSON.stringify(j,null,2)+"\n")' "$c" "$HYPRPI_REMOTE_THOUGHTS_MODEL"; fi
+    p="$(dirname "$c")/hyprpi.jsonc"
+    if [[ ! -e "$p" && "${HYPRPI_REMOTE_USER_NAME:-}" =~ ^[A-Za-z][A-Za-z\ .\'-]{0,40}$ ]]; then node -e 'const fs=require("fs"),[p,n]=process.argv.slice(1);fs.writeFileSync(p,JSON.stringify({user:{name:n}},null,2)+"\n")' "$p" "$HYPRPI_REMOTE_USER_NAME"; fi
     echo "hyprpi $(git -C "$DIR" log -1 --format=%h 2>/dev/null || cat "$DIR/.version" 2>/dev/null) in $DIR; pi $(pi --version 2>/dev/null | head -1); node $(node -v)"
     echo "next: log pi in once (run \`pi\` here, /login), then: remote.sh start" ;;
   start)
@@ -123,6 +128,14 @@ case "$cmd" in
     [[ "${3:-}" == nostart ]] || tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null 2>&1 || true
     for _ in $(seq 20); do [[ -S "$ROOT/run/$NAME.rpc.sock" ]] && break; sleep 0.5; done
     exec node "$ROOT/hbroker.mjs" connect "$NAME" ;;
+  panel)
+    # J480: one of the world's panels (room = Stream, board = Projects, search = Thoughts, agents), run HERE against this
+    # machine's daemon, in the ssh terminal the laptop's panel window opened (omnistation/world X panel KIND)
+    kind="${NAME}"; [[ "$kind" =~ ^(room|board|search|agents)$ ]] || { echo "remote.sh: panel room|board|search|agents" >&2; exit 2; }
+    secrets_ok || exit 3
+    [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: world ${W^^}'s daemon isn't running here (start an agent: world ${W^^} new)" >&2; exit 4; }
+    export HYPRPI_REMOTE_PANEL=1 TERM="${TERM:-xterm-256color}"
+    exec node "$DIR/mockups/$kind-tui.mjs" "${W^^}" ;;
   attach)
     tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null
     tmux set-option -t "hyprpi-$W-$NAME" status off >/dev/null 2>&1 || true
@@ -143,5 +156,5 @@ case "$cmd" in
   stop)
     if [[ "$NAME" == all ]]; then for s in $(tmux ls -F '#S' 2>/dev/null | grep "^hyprpi-$W-"); do tmux kill-session -t "$s"; done; echo "stopped all"
     else tmux kill-session -t "hyprpi-$W-$NAME" 2>/dev/null && echo "stopped $NAME (its session stays: start $NAME resumes it)" || echo "$NAME wasn't running"; fi ;;
-  *) echo "usage: remote.sh install | start [NAME] | connect [NAME] | attach [NAME] | rename NAME NEW | status | stop [NAME|all]" >&2; exit 2 ;;
+  *) echo "usage: remote.sh install | start [NAME] | connect [NAME] | attach [NAME] | panel room|board|search|agents | rename NAME NEW | status | stop [NAME|all]" >&2; exit 2 ;;
 esac
