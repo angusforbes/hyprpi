@@ -11,8 +11,10 @@ set -euo pipefail
 W="$HOME/workspace"; LAST="$W/.serve-model.last"
 # the box's settings (VLLM_IMAGE, GPU_UTIL) are kept in ~/workspace/.serve.env: given once, used by every later start (and by
 # brev-image's serve-image.sh), so a restart after `brev start` needs no environment
-ENVF="$W/.serve.env"; [[ -f "$ENVF" ]] && . "$ENVF"
+ENVF="$W/.serve.env"
+# (review) values given now win over the saved ones, and are saved
 for v in VLLM_IMAGE GPU_UTIL; do [[ -n "${!v:-}" ]] && { grep -v "^$v=" "$ENVF" 2>/dev/null; printf '%s=%q\n' "$v" "${!v}"; } > "$ENVF.new" && mv "$ENVF.new" "$ENVF"; done
+[[ -f "$ENVF" ]] && . "$ENVF"
 IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:latest}"
 if [[ "${1:-}" == stop ]]; then docker rm -f vllm >/dev/null 2>&1 || true; echo "vllm stopped"; exit 0; fi
 if [[ $# -eq 0 ]]; then [[ -f "$LAST" ]] || { echo "usage: serve-model.sh <hf model id> [vllm args]" >&2; exit 2; }; mapfile -t args < "$LAST"; else args=("$@"); fi

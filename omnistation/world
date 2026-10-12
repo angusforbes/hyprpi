@@ -138,7 +138,7 @@ case "$cmd" in
     # J483: copy the remote machine's new generated images (~/workspace/outputs: brev-image's PNGs) to ~/Downloads/brev and
     # print each as a file:// link. Only plain names (letters, digits, . _ -; brev-image makes no others) are copied.
     dest="${HYPRPI_IMAGES_DIR:-$HOME/Downloads/brev}"; mkdir -p "$dest"
-    names=$("${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && ls -1 | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*\.png\$' || true" 2>/dev/null) || true
+    names=$("${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && python3 -c 'import os,re; [print(f) for f in sorted(os.listdir(\".\")) if re.fullmatch(r\"[A-Za-z0-9][A-Za-z0-9._-]*[.]png\", f) and os.path.isfile(f)]' || true" 2>/dev/null) || true  # (review) whole names only: one with a newline in it never matches
     new=(); while IFS= read -r n; do n="${n%$'\r'}"; [[ "$n" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.png$ && ! -e "$dest/$n" ]] && new+=("$n"); done <<< "$names"
     (( ${#new[@]} )) || { echo "no new images on world $WL"; exit 0; }
     "${SSH[@]}" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$dest"
