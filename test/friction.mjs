@@ -31,7 +31,15 @@ const S = fs.mkdtempSync(path.join(os.tmpdir(), "j488-"));
   k = F.summary(f).find((x) => x.kind === "desktop-input-testing");
   ok("A W4: a repeat after the skill counts against it, and says so", k.after === 1 && /isn't working/.test(r3.advice), r3.advice);
   const text = fs.readFileSync(f, "utf8");
-  ok("A one line per entry, Markdown Angus can read, · and newlines in the text made safe", /^- 2026-10-11 13:00 · D · desktop-input-testing · Knock · fake keys - held Super while he typed · fix: toast first$/m.test(text) && /## Skills\n- desktop-input-testing → /.test(text));
+  ok("A one line per entry, Markdown Angus can read, · and newlines in the text made safe", /^- 2026-10-11 13:00:00 · D · desktop-input-testing · Knock · fake keys - held Super while he typed · fix: toast first$/m.test(text) && /## Skills\n- desktop-input-testing → /.test(text));
+  // FrictionCheck: a repeat in the same minute as the skill still counts; a CRLF file keeps its entries; old minute-only stamps parse
+  const g = path.join(S, "minute.md"), t0 = new Date(2026, 9, 12, 10, 25, 10), t1 = new Date(2026, 9, 12, 10, 25, 59);
+  F.add(g, { kind: "k", what: "one" }, new Date(2026, 9, 12, 9, 0)); F.add(g, { kind: "k", what: "two" }, new Date(2026, 9, 12, 9, 5));
+  F.linkSkill(g, { kind: "k", skill: "s" }, t0); const r4 = F.add(g, { kind: "k", what: "three" }, t1);
+  ok("A a repeat 49 s after the skill (same minute) counts against it", r4.after === 1 && /isn't working/.test(r4.advice), r4.advice);
+  const c = path.join(S, "crlf.md"); fs.writeFileSync(c, "# Friction log\r\n\r\n## Skills\r\n- k → s, since 2026-10-11 09:00\r\n\r\n## Entries\r\n- 2026-10-11 08:00 · D · k · Knock · old one\r\n");
+  const r5 = F.add(c, { kind: "k", what: "new one" }, new Date(2026, 9, 11, 10, 0));
+  ok("A a CRLF, hand-edited file keeps its entries and skill (old minute-only stamps parse)", r5.count === 2 && r5.skill === "s" && r5.after === 1 && !fs.readFileSync(c, "utf8").includes("\r"), JSON.stringify(r5).slice(0, 160));
   ok("A an unknown kind tag is refused cleanly", (() => { try { F.add(f, { kind: "  ", what: "x" }); return false; } catch (e) { return /kind/.test(e.message); } })());
 }
 
