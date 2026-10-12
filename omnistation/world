@@ -70,7 +70,7 @@ case "$cmd" in
     if [[ -n "$DESK" ]] && command -v omni-cli >/dev/null; then
       [[ "$DESK" =~ ^[A-Za-z0-9._-]{1,80}$ ]] || { echo "world: bad \"desktop\" in $CONF" >&2; exit 2; }
       # (its hostname or UUID: omni-cli desktop get doesn't take the display name); any failure reads as "unknown", never an exit
-      dstate() { local j; j=$(AI_PIM_UTILS_TELEMETRY_DISABLED=1 omni-cli desktop get "$DESK" --json 2>/dev/null) || j=""; printf '%s' "$j" | jq -r '[.data.state, .data.desktop.state] | map(select(. != null)) | first // "unknown"' 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo unknown; }
+      dstate() { local j; j=$(AI_PIM_UTILS_TELEMETRY_DISABLED=1 omni-cli desktop get "$DESK" --json 2>/dev/null) || j=""; printf '%s' "$j" | jq -r '[.data.state, .data.desktop.state] | map(select(. != null)) | first // "unknown"' 2>/dev/null | tr "[:upper:]" "[:lower:]" | grep . || echo unknown; }
       st=$(dstate); say "desktop $DESK is $st"
       if [[ "$st" != running ]]; then
         if [[ "$st" == stopped ]] && (( startdesk )); then
