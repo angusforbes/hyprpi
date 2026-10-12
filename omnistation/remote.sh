@@ -104,12 +104,17 @@ case "$cmd" in
     # name for the panels (the laptop's; else the panels here would say the remote login's name, e.g. "Ubuntu")
     if [[ "${HYPRPI_REMOTE_THOUGHTS_MODEL:-}" =~ ^[A-Za-z0-9._/:-]+$ ]]; then node -e 'const fs=require("fs"),[c,m]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(c,"utf8"));j.thoughtsModel=m;fs.writeFileSync(c,JSON.stringify(j,null,2)+"\n")' "$c" "$HYPRPI_REMOTE_THOUGHTS_MODEL"; fi
     p="$(dirname "$c")/hyprpi.jsonc"
-    if [[ ! -e "$p" && "${HYPRPI_REMOTE_USER_NAME:-}" =~ ^[A-Za-z][A-Za-z\ .\'-]{0,40}$ ]]; then node -e 'const fs=require("fs"),[p,n]=process.argv.slice(1);fs.writeFileSync(p,JSON.stringify({user:{name:n}},null,2)+"\n")' "$p" "$HYPRPI_REMOTE_USER_NAME"; fi
+    if [[ "${HYPRPI_REMOTE_USER_NAME:-}" =~ ^[A-Za-z][A-Za-z\ .\'-]{0,40}$ ]]; then
+      if [[ ! -e "$p" ]]; then node -e 'const fs=require("fs"),[p,n]=process.argv.slice(1);fs.writeFileSync(p,JSON.stringify({user:{name:n}},null,2)+"\n")' "$p" "$HYPRPI_REMOTE_USER_NAME"
+      else node -e 'const fs=require("fs"),[p,n]=process.argv.slice(1);const s=fs.readFileSync(p,"utf8");const t=s.replace(/"user"\s*:\s*\{\s*"name"\s*:\s*""\s*\}/,JSON.stringify({user:{name:n}}).slice(1,-1));if(t!==s)fs.writeFileSync(p,t)' "$p" "$HYPRPI_REMOTE_USER_NAME"; fi  # the default file the daemon wrote: only an EMPTY name is filled in
+    fi
     echo "hyprpi $(git -C "$DIR" log -1 --format=%h 2>/dev/null || cat "$DIR/.version" 2>/dev/null) in $DIR; pi $(pi --version 2>/dev/null | head -1); node $(node -v)"
     echo "next: log pi in once (run \`pi\` here, /login), then: remote.sh start" ;;
   start)
     secrets_ok || exit 5
-    tmux has-session -t hyprpi-$W-daemon 2>/dev/null || tmux new-session -d -s hyprpi-$W-daemon "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
+    # J480: the daemon (and the Thoughts it starts) must never look like an agent to pi-entry: a tmux server first started from an
+    # agent's environment passed HYPRPI_REMOTE_RPC/HYPRPI_NAME on, and Thoughts-I then ran as "hbroker serve brev-alpha"
+    tmux has-session -t hyprpi-$W-daemon 2>/dev/null || tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: the daemon didn't start (tmux attach -t hyprpi-$W-daemon shows why)" >&2; exit 4; }
     if tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
