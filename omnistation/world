@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# world: the laptop side of a REMOTE world (J469/J471). Any world letter can be bound to a remote machine: its agents run headless
+# there (omnistation/remote.sh, under ~/.hyprpi-<letter> on that machine), and here each one is a window on that world's
+# workspaces, drawn locally (omnistation/remote-client.mjs, pi's own components): typing is local, a finished message goes to the
+# remote pi, its output streams back, and the window reconnects by itself after a drop or a new login.
+#
+#   world X setup            copy remote.sh + hbroker.mjs to the machine and install hyprpi there (copy of master, or git)
+#   world X start [NAME]     start the remote daemon and agent NAME (default alpha)
+#   world X new NAME         start agent NAME remotely and open its window (start + open)
+#   world X open [NAME]      open agent NAME's window on the world's first workspace, silently (your view doesn't move)
+#   world X status           what runs remotely
+#   world X stop [NAME|all]  stop an agent remotely (its session stays: start / open resumes it)
+#   world X start-mirror NAME, open-mirror NAME   the J469 fallback: pi's own terminal UI in remote tmux, mirrored over ssh
+#   world X binding          print the binding as JSON (world, ssh argv, workspace, remote folder) for other tools (phone app)
+#
+# The binding (private, never in this repo: host, user and login tool are site-specific):
+#   ~/.config/hyprpi/remote/<letter>.json   { "ssh": ["ssh", "user@host"], "label": "My server" }
+# "ssh" is the argv that reaches the machine (plain ssh, or e.g. a Teleport `tsh ssh user@host`); the remote command is appended
+# as its last argument; a "-t" in it is dropped where a pipe is needed and added where a terminal is. "label" is optional. The
+# world's workspaces come from hyprpi's world layout (worldSize, default 10: world A = 1-10, B = 11-20, ...); "workspace" in the
+# file overrides the first one. (The J469 file name world-<letter>.json is still read.)
+set -euo pipefail
+H="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+WL="${1:-}"; WL="${WL^^}"; shift || true
+[[ "$WL" =~ ^[A-I]$ ]] || { echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding [NAME]" >&2; exit 2; }
+wl="${WL,,}"
+CDIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/remote"
+CONF="${HYPRPI_REMOTE_CONF:-$CDIR/$wl.json}"
+[[ -f "$CONF" || -n "${HYPRPI_REMOTE_CONF:-}" || ! -f "$CDIR/world-$wl.json" ]] || CONF="$CDIR/world-$wl.json"
+[[ -f "$CONF" ]] || { echo "world: world $WL isn't bound to a remote machine; write $CDIR/$wl.json: { \"ssh\": [\"ssh\", \"user@host\"] }" >&2; exit 2; }
+mapfile -t SSH < <(jq -r '.ssh[]' "$CONF" | grep -vxE -- '-tt?')
+(( ${#SSH[@]} )) || { echo "world: \"ssh\" is empty in $CONF" >&2; exit 2; }
+SSHT=("${SSH[@]:0:${#SSH[@]}-1}" -t "${SSH[-1]}") # with a terminal (for the mirror window): -t before the host
+size=$(node -e 'import(process.argv[1]).then(m=>console.log(m.loadConfig().worldSize||10)).catch(()=>console.log(10))' "$H/lib/paths.mjs" 2>/dev/null || echo 10)
+idx=$(( $(printf '%d' "'$WL") - 64 ))
+WS=$(jq -r '.workspace // empty' "$CONF"); WS="${WS:-$(( (idx - 1) * size + 1 ))}"
+[[ "$WS" =~ ^[0-9]{1,3}$ ]] || { echo "world: bad workspace" >&2; exit 2; }
+LABEL=$(jq -r '.label // empty' "$CONF")
+cmd="${1:-status}"; NAME="${2:-alpha}"
+[[ "$NAME" =~ ^[a-z][a-z0-9-]{0,30}$ || "$NAME" == all ]] || { echo "world: a name is lowercase letters, digits and -" >&2; exit 2; }
+R="HYPRPI_REMOTE_WS=$WS bash ~/.hyprpi-$wl/remote.sh"
+case "$cmd" in
+  binding) jq -n --arg w "$WL" --argjson ws "$WS" --arg label "$LABEL" --arg dir "~/.hyprpi-$wl" --arg conf "$CONF" --args '{world:$w, ssh:$ARGS.positional, workspace:$ws, label:$label, remoteDir:$dir, conf:$conf}' "${SSH[@]}" ;;
+  setup)
+    "${SSH[@]}" "mkdir -p ~/.hyprpi-$wl && chmod 700 ~/.hyprpi-$wl && cat > ~/.hyprpi-$wl/remote.sh" < "$H/omnistation/remote.sh"
+    "${SSH[@]}" "cat > ~/.hyprpi-$wl/hbroker.mjs.new && mv ~/.hyprpi-$wl/hbroker.mjs.new ~/.hyprpi-$wl/hbroker.mjs" < "$H/omnistation/hbroker.mjs"
+    # hyprpi itself: this checkout's committed master as a tar (the remote may not reach the git host); a git clone there is updated
+    # instead. (Ledger) ~/hyprpi is replaced only on an explicit "copy" answer: a failed probe (ssh error) changes nothing
+    kind=$("${SSH[@]}" 'if [ -d ~/hyprpi/.git ]; then echo git; else echo copy; fi' 2>/dev/null | tr -d '\r' | tail -1) || kind=""
+    [[ "$kind" == git || "$kind" == copy ]] || { echo "world: couldn't reach the remote machine (is the login still valid?); nothing changed" >&2; exit 3; }
+    if [[ "$kind" == copy ]]; then
+      ver=$(git -C "$H" rev-parse --short master)
+      { git -C "$H" archive --format=tar master; } | "${SSH[@]}" "rm -rf ~/hyprpi.new && mkdir -p ~/hyprpi.new && tar -x -C ~/hyprpi.new && test -f ~/hyprpi.new/bin/hyprpi && echo $ver > ~/hyprpi.new/.version && rm -rf ~/hyprpi.old && { [ ! -e ~/hyprpi ] || mv ~/hyprpi ~/hyprpi.old; } && mv ~/hyprpi.new ~/hyprpi && rm -rf ~/hyprpi.old"
+    fi
+    "${SSH[@]}" "$R install" ;;
+  start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;
+  start-mirror) "${SSH[@]}" "HYPRPI_REMOTE_MIRROR=1 $R start $NAME" ;;
+  new) "${SSH[@]}" "$R start $NAME" && exec "$0" "$WL" open "$NAME" ;;
+  open|open-mirror)
+    if [[ "$cmd" == open ]]; then
+      # the client's dependencies: pi's own packages, pinned to the laptop's pi version, in a cache folder
+      DEPS="${HYPRPI_REMOTE_DEPS:-$HOME/.cache/hyprpi-remote}"; PIV=$(pi --version 2>/dev/null | tail -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+      PJ="$DEPS/node_modules/@earendil-works/pi-coding-agent/package.json"
+      if [[ ! -f "$PJ" ]] || { [[ -n "$PIV" ]] && ! grep -q "\"version\": \"$PIV\"" "$PJ"; }; then
+        mkdir -p "$DEPS"; [[ -f "$DEPS/package.json" ]] || echo '{"name":"hyprpi-remote-client","private":true}' > "$DEPS/package.json"
+        (cd "$DEPS" && npm install --silent "@earendil-works/pi-coding-agent@${PIV:-latest}") || { echo "world: couldn't install the client's packages into $DEPS" >&2; exit 3; }
+      fi
+      run="env HYPRPI_REMOTE_DEPS=$(printf %q "$DEPS") HYPRPI_REMOTE_CONF=$(printf %q "$CONF") HYPRPI_REMOTE_WS=$WS node $(printf %q "$H/omnistation/remote-client.mjs") $WL $NAME"
+    else
+      run="$(printf '%q ' "${SSHT[@]}")$(printf '%q' "$R attach $NAME")"
+    fi
+    line="kitty --class=hyprpi.$wl-agent --title='🛰 $WL: $NAME' -- $run"
+    [[ "$line" != *"]]"* ]] || { echo "world: can't open: the command contains ]]" >&2; exit 2; }
+    hyprctl dispatch "hl.dsp.exec_cmd([[${line}]], { workspace = \"$WS silent\" })" >/dev/null
+    echo "opened agent $NAME on workspace $WS (world $WL${LABEL:+, $LABEL})" ;;
+  *) echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding [NAME]" >&2; exit 2 ;;
+esac
