@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// brev/nv-models.mjs [--check] [--list FILE]: runs ON a Brev box (J499). Sets up provider "nv-inference" (NVIDIA Inference Hub) in
-// pi's ~/.pi/agent/models.json from brev/nv-models.list, with the box's own dedicated key read at request time by a !command from
+// brev/nv-models.mjs [--check] --models FILE: runs ON a Brev box (J499). Sets up provider "nv-inference" (NVIDIA Inference Hub) in
+// pi's ~/.pi/agent/models.json from FILE (brev/models-resolve.mjs's output for brev/models.jsonc, made on the laptop), with the box's own dedicated key read at request time by a !command from
 // ~/workspace/.secrets/nv_inference_key (never read into a file or printed here), and makes the list's "default" model pi's default
 // (settings.json) and Thoughts' (hyprpi config.json thoughtsModel, unless HYPRPI_REMOTE_THOUGHTS_MODEL names another). Other
 // providers (e.g. local-vllm) are kept. Idempotent: a file is written only when its content changes.
@@ -8,7 +8,7 @@
 // Exit 0 also when there is no key: it says so and changes nothing (e.g. world H, which has no Brev key).
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 const HOME = os.homedir(), args = process.argv.slice(2);
-const listFile = args.includes("--list") ? args[args.indexOf("--list") + 1] : path.join(path.dirname(new URL(import.meta.url).pathname), "nv-models.list");
+const modelsFile = args.includes("--models") ? args[args.indexOf("--models") + 1] : path.join(path.dirname(new URL(import.meta.url).pathname), "nv-models.json");
 const KEYF = path.join(HOME, "workspace/.secrets/nv_inference_key");
 const BASE = "https://inference-api.nvidia.com/v1";
 const say = (s) => console.log(`nv-models: ${s}`);
@@ -19,16 +19,12 @@ if (mode(KEYF) & 0o077 || mode(path.dirname(KEYF)) & 0o077) { say(`${KEYF} must 
 const key = fs.readFileSync(KEYF, "utf8").replace(/[\r\n]/g, "");
 if (key.startsWith("nvapi-")) { say("the key is a build.nvidia.com key (nvapi-…); the Inference Hub needs an sk-… key: nothing changed"); process.exit(2); }
 
-// the list
-const rows = fs.readFileSync(listFile, "utf8").split("\n").map((l) => l.replace(/#.*/, "").trim()).filter(Boolean).map((l) => l.split(/\s+/));
-let models = [], def = null;
-for (const [id, api, ctx, max, flag] of rows) {
-  if (!id || !/^(completions|responses)$/.test(api || "") || !(+ctx > 0) || !(+max > 0)) { say(`skipping a bad line in ${listFile}: ${[id, api, ctx, max].join(" ")}`); continue; }
-  models.push({ id, name: `${id.split("/").pop()} (Inference Hub)`, ...(api === "completions" ? { api: "openai-completions" } : {}), reasoning: api === "responses", input: ["text", "image"], contextWindow: +ctx, maxTokens: +max });
-  if (flag === "default") def = id;
-}
-if (!models.length) { say(`no models in ${listFile}; nothing changed`); process.exit(2); }
-def ||= models[0].id;
+// the resolved list
+let models, def;
+try { const r = JSON.parse(fs.readFileSync(modelsFile, "utf8")); models = (r.models || []).filter((m) => m && typeof m.id === "string" && /^openai-(completions|responses)$/.test(m.api || "") && m.contextWindow > 0); def = r.default; }
+catch (e) { say(`can't read the model list ${modelsFile} (${e.message}); nothing changed`); process.exit(2); }
+if (!models.length) { say(`no models in ${modelsFile}; nothing changed`); process.exit(2); }
+if (!models.some((m) => m.id === def)) def = models[0].id;
 
 if (args.includes("--check")) {
   try {

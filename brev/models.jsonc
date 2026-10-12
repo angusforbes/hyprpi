@@ -1,0 +1,49 @@
+// brev/models.jsonc: which NVIDIA Inference Hub ("nv-inference") models every Brev box's pi offers (J499). Edit freely, then run
+// `omnistation/world X setup` (X = the box's world, e.g. I) to apply it to that box. The box uses its OWN key
+// (~/workspace/.secrets/nv_inference_key, an sk-… Inference Hub key you put there yourself); the key never leaves the box.
+// brev/models-resolve.mjs turns this file into the model list on the laptop; brev/nv-models.mjs writes it into the box's pi.
+{
+  // Which set to start from:
+  //   "short"  = the short list below
+  //   "laptop" = every nv-inference model on this laptop's scoped model list (pi's enabledModels in ~/.pi/agent/settings.json),
+  //              read when setup runs, minus "deny" below
+  //   "custom" = the "custom" list below
+  // "add" and "exclude" then apply on top of any preset, and "default" is always included.
+  "preset": "short",
+
+  // pi's default model for new agents on the box, and the box's Thoughts model
+  "default": "azure/anthropic/claude-opus-5-5",
+
+  "short": [
+    "azure/anthropic/claude-opus-5-5",
+    "azure/anthropic/claude-sonnet-5-5",
+    "azure/anthropic/claude-haiku-4-5",
+    "openai/openai/gpt-6.1-sol",
+    "gcp/google/gemini-3.1-pro-preview"
+  ],
+
+  "custom": [
+    "azure/anthropic/claude-opus-5-5"
+  ],
+
+  // added to any preset, e.g. "openai/openai/gpt-6-sol", "nvidia/deepseek-ai/deepseek-v4-pro", "nvidia/qwen/qwen3.5-122b-a10b"
+  "add": [],
+
+  // taken out of any preset (exact ids)
+  "exclude": [],
+
+  // never offered, whatever the preset ("*" = any text, case-insensitive), each with why
+  "deny": [
+    { "pattern": "*kimi*", "why": "J389/J392: kimi-k3 passed a short 'reply ok' test but answered a full agent prompt with garbled words; Angus: never choose it again" }
+  ],
+
+  // Models that aren't on the laptop's lists need their details here (api: "openai-completions" for Claude, Gemini and open
+  // models; "openai-responses" for OpenAI GPT). Ids found in the laptop's ~/.pi/agent/models.json or docker/world/nv-inference-models.json
+  // need nothing.
+  "details": {
+    "gcp/google/gemini-3.1-pro-preview": { "api": "openai-completions", "contextWindow": 1048576, "maxTokens": 65536 },
+    "nvidia/deepseek-ai/deepseek-v4-pro": { "api": "openai-completions", "contextWindow": 128000, "maxTokens": 32000 },
+    "nvidia/qwen/qwen3.5-122b-a10b": { "api": "openai-completions", "contextWindow": 262144, "maxTokens": 32000 },
+    "nvidia/nvidia/nemotron-3-super-120b-long-ctx": { "api": "openai-completions", "contextWindow": 1000000, "maxTokens": 32000 }
+  }
+}
