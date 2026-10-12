@@ -16,8 +16,9 @@ cat > "$F/bin/brev" <<'EOF'
 F="$(dirname "$0")/.."
 case "$1" in
   ls) st="$(cat "$F/status")"; [[ "$st" == error ]] && { echo "api error" >&2; exit 1; }
-      echo "NAME STATUS"; [[ "$st" != absent ]] && echo "hyprpi-l40s $st"; echo "nemoclaw-8917fb STOPPED"; exit 0;;
-  stop) echo "stop $2" >> "$F/calls"; echo "stop $2" >> "$F/allcalls"; [[ -f "$F/stophang" ]] && { trap "" TERM; sleep 30; }; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }; echo STOPPED > "$F/status"; exit 0;;
+      echo "You have 3 instances in Org test"; echo " NAME STATUS BUILD"; [[ "$st" != absent ]] && echo " hyprpi-l40s $st COMPLETED"; echo " nemoclaw-8917fb $(cat "$F/nemo" 2>/dev/null || echo STOPPED) COMPLETED"; [[ -f "$F/more" ]] && sed 's/^/ /' "$F/more"; exit 0;;
+  stop) echo "stop $2" >> "$F/calls"; echo "stop $2" >> "$F/allcalls"; [[ -f "$F/stophang" ]] && { trap "" TERM; sleep 30; }; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }
+        if [[ "$2" == hyprpi-l40s ]]; then echo STOPPED > "$F/status"; else sed -i "s/^$2 RUNNING/$2 STOPPED/" "$F/more"; fi; exit 0;;
 esac
 EOF
 cat > "$F/bin/ssh" <<'EOF'
@@ -26,7 +27,9 @@ F="$(cd "$(dirname "$0")/.." && pwd)"
 echo "ssh $*" >> "$F/sshcalls"
 [[ -f "$F/sshfail" ]] && exit 255
 [[ -f "$F/sshhold" ]] && { touch "$F/sshheld"; while [[ -f "$F/sshhold" ]]; do sleep 0.1; done; }
-HOME="$F/home" PATH="$F/bin:$PATH" bash -s
+box=""; for a; do [[ "$a" == "bash -s" ]] && break; box="$a"; done # the argument just before the remote command
+h="$F/home"; [[ -d "$F/home-$box" ]] && h="$F/home-$box"
+BOXNAME="$box" HOME="$h" PATH="$F/bin:$PATH" bash -s
 EOF
 cat > "$F/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -41,8 +44,9 @@ fixture() { # every activity file N minutes old
   rm -rf "$H"; mkdir -p "$H/.hyprpi-i/sessions/s1" "$H/.hyprpi-i/state/thoughts" "$H/.hyprpi-i/state/boards" "$H/workspace/outputs" "$H/workspace/shared"
   for f in "$H/.hyprpi-i/sessions/s1/a.jsonl" "$H/.hyprpi-i/state/thoughts/I.thread.jsonl" "$H/.hyprpi-i/state/boards/I.jsonl" "$H/workspace/outputs/x.png" "$H/workspace/shared/n.txt"; do echo x > "$f"; touch -d "-$1 min" "$f"; done
 }
-fresh() { rm -rf "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
-started_ago() { echo $(( $(date +%s) - $1 * 60 )) > "$F/state/running_since"; } # pretend the timer first saw it RUNNING N min ago
+gpu_on() { printf '#!/usr/bin/env bash\nF="%s"; f="$F/gpu-$BOXNAME"; [[ -f "$f" ]] || f="$F/gpu"; [[ -f "$f" ]] && cat "$f"\n' "$F" > "$F/bin/nvidia-smi"; chmod +x "$F/bin/nvidia-smi"; }
+fresh() { rm -rf "$F/bin/nvidia-smi" "$F"/gpu* "$F/more" "$F/nemo" "$F"/home-* "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
+started_ago() { mkdir -p "$F/state/boxes/hyprpi-l40s"; echo $(( $(date +%s) - $1 * 60 )) > "$F/state/boxes/hyprpi-l40s/running_since"; } # pretend the timer first saw it RUNNING N min ago
 run() { "$S" run; }
 pass=0; fail=0
 ok() { if eval "$2"; then echo "ok   $1"; pass=$((pass+1)); else echo "FAIL $1"; echo "     calls: $(tr '\n' '|' < "$F/calls" 2>/dev/null || true)"; echo "     log: $(tail -3 "$F/state/log" 2>/dev/null | tr '\n' '|')"; fail=$((fail+1)); fi; }
@@ -99,7 +103,7 @@ ok "just started (first seen RUNNING now), files 5 h old → no stop" '[[ $(stop
 # 7. STOPPED / absent / brev ls error → nothing, and one log line per change (no spam)
 for st in STOPPED absent error; do
   fresh; fixture 300; echo "$st" > "$F/status"; for i in 1 2 3 4 5; do run; done
-  ok "$st → no ssh, no stop, no notice, 1 log line" '[[ ! -f "$F/sshcalls" && $(stops) == 0 && $(notices) == 0 && $(wc -l < "$F/state/log") == 1 ]]'
+  ok "$st → no ssh, no stop, no notice, at most 1 log line" '[[ ! -f "$F/sshcalls" && $(stops) == 0 && $(notices) == 0 && $(cat "$F/state/log" 2>/dev/null | wc -l) -le 1 ]]'
 done
 
 # 8. ssh fails → never stops on a guess, one log line
@@ -109,9 +113,9 @@ ok "probe over ssh fails → no stop, quiet" '[[ $(stops) == 0 && $(notices) == 
 # 9. a failing stop alerts once, retries hourly without new alerts
 fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stopfail"; run; run; run
 ok "stop fails → 1 critical alert, no retry within the hour" '[[ $(stops) == 1 && $(notices) == 1 && $(cnt critical) == 1 ]]'
-echo $(( $(date +%s) - 3700 )) > "$F/state/stop_failed"; run
+echo $(( $(date +%s) - 3700 )) > "$F/state/boxes/hyprpi-l40s/stop_failed"; run
 ok "…an hour later it retries, still no new alert" '[[ $(stops) == 2 && $(notices) == 1 ]]'
-rm -f "$F/stopfail"; echo $(( $(date +%s) - 3700 )) > "$F/state/stop_failed"; run
+rm -f "$F/stopfail"; echo $(( $(date +%s) - 3700 )) > "$F/state/boxes/hyprpi-l40s/stop_failed"; run
 ok "…and when the retry works, one 'stopped' notice" '[[ $(stops) == 3 && $(notices) == 2 && $(cnt "^notify.*stopped") == 1 ]]'
 
 # 10. pause / resume
@@ -144,7 +148,76 @@ ok "two runs at once → one stop, one notice, one Thoughts line" '[[ $(stops) =
 fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stophang"; t0=$(date +%s); BREV_AUTOSTOP_STOP_TIMEOUT=1 timeout 60 "$S" run; t1=$(date +%s)
 ok "hanging brev stop → killed within ~16 s, one critical alert" '(( t1 - t0 < 30 )) && [[ $(cnt critical) == 1 ]]'
 
+# --- J516: every instance ---------------------------------------------------------------------------------------------------
+fixture_for() { local b="$1" m="$2" h="$F/home-$1"; rm -rf "$h"; mkdir -p "$h/.hyprpi-x/sessions/s"; echo x > "$h/.hyprpi-x/sessions/s/a.jsonl"; touch -d "-$m min" "$h/.hyprpi-x/sessions/s/a.jsonl"; } # (a world X box; no shared folder)
+started_ago_for() { mkdir -p "$F/state/boxes/$1"; echo $(( $(date +%s) - $2 * 60 )) > "$F/state/boxes/$1/running_since"; }
+# 16. two RUNNING instances, handled independently: the idle one is stopped, the busy one isn't
+fresh; fixture 120; echo RUNNING > "$F/status"; echo "train-a100 RUNNING COMPLETED" > "$F/more"; fixture_for train-a100 5
+run; started_ago 120; started_ago_for train-a100 120; run
+ok "two RUNNING: idle hyprpi-l40s stopped, busy train-a100 (5 min) not" '[[ $(stops) == 1 ]] && grep -qx "stop hyprpi-l40s" "$F/calls" && [[ $(thoughts) == 1 ]]'
+touch -d "-120 min" "$F/home-train-a100/.hyprpi-x/sessions/s/a.jsonl"; BREV_AUTOSTOP_NOW=$(( $(date +%s) + 50*60 )) run
+ok "…50 min after its last session write train-a100 is idle too: its own stop, its own notice naming it" '[[ $(stops) == 2 ]] && grep -qx "stop train-a100" "$F/calls" && grep -q "^notify.*Brev box train-a100" "$F/calls" && [[ $(thoughts) == 2 ]]'
+# 17. an unknown new instance gets the default (45 min); a per-instance idle line overrides it
+CF="$F/conf"; printf 'default_idle_min 45\nexclude nemoclaw-8917fb\nidle slow-box 90\n' > "$CF"
+fresh; fixture 120; echo STOPPED > "$F/status"; printf 'newbie RUNNING X\nslow-box RUNNING X\n' > "$F/more"; fixture_for newbie 120; fixture_for slow-box 120
+BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for newbie 50; started_ago_for slow-box 50; BREV_AUTOSTOP_CONFIG="$CF" run
+ok "unknown new instance → default 45 min → stopped at 50; slow-box (idle 90) not" '[[ $(stops) == 1 ]] && grep -qx "stop newbie" "$F/calls"'
+started_ago_for slow-box 95; BREV_AUTOSTOP_CONFIG="$CF" run
+ok "…slow-box stopped once past its own 90 min" '[[ $(stops) == 2 ]] && grep -qx "stop slow-box" "$F/calls"'
+# 18. GPU utilisation counts (a training box with no hyprpi files): busy keeps it, idle GPU doesn't
+fresh; echo STOPPED > "$F/status"; echo "train-a100 RUNNING X" > "$F/more"; fixture_for train-a100 300; gpu_on; printf '3\n87\n' > "$F/gpu-train-a100"
+run; started_ago_for train-a100 120; run
+ok "GPU at 87% (one of 2 GPUs) → no stop" '[[ $(stops) == 0 ]] && grep -q "GPU busy (87%)" "$F/state/log"'
+printf '4\n' > "$F/gpu-train-a100"; BREV_AUTOSTOP_NOW=$(( $(date +%s) + 30*60 )) run
+ok "…GPU drops to 4%: 30 min after the last busy sample → no stop yet" '[[ $(stops) == 0 ]]'
+BREV_AUTOSTOP_NOW=$(( $(date +%s) + 50*60 )) run
+ok "…50 min after the last busy sample → stopped" '[[ $(stops) == 1 ]]'
+fresh; echo STOPPED > "$F/status"; echo "train-a100 RUNNING X" > "$F/more"; fixture_for train-a100 300; gpu_on; printf '10\n' > "$F/gpu-train-a100"
+run; started_ago_for train-a100 120; run
+ok "GPU exactly at the threshold (10%) is idle → stopped" '[[ $(stops) == 1 ]]'
+# 19. per-instance pause holds for that box only
+fresh; fixture 120; echo RUNNING > "$F/status"; echo "train-a100 RUNNING X" > "$F/more"; fixture_for train-a100 120
+run; started_ago 120; started_ago_for train-a100 120; "$S" pause train-a100 24h >/dev/null; run
+ok "pause train-a100 24h → it stays, hyprpi-l40s is still stopped" '[[ $(stops) == 1 ]] && grep -qx "stop hyprpi-l40s" "$F/calls"'
+"$S" resume train-a100 >/dev/null; run
+ok "resume train-a100 → stopped" '[[ $(stops) == 2 ]] && grep -qx "stop train-a100" "$F/calls"'
+# 20. an excluded instance is never probed or stopped, even RUNNING and idle (default config and an explicit one)
+fresh; echo STOPPED > "$F/status"; echo RUNNING > "$F/nemo"; fixture 300; run; started_ago_for nemoclaw-8917fb 300; run; run
+ok "nemoclaw-8917fb RUNNING + idle, no config file → never probed, never stopped" '[[ $(stops) == 0 && ! -f "$F/sshcalls" ]]'
+printf 'exclude nemoclaw-8917fb\nexclude keep-me\n' > "$CF"; echo "keep-me RUNNING X" > "$F/more"; BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for keep-me 300; BREV_AUTOSTOP_CONFIG="$CF" run
+ok "an excluded instance in the config → never probed, never stopped" '[[ $(stops) == 0 && ! -f "$F/sshcalls" ]]'
+# 21. install: links, enables the timer if missing, registers the instance, says so; idempotent
+IB="$F/ibin"; IC="$F/iconf/brev-autostop.conf"; SC="$F/bin/systemctl"; rm -f "$F/sysd"
+printf '#!/usr/bin/env bash\nF="%s"; echo "systemctl $*" >> "$F/syscalls"\ncase "$*" in *is-enabled*) [[ -f "$F/sysd" ]];; *is-active*) [[ -f "$F/sysd" ]];; *enable*) touch "$F/sysd";; esac\n' "$F" > "$SC"; chmod +x "$SC"
+i1="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install train-a100)"
+ok "install (first time): link + timer enabled + registered + 'auto-stop is on for train-a100'" '[[ -L "$IB/brev-autostop" ]] && grep -q "enable --now brev-autostop.timer" "$F/syscalls" && grep -qx "box train-a100" "$IC" && grep -qx "exclude nemoclaw-8917fb" "$IC" && grep -q "auto-stop is on for train-a100: stopped after 45 idle minutes" <<<"$i1"'
+i2="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install train-a100)"
+ok "install again: nothing new (one line), config line not duplicated, timer not re-enabled" '[[ $(grep -c . <<<"$i2") == 1 && $(grep -c "^box train-a100" "$IC") == 1 && $(grep -c "enable --now" "$F/syscalls") == 1 ]]'
+i3="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install nemoclaw-8917fb)"
+ok "install of an excluded instance says so and doesn't register it" '! grep -q "^box nemoclaw" "$IC" && grep -q "EXCLUDED" <<<"$i3"'
+# 23. setup-hook (what `world X setup` runs): a Brev box from its binding gets auto-stop; anything else is silent
+rm -f "$IC" "$F/syscalls" "$F/sysd" "$IB/brev-autostop"; echo STOPPED > "$F/status"; echo "math-a100 RUNNING X" > "$F/more"
+envi=(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC")
+printf '{"ssh":["ssh","math-a100"],"prefix":"brev-"}\n' > "$F/b1.json"; printf '{"ssh":["tsh","ssh","agf@omni-host"]}\n' > "$F/b2.json"; printf '{"ssh":["ssh","alias"],"brev":"math-a100"}\n' > "$F/b3.json"
+h1="$(env "${envi[@]}" "$S" setup-hook "$F/b1.json")"
+ok "setup-hook, Brev binding → timer enabled, math-a100 registered, 'auto-stop is on for math-a100'" 'grep -q "enabled the laptop timer" <<<"$h1" && grep -q "auto-stop is on for math-a100" <<<"$h1" && grep -qx "box math-a100" "$IC"'
+h2="$(env "${envi[@]}" "$S" setup-hook "$F/b2.json")"; rc2=$?
+ok "setup-hook, an Omnistation (non-Brev) binding → silent, exit 0, nothing registered" '[[ -z "$h2" && $rc2 == 0 ]] && ! grep -q omni "$IC"'
+h3="$(env "${envi[@]}" "$S" setup-hook "$F/b3.json")"
+ok "setup-hook again (\"brev\" field) → idempotent: one line, nothing added" '[[ $(grep -c . <<<"$h3") == 1 && $(grep -c "^box math-a100" "$IC") == 1 && $(grep -c "enable --now" "$F/syscalls") == 1 ]]'
+# 24. the real `omnistation/world X setup`, scratch: binding with a dead ssh stub (setup stops at "couldn't reach"), the hook runs first
+printf '#!/usr/bin/env bash\nexit 255\n' > "$F/bin/deadssh"; chmod +x "$F/bin/deadssh"; printf '{"ssh":["%s","math-a100"]}\n' "$F/bin/deadssh" > "$F/b4.json"
+rm -f "$IC" "$F/syscalls" "$F/sysd"
+w4="$(env "${envi[@]}" HYPRPI_REMOTE_CONF="$F/b4.json" "$HERE/omnistation/world" I setup 2>&1)"
+ok "world I setup (scratch) prints 'auto-stop is on for math-a100' before reaching the box" 'grep -q "auto-stop is on for math-a100" <<<"$w4" && grep -qx "box math-a100" "$IC"'
+w5="$(env "${envi[@]}" HYPRPI_REMOTE_CONF="$F/b4.json" "$HERE/omnistation/world" I setup 2>&1)"
+ok "…run again: same one line, nothing re-enabled or duplicated" '[[ $(grep -c "auto-stop" <<<"$w5") == 1 && $(grep -c "^box math-a100" "$IC") == 1 && $(grep -c "enable --now" "$F/syscalls") == 1 ]]'
+
+# 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
+fresh; fixture 120; echo STOPPED > "$F/status"; run
+ok "brev ls's header lines are not instances" '[[ ! -d "$F/state/boxes/You" && ! -d "$F/state/boxes/NAME" ]]'
+
 # 15. never touched the other instance (every stop of every case)
-ok "only hyprpi-l40s was ever stopped (all cases)" '[[ $(grep -c . "$F/allcalls") -ge 8 ]] && ! grep -qv "^stop hyprpi-l40s$" "$F/allcalls"'
+ok "nemoclaw-8917fb was never stopped (all cases)" '[[ $(grep -c . "$F/allcalls") -ge 8 ]] && ! grep -q nemoclaw "$F/allcalls"'
 
 echo "$pass passed, $fail failed"; [[ $fail == 0 ]]

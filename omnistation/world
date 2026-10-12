@@ -56,6 +56,9 @@ R="HYPRPI_REMOTE_WS=$WS bash ~/.hyprpi-$wl/remote.sh"
 case "$cmd" in
   binding) jq -n --arg w "$WL" --argjson ws "$WS" --arg label "$LABEL" --arg dir "~/.hyprpi-$wl" --arg conf "$CONF" --args '{world:$w, ssh:$ARGS.positional, workspace:$ws, label:$label, remoteDir:$dir, conf:$conf}' "${SSH[@]}" ;;
   setup)
+    # J516 (Angus: auto-stop "should be part of our hyprpi brev install when we first set up a brev instance"): a Brev box gets the
+    # laptop's idle auto-stop first (timer enabled if missing, the instance registered, one line saying so); not a Brev box: silent
+    "$H/brev/autostop/brev-autostop" setup-hook "$CONF" || echo "world: couldn't turn on Brev auto-stop (brev-autostop install by hand)" >&2
     "${SSH[@]}" "mkdir -p ~/.hyprpi-$wl && chmod 700 ~/.hyprpi-$wl && cat > ~/.hyprpi-$wl/remote.sh" < "$H/omnistation/remote.sh"
     "${SSH[@]}" "cat > ~/.hyprpi-$wl/hbroker.mjs.new && mv ~/.hyprpi-$wl/hbroker.mjs.new ~/.hyprpi-$wl/hbroker.mjs" < "$H/omnistation/hbroker.mjs"
     # hyprpi itself: this checkout's committed master as a tar (the remote may not reach the git host); a git clone there is updated

@@ -1,0 +1,19 @@
+# brev-autostop config (J516). The laptop timer stops any RUNNING Brev instance after its idle minutes.
+# Live copy: ~/.config/hyprpi/brev-autostop.conf (made from this file on first use; `brev-autostop config` prints the path).
+# One setting per line; # starts a comment. Changes apply at the next run (every 5 min); no restart needed.
+#
+#   default_idle_min N   idle minutes for every instance without its own line (also brand-new ones)
+#   gpu_busy_pct N       GPU utilisation above this (any of 3 samples) counts as activity (a training run keeps its box up)
+#   idle NAME N          this instance's own idle minutes
+#   exclude NAME         never stop this instance and never probe it
+#   box NAME             registered by `world X setup` (brev-autostop install NAME); uses the default
+#
+# To protect a long job, pause instead of editing: brev-autostop pause NAME 24h (or `pause NAME` until `resume NAME`).
+
+default_idle_min 45
+gpu_busy_pct 10
+
+# not a hyprpi box: never touched (Angus)
+exclude nemoclaw-8917fb
+
+box hyprpi-l40s
