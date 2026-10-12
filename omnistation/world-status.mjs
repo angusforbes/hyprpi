@@ -33,8 +33,11 @@ fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
 const LOCK = path.join(DIR, "status.pid");
 const isHelper = (pid) => { try { const a = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0"); return a.some((x) => x.endsWith("/world-status.mjs")) && a.includes(WL); } catch { return false; } };
 for (let tries = 0; ; tries++) {
-  try { const fd = fs.openSync(LOCK, "wx", 0o600); fs.writeSync(fd, String(process.pid)); fs.closeSync(fd); break; }
+  // (review) the lock appears already holding our pid: written to a private file first, then hard-linked into place (atomic, EEXIST if taken)
+  const mineTmp = `${LOCK}.${process.pid}`; fs.writeFileSync(mineTmp, String(process.pid), { mode: 0o600 });
+  try { fs.linkSync(mineTmp, LOCK); fs.unlinkSync(mineTmp); break; }
   catch (e) {
+    try { fs.unlinkSync(mineTmp); } catch {}
     if (e.code !== "EEXIST" || tries > 0) process.exit(0);
     const old = Number(fs.readFileSync(LOCK, "utf8")); if (old && old !== process.pid && isHelper(old)) process.exit(0);
     try { fs.unlinkSync(LOCK); } catch { /* another one took it: the next try decides */ }
@@ -77,6 +80,9 @@ async function tick() {
   } catch { /* offline or slow: the report ages */ }
 }
 for (;;) {
+  // (review) whoever no longer holds the lock (two took over the same stale one at once) leaves; the holder stays
+  let holder = 0; try { holder = Number(fs.readFileSync(LOCK, "utf8")); } catch { /* gone */ }
+  if (holder !== process.pid) { rworld.closeBridges?.(); process.exit(0); }
   try { await tick(); } catch { /* next round */ }
   if (Date.now() - lastSeenWindow > 10 * 60e3) bye(); // no window of this world for 10 min
   await new Promise((r) => setTimeout(r, 3000));

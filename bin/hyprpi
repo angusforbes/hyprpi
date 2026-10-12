@@ -216,6 +216,7 @@ async function cmdNew() {
     const wl = workspace ? "abcdefghi"[Math.floor((workspace - 1) / (Number(cfg.worldSize) || 10))] : "";
     const bound = wl && path.join(process.env.XDG_CONFIG_HOME || path.join(process.env.HOME, ".config"), "hyprpi", "remote", `${wl}.json`);
     if (bound && fs.existsSync(bound) && !wantId && !twinOf && !beside && !process.env.HYPRPI_GATE_DRYRUN) {
+      { const why = hypr.hyprBlocked(); if (why) die(`hypr actions disabled (isolated daemon: ${why}): no remote agent started`); } // (review) J333 holds here too
       const nm = /^[a-z][a-z0-9-]{0,30}$/.test(String(wantName).toLowerCase()) ? String(wantName).toLowerCase() : "";
       const r = spawnSync(path.join(ROOT, "omnistation", "world"), [wl.toUpperCase(), "new", ...(nm ? [nm] : [])], { stdio: "inherit" });
       process.exit(r.status ?? 1);
