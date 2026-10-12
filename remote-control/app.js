@@ -672,7 +672,7 @@ function agentsOf(w) {
 async function fetchAgents(w) {
   const [r, hd] = await Promise.all([call("GET", `/api/agents?world=${w}`), call("GET", `/api/held?world=${w}`).catch(() => null)]), l = agentsOf(w); // J434: a sandboxed world's held item
   const changed = !l.loaded || JSON.stringify(r.agents) !== JSON.stringify(l.agents) || (hd?.digest || "") !== (l.held?.digest || "") || (r.offline || "") !== (l.offline || "");
-  l.agents = r.agents || []; l.loaded = true; l.offline = r.offline || ""; // J472: a remote world that can't be reached l.held = hd && hd.item ? hd : null;
+  l.agents = r.agents || []; l.loaded = true; l.held = hd && hd.item ? hd : null; l.offline = r.offline || ""; // J472: a remote world that can't be reached
   try { localStorage.setItem(LSA(w), JSON.stringify({ agents: l.agents })); } catch { /* memory only */ }
   if (w === world && view === "agents" && changed) renderAgents({ keepScroll: true });
   // J450 (GCheck): a sandboxed world's chip counts its inner agents, which the server only knows after this list
