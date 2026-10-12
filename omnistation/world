@@ -71,7 +71,11 @@ case "$cmd" in
     # J480: the human's name (this laptop's) and the binding's optional "thoughtsModel" go to the remote config
     un=$(node -e 'import(process.argv[1]).then(m=>console.log(m.userName())).catch(()=>{})' "$H/lib/policy.mjs" 2>/dev/null | tr -cd "A-Za-z .'-")
     tm=$(jq -r '.thoughtsModel // empty' "$CONF" | tr -cd 'A-Za-z0-9._/:-')
-    "${SSH[@]}" "HYPRPI_REMOTE_USER_NAME=$(printf %q "$un") HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") $R install" ;;
+    "${SSH[@]}" "HYPRPI_REMOTE_USER_NAME=$(printf %q "$un") HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") $R install"
+    # J499 (Angus: "a script so that it sets those up on any brev instance"): the NVIDIA Inference Hub models from brev/nv-models.list,
+    # with the box's own key (~/workspace/.secrets/nv_inference_key; none there = it says so and changes nothing, e.g. world H)
+    "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.list" < "$H/brev/nv-models.list"
+    "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.mjs && PATH=\$HOME/.local/bin:\$PATH HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") node ~/.hyprpi-$wl/nv-models.mjs --check" < "$H/brev/nv-models.mjs" ;;
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;
   rename) NEW="${3:-}"; [[ "$NEW" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || { echo "world: rename NAME NEW" >&2; exit 2; }
     "${SSH[@]}" "$R rename $NAME $NEW" && echo "renamed $NAME to $NEW (same session); reopen its window: world $WL open $NEW" ;;
