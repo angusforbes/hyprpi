@@ -7,9 +7,10 @@
   //   "short"  = the short list below
   //   "laptop" = every nv-inference model on this laptop's scoped model list (pi's enabledModels in ~/.pi/agent/settings.json),
   //              read when setup runs, minus "deny" below
+  //   "claude3gpt3" = three Claude and three GPT models (the list below; Angus, 2026-10-12)
   //   "custom" = the "custom" list below
   // "add" and "exclude" then apply on top of any preset, and "default" is always included.
-  "preset": "short",
+  "preset": "claude3gpt3",
 
   // pi's default model for new agents on the box, and the box's Thoughts model
   "default": "azure/anthropic/claude-opus-5-5",
@@ -20,6 +21,17 @@
     "azure/anthropic/claude-haiku-4-5",
     "openai/openai/gpt-6.1-sol",
     "gcp/google/gemini-3.1-pro-preview"
+  ],
+
+  // GPT spread: 6.1 sol = the newest flagship; 6 astra and 6 luna = the other GPT-6 variants, luna as the light tier (its name
+  // follows 5.6's sol / terra / luna, largest to smallest; the Hub publishes no prices to confirm it)
+  "claude3gpt3": [
+    "azure/anthropic/claude-opus-5-5",
+    "azure/anthropic/claude-sonnet-5-5",
+    "azure/anthropic/claude-haiku-5-5",
+    "openai/openai/gpt-6.1-sol",
+    "openai/openai/gpt-6-astra",
+    "openai/openai/gpt-6-luna"
   ],
 
   "custom": [

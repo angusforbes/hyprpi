@@ -29,7 +29,7 @@ for (const m of lap.models || []) cat.set(m.id, { ...m, api: m.api || lapApi });
 for (const [id, d] of Object.entries(cfg.details || {})) cat.set(id, { id, ...(cat.get(id) || {}), ...d });
 
 let ids;
-if (cfg.preset === "short") ids = list("short");
+if (cfg.preset === "short" || cfg.preset === "claude3gpt3") ids = list(cfg.preset);
 else if (cfg.preset === "custom") ids = list("custom");
 else if (cfg.preset === "laptop") {
   const scoped = (readJson(path.join(PI, "settings.json"))?.enabledModels || []).map(String);
@@ -41,7 +41,7 @@ else if (cfg.preset === "laptop") {
   let piScope = null; try { piScope = (await import(mr)).resolveModelScopeFromModels; } catch { /* not installed */ }
   if (piScope) ids = [...new Set(piScope(scoped, lapModels).scopedModels.map((x) => x.model.id))];
   else die(`preset "laptop" needs pi's model resolver at ${mr} (run \`omnistation/world X open\` once, which installs it); nothing resolved`); // (review) no approximate list
-} else die(`"preset" must be short, laptop or custom (it is ${JSON.stringify(cfg.preset)})`);
+} else die(`"preset" must be short, claude3gpt3, laptop or custom (it is ${JSON.stringify(cfg.preset)})`);
 const def = String(cfg.default || ids[0] || "");
 ids = [...new Set([def, ...ids, ...list("add")])].filter((id) => id && !list("exclude").includes(id));
 const denied = [];
