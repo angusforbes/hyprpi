@@ -6,4 +6,5 @@ After=network-online.target
 Type=oneshot
 ExecStart=%h/Harness/hyprpi/brev/autostop/brev-autostop run
 Nice=10
+TimeoutStartSec=10min
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin

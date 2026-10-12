@@ -17,7 +17,7 @@ F="$(dirname "$0")/.."
 case "$1" in
   ls) st="$(cat "$F/status")"; [[ "$st" == error ]] && { echo "api error" >&2; exit 1; }
       echo "NAME STATUS"; [[ "$st" != absent ]] && echo "hyprpi-l40s $st"; echo "nemoclaw-8917fb STOPPED"; exit 0;;
-  stop) echo "stop $2" >> "$F/calls"; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }; echo STOPPED > "$F/status"; exit 0;;
+  stop) echo "stop $2" >> "$F/calls"; echo "stop $2" >> "$F/allcalls"; [[ -f "$F/stophang" ]] && { trap "" TERM; sleep 30; }; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }; echo STOPPED > "$F/status"; exit 0;;
 esac
 EOF
 cat > "$F/bin/ssh" <<'EOF'
@@ -25,6 +25,7 @@ cat > "$F/bin/ssh" <<'EOF'
 F="$(cd "$(dirname "$0")/.." && pwd)"
 echo "ssh $*" >> "$F/sshcalls"
 [[ -f "$F/sshfail" ]] && exit 255
+[[ -f "$F/sshhold" ]] && { touch "$F/sshheld"; while [[ -f "$F/sshhold" ]]; do sleep 0.1; done; }
 HOME="$F/home" PATH="$F/bin:$PATH" bash -s
 EOF
 cat > "$F/bin/curl" <<'EOF'
@@ -40,7 +41,7 @@ fixture() { # every activity file N minutes old
   rm -rf "$H"; mkdir -p "$H/.hyprpi-i/sessions/s1" "$H/.hyprpi-i/state/thoughts" "$H/.hyprpi-i/state/boards" "$H/workspace/outputs" "$H/workspace/shared"
   for f in "$H/.hyprpi-i/sessions/s1/a.jsonl" "$H/.hyprpi-i/state/thoughts/I.thread.jsonl" "$H/.hyprpi-i/state/boards/I.jsonl" "$H/workspace/outputs/x.png" "$H/workspace/shared/n.txt"; do echo x > "$f"; touch -d "-$1 min" "$f"; done
 }
-fresh() { rm -rf "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics"; }
+fresh() { rm -rf "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
 started_ago() { echo $(( $(date +%s) - $1 * 60 )) > "$F/state/running_since"; } # pretend the timer first saw it RUNNING N min ago
 run() { "$S" run; }
 pass=0; fail=0
@@ -78,8 +79,10 @@ ok "a file deleted from the shared folder → no stop" '[[ $(stops) == 0 ]]'
 fresh; fixture 120; echo RUNNING > "$F/status"; printf 'vllm:request_success_total{finished_reason="stop"} 5.0\nvllm:num_requests_running 0.0\n' > "$F/metrics"; run; started_ago 120
 printf 'vllm:request_success_total{finished_reason="stop"} 7.0\nvllm:num_requests_running 0.0\n' > "$F/metrics"; run
 ok "vLLM requests since the last run → no stop" '[[ $(stops) == 0 ]]'
-run; run
-ok "…then 'last activity' stays at that moment (no stop for 45 min)" '[[ $(stops) == 0 ]]'
+BREV_AUTOSTOP_NOW=$(( $(date +%s) + 44*60 )) run
+ok "…44 min after those requests: still no stop" '[[ $(stops) == 0 ]]'
+BREV_AUTOSTOP_NOW=$(( $(date +%s) + 46*60 )) run
+ok "…46 min after them (counter unchanged): stop" '[[ $(stops) == 1 ]]'
 fresh; fixture 120; echo RUNNING > "$F/status"; printf 'vllm:request_success_total 9\nvllm:num_requests_running 1\n' > "$F/metrics"; run; started_ago 120; run
 ok "vLLM request running now → no stop" '[[ $(stops) == 0 ]]'
 fresh; fixture 120; echo RUNNING > "$F/status"; printf 'vllm:request_success_total 9\nvllm:num_requests_running 0\n' > "$F/metrics"; run; started_ago 120; run
@@ -125,7 +128,23 @@ ok "a timed pause that ran out → stops" '[[ $(stops) == 1 ]]'
 fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; BREV_AUTOSTOP_DRY=1 run
 ok "DRY → no stop, logged" '[[ $(stops) == 0 ]] && grep -q "DRY: would stop" "$F/state/log"'
 
-# 12. never touches the other instance
-ok "only hyprpi-l40s was ever stopped" '! grep -q nemoclaw "$F/calls" 2>/dev/null'
+# 12. a pause given while a run is probing the box still holds
+fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/sshhold"; run & bg=$!
+for i in $(seq 50); do [[ -f "$F/sshheld" ]] && break; sleep 0.1; done
+"$S" pause 6h >/dev/null; rm -f "$F/sshhold"; wait $bg
+ok "pause during the probe → that run doesn't stop" '[[ $(stops) == 0 ]] && grep -q "paused (during this run)" "$F/state/log"'
+
+# 13. two runs at once: one stop, one notice
+fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/sshhold"; run & b1=$!
+for i in $(seq 50); do [[ -f "$F/sshheld" ]] && break; sleep 0.1; done
+run & b2=$!; sleep 0.5; rm -f "$F/sshhold"; wait $b1 $b2
+ok "two runs at once → one stop, one notice, one Thoughts line" '[[ $(stops) == 1 && $(notices) == 1 && $(thoughts) == 1 ]]'
+
+# 14. a stop that hangs (ignores TERM) is killed: the run ends and alerts
+fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stophang"; t0=$(date +%s); BREV_AUTOSTOP_STOP_TIMEOUT=1 timeout 60 "$S" run; t1=$(date +%s)
+ok "hanging brev stop → killed within ~16 s, one critical alert" '(( t1 - t0 < 30 )) && [[ $(cnt critical) == 1 ]]'
+
+# 15. never touched the other instance (every stop of every case)
+ok "only hyprpi-l40s was ever stopped (all cases)" '[[ $(grep -c . "$F/allcalls") -ge 8 ]] && ! grep -qv "^stop hyprpi-l40s$" "$F/allcalls"'
 
 echo "$pass passed, $fail failed"; [[ $fail == 0 ]]

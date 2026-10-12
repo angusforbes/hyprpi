@@ -26,7 +26,7 @@ NOTIFY="${BREV_AUTOSTOP_NOTIFY:-notify-send}"
 HYPRPI="${BREV_AUTOSTOP_HYPRPI:-hyprpi}"
 mkdir -p "$ST"
 now() { echo "${BREV_AUTOSTOP_NOW:-$(date +%s)}"; }
-log() { printf '%s %s\n' "$(date -d "@$(now)" '+%F %T')" "$*" >> "$ST/log"; tail -n 400 "$ST/log" > "$ST/log.tmp" 2>/dev/null && mv "$ST/log.tmp" "$ST/log"; }
+log() { printf '%s %s\n' "$(date -d "@$(now)" '+%F %T')" "$*" >> "$ST/log"; } # (trimmed to 400 lines by run, under its lock)
 get() { cat "$ST/$1" 2>/dev/null; }
 put() { printf '%s\n' "$2" > "$ST/$1"; }
 state() { [[ "$(get state)" == "$1" ]] || { put state "$1"; log "$2"; }; } # one log line per change of state, not one per run
@@ -44,7 +44,7 @@ case "${1:-run}" in
     echo "brev-autostop paused $([[ $until -gt 0 ]] && date -d "@$until" '+until %a %H:%M' || echo 'until: brev-autostop resume')"; exit 0;;
   resume) rm -f "$ST/pause"; log "resumed by hand"; echo "brev-autostop resumed"; exit 0;;
   status)
-    echo "box $BOX: $(timeout 60 "$BREV" ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
+    echo "box $BOX: $(timeout -k 10 60 "$BREV" ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
     p="$(get pause)"; [[ -n "$p" ]] && { [[ "$p" == 0 ]] && echo "PAUSED until resume" || echo "PAUSED until $(date -d "@$p" '+%a %H:%M')"; }
     echo "state: $(get state); last activity: $(get last_act | xargs -I{} date -d @{} '+%a %H:%M' 2>/dev/null) ($(get last_why)); idle limit ${IDLE_MIN} min"
     echo "log ($ST/log):"; tail -n 15 "$ST/log" 2>/dev/null; exit 0;;
@@ -59,8 +59,13 @@ alert() { # $1 = text, $2 = urgency: both channels, each best effort; says which
   log "notice (${sent:-no channel reached}): $1"
 }
 
+# One run at a time (a hand run next to the timer's): a second one just leaves.
+exec 9>"$ST/lock"; flock -n 9 || exit 0
+[[ -f "$ST/log" && $(wc -l < "$ST/log") -gt 500 ]] && { tail -n 400 "$ST/log" > "$ST/log.tmp" && mv "$ST/log.tmp" "$ST/log"; }
+paused() { local p; p="$(get pause)"; [[ -n "$p" ]] && [[ "$p" == 0 || "$p" -gt "$(now)" ]]; }
+
 # 1. Brev's own view of the box
-out="$(timeout 60 "$BREV" ls 2>/dev/null)"; rc=$?
+out="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)"; rc=$?
 status="$(awk -v b="$BOX" '$1==b{print $2}' <<<"$out")"
 if [[ $rc -ne 0 ]]; then state "brev-error" "brev ls failed (rc $rc): nothing done"; exit 0; fi
 if [[ "$status" != RUNNING ]]; then
@@ -87,7 +92,7 @@ echo "shared_sig $(cd ~/workspace/shared 2>/dev/null && find . -path ./.unison -
 mt=$(curl -fsS -m 5 http://127.0.0.1:8000/metrics 2>/dev/null)
 if [ -n "$mt" ]; then echo "vllm_total $(printf "%s\n" "$mt" | awk "/^vllm:request_success_total/{s+=\$2} END{printf \"%d\", s}")"; echo "vllm_running $(printf "%s\n" "$mt" | awk "/^vllm:num_requests_running/{s+=\$2} END{printf \"%d\", s}")"; else echo "vllm_total none"; fi
 echo ok'
-res="$(timeout 90 "$SSH" -o BatchMode=yes -o ConnectTimeout=20 "$BOX" "bash -s" <<<"$probe" 2>/dev/null)"
+res="$(timeout -k 10 90 "$SSH" -o BatchMode=yes -o ConnectTimeout=20 "$BOX" "bash -s" <<<"$probe" 2>/dev/null)"
 if ! grep -qx ok <<<"$res"; then state "probe-failed" "couldn't read $BOX's activity over ssh: not stopping on a guess"; exit 0; fi
 val() { awk -v k="$1" '$1==k{print $2}' <<<"$res"; }
 best=""; why=""
@@ -116,9 +121,10 @@ idle=$(( T - from ))
 if (( idle < IDLE_MIN * 60 )); then state "active" "$BOX active (last: $ref): watching"; exit 0; fi
 sf="$(get stop_failed)"
 if [[ -n "$sf" ]] && (( T - sf < 3600 )); then state "stop-failed" "still idle; the stop failed: retrying hourly, no new alert"; exit 0; fi
+if paused; then state "paused" "paused (during this run): not stopping $BOX"; exit 0; fi # a pause given while the probe ran still counts
 if [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]]; then log "DRY: would stop $BOX (idle $(mins "$idle") min, last: $ref)"; exit 0; fi
 log "stopping $BOX: idle $(mins "$idle") min (last: $ref)"
-if sout="$(timeout 300 "$BREV" stop "$BOX" 2>&1)"; then
+if sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1)"; then
   put state "stopped"; rm -f "$ST/stop_failed" "$ST/running_since" "$ST/vllm_total" "$ST/shared_sig" "$ST/last_act" "$ST/last_why"
   alert "Brev auto-stop: stopped $BOX after $(mins "$idle") idle minutes (\$1.74/h saved). Its workspace is kept; ask an agent to start it again (brev start $BOX)." normal
 else
