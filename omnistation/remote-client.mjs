@@ -116,7 +116,7 @@ function paintChrome() {
   footer.invalidate?.();
   editor.borderColor = T.getThinkingBorderColor(st.thinking || "off");
   statusLine.setText(st.lastErr ? T.fg("warning", clean(st.lastErr).replace(/\x1b\[[0-9;:]*m/g, "")) : "");
-  pendingBox.setText([st.pending ? `${st.pending} message(s) queued` : "", outbox.length ? `${outbox.length} message(s) waiting for the connection: ${outbox.map((t) => t.slice(0, 40)).join(" | ")}` : ""].filter(Boolean).map((t) => T.fg("dim", t)).join("\n"));
+  pendingBox.setText([st.pending ? `${st.pending} message(s) queued` : "", outbox.length ? `${outbox.length} message(s) waiting for the connection: ${outbox.map((o) => o.text.slice(0, 40)).join(" | ")}` : ""].filter(Boolean).map((t) => T.fg("dim", t)).join("\n"));
   ui.requestRender();
 }
 
@@ -294,14 +294,20 @@ async function refreshState() {
 // history is rendered synchronously from inside the read loop (see connect): events after its response line are newer than it,
 // events before it are already in it. (review: rendering it a microtask later let it wipe newer live events)
 let histId = null, booting = false;
-async function reloadHistory() { try { const p = rpc({ type: "get_messages" }, 60000); histId = `r${reqN}`; booting = true; await p; } catch (e) { st.lastErr = `history: ${e.message}`; } finally { booting = false; histId = null; } paintChrome(); }
+async function reloadHistory() { // (review) overlapping loads: only the latest one owns the load state
+  let mine = null;
+  try { const p = rpc({ type: "get_messages" }, 60000); mine = histId = `r${reqN}`; booting = true; await p; } catch (e) { st.lastErr = `history: ${e.message}`; }
+  finally { if (histId === mine || histId === null) { booting = false; histId = null; } }
+  paintChrome();
+}
 async function pickModel(filter = "") {
   let models; try { models = (await rpc({ type: "get_available_models" })).models || []; } catch (e) { st.lastErr = `models: ${e.message}`; return paintChrome(); }
   const items = models.map((m) => ({ value: `${m.provider}\u0000${m.id}`, label: `${m.provider}/${m.id}`, description: m.name || "" }));
   const hits = items.filter((i) => !filter || i.label.toLowerCase().includes(filter.toLowerCase()));
   if (filter && hits.length === 1) return setModel(hits[0].value);
+  if (dialog) { st.lastErr = "answer the open question first"; return paintChrome(); } // (review) one may have arrived meanwhile
   showPicker(`Model (now ${modelLabel()}): ↑↓ Enter, Esc cancels; type to filter`, items, (v) => v && setModel(v), null, true);
-  if (filter) { dialog.filter = filter; drawPicker(); }
+  if (filter && dialog?.all) { dialog.filter = filter; drawPicker(); }
 }
 async function setModel(v) {
   const [provider, modelId] = v.split("\u0000");
@@ -314,7 +320,7 @@ async function submit(text) {
   if (t === "/quit" || t === "/exit") return quit();
   const m = t.match(/^\/model(?:\s+(.*))?$/); if (m) return pickModel((m[1] || "").trim());
   editor.addToHistory?.(t);
-  if (!st.connected) { outbox.push(text); paintChrome(); return; } // sent as soon as the link is up (the first connect takes seconds)
+  if (!st.connected) { outbox.push({ text, mode: "steer" }); paintChrome(); return; } // sent as soon as the link is up (the first connect takes seconds)
   await send(text);
 }
 // one prompt to the remote pi; "steer" is harmless when it is idle (it just starts) and needed when it is busy, so a prompt
@@ -330,7 +336,7 @@ async function send(text, mode = "steer") {
     editor.setText([editor.getText(), text].filter(Boolean).join("\n\n")); paintChrome(); // appended: several failures don't overwrite each other
   }
 }
-editor.onSubmit = (text) => { if (DEBUG) process.stderr.write(`submit ${JSON.stringify(text)}\n`); editor.setText(""); submit(text); };
+editor.onSubmit = (text) => { if (DEBUG) process.stderr.write(`submit ${JSON.stringify(text)}\n`); editor.setText(""); submit(text).catch((e) => { st.lastErr = e.message; paintChrome(); }); };
 editor.onEscape = () => {
   if (dialog?.kind === "text") { sendRaw({ type: "extension_ui_response", id: dialog.id, cancelled: true }); return closeDialog(); }
   if (st.streaming) {
@@ -338,10 +344,10 @@ editor.onEscape = () => {
     rpc({ type: "clear_queue" }).then((q) => { const back = [...(q?.steering || []), ...(q?.followUp || [])]; if (back.length) editor.setText([...back, editor.getText()].filter(Boolean).join("\n\n")); st.pending = 0; paintChrome(); }, () => {})
       .finally(() => rpc({ type: "abort" }).catch(() => {})); st.lastErr = "interrupting…"; paintChrome(); setTimeout(() => { if (st.lastErr === "interrupting…") { st.lastErr = ""; paintChrome(); } }, 3000); }
 };
-editor.onAction("app.model.select", () => pickModel());
+editor.onAction("app.model.select", () => { pickModel().catch((e) => { st.lastErr = e.message; paintChrome(); }); });
 editor.onAction("app.tools.expand", () => { st.expanded = !st.expanded; for (const c of chat.children) c.setExpanded?.(st.expanded); ui.requestRender(); });
 editor.onAction("app.thinking.cycle", () => rpc({ type: "cycle_thinking_level" }).then(refreshState, () => {}));
-editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (dialog?.kind === "text") { editor.setText(""); return submit(t); } if (!t.trim()) return; editor.setText(""); if (!st.connected) { outbox.push(t); return paintChrome(); } send(t, "followUp"); });
+editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (dialog?.kind === "text") { editor.setText(""); return submit(t); } if (!t.trim()) return; editor.setText(""); if (!st.connected) { outbox.push({ text: t, mode: "followUp" }); return paintChrome(); } send(t, "followUp"); });
 editor.onAction("app.clear", () => {
   if (editor.getText()) { editor.setText(""); st.quitArmed = 0; ui.requestRender(); return; }
   if (Date.now() - st.quitArmed < 1500) return quit();
@@ -398,7 +404,7 @@ function connect() {
     while ((i = buf.indexOf("\n")) >= 0) {
       const l = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1); if (!l) continue;
       let r; try { r = scrub(JSON.parse(l)); } catch { continue; }
-      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(async () => { for (const t of outbox.splice(0)) await send(t); paintChrome(); }); continue; }
+      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(async () => { for (const o of outbox.splice(0)) await send(o.text, o.mode); paintChrome(); }); continue; }
       if (r.type === "broker_pong") continue;
       if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
       else if (booting && /^(message_|tool_execution_|turn_|bash_execution)/.test(r.type || "")) continue; // already in the coming snapshot (state events still apply)
