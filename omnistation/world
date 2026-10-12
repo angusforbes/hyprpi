@@ -12,9 +12,14 @@
 #   world X stop [NAME|all]  stop an agent remotely (its session stays: start / open resumes it)
 #   world X start-mirror NAME, open-mirror NAME   the J469 fallback: pi's own terminal UI in remote tmux, mirrored over ssh
 #   world X binding          print the binding as JSON (world, ssh argv, workspace, remote folder) for other tools (phone app)
+#   world X recover [--dry-run] [--start-desktop]   after the machine rebooted: wait until it answers, then start and open every
+#                            agent that has a session there (J473). With "desktop" in the binding and omni-cli on the laptop it first
+#                            checks the desktop is running; it starts a stopped one only with --start-desktop. --dry-run only checks
+#                            and prints what it would do.
 #
 # The binding (private, never in this repo: host, user and login tool are site-specific):
-#   ~/.config/hyprpi/remote/<letter>.json   { "ssh": ["ssh", "user@host"], "label": "My server" }
+#   ~/.config/hyprpi/remote/<letter>.json   { "ssh": ["ssh", "user@host"], "label": "My server", "desktop": "its-desktop-name" }
+# ("desktop", optional: the cloud desktop's name for omni-cli, used only by recover.)
 # "ssh" is the argv that reaches the machine (plain ssh, or e.g. a Teleport `tsh ssh user@host`); the remote command is appended
 # as its last argument; a "-t" in it is dropped where a pipe is needed and added where a terminal is. "label" is optional. The
 # world's workspaces come from hyprpi's world layout (worldSize, default 10: world A = 1-10, B = 11-20, ...); "workspace" in the
@@ -37,6 +42,7 @@ WS=$(jq -r '.workspace // empty' "$CONF"); WS="${WS:-$(( (idx - 1) * size + 1 ))
 [[ "$WS" =~ ^[0-9]{1,3}$ ]] || { echo "world: bad workspace" >&2; exit 2; }
 LABEL=$(jq -r '.label // empty' "$CONF")
 cmd="${1:-status}"; NAME="${2:-alpha}"
+[[ "$cmd" == recover ]] && NAME=alpha # (recover takes flags, not a name)
 [[ "$NAME" =~ ^[a-z][a-z0-9-]{0,30}$ || "$NAME" == all ]] || { echo "world: a name is lowercase letters, digits and -" >&2; exit 2; }
 R="HYPRPI_REMOTE_WS=$WS bash ~/.hyprpi-$wl/remote.sh"
 case "$cmd" in
@@ -56,6 +62,33 @@ case "$cmd" in
     fi
     "${SSH[@]}" "$R install" ;;
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;
+  recover)
+    # J473: bring the world back after the remote machine rebooted. Never powers anything on unless --start-desktop is given.
+    dry=0; startdesk=0; for a in "${@:2}"; do case "$a" in --dry-run) dry=1 ;; --start-desktop) startdesk=1 ;; *) echo "world: recover [--dry-run] [--start-desktop]" >&2; exit 2 ;; esac; done
+    say() { echo "recover $WL: $*"; }
+    DESK=$(jq -r '.desktop // empty' "$CONF")
+    if [[ -n "$DESK" ]] && command -v omni-cli >/dev/null; then
+      [[ "$DESK" =~ ^[A-Za-z0-9._-]{1,80}$ ]] || { echo "world: bad \"desktop\" in $CONF" >&2; exit 2; }
+      dstate() { AI_PIM_UTILS_TELEMETRY_DISABLED=1 omni-cli desktop get "$DESK" --json 2>/dev/null | jq -r '[.data.state, .data.status, .data.desktop.state, .data.desktop.status] | map(select(. != null)) | first // "unknown"' | tr '[:upper:]' '[:lower:]'; }
+      st=$(dstate); say "desktop $DESK is $st"
+      if [[ "$st" != running ]]; then
+        if [[ "$st" == stopped ]] && (( startdesk )); then
+          if (( dry )); then say "would start desktop $DESK (omni-cli desktop start)"; else say "starting desktop $DESK"; AI_PIM_UTILS_TELEMETRY_DISABLED=1 omni-cli desktop start "$DESK" >/dev/null; fi
+        elif [[ "$st" == stopped ]]; then echo "world: desktop $DESK is stopped; start it yourself, or run recover --start-desktop" >&2; exit 3
+        elif [[ "$st" == unknown ]]; then say "can't read the desktop's state (omni-cli login? VPN?); waiting for ssh only"
+        fi
+        if (( ! dry )) && [[ "$st" != unknown ]]; then for _ in $(seq 60); do st=$(dstate); [[ "$st" == running ]] && break; sleep 15; done; say "desktop $DESK is $st"; [[ "$st" == running ]] || { echo "world: desktop $DESK isn't running after 15 min" >&2; exit 3; }; fi
+      fi
+    elif [[ -n "$DESK" ]]; then say "omni-cli isn't installed here: no power check, waiting for ssh only"
+    fi
+    ok=0; for _ in $(seq $(( dry ? 1 : 40 ))); do if "${SSH[@]}" true </dev/null >/dev/null 2>&1; then ok=1; break; fi; sleep 15; done
+    (( ok )) || { echo "world: the machine doesn't answer over ssh (login? VPN? still booting?)" >&2; exit 3; }
+    say "the machine answers over ssh"
+    mapfile -t NAMES < <("${SSH[@]}" "ls -1 ~/.hyprpi-$wl/sessions 2>/dev/null" </dev/null | tr -d '\r' | grep -xE '[a-z][a-z0-9-]{0,30}' || true)
+    (( ${#NAMES[@]} )) || { say "no agent has a session there: nothing to start"; exit 0; }
+    for n in "${NAMES[@]}"; do
+      if (( dry )); then say "would run: world $WL start $n; world $WL open $n"; else "$0" "$WL" start "$n" && "$0" "$WL" open "$n"; fi
+    done ;;
   start-mirror) "${SSH[@]}" "HYPRPI_REMOTE_MIRROR=1 $R start $NAME" ;;
   new) "${SSH[@]}" "$R start $NAME" && exec "$0" "$WL" open "$NAME" ;;
   open|open-mirror)
@@ -75,5 +108,5 @@ case "$cmd" in
     [[ "$line" != *"]]"* ]] || { echo "world: can't open: the command contains ]]" >&2; exit 2; }
     hyprctl dispatch "hl.dsp.exec_cmd([[${line}]], { workspace = \"$WS silent\" })" >/dev/null
     echo "opened agent $NAME on workspace $WS (world $WL${LABEL:+, $LABEL})" ;;
-  *) echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding [NAME]" >&2; exit 2 ;;
+  *) echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding|recover [NAME]" >&2; exit 2 ;;
 esac
