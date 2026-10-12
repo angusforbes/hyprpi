@@ -8,22 +8,22 @@ const cfgFile = args.includes("--config") ? args[args.indexOf("--config") + 1] :
 const PI = process.env.HYPRPI_LAPTOP_PI_DIR || path.join(os.homedir(), ".pi/agent");
 const die = (s) => { console.error(`models-resolve: ${s}`); process.exit(2); };
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
-// JSONC: drop // comments and trailing commas, both only outside strings
+// JSONC: drop // and /* */ comments, then trailing commas, both only outside strings
+const outside = (t, f) => { let o = "", s = false; for (let i = 0; i < t.length; i++) { const c = t[i]; if (s) { o += c; if (c === "\\") o += t[++i] ?? ""; else if (c === '"') s = false; continue; } if (c === '"') { s = true; o += c; continue; } const r = f(t, i); if (r) { o += r.out; i = r.next - 1; } else o += c; } return o; };
 const jsonc = (t) => {
-  let o = "", s = false;
-  for (let i = 0; i < t.length; i++) {
-    const c = t[i];
-    if (s) { o += c; if (c === "\\") o += t[++i] ?? ""; else if (c === '"') s = false; continue; }
-    if (c === '"') { s = true; o += c; continue; }
-    if (c === "/" && t[i + 1] === "/") { while (i < t.length && t[i] !== "\n") i++; o += "\n"; continue; }
-    if (c === ",") { let j = i + 1; while (j < t.length && /\s/.test(t[j])) j++; if (t[j] === "/" && t[j + 1] === "/") { let k = j; while (k < t.length && t[k] !== "\n") k++; j = k; while (j < t.length && /\s/.test(t[j])) j++; } if (t[j] === "}" || t[j] === "]") continue; }
-    o += c;
-  }
-  return JSON.parse(o);
+  t = outside(t, (t, i) => t[i] === "/" && t[i + 1] === "/" ? { out: "", next: t.indexOf("\n", i) < 0 ? t.length : t.indexOf("\n", i) }
+    : t[i] === "/" && t[i + 1] === "*" ? { out: " ", next: t.indexOf("*/", i + 2) < 0 ? t.length : t.indexOf("*/", i + 2) + 2 } : null);
+  t = outside(t, (t, i) => { if (t[i] !== ",") return null; let j = i + 1; while (j < t.length && /\s/.test(t[j])) j++; return t[j] === "}" || t[j] === "]" ? { out: "", next: i + 1 } : null; });
+  return JSON.parse(t);
 };
 let cfg; try { cfg = jsonc(fs.readFileSync(cfgFile, "utf8")); } catch (e) { die(`can't read ${cfgFile}: ${e.message}`); }
 const list = (k) => (Array.isArray(cfg[k]) ? cfg[k] : []).map(String);
-const glob = (p) => new RegExp("^" + String(p).toLowerCase().replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
+const glob = (p) => new RegExp("^" + String(p).toLowerCase().replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$"); // deny patterns: * and ?
+// pi's scoped-model patterns (minimatch, case-insensitive): ** = anything, * and ? within one path part, [..] classes; a ":level"
+// thinking suffix is ignored
+const scopeGlob = (p) => { let r = ""; const s = String(p).toLowerCase().replace(/:(off|minimal|low|medium|high|xhigh|max)$/, "");
+  for (let i = 0; i < s.length; i++) { const c = s[i]; if (c === "*" && s[i + 1] === "*") { r += ".*"; i++; } else if (c === "*") r += "[^/]*"; else if (c === "?") r += "[^/]"; else if (c === "[") { const e = s.indexOf("]", i + 1); if (e > i) { r += "[" + s.slice(i + 1, e).replace(/^!/, "^").replace(/\\/g, "\\\\") + "]"; i = e; } else r += "\\["; } else r += c.replace(/[.+^${}()|\]\\]/g, "\\$&"); }
+  return new RegExp("^" + r + "$"); };
 
 // catalogs of known model details: the laptop's pi nv-inference provider, then the sandbox world's list, then "details"
 const lap = readJson(path.join(PI, "models.json"))?.providers?.["nv-inference"] || {};
@@ -38,7 +38,7 @@ if (cfg.preset === "short") ids = list("short");
 else if (cfg.preset === "custom") ids = list("custom");
 else if (cfg.preset === "laptop") {
   const scoped = (readJson(path.join(PI, "settings.json"))?.enabledModels || []).map(String);
-  const pats = scoped.filter((p) => p.startsWith("nv-inference/")).map((p) => glob(p.slice("nv-inference/".length)));
+  const pats = scoped.filter((p) => p.startsWith("nv-inference/")).map((p) => scopeGlob(p.slice("nv-inference/".length)));
   ids = (lap.models || []).map((m) => m.id).filter((id) => pats.some((re) => re.test(id.toLowerCase())));
 } else die(`"preset" must be short, laptop or custom (it is ${JSON.stringify(cfg.preset)})`);
 const def = String(cfg.default || ids[0] || "");
