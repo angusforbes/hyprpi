@@ -52,30 +52,55 @@ const { UserMessageComponent } = await imp(`${agentDist}/modes/interactive/compo
 const { ToolExecutionComponent } = await imp(`${agentDist}/modes/interactive/components/tool-execution.js`);
 const { withBuiltInRenderers } = await imp(`${agentDist}/core/tools/renderers/index.js`);
 const { WorkingStatusIndicator } = await imp(`${agentDist}/modes/interactive/components/status-indicator.js`);
+const { FooterComponent } = await imp(`${agentDist}/modes/interactive/components/footer.js`);
 const { Container, Text, Spacer, SelectList, ProcessTerminal, TuiMainScreen, setKeybindings, matchesKey } = tui;
 
-// theme: the laptop's pi setting, so the window looks like the other agent windows
+// J471 v2 (Angus: "the agent windows look way different on H"): the laptop's own pi look: its settings, its themes (a theme
+// file in ~/.pi/agent/themes, e.g. Omarchy's, is registered first, as pi's resource loader does), the same footer component
 let settings = {}; try { settings = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".pi/agent/settings.json"), "utf8")); } catch {}
-try { initTheme(settings.theme, false); } catch { initTheme(undefined, false); }
+try {
+  const dir = path.join(os.homedir(), ".pi/agent/themes"), mine = [];
+  for (const f of fs.readdirSync(dir)) if (f.endsWith(".json")) { try { mine.push(themeMod.loadThemeFromPath(path.join(dir, f))); } catch {} }
+  themeMod.setRegisteredThemes(mine);
+} catch {}
+try { initTheme(settings.theme, true); } catch { initTheme(undefined, false); }
 const T = themeMod.theme;
 const md = () => getMarkdownTheme();
 
 const ui = new TuiMainScreen(new ProcessTerminal());
 const keybindings = KeybindingsManager.create(); setKeybindings(keybindings);
-const header = new Text("", 1, 0);
 const chat = new Container();
 const pendingBox = new Text("", 1, 0);
 const statusLine = new Text("", 1, 0);
-const editor = new CustomEditor(ui, themeMod.getEditorTheme(), keybindings, { paddingX: settings.editorPaddingX ?? 0, embedWorkingStatus: true });
-const footer = new Text("", 1, 0);
+const workingBox = new Container(); // pi's "⠼ Working" line sits above the editor, as in the other windows
+const editor = new CustomEditor(ui, themeMod.getEditorTheme(), keybindings, { paddingX: settings.editorPaddingX ?? 0, autocompleteMaxVisible: settings.autocompleteMaxVisible });
 const pickerBox = new Container();
-for (const c of [header, chat, pendingBox, statusLine, pickerBox, editor, footer]) ui.addChild(c);
+// pi's own footer, fed from the remote session: cwd, tokens / cost / context, model + thinking, and the extensions' status line
+// (hyprpi's "name · room H" comes from the remote agent's own extension; the link's state is one more entry there)
+const fakeSession = {
+  get state() { return { model: st.model, thinkingLevel: st.thinking }; },
+  get model() { return st.model; }, routedModel: undefined,
+  modelRuntime: { isUsingSubscription: () => false },
+  getContextUsage: () => st.stats?.contextUsage,
+  sessionManager: {
+    getEntryCount: () => st.statsRev, getSessionId: () => st.sessionId || "", getLeafId: () => String(st.statsRev),
+    getEntries: () => st.stats ? [{ type: "usage", usage: { input: st.stats.tokens?.input || 0, output: st.stats.tokens?.output || 0, cacheRead: st.stats.tokens?.cacheRead || 0, cacheWrite: st.stats.tokens?.cacheWrite || 0, totalTokens: st.stats.tokens?.total || 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: Number(st.stats.cost) || 0 } } }] : [],
+    getCwd: () => (st.cwd.startsWith("~") ? (process.env.HOME || "") + st.cwd.slice(1) : st.cwd), getSessionName: () => st.sessionName,
+  },
+};
+const footerData = { getGitBranch: () => null, getAvailableProviderCount: () => st.providers || 1, getExtensionStatuses: () => {
+  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", "🛰 reconnecting…")); for (const [k, v] of m) if (!v) m.delete(k); return m; } };
+const footer = new FooterComponent(fakeSession, footerData);
+footer.setAutoCompactEnabled?.(true);
+for (const c of [chat, pendingBox, statusLine, workingBox, pickerBox, editor, footer]) ui.addChild(c);
 ui.setFocus(editor);
-process.stdout.write(`\x1b]2;🛰 ${WL}: ${NAME}\x07`);
+// the title as G's windows have it ("🐳 G: π - Beta - world-g"): the world's mark and letter, then pi's own title from the agent
+const setTitle = (t) => process.stdout.write(`\x1b]2;🛰 ${WL}: ${String(t || `π - ${NAME}`).replace(/[^\p{L}\p{N}\p{P}\p{Zs}π]/gu, "").slice(0, 80)}\x07`);
+setTitle();
 
 // ---- state
 const st = { connected: false, conn: null, streaming: false, model: null, thinking: "", cwd: "~", sessionName: "", pending: 0,
-  lastErr: "", expanded: false, streamingComp: null, pendingTools: new Map(), quitArmed: 0, extStatus: new Map() };
+  lastErr: "", expanded: false, streamingComp: null, pendingTools: new Map(), quitArmed: 0, extStatus: new Map(), stats: null, statsRev: 0, providers: 1 };
 let reqN = 0; const waiting = new Map(); const outbox = [];
 const sendRaw = (obj) => { if (!st.conn) return false; st.conn.stdin.write(JSON.stringify(obj) + "\n"); return true; };
 const rpc = (obj, timeoutMs = 30000) => new Promise((resolve, reject) => {
@@ -88,11 +113,8 @@ const rpc = (obj, timeoutMs = 30000) => new Promise((resolve, reject) => {
 
 const modelLabel = () => st.model ? `${st.model.provider}/${st.model.id}` : "no model";
 function paintChrome() {
-  const dot = st.connected ? T.fg("success", "●") : T.fg("warning", "○");
-  header.setText(`${T.bold(`🛰 ${WL}: ${NAME}`)} ${T.fg("dim", "· remote agent ·")} ${dot} ${T.fg("dim", st.connected ? "connected" : "reconnecting…")}`);
-  const ext = [...st.extStatus.values()].filter(Boolean).join("  ");
-  footer.setText(T.fg("dim", `${st.cwd}${st.sessionName ? " · " + st.sessionName : ""}`) + "\n" +
-    T.fg("dim", `${modelLabel()}${st.thinking ? " · " + st.thinking : ""}${ext ? "  " + ext : ""}`));
+  footer.invalidate?.();
+  editor.borderColor = T.getThinkingBorderColor(st.thinking || "off");
   statusLine.setText(st.lastErr ? T.fg("warning", clean(st.lastErr).replace(/\x1b\[[0-9;:]*m/g, "")) : "");
   pendingBox.setText([st.pending ? `${st.pending} message(s) queued` : "", outbox.length ? `${outbox.length} message(s) waiting for the connection: ${outbox.map((t) => t.slice(0, 40)).join(" | ")}` : ""].filter(Boolean).map((t) => T.fg("dim", t)).join("\n"));
   ui.requestRender();
@@ -101,8 +123,8 @@ function paintChrome() {
 // ---- rendering (mirrors pi's interactive mode)
 let working = null;
 function setWorking(on) {
-  if (on && !working) { working = new WorkingStatusIndicator(ui, "Working...", undefined); editor.setWorkingStatusIndicator(working); }
-  if (!on && working) { working.dispose?.(); working = null; editor.setWorkingStatusIndicator(undefined); }
+  if (on && !working) { working = new WorkingStatusIndicator(ui, "Working...", undefined); workingBox.clear(); workingBox.addChild(working); }
+  if (!on && working) { working.dispose?.(); working = null; workingBox.clear(); }
   ui.requestRender();
 }
 const userText = (m) => typeof m.content === "string" ? m.content : (m.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
@@ -227,7 +249,7 @@ function onUiRequest(r) {
   if (["select", "confirm", "input", "editor"].includes(r.method) && dialog) { if (dialog.id !== r.id && !dialogQueue.some((q) => q.id === r.id)) dialogQueue.push(r); return; }
   if (r.method === "setStatus") { st.extStatus.set(r.statusKey, r.statusText || ""); paintChrome(); return; }
   if (r.method === "notify") { chat.addChild(new Spacer(1)); chat.addChild(new Text(T.fg(r.notifyType === "error" ? "error" : r.notifyType === "warning" ? "warning" : "dim", r.message || ""), 1, 0)); ui.requestRender(); return; }
-  if (r.method === "setTitle") return;
+  if (r.method === "setTitle") return setTitle(r.title);
   if (r.method === "set_editor_text") { editor.setText(r.text || ""); ui.requestRender(); return; }
   if (r.method === "select" || r.method === "confirm") {
     const items = r.method === "confirm" ? [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }] : (r.options || []).map((o) => ({ value: o, label: o }));
@@ -263,8 +285,10 @@ function drawPicker() { // (SelectList's own filter is a prefix match on the val
 // ---- commands
 async function refreshState() {
   try { const s = await rpc({ type: "get_state" }); st.model = s.model || null; st.thinking = s.thinkingLevel || ""; st.sessionName = s.sessionName || "";
-    st.streaming = !!s.isStreaming; st.pending = s.pendingMessageCount || 0; setWorking(st.streaming);
+    st.streaming = !!s.isStreaming; st.pending = s.pendingMessageCount || 0; st.sessionId = s.sessionId || ""; setWorking(st.streaming);
   } catch {}
+  try { st.stats = await rpc({ type: "get_session_stats" }); st.statsRev++; } catch {}
+  if (!st.providersAt) { st.providersAt = 1; rpc({ type: "get_available_models" }).then((d) => { st.providers = new Set((d.models || []).map((m) => m.provider)).size || 1; paintChrome(); }, () => {}); }
   paintChrome();
 }
 // history is rendered synchronously from inside the read loop (see connect): events after its response line are newer than it,
