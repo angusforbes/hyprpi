@@ -339,3 +339,9 @@ The Thoughts window has no `/ai`, `/thought`, `/digest` or `/search` of the shar
 - Esc interrupts what is running (it never touches the box); Ctrl+Up / Ctrl+Down, PgUp / PgDn and Ctrl+Home / Ctrl+End scroll the thread; End on an empty box follows the newest
 
 </details>
+
+## License
+
+MIT: see [LICENSE](LICENSE). Copyright (c) 2026 Angus Forbes. The hyprwrlds, hyprwrlds-vimarchy and voice-routing folders carry the same MIT licence in their own LICENSE files.
+
+Third-party: hyprwrlds-vimarchy's look (its hint colour palette and badge sizing rule) follows [Vimarchy](https://github.com/clickety-clacks/vimarchy), which is MIT-licensed; no Vimarchy source files are included. hyprpi has no vendored third-party code.

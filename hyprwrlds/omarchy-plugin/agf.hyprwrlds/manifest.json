@@ -4,6 +4,7 @@
   "name": "hyprwrlds",
   "version": "0.1.0",
   "author": "agf",
+  "license": "MIT",
   "description": "World picker (A B C ...) plus the numbered workspaces of the current world. World A = workspaces 1-10, B = 11-20, C = 21-30, and so on. Keys and logic live in ~/.config/hypr/hyprwrlds.lua; this widget calls it with `hyprctl eval 'hyprwrlds.world(N)'`. Replaces omarchy.workspaces in the bar.",
   "kinds": [
     "bar-widget"
