@@ -1,0 +1,10 @@
+[Unit]
+Description=J494 run brev-sync every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=20s
+
+[Install]
+WantedBy=timers.target

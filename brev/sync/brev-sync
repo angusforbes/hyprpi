@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# J494 (Angus: "a shared folder that acts as a drop box on brev / 2 way / Make sure I can see brev folder on phone too"):
+# ~/Brev on the laptop <-> ~/workspace/shared on the Brev box, two-way, with Unison (the same static 2.54.0 binary on both
+# sides). Run by brev-sync.timer (systemd user, every 2 min). Each run:
+#   1. asks Brev (its API, not the box) whether the box is RUNNING; if not, it exits quietly (one log line when that changes),
+#      so a stopped box costs nothing and is never started;
+#   2. pulls brev-image's new PNGs from ~/workspace/outputs into ~/Brev (omnistation/world <letter> images);
+#   3. syncs ~/Brev <-> ~/workspace/shared both ways. Conflicts: the newer copy wins and the other is kept next to it
+#      (copyonconflict: "name (conflict_on_DATE).ext"); overwritten or deleted files are also kept in ~/.unison/backup on the
+#      side that lost them (the last 3). A whole replica gone empty is never propagated (confirmbigdel stops the run).
+# The box-side folder is NOT ~/workspace/outputs, so files arriving from the laptop never touch what an idle check watches
+# (outputs/*.png, ~/.hyprpi-i session and state files). ssh by itself doesn't count as activity there.
+# Settings (env, e.g. in a systemd drop-in): BREV_SYNC_BOX, BREV_SYNC_WORLD, BREV_SYNC_DIR, BREV_SYNC_REMOTE, BREV_SYNC_UNISON.
+#   brev-sync          one run (what the timer does)
+#   brev-sync status   the box's state, the last runs, and what's in both folders
+set -uo pipefail
+H="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+BOX="${BREV_SYNC_BOX:-hyprpi-l40s}"; WL="${BREV_SYNC_WORLD:-I}"
+LOCAL="${BREV_SYNC_DIR:-$HOME/Brev}"; REMOTE="${BREV_SYNC_REMOTE:-workspace/shared}"
+UNISON="${BREV_SYNC_UNISON:-$HOME/.local/lib/unison-2.54.0/unison}"
+ST="${XDG_STATE_HOME:-$HOME/.local/state}/brev-sync"; mkdir -p "$ST" "$LOCAL"
+LOG="$ST/sync.log"
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+# one line per change of state, not one per run (no spam while the box is stopped)
+state() { local was; was="$(cat "$ST/state" 2>/dev/null)"; [[ "$was" == "$1" ]] || { log "$1${2:+: $2}"; echo "$1" > "$ST/state"; }; }
+# keep the log short
+[[ -f "$LOG" ]] && (( $(wc -l < "$LOG") > 2000 )) && { tail -n 1000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; }
+
+if [[ "${1:-}" == status ]]; then
+  echo "box $BOX: $(brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"; echo "last state: $(cat "$ST/state" 2>/dev/null)"
+  echo "--- log (last 10)"; tail -n 10 "$LOG" 2>/dev/null; echo "--- $LOCAL"; ls -la "$LOCAL"; exit 0
+fi
+
+exec 9>"$ST/lock"; flock -n 9 || exit 0   # a run still going (slow network): skip this one
+
+status="$(timeout 60 brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
+if [[ "$status" != RUNNING ]]; then state "paused" "box $BOX is ${status:-unknown (brev ls failed)}"; exit 0; fi
+
+SSHARGS="-o ConnectTimeout=20 -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# 2. new generated images (world <letter> images skips names already in ~/Brev)
+pulled="$(HYPRPI_IMAGES_DIR="$LOCAL" timeout 300 "$H/omnistation/world" "$WL" images 2>/dev/null)"; prc=$?
+[[ $prc -eq 0 ]] && grep -q "^file://" <<< "$pulled" && log "pulled from outputs: $(grep -c '^file://' <<< "$pulled") image(s)"
+# 3. two-way
+out="$(timeout 900 "$UNISON" "$LOCAL" "ssh://$BOX/$REMOTE" -batch -auto -times -prefer newer -copyonconflict \
+  -backup 'Name *' -maxbackups 3 -confirmbigdel -ignore 'Name .*.unison.tmp' -ignore 'Name .unison.*' \
+  -servercmd .local/bin/unison -sshargs "$SSHARGS" -logfile "$ST/unison.log" -ui text 2>&1)"; rc=$?
+# Unison: 0 = nothing to do or all done, 1 = all done but some skipped, 2 = non-fatal failures, 3 = fatal (e.g. no connection)
+case $rc in
+  0) state "ok"; c="$(grep -E 'Synchronization complete' <<< "$out" | tail -1)"; [[ -n "$c" ]] && log "$c" ;;
+  1|2) state "partial" "unison exit $rc"; log "$(tail -n 5 <<< "$out" | tr '\n' ' ' | cut -c1-600)" ;;
+  *) state "unreachable" "unison exit $rc: $(tail -n 3 <<< "$out" | tr '\n' ' ' | cut -c1-300)" ;;
+esac
+exit 0

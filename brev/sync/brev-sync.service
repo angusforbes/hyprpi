@@ -1,0 +1,9 @@
+[Unit]
+Description=J494 two-way sync of ~/Brev with the Brev box (~/workspace/shared); skips quietly while the box is stopped
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Harness/hyprpi/brev/sync/brev-sync
+Nice=10
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
