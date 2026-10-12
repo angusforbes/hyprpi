@@ -29,9 +29,12 @@ case "$cmd" in
     plain=(); for a in "${SSH[@]}"; do [[ "$a" == "-t" ]] || plain+=("$a"); done
     "${plain[@]}" 'mkdir -p ~/.hyprpi-h && chmod 700 ~/.hyprpi-h && cat > ~/.hyprpi-h/remote.sh' < "$H/omnistation/remote.sh"
     # hyprpi itself: this checkout's committed master as a tar (the remote may not reach the git host); a git clone there is updated instead
-    if ! "${plain[@]}" 'test -d ~/hyprpi/.git'; then
+    # (Ledger) replace ~/hyprpi only on an explicit "copy" answer: a failed probe (ssh error) changes nothing
+    kind=$("${plain[@]}" 'if [ -d ~/hyprpi/.git ]; then echo git; else echo copy; fi' 2>/dev/null | tr -d '\r' | tail -1) || kind=""
+    [[ "$kind" == git || "$kind" == copy ]] || { echo "world-h: couldn't reach the remote machine (is the login still valid?); nothing changed" >&2; exit 3; }
+    if [[ "$kind" == copy ]]; then
       ver=$(git -C "$H" rev-parse --short master)
-      { git -C "$H" archive --format=tar master; } | "${plain[@]}" "rm -rf ~/hyprpi.new && mkdir -p ~/hyprpi.new && tar -x -C ~/hyprpi.new && echo $ver > ~/hyprpi.new/.version && rm -rf ~/hyprpi && mv ~/hyprpi.new ~/hyprpi"
+      { git -C "$H" archive --format=tar master; } | "${plain[@]}" "rm -rf ~/hyprpi.new && mkdir -p ~/hyprpi.new && tar -x -C ~/hyprpi.new && test -f ~/hyprpi.new/bin/hyprpi && echo $ver > ~/hyprpi.new/.version && rm -rf ~/hyprpi.old && { [ ! -e ~/hyprpi ] || mv ~/hyprpi ~/hyprpi.old; } && mv ~/hyprpi.new ~/hyprpi && rm -rf ~/hyprpi.old"
     fi
     "${SSH[@]}" "$R install" ;;
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;

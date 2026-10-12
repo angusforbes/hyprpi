@@ -27,6 +27,7 @@ infocmp "${TERM:-dumb}" >/dev/null 2>&1 || export TERM=xterm-256color
 # a machine whose outbound TLS is inspected by its own CA: node (pi, hyprpi) must trust the system bundle, as curl does
 [[ -z "${NODE_EXTRA_CA_CERTS:-}" && -r /etc/ssl/certs/ca-certificates.crt ]] && export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 cmd="${1:-status}"; NAME="${2:-alpha}"
+[[ "${HYPRPI_H_WS:-71}" =~ ^[0-9]{1,3}$ ]] || { echo "remote.sh: HYPRPI_H_WS is a workspace number" >&2; exit 2; }
 [[ "$NAME" =~ ^[a-z][a-z0-9-]{0,30}$ || "$NAME" == all ]] || { echo "remote.sh: a name is lowercase letters, digits and -" >&2; exit 2; }
 mkdir -p "$ROOT/state" "$ROOT/run" "$WORK"; chmod 700 "$ROOT" "$ROOT/run"
 hp() { node "$DIR/bin/hyprpi" "$@"; }
@@ -46,13 +47,13 @@ case "$cmd" in
     echo "hyprpi $(git -C "$DIR" log -1 --format=%h 2>/dev/null || cat "$DIR/.version" 2>/dev/null) in $DIR; pi $(pi --version 2>/dev/null | head -1); node $(node -v)"
     echo "next: log pi in once (run \`pi\` here, /login), then: remote.sh start" ;;
   start)
-    tmux has-session -t hyprpi-h-daemon 2>/dev/null || tmux new-session -d -s hyprpi-h-daemon "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $DIR/bin/hyprpi daemon"
+    tmux has-session -t hyprpi-h-daemon 2>/dev/null || tmux new-session -d -s hyprpi-h-daemon "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: the daemon didn't start (tmux attach -t hyprpi-h-daemon shows why)" >&2; exit 4; }
     if tmux has-session -t "hyprpi-h-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
     # its pi session is resumed when it ran before (the newest session of this agent id), else a new one starts
     sess=$(ls -t "$ROOT/sessions/$NAME"/*.jsonl 2>/dev/null | head -1 || true)
-    tmux new-session -d -s "hyprpi-h-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $DIR/bin/hyprpi new --id h-$NAME --name $NAME --cwd $WORK --workspace ${HYPRPI_H_WS:-71} -- --session-dir $ROOT/sessions/$NAME ${sess:+--session $sess}"
+    tmux new-session -d -s "hyprpi-h-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") new --id h-$NAME --name $NAME --cwd $(printf %q "$WORK") --workspace $(printf %q "${HYPRPI_H_WS:-71}") -- --session-dir $(printf %q "$ROOT/sessions/$NAME") ${sess:+--session $(printf %q "$sess")}"  # (Ledger: every path quoted for the tmux command string)
     tmux set-option -t "hyprpi-h-$NAME" status off >/dev/null 2>&1 || true  # the window looks like any hyprpi agent: no tmux bar
     sleep 2; tmux has-session -t "hyprpi-h-$NAME" 2>/dev/null && echo "agent $NAME started (tmux session hyprpi-h-$NAME)" || { echo "remote.sh: agent $NAME exited at once" >&2; exit 4; } ;;
   attach)
