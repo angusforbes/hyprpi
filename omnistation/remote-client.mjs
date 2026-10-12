@@ -11,7 +11,8 @@
 //      HYPRPI_REMOTE_WS = the world's first workspace (`world` passes it)
 //
 // Keys: Enter sends (while the agent works it is queued as a steer; Alt+Enter queues a follow-up), Esc interrupts the agent,
-// Ctrl+C clears the editor (twice on an empty one quits; the agent keeps running), Ctrl+L picks the model, Ctrl+O expands tool
+// Ctrl+C clears the editor (twice on an empty one quits) where your keybindings keep it, Ctrl+D on an empty editor or /quit closes
+// the window (the agent keeps running), Ctrl+L picks the model, Ctrl+O expands tool
 // output. Commands handled here: /model [filter], /quit; anything else starting with / goes to the agent as a prompt (its
 // extension commands, skills and templates run there).
 // keys typed while the modules load must not echo raw onto the screen: raw mode at once (the TUI takes over below)
