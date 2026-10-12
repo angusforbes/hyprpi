@@ -19,11 +19,6 @@ const jsonc = (t) => {
 let cfg; try { cfg = jsonc(fs.readFileSync(cfgFile, "utf8")); } catch (e) { die(`can't read ${cfgFile}: ${e.message}`); }
 const list = (k) => (Array.isArray(cfg[k]) ? cfg[k] : []).map(String);
 const glob = (p) => new RegExp("^" + String(p).toLowerCase().replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$"); // deny patterns: * and ?
-// pi's scoped-model patterns (minimatch, case-insensitive): ** = anything, * and ? within one path part, [..] classes; a ":level"
-// thinking suffix is ignored
-const scopeGlob = (p) => { let r = ""; const s = String(p).toLowerCase().replace(/:(off|minimal|low|medium|high|xhigh|max)$/, "");
-  for (let i = 0; i < s.length; i++) { const c = s[i]; if (c === "*" && s[i + 1] === "*") { r += ".*"; i++; } else if (c === "*") r += "[^/]*"; else if (c === "?") r += "[^/]"; else if (c === "[") { const e = s.indexOf("]", i + 1); if (e > i) { r += "[" + s.slice(i + 1, e).replace(/^!/, "^").replace(/\\/g, "\\\\") + "]"; i = e; } else r += "\\["; } else r += c.replace(/[.+^${}()|\]\\]/g, "\\$&"); }
-  return new RegExp("^" + r + "$"); };
 
 // catalogs of known model details: the laptop's pi nv-inference provider, then the sandbox world's list, then "details"
 const lap = readJson(path.join(PI, "models.json"))?.providers?.["nv-inference"] || {};
@@ -45,11 +40,7 @@ else if (cfg.preset === "laptop") {
   const mr = path.join(deps, "node_modules/@earendil-works/pi-coding-agent/dist/core/model-resolver.js");
   let piScope = null; try { piScope = (await import(mr)).resolveModelScopeFromModels; } catch { /* not installed */ }
   if (piScope) ids = [...new Set(piScope(scoped, lapModels).scopedModels.map((x) => x.model.id))];
-  else {
-    console.error(`models-resolve: pi's model resolver isn't at ${mr} (run world X open once); matching the scope approximately`);
-    const pats = scoped.filter((p) => p.toLowerCase().startsWith("nv-inference/")).map((p) => scopeGlob(p.slice("nv-inference/".length)));
-    ids = lapModels.map((m) => m.id).filter((id) => pats.some((re) => re.test(id.toLowerCase())));
-  }
+  else die(`preset "laptop" needs pi's model resolver at ${mr} (run \`omnistation/world X open\` once, which installs it); nothing resolved`); // (review) no approximate list
 } else die(`"preset" must be short, laptop or custom (it is ${JSON.stringify(cfg.preset)})`);
 const def = String(cfg.default || ids[0] || "");
 ids = [...new Set([def, ...ids, ...list("add")])].filter((id) => id && !list("exclude").includes(id));
