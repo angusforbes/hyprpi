@@ -567,14 +567,15 @@ Item {
         var worlds = String(opt.worlds || ""), ws = Number(opt.ws || 0), name = String(opt.name || ""), home = String(opt.home || "") // hyprpi: FinderRank's keys (home: J195)
         var slot = Number(opt.slot || 0), recent = Number(opt.recent || 0) // hyprpi: the digit ranking and its time tiebreak (they were dropped here, so "1" found nothing)
         var subtitle = String(opt.subtitle || "") // hyprpi: the small line under the name (J23)
+        var search = String(opt.search || "") // hyprpi J482: extra text the filter matches (an app window's class and title)
       } else {
-      var worlds = "", ws = 0, name = "", subtitle = "", slot = 0, recent = 0, home = "" // hyprpi
+      var worlds = "", ws = 0, name = "", subtitle = "", slot = 0, recent = 0, home = "", search = "" // hyprpi
       var parts = String(opt || "").split("\t")
       var icon = parts.length > 1 ? parts.shift() : ""
       var label = parts.shift() || ""
       var detail = parts.join("\t")
       }
-      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, home: home, slot: slot, recent: recent, name: name, subtitle: subtitle }) // hyprpi
+      parsed.push({ i: i, icon: icon, label: label, detail: detail, rich: rich, value: value, worlds: worlds, ws: ws, home: home, slot: slot, recent: recent, name: name, subtitle: subtitle, search: search }) // hyprpi
     }
     return parsed
   }
