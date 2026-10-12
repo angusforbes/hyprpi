@@ -4,6 +4,7 @@
 #
 #   world-h setup            copy remote.sh to the remote machine and install hyprpi there (git clone + pi)
 #   world-h start [NAME]     start the remote daemon and agent NAME (default alpha)
+#   world-h new NAME         start agent NAME remotely and open its window (start + open)
 #   world-h open [NAME]      open a window for agent NAME on world H's first workspace, silently (your view doesn't move)
 #   world-h status           what runs remotely
 #   world-h stop [NAME|all]  stop an agent remotely (its session stays)
@@ -34,11 +35,12 @@ case "$cmd" in
     fi
     "${SSH[@]}" "$R install" ;;
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;
+  new) "${SSH[@]}" "$R start $NAME" && exec "$0" open "$NAME" ;;  # start agent NAME remotely, then its window
   open)
     q() { printf '%q ' "$@"; }
     line="kitty --class=hyprpi.h-agent --title='🛰 H: $NAME' -- $(q "${SSH[@]}")$(printf '%q' "$R attach $NAME")"
     [[ "$line" != *"]]"* ]] || { echo "world-h: can't open: the command contains ]]" >&2; exit 2; }
     hyprctl dispatch "hl.dsp.exec_cmd([[${line}]], { workspace = \"$WS silent\" })" >/dev/null
     echo "opened agent $NAME on workspace $WS (world H)" ;;
-  *) echo "usage: world-h setup | start [NAME] | open [NAME] | status | stop [NAME|all]" >&2; exit 2 ;;
+  *) echo "usage: world-h setup | new NAME | start [NAME] | open [NAME] | status | stop [NAME|all]" >&2; exit 2 ;;
 esac
