@@ -48,7 +48,7 @@ cmd="${1:-status}"; NAME="${2:-alpha}"
 # J471 v2 (Angus: "let's pick better names, maybe they can start with 'omni-'"): the binding's "prefix" starts every new agent's
 # name; `new` without a name picks one (prefix + three letters, like a host agent's "pi" + letters)
 if [[ "$cmd" == new ]]; then
-  if [[ -z "${2:-}" ]]; then NAME="${PREFIX:-r-}$(tr -dc 'a-z' </dev/urandom | head -c 3)"; elif [[ -n "$PREFIX" && "$NAME" != "$PREFIX"* ]]; then NAME="$PREFIX$NAME"; fi
+  if [[ -z "${2:-}" ]]; then abc=abcdefghijklmnopqrstuvwxyz; NAME="${PREFIX:-r-}${abc:RANDOM%26:1}${abc:RANDOM%26:1}${abc:RANDOM%26:1}"; elif [[ -n "$PREFIX" && "$NAME" != "$PREFIX"* ]]; then NAME="$PREFIX$NAME"; fi
 fi
 [[ "$cmd" == recover ]] && NAME=alpha # (recover takes flags, not a name)
 [[ "$NAME" =~ ^[a-z][a-z0-9-]{0,30}$ || "$NAME" == all ]] || { echo "world: a name is lowercase letters, digits and -" >&2; exit 2; }
