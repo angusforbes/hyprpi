@@ -52,7 +52,7 @@ case "$cmd" in
     [[ "$kind" == git || "$kind" == copy ]] || { echo "world: couldn't reach the remote machine (is the login still valid?); nothing changed" >&2; exit 3; }
     if [[ "$kind" == copy ]]; then
       ver=$(git -C "$H" rev-parse --short master)
-      { git -C "$H" archive --format=tar master; } | "${SSH[@]}" "set -e; n=\$(mktemp -d \"\$HOME/hyprpi.new.XXXXXX\"); tar -x -C \"\$n\"; test -f \"\$n/bin/hyprpi\"; echo $ver > \"\$n/.version\"; if [ -e \"\$HOME/hyprpi.old\" ]; then [ -f \"\$HOME/hyprpi.old/.version\" ] || { echo 'world: ~/hyprpi.old exists and is not ours; move it away' >&2; rm -rf \"\$n\"; exit 3; }; rm -rf \"\$HOME/hyprpi.old\"; fi; [ ! -e \"\$HOME/hyprpi\" ] || mv \"\$HOME/hyprpi\" \"\$HOME/hyprpi.old\"; mv \"\$n\" \"\$HOME/hyprpi\""  # (review) a unique staging folder; only our own marked copies are ever removed; the previous one stays as ~/hyprpi.old
+      { git -C "$H" archive --format=tar master; } | "${SSH[@]}" "set -e; n=\$(mktemp -d \"\$HOME/hyprpi.new.XXXXXX\"); trap 'rm -rf \"\$n\"' EXIT; tar -x -C \"\$n\"; test -f \"\$n/bin/hyprpi\"; echo $ver > \"\$n/.version\"; if [ -e \"\$HOME/hyprpi.old\" ]; then [ -f \"\$HOME/hyprpi.old/.version\" ] || { echo 'world: ~/hyprpi.old exists and is not ours; move it away' >&2; rm -rf \"\$n\"; exit 3; }; rm -rf \"\$HOME/hyprpi.old\"; fi; [ ! -e \"\$HOME/hyprpi\" ] || mv \"\$HOME/hyprpi\" \"\$HOME/hyprpi.old\"; mv \"\$n\" \"\$HOME/hyprpi\"; trap - EXIT"  # (review) a unique staging folder; only our own marked copies are ever removed; the previous one stays as ~/hyprpi.old
     fi
     "${SSH[@]}" "$R install" ;;
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;

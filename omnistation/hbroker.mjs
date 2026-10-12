@@ -76,7 +76,7 @@ if (cmd === "connect") {
         pendingUi.set(r.id, r);
         // (review) pi resolves a dialog with a timeout by itself: forget it then, and close it in the windows
         if (r.timeout) setTimeout(() => { if (pendingUi.delete(r.id)) for (const s of clients.values()) send(s, { type: "extension_ui_closed", id: r.id }); }, r.timeout + 1000).unref();
-      } else if (r.method !== "notify") sticky.set(`${r.method}:${r.statusKey || r.widgetKey || ""}`, r);
+      } else if (["setStatus", "setWidget", "setTitle"].includes(r.method)) sticky.set(`${r.method}:${r.statusKey || r.widgetKey || ""}`, r);
     }
     for (const sock of clients.values()) send(sock, r);
   }));

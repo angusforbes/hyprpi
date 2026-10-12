@@ -81,8 +81,9 @@ const sendRaw = (obj) => { if (!st.conn) return false; st.conn.stdin.write(JSON.
 const rpc = (obj, timeoutMs = 30000) => new Promise((resolve, reject) => {
   const id = `r${++reqN}`;
   if (!sendRaw({ ...obj, id })) return reject(new Error("not connected"));
-  const t = setTimeout(() => { waiting.delete(id); reject(new Error(`${obj.type}: no answer`)); }, timeoutMs);
-  waiting.set(id, (r) => { clearTimeout(t); r.success === false ? reject(new Error(r.error || "failed")) : resolve(r.data); });
+  const unknown = (m) => Object.assign(new Error(m), { unknown: true }); // no answer: it may or may not have arrived
+  const t = setTimeout(() => { waiting.delete(id); reject(unknown(`${obj.type}: no answer`)); }, timeoutMs);
+  waiting.set(id, (r) => { clearTimeout(t); r.success === false ? reject(r.error === "connection lost" ? unknown(r.error) : new Error(r.error || "failed")) : resolve(r.data); });
 });
 
 const modelLabel = () => st.model ? `${st.model.provider}/${st.model.id}` : "no model";
@@ -294,13 +295,13 @@ async function submit(text) {
 }
 // one prompt to the remote pi; "steer" is harmless when it is idle (it just starts) and needed when it is busy, so a prompt
 // is never refused because our idea of "busy" lags behind (review: queued offline prompts went out together)
-async function send(text) {
+async function send(text, mode = "steer") {
   try {
-    const r = await rpc({ type: "prompt", message: text, streamingBehavior: "steer" });
+    const r = await rpc({ type: "prompt", message: text, streamingBehavior: mode });
     if (r?.disposition === "queued") { st.pending++; paintChrome(); }
   } catch (e) {
     // (review) a dropped link after pi accepted it but before the answer came back: it may have been sent; never call it "not sent"
-    st.lastErr = e.message === "connection lost" ? "the connection dropped while sending: it may have arrived (the history shows it after the reconnect); it's also back in the editor, don't resend blindly"
+    st.lastErr = e.unknown ? "the connection dropped while sending: it may have arrived (the history shows it after the reconnect); it's also back in the editor, don't resend blindly"
       : `not sent (${e.message}); it's back in the editor`;
     editor.setText([editor.getText(), text].filter(Boolean).join("\n\n")); paintChrome(); // appended: several failures don't overwrite each other
   }
@@ -316,7 +317,7 @@ editor.onEscape = () => {
 editor.onAction("app.model.select", () => pickModel());
 editor.onAction("app.tools.expand", () => { st.expanded = !st.expanded; for (const c of chat.children) c.setExpanded?.(st.expanded); ui.requestRender(); });
 editor.onAction("app.thinking.cycle", () => rpc({ type: "cycle_thinking_level" }).then(refreshState, () => {}));
-editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (dialog?.kind === "text") { editor.setText(""); return submit(t); } if (!t.trim()) return; editor.setText(""); rpc({ type: "prompt", message: t, ...(st.streaming ? { streamingBehavior: "followUp" } : {}) }).catch((e) => { st.lastErr = e.message; editor.setText(t); paintChrome(); }); });
+editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (dialog?.kind === "text") { editor.setText(""); return submit(t); } if (!t.trim()) return; editor.setText(""); if (!st.connected) { outbox.push(t); return paintChrome(); } send(t, "followUp"); });
 editor.onAction("app.clear", () => {
   if (editor.getText()) { editor.setText(""); st.quitArmed = 0; ui.requestRender(); return; }
   if (Date.now() - st.quitArmed < 1500) return quit();
