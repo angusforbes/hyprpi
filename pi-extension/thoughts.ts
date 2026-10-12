@@ -259,6 +259,21 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "friction_log",
+    label: "Friction log",
+    description: "Angus's complaints as cues (J488). action add: log one he just made (kind = a short tag, reusing an existing one when it fits; what happened; the agent involved; the fix); the answer says how often that kind came up and what to do (first time: just fix it; again: propose ONE small skill or hook in one line). list: the kinds with counts, their skills, and repeats since a skill. skill: link a skill (or hook) to a kind once it exists.",
+    promptSnippet: "Log a complaint of Angus's; a repeat becomes a skill proposal",
+    parameters: Type.Object({ action: Type.String({ description: "add | list | skill" }), kind: Type.Optional(Type.String()), what: Type.Optional(Type.String({ description: "add: what happened, one sentence" })), agent: Type.Optional(Type.String({ description: "add: the agent involved" })), fix: Type.Optional(Type.String({ description: "add: what fixed it" })), skill: Type.Optional(Type.String({ description: "skill: its name and path" })) }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      if (p.action === "list") { const r: any = await call("friction.list", {}); return out(r.kinds.length ? r.kinds.map((k: any) => `${k.kind}: ${k.count}× (last ${k.last})${k.skill ? ` · skill ${k.skill} since ${k.since}, ${k.after} since` : ""}`).join("\n") : "No frictions logged yet.", {}); }
+      if (p.action === "skill") { const r: any = await call("friction.skill", p); return out(`${r.kind} → ${r.skill} (since ${r.since}); repeats from now on count against it.`, { action: `linked skill ${r.skill} to friction ${r.kind}` }); }
+      if (p.action !== "add") throw new Error("action: add | list | skill");
+      const r: any = await call("friction.add", p);
+      return out(`Logged (${r.kind}, ${r.count}× now${r.new_kind ? `; a new kind: the others are ${r.kinds.filter((x: string) => !x.startsWith(r.kind + " ")).join(", ") || "none"}` : ""}). ${r.advice}`, {});
+    },
+  });
+
+  pi.registerTool({
     name: "close_job",
     label: "Close a stale job",
     description: "Close a job stuck at running (or stopped) whose report never arrived as a brief report (J440): state done with report = its report (\"Wn → result\" for every done-when line, e.g. the one its agent sent as a message or answer) and evidence (where the proof is: a file, a checker's verdict); verify_work by a second agent or Angus still follows. Or state obsolete with reason (overtaken, no longer needed). History and versions are kept.",

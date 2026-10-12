@@ -25,6 +25,9 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi thoughts [--room R] [--via voice] TEXT   a message to a world's Thoughts (default: the world you're on); --via voice marks it 🎤 (dictation)
   hyprpi dictate [--to hp:ID|proj:NAME] TEXT   a dictation: the focused world's Thoughts (🎤), or the agent /
                               project it starts with ("Atlas, …", "project onboarding, …")
+  hyprpi friction add KIND WHAT [--agent NAME] [--fix TEXT] [--room W]   log one of Angus's complaints (J488,
+                              ~/Obsidian/Notes/Friction log.md); prints how often that kind came up and what to do
+  hyprpi friction list | skill KIND SKILL   the kinds with counts / link a skill to a kind
   hyprpi tinker [W:] TEXT     drop a friction fix off in the workshop world: one free agent
                               there gets it, or a new one opens. "D: TEXT" also makes world D
                               the workshop from now on (remembered)
@@ -580,6 +583,16 @@ const commands = {
     if (!who || !text.trim()) die("usage: hyprpi send AGENT TEXT");
     const r = await request("agent.prompt", { agent: who, text, via: "cli" });
     console.log(`→ ${r.name}`);
+  },
+  friction: async () => {
+    const sub = args.shift() || "list";
+    if (sub === "list") { const r = await request("friction.list", {}); console.log(r.kinds.length ? r.kinds.map((k) => `${k.kind}: ${k.count}× (last ${k.last})${k.skill ? ` · skill ${k.skill} since ${k.since}, ${k.after} since` : ""}`).join("\n") : "no frictions logged yet"); console.log(`(${r.file})`); return; }
+    if (sub === "skill") { const [kind, ...rest] = args; if (!kind || !rest.length) die("usage: hyprpi friction skill KIND SKILL"); const r = await request("friction.skill", { kind, skill: rest.join(" ") }); console.log(`${r.kind} → ${r.skill} (since ${r.since})`); return; }
+    if (sub !== "add") die("usage: hyprpi friction add KIND WHAT [--agent NAME] [--fix TEXT] [--room W] | list | skill KIND SKILL");
+    const agent = opt("--agent"), fix = opt("--fix"), room = opt("--room"), [kind, ...what] = args;
+    if (!kind || !what.length) die("usage: hyprpi friction add KIND WHAT [--agent NAME] [--fix TEXT] [--room W]");
+    const r = await request("friction.add", { kind, what: what.join(" "), ...(process.env.HYPRPI_AGENT_ID ? { as_agent: process.env.HYPRPI_AGENT_ID } : {}), ...(agent ? { agent } : {}), ...(fix ? { fix } : {}), ...(room ? { room } : {}) });
+    console.log(`logged (${r.kind}, ${r.count}× now). ${r.advice}`);
   },
   tinker: async () => {
     const text = args.join(" ");
