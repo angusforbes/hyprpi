@@ -36,7 +36,7 @@ if (!SSH.length) { console.error(`h-client: "ssh" is empty in ${CONF}`); process
 // the first connect starts the agent if it isn't running; a reconnect doesn't (review: `world X stop NAME` must stay stopped)
 const DEBUG = !!process.env.HYPRPI_REMOTE_DEBUG;
 const remoteCmd = (first) => `HYPRPI_REMOTE_WS=${WS} bash ~/.hyprpi-${wl}/remote.sh connect ${NAME}${first ? "" : " nostart"}`;
-let everConnected = false, stopped = false;
+let everConnected = false, stopped = false, startFailed = false, startTries = 0, sawNotRunning = false; // J478
 
 const DEPS = process.env.HYPRPI_REMOTE_DEPS || path.join(os.homedir(), ".cache/hyprpi-remote");
 const PKG = path.join(DEPS, "node_modules/@earendil-works");
@@ -100,7 +100,7 @@ const fakeSession = {
   },
 };
 const footerData = { getGitBranch: () => null, getAvailableProviderCount: () => st.providers || 1, getExtensionStatuses: () => {
-  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", `${MARK} reconnecting…`)); for (const [k, v] of m) if (!v) m.delete(k); return m; } };
+  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", everConnected ? `${MARK} reconnecting…` : startFailed ? `${MARK} not started` : `${MARK} starting ${NAME}${conf.label ? ` on ${conf.label}` : ""}…`)); /* J478: the window is up before the agent is */ for (const [k, v] of m) if (!v) m.delete(k); return m; } };
 const footer = new FooterComponent(fakeSession, footerData);
 footer.setAutoCompactEnabled?.(true);
 for (const c of [chat, pendingBox, statusLine, workingBox, pickerBox, editor, footer]) ui.addChild(c);
@@ -426,6 +426,8 @@ function connect() {
       if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
       else if (booting && /^(message_|tool_execution_|turn_|bash_execution)/.test(r.type || "")) continue; // already in the coming snapshot (state events still apply)
       if (r.type === "broker_error" && /isn't running/.test(r.error || "") && everConnected) { stopped = true; }
+      // J478: the FIRST connect starts the agent; if it's still not running after that, the start failed: say so, don't retry forever
+      if (r.type === "broker_error" && /isn't running/.test(r.error || "") && !everConnected) { sawNotRunning = true; } // (counted on exit: a slow start gets 3 tries; the line may arrive after the exit event)
       if (r.type === "response" && r.id && waiting.has(r.id)) { const f = waiting.get(r.id); waiting.delete(r.id); f(r); continue; }
       onEvent(r);
     }
@@ -445,6 +447,8 @@ function connect() {
     booting = false; histId = null;
     if (dialog?.id) closeDialogSilently(); dialogQueue.length = 0; // the broker cancels them when no client is left; a new connect replays live ones
     if (stopped) { st.lastErr = `agent ${NAME} was stopped on the remote machine; close this window, or reopen it with: world ${WL} open ${NAME}`; paintChrome(); return; }
+    if (!hello && !everConnected && ++startTries >= 3 && sawNotRunning) startFailed = true; // 3 first connects without the agent, and it said it isn't running
+    if (startFailed) { st.lastErr = `agent ${NAME} didn't start on ${conf.label || "the remote machine"} (world ${WL} status shows what runs there; world ${WL} start ${NAME} shows why); close this window, or try again with SUPER+A`; paintChrome(); return; } // J478
     const why = errTail.trim().split("\n").filter(Boolean).pop() || "";
     const expired = /expired|login|certificate|not logged in|tsh login|permission denied/i.test(errTail);
     st.lastErr = expired ? `the login to the remote machine has run out: run tsh login (or your ssh login), I'll reconnect by myself (${why.slice(0, 120)})`

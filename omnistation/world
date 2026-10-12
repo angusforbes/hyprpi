@@ -101,7 +101,9 @@ case "$cmd" in
       if (( dry )); then say "would run: world $WL start $n; world $WL open $n"; else "$0" "$WL" start "$n" && "$0" "$WL" open "$n"; fi
     done ;;
   start-mirror) "${SSH[@]}" "HYPRPI_REMOTE_MIRROR=1 $R start $NAME" ;;
-  new) "${SSH[@]}" "$R start $NAME" && exec "$0" "$WL" open "$NAME" ;;
+  # J478 (Angus: "open the window first … then fill in the details as the agent becomes live"): the window opens at once and its
+  # client's first connect starts the agent remotely (remote.sh connect), showing "starting NAME…" until it's live, or why it didn't start
+  new) exec "$0" "$WL" open "$NAME" ;;
   open|open-mirror)
     if [[ "$cmd" == open ]]; then
       # the client's dependencies: pi's own packages, pinned to the laptop's pi version, in a cache folder
