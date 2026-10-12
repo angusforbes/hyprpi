@@ -72,6 +72,7 @@ case "$cmd" in
     un=$(node -e 'import(process.argv[1]).then(m=>console.log(m.userName())).catch(()=>{})' "$H/lib/policy.mjs" 2>/dev/null | tr -cd "A-Za-z .'-")
     tm=$(jq -r '.thoughtsModel // empty' "$CONF" | tr -cd 'A-Za-z0-9._/:-')
     "${SSH[@]}" "HYPRPI_REMOTE_USER_NAME=$(printf %q "$un") HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") $R install"
+    # (node there trusts the system CA bundle, as remote.sh does: Omnistation inspects TLS)
     # J499/J500 (Angus: "a script so that it sets those up on any brev instance", "a similar config for models in omnistation"):
     # the NVIDIA Inference Hub models this world offers, from its config file: the binding's "models" (a path in this repo, e.g.
     # omnistation/models.jsonc for H), else brev/models.jsonc. It's resolved HERE (the "laptop" preset reads this laptop's scoped
@@ -81,7 +82,7 @@ case "$cmd" in
     mkey=$(jq -r '.modelsKeyFile // "~/workspace/.secrets/nv_inference_key"' "$CONF"); [[ "$mkey" =~ ^~?/?[A-Za-z0-9._/-]+$ ]] || { echo "world: bad \"modelsKeyFile\" in $CONF" >&2; exit 2; }
     if nvm=$(node "$H/lib/models-resolve.mjs" --config "$H/$mcfg"); then
       printf '%s\n' "$nvm" | "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.json"
-      "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.mjs && PATH=\$HOME/.local/bin:\$PATH HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") node ~/.hyprpi-$wl/nv-models.mjs --check --key-file $(printf %q "$mkey") --models ~/.hyprpi-$wl/nv-models.json" < "$H/lib/nv-models.mjs"
+      "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.mjs && export PATH=\$HOME/.local/bin:\$HOME/.npm-global/bin:\$PATH; [ -n \"\${NODE_EXTRA_CA_CERTS:-}\" ] || [ ! -r /etc/ssl/certs/ca-certificates.crt ] || export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt; HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") node ~/.hyprpi-$wl/nv-models.mjs --check --key-file $(printf %q "$mkey") --models ~/.hyprpi-$wl/nv-models.json" < "$H/lib/nv-models.mjs"
     else echo "world: $mcfg didn't resolve (above); the machine's nv-inference models are unchanged" >&2; fi ;;
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;
   rename) NEW="${3:-}"; [[ "$NEW" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || { echo "world: rename NAME NEW" >&2; exit 2; }
