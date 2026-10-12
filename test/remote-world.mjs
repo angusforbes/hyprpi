@@ -14,20 +14,20 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..")
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j472-")), RD = path.join(T, "remote"), BIN = path.join(T, "bin");
 fs.mkdirSync(RD); fs.mkdirSync(BIN);
 fs.writeFileSync(path.join(BIN, "tsh"), `#!/bin/sh\necho "$@" >> ${T}/tsh.log\nif [ "$1" = status ]; then echo "ERROR: Not logged in." >&2; exit 1; fi\nexit 9\n`, { mode: 0o755 });
-fs.writeFileSync(path.join(RD, "world-h.json"), JSON.stringify({ ssh: [path.join(BIN, "tsh"), "ssh", "-t", "me@example.invalid"], workspace: 71 }));
+fs.writeFileSync(path.join(RD, "h.json"), JSON.stringify({ ssh: [path.join(BIN, "tsh"), "ssh", "me@example.invalid"], label: "Test" }));
 process.env.HYPRPI_REMOTE_DIR = RD;
 let fails = 0; const ok = (n, c, x = "") => { if (!c) fails++; console.log(`${c ? "ok  " : "FAIL"} ${n}${x ? ": " + x : ""}`); };
 const r = await import("../remote-control/rworld.mjs");
 const w = r.remoteOf("H");
-ok("world H from the private file (workspace 71)", w && w.letter === "H" && !w.ssh.includes("-t"));
+ok("world H from the private file (h.json)", w && w.letter === "H" && w.dir === ".hyprpi-h" && w.label === "Test");
 let e = await r.call(w, "list").then(() => null, (x) => x);
 ok("expired login: offline with a hint", e?.offline && /tsh login/.test(e.message), e?.message);
 ok("no tsh ssh was started", !fs.readFileSync(path.join(T, "tsh.log"), "utf8").includes("ssh"));
 ok("offline remembered (no retry storm)", /tsh login/.test(r.offline("world-h")));
 e = await r.call(w, "board.item", {}).then(() => null, (x) => x); ok("allowlist", /not allowed/.test(e?.message || ""));
-ok("session path check", (await r.sessionCopy(w, "/etc/passwd")) === null && (await r.sessionCopy(w, "/home/x/.hyprpi-h/sessions/a/../../.ssh/id.jsonl")) === null);
+ok("session path check", (await r.sessionCopy(w, "/etc/passwd")) === null && (await r.sessionCopy(w, "/home/x/.hyprpi-h/sessions/a/../../.ssh/id.jsonl")) === null && (await r.sessionCopy(w, "/home/x/.hyprpi-g/sessions/a/s.jsonl")) === null);
 // an unreachable plain-ssh host: offline, quickly (BatchMode, ConnectTimeout)
-fs.writeFileSync(path.join(RD, "world-h.json"), JSON.stringify({ ssh: ["ssh", "-o", "ConnectTimeout=3", "nobody@192.0.2.1"], workspace: 71 }));
+fs.writeFileSync(path.join(RD, "h.json"), JSON.stringify({ ssh: ["ssh", "-o", "ConnectTimeout=3", "nobody@192.0.2.1"] }));
 const r2 = await import("../remote-control/rworld.mjs?x=2"); const w2 = r2.remoteOf("H");
 const t0 = Date.now(); e = await r2.call(w2, "list").then(() => null, (x) => x);
 ok("unreachable host: offline", e && /world-h|reach|ended/.test(e.message) && r2.offline("world-h"), `${e?.message} (${Date.now() - t0} ms)`);

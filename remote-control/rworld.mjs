@@ -3,7 +3,7 @@
 // phone server reaches that daemon the way world-h's windows do: with the ssh argv from the private settings file
 // (~/.config/hyprpi/remote/<name>.json: { "ssh": [...], "workspace": 71 }), over ONE long-lived connection running a small node
 // loop there (newline JSON with ids, as gworld.mjs's J444 bridge). The same allowlist as a sandboxed world: list, an agent's
-// prompt / interrupt, the world's Thoughts (get / send), and an agent's session file (realpath under ~/.hyprpi-h/sessions/,
+// prompt / interrupt, the world's Thoughts (get / send), and an agent's session file (realpath under ~/.hyprpi-<x>/sessions/,
 // read there). Replies are data only. Fail closed: a timeout per request kills the connection; nothing is retried blindly.
 // Offline: when the login has expired (a Teleport `tsh` login lasts hours) or the machine can't be reached, the world shows as
 // offline with a hint, and no new connection is tried for a while (a `tsh ssh` with an expired login is never started, so it
@@ -15,16 +15,19 @@ import path from "node:path";
 
 const DIR = process.env.HYPRPI_REMOTE_DIR || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "hyprpi", "remote"); // (tests: HYPRPI_REMOTE_DIR)
 const LETTERS = "ABCDEFGHI";
-// Every remote world: [{ name, letter, ssh: [...] }] from ~/.config/hyprpi/remote/*.json (a bad file is skipped).
+// Every remote world: [{ name, letter, label, dir, ssh: [...] }]. Linkpath's binding (J469): ~/.config/hyprpi/remote/<letter>.json
+// ({ "ssh": [...], "label": "…", "workspace"?: N }); on the machine everything of world X lives in ~/.hyprpi-<x>. (An older
+// <name>.json with "workspace" still counts.) A bad file is skipped.
 export function remoteWorlds() {
   let files = []; try { files = fs.readdirSync(DIR).filter((f) => /^[a-z0-9-]{1,32}\.json$/.test(f)); } catch { return []; }
   const out = [];
-  for (const f of files) {
+  for (const f of files.sort()) {
     try {
-      const c = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8"));
-      const ws = Number(c.workspace ?? 71), letter = /^[A-I]$/.test(c.world || "") ? c.world : Number.isInteger(ws) && ws >= 1 && ws <= 90 ? LETTERS[Math.floor((ws - 1) / 10)] : "";
+      const c = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8")), base = f.replace(/\.json$/, "");
+      const ws = Number(c.workspace), letter = /^[a-i]$/.test(base) ? base.toUpperCase() : /^[A-I]$/.test(c.world || "") ? c.world : Number.isInteger(ws) && ws >= 1 && ws <= 90 ? LETTERS[Math.floor((ws - 1) / 10)] : "";
       const ssh = Array.isArray(c.ssh) ? c.ssh.filter((a) => typeof a === "string" && a && a !== "-t" && a !== "-tt") : [];
-      if (letter && ssh.length && /^[\w./-]+$/.test(path.basename(ssh[0]))) out.push({ name: f.replace(/\.json$/, ""), letter, ssh });
+      if (letter && ssh.length && /^[\w./-]+$/.test(path.basename(ssh[0])) && !out.some((x) => x.letter === letter))
+        out.push({ name: `world-${letter.toLowerCase()}`, letter, label: typeof c.label === "string" ? c.label.slice(0, 40) : "", dir: `.hyprpi-${letter.toLowerCase()}`, ssh });
     } catch { /* skip */ }
   }
   return out;
@@ -33,8 +36,8 @@ export const remoteOf = (letter) => remoteWorlds().find((w) => w.letter === lett
 
 const ALLOWED = new Set(["list", "agent.prompt", "agent.interrupt", "thoughts.get", "thoughts.send"]);
 // The loop, on the remote machine. Its environment is remote.sh's (the headless daemon's socket and state).
-const LOOP = 'import(process.argv[1]+"/lib/client.mjs").then(async(c)=>{const fs=await import("node:fs"),os=await import("node:os");const S=os.homedir()+"/.hyprpi-h/sessions/";const rl=(await import("node:readline")).createInterface({input:process.stdin});process.stdout.write(JSON.stringify({id:0,ok:true,ready:true})+"\\n");rl.on("line",async(l)=>{let q;try{q=JSON.parse(l);}catch{return;}const out=(o)=>process.stdout.write(JSON.stringify({id:q.id,...o})+"\\n");try{if(q.t==="call"){const k=await c.connect({timeout:5000});try{out({ok:true,r:await k.call(q.m,q.p,{timeoutMs:30000})});}finally{k.close();}}else if(q.t==="file"){const f=fs.realpathSync(String(q.f));if(!f.startsWith(S)||!/^[a-z][a-z0-9-]{0,30}\\/[^/]+\\.jsonl$/.test(f.slice(S.length)))throw new Error("not a session file");if(fs.statSync(f).size>24e6)throw new Error("session file too large");out({ok:true,b:fs.readFileSync(f).toString("base64")});}else throw new Error("bad request");}catch(e){out({ok:false,e:String(e&&e.message||e).slice(0,300)});}});rl.on("close",()=>process.exit(0));}).catch((e)=>{process.stderr.write(String(e.message||e));process.exit(1);})';
-const REMOTE_CMD = `export HYPRPI_STATE="$HOME/.hyprpi-h/state" HYPRPI_SOCKET="$HOME/.hyprpi-h/run/daemon.sock" HYPRPI_NO_ADOPT=1 PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; unset HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY DISPLAY; exec node --input-type=module -e '${LOOP}' "$HOME/hyprpi"`;
+const LOOP = 'import(process.argv[1]+"/lib/client.mjs").then(async(c)=>{const fs=await import("node:fs"),os=await import("node:os");const S=os.homedir()+"/"+process.argv[2]+"/sessions/";const rl=(await import("node:readline")).createInterface({input:process.stdin});process.stdout.write(JSON.stringify({id:0,ok:true,ready:true})+"\\n");rl.on("line",async(l)=>{let q;try{q=JSON.parse(l);}catch{return;}const out=(o)=>process.stdout.write(JSON.stringify({id:q.id,...o})+"\\n");try{if(q.t==="call"){const k=await c.connect({timeout:5000});try{out({ok:true,r:await k.call(q.m,q.p,{timeoutMs:30000})});}finally{k.close();}}else if(q.t==="file"){const f=fs.realpathSync(String(q.f));if(!f.startsWith(S)||!/^[a-z][a-z0-9-]{0,30}\\/[^/]+\\.jsonl$/.test(f.slice(S.length)))throw new Error("not a session file");if(fs.statSync(f).size>24e6)throw new Error("session file too large");out({ok:true,b:fs.readFileSync(f).toString("base64")});}else throw new Error("bad request");}catch(e){out({ok:false,e:String(e&&e.message||e).slice(0,300)});}});rl.on("close",()=>process.exit(0));}).catch((e)=>{process.stderr.write(String(e.message||e));process.exit(1);})';
+const remoteCmd = (w) => { if (!/^\.hyprpi-[a-i]$/.test(w.dir)) throw new Error("bad remote dir"); return `export HYPRPI_STATE="$HOME/${w.dir}/state" HYPRPI_SOCKET="$HOME/${w.dir}/run/daemon.sock" HYPRPI_NO_ADOPT=1 PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; unset HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY DISPLAY; exec node --input-type=module -e '${LOOP}' "$HOME/hyprpi" ${w.dir}`; };
 
 // ---- offline: the Teleport login (when the ssh argv is tsh) and the last connection failure
 const down = new Map(); // name -> { until, why }
@@ -56,7 +59,7 @@ async function bridge(w) {
   const off = offline(w.name); if (off) throw Object.assign(new Error(off), { offline: true });
   if (path.basename(w.ssh[0]) === "tsh") { const why = await tshValid(w.ssh[0]); if (why) { markDown(w.name, why); throw Object.assign(new Error(why), { offline: true }); } }
   const args = path.basename(w.ssh[0]) === "ssh" ? ["-o", "BatchMode=yes", ...w.ssh.slice(1)] : w.ssh.slice(1); // never a prompt
-  const p = spawn(w.ssh[0], [...args, REMOTE_CMD], { stdio: ["pipe", "pipe", "pipe"] });
+  const p = spawn(w.ssh[0], [...args, remoteCmd(w)], { stdio: ["pipe", "pipe", "pipe"] });
   let err = "";
   b = { p, buf: "", pending: new Map(), next: 1, dead: false };
   const fail = (why) => {
@@ -119,7 +122,7 @@ export async function call(w, method, params = {}) {
 // ~/.hyprpi-h/sessions/<agent>/ (checked again there, after realpath).
 const cache = new Map();
 export async function sessionCopy(w, file) {
-  if (!/^\/[^\0]*\/\.hyprpi-h\/sessions\/[a-z][a-z0-9-]{0,30}\/[^/\0]+\.jsonl$/.test(String(file)) || String(file).includes("/../")) return null;
+  if (!new RegExp(`^/[^\\0]*/\\${w.dir}/sessions/[a-z][a-z0-9-]{0,30}/[^/\\0]+\\.jsonl$`).test(String(file)) || String(file).includes("/../")) return null;
   const k = `${w.name}:${file}`, c = cache.get(k);
   if (c && Date.now() - c.at < 3000 && fs.existsSync(c.tmp)) return c.tmp;
   const m = await viaBridge(w, { t: "file", f: file }, 30000);
