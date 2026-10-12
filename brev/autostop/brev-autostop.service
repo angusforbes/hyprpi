@@ -1,0 +1,9 @@
+[Unit]
+Description=J498 stop the Brev box after 45 idle minutes (only acts while brev ls says RUNNING)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Harness/hyprpi/brev/autostop/brev-autostop run
+Nice=10
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
