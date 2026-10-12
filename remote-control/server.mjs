@@ -696,9 +696,17 @@ const server = http.createServer(async (req, res) => {
       const b = await body(req), id = String(b.agent || ""), what = url.pathname.split("/").pop();
       // J474: a message id (from the page) is delivered once: a repeat of the same id within 10 min gets the first answer, nothing is sent again
       const mid = /^[\w-]{8,64}$/.test(String(b.id || "")) ? `${what}:${id}:${b.id}` : "";
-      if (mid && sentOnce.has(mid)) { const p = sentOnce.get(mid); log("phone", what, "repeat of", String(b.id).slice(0, 12), "ignored"); return json(res, 200, { ...((await p.catch(() => null)) || {}), repeat: true }); }
-      let settle = null; if (mid) { sentOnce.set(mid, new Promise((r) => { settle = r; })); if (sentOnce.size > 500) sentOnce.delete(sentOnce.keys().next().value); setTimeout(() => sentOnce.delete(mid), 600e3).unref?.(); }
-      const done = (code, obj) => { settle?.(code === 200 ? obj : null); if (code !== 200 && mid) sentOnce.delete(mid); return json(res, code, obj); }; // a failed send may be tried again with the same id
+      // (OnceReview) a concurrent repeat gets the first request's own status and body (a failure too); a failed id is forgotten so a later
+      // retry can go through, and an entry's expiry only ever removes that same entry
+      if (mid && sentOnce.has(mid)) { const e = sentOnce.get(mid); log("phone", what, "repeat of", String(b.id).slice(0, 12), "ignored"); const r = await e.p; return json(res, r.code, { ...r.obj, repeat: true }); }
+      let entry = null;
+      if (mid) {
+        let settle; entry = { p: new Promise((r) => { settle = r; }) }; entry.settle = settle;
+        entry.timer = setTimeout(() => { if (sentOnce.get(mid) === entry) sentOnce.delete(mid); }, 600e3); entry.timer.unref?.();
+        sentOnce.set(mid, entry);
+        while (sentOnce.size > 2000) { const [k, old] = sentOnce.entries().next().value; clearTimeout(old.timer); sentOnce.delete(k); } // (phone traffic is far below this)
+      }
+      const done = (code, obj) => { if (entry) { entry.settle({ code, obj }); if (code !== 200) { clearTimeout(entry.timer); if (sentOnce.get(mid) === entry) sentOnce.delete(mid); } } return json(res, code, obj); };
       // J433: an agent of a sandboxed world goes to its inner daemon, as typed at its window (owner input).
       if (/^(sbx|rmt):/.test(id)) { // (J472: and a remote world's agent, on its own machine's daemon)
         const ia = await innerAgent(id).catch(() => null); if (!ia) return done( 404, { error: "no such live agent" });

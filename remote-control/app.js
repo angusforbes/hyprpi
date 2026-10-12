@@ -1091,7 +1091,7 @@ async function pollSession() {
   const id = sess.agent, from = sess.end;
   sessPolling = true;
   try {
-    const r = await call("GET", `/api/session?agent=${encodeURIComponent(id)}&after=${from}`);
+    const r = await Promise.race([call("GET", `/api/session?agent=${encodeURIComponent(id)}&after=${from}`), new Promise((_, no) => setTimeout(() => no(new Error("slow")), 20000))]); // (OnceReview) a poll that never answers can't block polling for good
     if (sess.agent !== id || sess.end !== from) return;
     renderSessionHead();
     if (!r.items.length) { sess.end = r.end; return; }
