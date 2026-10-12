@@ -92,7 +92,9 @@ echo "shared_sig $(cd ~/workspace/shared 2>/dev/null && find . -path ./.unison -
 mt=$(curl -fsS -m 5 http://127.0.0.1:8000/metrics 2>/dev/null)
 if [ -n "$mt" ]; then echo "vllm_total $(printf "%s\n" "$mt" | awk "/^vllm:request_success_total/{s+=\$2} END{printf \"%d\", s}")"; echo "vllm_running $(printf "%s\n" "$mt" | awk "/^vllm:num_requests_running/{s+=\$2} END{printf \"%d\", s}")"; else echo "vllm_total none"; fi
 echo ok'
-res="$(timeout -k 10 90 "$SSH" -o BatchMode=yes -o ConnectTimeout=20 "$BOX" "bash -s" <<<"$probe" 2>/dev/null)"
+# (J512) its own connection, never Brev's shared one (ControlMaster auto, ControlPersist 10m): when this ssh had to START the shared
+# master under `timeout` inside $(…), the capture waited for the backgrounded master and every first probe after a quiet spell failed
+res="$(timeout -k 10 90 "$SSH" -o BatchMode=yes -o ConnectTimeout=20 -o ControlMaster=no -o ControlPath=none "$BOX" "bash -s" <<<"$probe" 2>/dev/null)"
 if ! grep -qx ok <<<"$res"; then state "probe-failed" "couldn't read $BOX's activity over ssh: not stopping on a guess"; exit 0; fi
 val() { awk -v k="$1" '$1==k{print $2}' <<<"$res"; }
 best=""; why=""
