@@ -3,7 +3,7 @@
 # its idle minutes (default 45), so none bills for nothing. Runs every 5 min from the systemd user timer brev-autostop.timer.
 # Each run:
 #   1. asks Brev (its API, not the boxes) which instances are RUNNING; every RUNNING one is checked, except those the config
-#      excludes (nemoclaw-8917fb by default); STOPPED / absent / brev ls failing: nothing;
+#      excludes; STOPPED / absent / brev ls failing: nothing. With no config file at all it does nothing (install makes one);
 #   2. asks each box (one ssh command, read-only, its own connection) how long ago it last did real work:
 #        - newest change to a hyprpi world's sessions, Thoughts threads and boards (~/.hyprpi-*/…), brev-image's PNGs
 #          (~/workspace/outputs) and the two-way shared folder (~/workspace/shared): a file changed there recently, or its listing
@@ -14,7 +14,7 @@
 #   3. idle = time since the latest of: that activity, and when this timer first saw the box RUNNING (a fresh start gets its time);
 #   4. idle >= its limit: `brev stop BOX` (keeps /home/ubuntu/workspace), then ONE notice naming the box: a desktop notification
 #      and a ⚠ line in world A's Thoughts thread (hyprpi thoughts alert). A failed stop alerts once, then retries hourly quietly.
-# A box that can't be read (ssh fails) is never stopped on a guess. Boxes are handled independently.
+# A box that can't be read (ssh fails) is never stopped on a guess. Instances to leave alone go in the LIVE config only (exclude NAME). Boxes are handled independently.
 # Config (J516): ~/.config/hyprpi/brev-autostop.conf, made from brev/autostop/brev-autostop.conf.example on first use:
 #   default_idle_min 45 · gpu_busy_pct 10 · idle NAME MIN · exclude NAME · box NAME (registered by setup; just the default)
 # Commands: run (the timer) · status · pause [NAME] [N(m|h|d)] · resume [NAME] · install [NAME] (link + enable the timer, register
@@ -40,10 +40,10 @@ rows() { awk 'h && NF>=2 {print $1, $2} $1=="NAME" && $2=="STATUS" {h=1}' <<<"$1
 
 # --- config ------------------------------------------------------------------------------------------------------------------
 ensure_conf() { [[ -f "$CONF" ]] || { mkdir -p "$(dirname "$CONF")" && cp "$HERE/brev-autostop.conf.example" "$CONF" && log "made $CONF from the example"; }; }
-cfg() { [[ -f "$CONF" ]] && tr -d '\r' < "$CONF" | grep -v '^[[:space:]]*#'; } # (CRLF-safe) # (a missing config: built-in defaults, and nemoclaw excluded below)
+cfg() { [[ -f "$CONF" ]] && tr -d '\r' < "$CONF" | grep -v '^[[:space:]]*#'; } # (CRLF-safe)
 DEFAULT_IDLE="$(cfg | awk '$1=="default_idle_min" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; DEFAULT_IDLE="${DEFAULT_IDLE:-45}"
 GPU_BUSY="$(cfg | awk '$1=="gpu_busy_pct" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; GPU_BUSY="${GPU_BUSY:-10}"
-excluded() { [[ ! -f "$CONF" && "$1" == nemoclaw-8917fb ]] && return 0; cfg | awk -v b="$1" '$1=="exclude" && $2==b{f=1} END{exit !f}'; }
+excluded() { cfg | awk -v b="$1" '$1=="exclude" && $2==b{f=1} END{exit !f}'; }
 idle_min() { local v; v="$(cfg | awk -v b="$1" '$1=="idle" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo "${v:-$DEFAULT_IDLE}"; }
 
 # --- per-box state: $ST/boxes/<name>/ ------------------------------------------------------------------------------------------
@@ -197,6 +197,8 @@ check_box() { # $1 = a RUNNING instance; never exits the script (each box on its
   fi
 }
 
+# No config (exclusions unknown): never probe or stop anything; say so once. `brev-autostop install` makes it.
+if [[ ! -f "$CONF" ]]; then [[ "$(cat "$ST/state" 2>/dev/null)" == no-config ]] || { echo no-config > "$ST/state"; log "no config at $CONF: nothing done (run brev-autostop install)"; }; exit 0; fi
 # Brev's own view: every instance and its status
 out="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)"; rc=$?
 if [[ $rc -ne 0 ]]; then

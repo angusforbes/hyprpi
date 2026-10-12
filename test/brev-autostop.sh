@@ -16,7 +16,7 @@ cat > "$F/bin/brev" <<'EOF'
 F="$(dirname "$0")/.."
 case "$1" in
   ls) st="$(cat "$F/status")"; [[ "$st" == error ]] && { echo "api error" >&2; exit 1; }
-      echo "You have 3 instances in Org test"; echo " NAME STATUS BUILD"; [[ "$st" != absent ]] && echo " hyprpi-l40s $st COMPLETED"; echo " nemoclaw-8917fb $(cat "$F/nemo" 2>/dev/null || echo STOPPED) COMPLETED"; [[ -f "$F/more" ]] && sed 's/^/ /' "$F/more"; exit 0;;
+      echo "You have 3 instances in Org test"; echo " NAME STATUS BUILD"; [[ "$st" != absent ]] && echo " hyprpi-l40s $st COMPLETED"; echo " keep-me-box $(cat "$F/nemo" 2>/dev/null || echo STOPPED) COMPLETED"; [[ -f "$F/more" ]] && sed 's/^/ /' "$F/more"; exit 0;;
   stop) echo "stop $2" >> "$F/calls"; echo "stop $2" >> "$F/allcalls"; [[ -f "$F/stophang" ]] && { trap "" TERM; sleep 30; }; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }
         if [[ "$2" == hyprpi-l40s ]]; then echo STOPPED > "$F/status"; else sed -i "s/^$2 RUNNING/$2 STOPPED/" "$F/more"; fi; exit 0;;
 esac
@@ -38,7 +38,8 @@ EOF
 printf '#!/usr/bin/env bash\necho "notify $*" >> "%s/calls"\n' "$F" > "$F/bin/notify-send"
 printf '#!/usr/bin/env bash\necho "hyprpi $*" >> "%s/calls"\n' "$F" > "$F/bin/hyprpi"
 chmod +x "$F/bin/"*
-export BREV_AUTOSTOP_CONFIG="$F/no-config" BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
+printf 'exclude keep-me-box\n' > "$F/base.conf"
+export BREV_AUTOSTOP_CONFIG="$F/base.conf" BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
 H="$F/home"
 fixture() { # every activity file N minutes old
   rm -rf "$H"; mkdir -p "$H/.hyprpi-i/sessions/s1" "$H/.hyprpi-i/state/thoughts" "$H/.hyprpi-i/state/boards" "$H/workspace/outputs" "$H/workspace/shared"
@@ -158,7 +159,7 @@ ok "two RUNNING: idle hyprpi-l40s stopped, busy train-a100 (5 min) not" '[[ $(st
 touch -d "-120 min" "$F/home-train-a100/.hyprpi-x/sessions/s/a.jsonl"; BREV_AUTOSTOP_NOW=$(( $(date +%s) + 50*60 )) run
 ok "…50 min after its last session write train-a100 is idle too: its own stop, its own notice naming it" '[[ $(stops) == 2 ]] && grep -qx "stop train-a100" "$F/calls" && grep -q "^notify.*Brev box train-a100" "$F/calls" && [[ $(thoughts) == 2 ]]'
 # 17. an unknown new instance gets the default (45 min); a per-instance idle line overrides it
-CF="$F/conf"; printf 'default_idle_min 45\nexclude nemoclaw-8917fb\nidle slow-box 90\n' > "$CF"
+CF="$F/conf"; printf 'default_idle_min 45\nexclude keep-me-box\nidle slow-box 90\n' > "$CF"
 fresh; fixture 120; echo STOPPED > "$F/status"; printf 'newbie RUNNING X\nslow-box RUNNING X\n' > "$F/more"; fixture_for newbie 120; fixture_for slow-box 120
 BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for newbie 50; started_ago_for slow-box 50; BREV_AUTOSTOP_CONFIG="$CF" run
 ok "unknown new instance → default 45 min → stopped at 50; slow-box (idle 90) not" '[[ $(stops) == 1 ]] && grep -qx "stop newbie" "$F/calls"'
@@ -182,19 +183,25 @@ ok "pause train-a100 24h → it stays, hyprpi-l40s is still stopped" '[[ $(stops
 "$S" resume train-a100 >/dev/null; run
 ok "resume train-a100 → stopped" '[[ $(stops) == 2 ]] && grep -qx "stop train-a100" "$F/calls"'
 # 20. an excluded instance is never probed or stopped, even RUNNING and idle (default config and an explicit one)
-fresh; echo STOPPED > "$F/status"; echo RUNNING > "$F/nemo"; fixture 300; run; started_ago_for nemoclaw-8917fb 300; run; run
-ok "nemoclaw-8917fb RUNNING + idle, no config file → never probed, never stopped" '[[ $(stops) == 0 && ! -f "$F/sshcalls" ]]'
-printf 'exclude nemoclaw-8917fb\nexclude keep-me\n' > "$CF"; echo "keep-me RUNNING X" > "$F/more"; BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for keep-me 300; BREV_AUTOSTOP_CONFIG="$CF" run
+fresh; echo STOPPED > "$F/status"; echo RUNNING > "$F/nemo"; fixture 300; run; started_ago_for keep-me-box 300; run; run
+ok "keep-me-box RUNNING + idle, excluded in the config → never probed, never stopped" '[[ $(stops) == 0 && ! -f "$F/sshcalls" ]]'
+printf 'exclude keep-me-box\nexclude keep-me\n' > "$CF"; echo "keep-me RUNNING X" > "$F/more"; BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for keep-me 300; BREV_AUTOSTOP_CONFIG="$CF" run
 ok "an excluded instance in the config → never probed, never stopped" '[[ $(stops) == 0 && ! -f "$F/sshcalls" ]]'
 # 21. install: links, enables the timer if missing, registers the instance, says so; idempotent
 IB="$F/ibin"; IC="$F/iconf/brev-autostop.conf"; SC="$F/bin/systemctl"; rm -f "$F/sysd"
 printf '#!/usr/bin/env bash\nF="%s"; echo "systemctl $*" >> "$F/syscalls"\ncase "$*" in *is-enabled*) [[ -f "$F/sysd" ]];; *is-active*) [[ -f "$F/sysd" ]];; *enable*) touch "$F/sysd";; esac\n' "$F" > "$SC"; chmod +x "$SC"
 i1="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install train-a100)"
-ok "install (first time): link + timer enabled + registered + 'auto-stop is on for train-a100'" '[[ -L "$IB/brev-autostop" ]] && grep -q "enable --now brev-autostop.timer" "$F/syscalls" && grep -qx "box train-a100" "$IC" && grep -qx "exclude nemoclaw-8917fb" "$IC" && grep -q "auto-stop is on for train-a100: stopped after 45 idle minutes" <<<"$i1"'
+ok "install (first time): link + timer enabled + registered + 'auto-stop is on for train-a100'" '[[ -L "$IB/brev-autostop" ]] && grep -q "enable --now brev-autostop.timer" "$F/syscalls" && grep -qx "box train-a100" "$IC" && grep -q "auto-stop is on for train-a100: stopped after 45 idle minutes" <<<"$i1"'
 i2="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install train-a100)"
 ok "install again: nothing new (one line), config line not duplicated, timer not re-enabled" '[[ $(grep -c . <<<"$i2") == 1 && $(grep -c "^box train-a100" "$IC") == 1 && $(grep -c "enable --now" "$F/syscalls") == 1 ]]'
-i3="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install nemoclaw-8917fb)"
-ok "install of an excluded instance says so and doesn't register it" '! grep -q "^box nemoclaw" "$IC" && grep -q "EXCLUDED" <<<"$i3"'
+echo "exclude keep-me-box" >> "$IC"; i3="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install keep-me-box)"
+ok "install of an excluded instance says so and doesn't register it" '! grep -q "^box keep-me-box" "$IC" && grep -q "EXCLUDED" <<<"$i3"'
+# 28. no config file at all → nothing probed or stopped, one log line
+fresh; fixture 300; echo RUNNING > "$F/status"; started_ago 300; for i in 1 2 3; do BREV_AUTOSTOP_CONFIG="$F/none.conf" run; done
+ok "no config file → never probes or stops anything, one log line" '[[ $(stops) == 0 && ! -f "$F/sshcalls" && $(grep -c "no config" "$F/state/log") == 1 ]]'
+# 29. the example config names no real instance and excludes nothing by itself
+ok "the example config has no exclude line in force" '! grep -q "^exclude" "$HERE/brev/autostop/brev-autostop.conf.example"'
+
 # 23. setup-hook (what `world X setup` runs): a Brev box from its binding gets auto-stop; anything else is silent
 rm -f "$IC" "$F/syscalls" "$F/sysd" "$IB/brev-autostop"; echo STOPPED > "$F/status"; echo "math-a100 RUNNING X" > "$F/more"
 envi=(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC")
@@ -214,7 +221,7 @@ w5="$(env "${envi[@]}" HYPRPI_REMOTE_CONF="$F/b4.json" "$HERE/omnistation/world"
 ok "…run again: same one line, nothing re-enabled or duplicated" '[[ $(grep -c "auto-stop" <<<"$w5") == 1 && $(grep -c "^box math-a100" "$IC") == 1 && $(grep -c "enable --now" "$F/syscalls") == 1 ]]'
 
 # 25. (FleetStopCheck) a CRLF config still excludes and sets limits; "08" is decimal
-printf 'default_idle_min 90\r\nexclude protected\r\nexclude nemoclaw-8917fb\r\n' > "$CF"
+printf 'default_idle_min 90\r\nexclude protected\r\nexclude keep-me-box\r\n' > "$CF"
 fresh; echo STOPPED > "$F/status"; printf 'protected RUNNING X\nother RUNNING X\n' > "$F/more"; fixture_for protected 300; fixture_for other 300
 BREV_AUTOSTOP_CONFIG="$CF" run; started_ago_for protected 300; started_ago_for other 50; BREV_AUTOSTOP_CONFIG="$CF" run
 ok "CRLF config: excluded box never probed or stopped; default 90 holds (other at 50 min kept)" '[[ $(stops) == 0 ]] && ! grep -q protected "$F/sshcalls"'
@@ -244,6 +251,6 @@ fresh; fixture 120; echo STOPPED > "$F/status"; run
 ok "brev ls's header lines are not instances" '[[ ! -d "$F/state/boxes/You" && ! -d "$F/state/boxes/NAME" ]]'
 
 # 15. never touched the other instance (every stop of every case)
-ok "nemoclaw-8917fb was never stopped (all cases)" '[[ $(grep -c . "$F/allcalls") -ge 8 ]] && ! grep -q nemoclaw "$F/allcalls"'
+ok "keep-me-box was never stopped (all cases)" '[[ $(grep -c . "$F/allcalls") -ge 8 ]] && ! grep -q keep-me-box "$F/allcalls"'
 
 echo "$pass passed, $fail failed"; [[ $fail == 0 ]]

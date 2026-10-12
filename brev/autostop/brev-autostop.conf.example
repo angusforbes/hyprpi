@@ -13,7 +13,5 @@
 default_idle_min 45
 gpu_busy_pct 10
 
-# not a hyprpi box: never touched (Angus)
-exclude nemoclaw-8917fb
-
-box hyprpi-l40s
+# Instances that must never be stopped automatically (e.g. a box someone else runs); one line each, like:
+# exclude keep-me-box
