@@ -1,14 +1,15 @@
 // brev/models.jsonc: which NVIDIA Inference Hub ("nv-inference") models every Brev box's pi offers (J499). Edit freely, then run
 // `omnistation/world X setup` (X = the box's world, e.g. I) to apply it to that box. The box uses its OWN key
 // (~/workspace/.secrets/nv_inference_key, an sk-… Inference Hub key you put there yourself); the key never leaves the box.
-// brev/models-resolve.mjs turns this file into the model list on the laptop; brev/nv-models.mjs writes it into the box's pi.
+// lib/models-resolve.mjs turns this file into the model list on the laptop; lib/nv-models.mjs writes it into the box's pi.
 {
-  // Which set to start from:
+  // Which set to start from (the same choices in omnistation/models.jsonc and docker/world/models.jsonc; lib/models-resolve.mjs):
   //   "short"  = the short list below
   //   "laptop" = every nv-inference model on this laptop's scoped model list (pi's enabledModels in ~/.pi/agent/settings.json),
   //              read when setup runs, minus "deny" below
   //   "claude3gpt3" = three Claude and three GPT models (the list below; Angus, 2026-10-12)
   //   "custom" = the "custom" list below
+  //   "catalog" = every model on hyprpi's standard tested list (docker/world/nv-inference-models.json: 32 OpenAI + 12 Claude)
   // "add" and "exclude" then apply on top of any preset, and "default" is always included.
   "preset": "claude3gpt3",
 

@@ -1,0 +1,70 @@
+// omnistation/models.jsonc: which NVIDIA Inference Hub ("nv-inference") models world H (Omnistation) offers (J500). Edit freely,
+// then run `omnistation/world H setup` to apply it there (the binding ~/.config/hyprpi/remote/h.json names this file and the key
+// file). Omnistation uses ITS OWN key, ~/.config/hyprpi-secrets/nvidia_inference_hub_key on that machine (already there, 600 in a
+// 700 folder); pi reads it by a !command and it never leaves the machine. lib/models-resolve.mjs turns this file into the model
+// list on the laptop; lib/nv-models.mjs writes it into Omnistation's pi. The setting below reproduces what H ran on 2026-10-12:
+// the standard list (preset "catalog") plus the two Perplexity Sonar web-search models, gpt-6-astra as the default, Thoughts-H on
+// Opus 5.5.
+{
+  // Which set to start from (the same choices in omnistation/models.jsonc and docker/world/models.jsonc; lib/models-resolve.mjs):
+  //   "short"  = the short list below
+  //   "laptop" = every nv-inference model on this laptop's scoped model list (pi's enabledModels in ~/.pi/agent/settings.json),
+  //              read when setup runs, minus "deny" below
+  //   "claude3gpt3" = three Claude and three GPT models (the list below; Angus, 2026-10-12)
+  //   "custom" = the "custom" list below
+  //   "catalog" = every model on hyprpi's standard tested list (docker/world/nv-inference-models.json: 32 OpenAI + 12 Claude)
+  // "add" and "exclude" then apply on top of any preset, and "default" is always included.
+  "preset": "catalog",
+
+  // pi's default model for new agents
+  "default": "openai/openai/gpt-6-astra",
+
+  // Thoughts-H's model (the binding's "thoughtsModel", when it has one, wins over this)
+  "thoughts": "azure/anthropic/claude-opus-5-5",
+
+  "short": [
+    "azure/anthropic/claude-opus-5-5",
+    "azure/anthropic/claude-sonnet-5-5",
+    "azure/anthropic/claude-haiku-4-5",
+    "openai/openai/gpt-6.1-sol",
+    "gcp/google/gemini-3.1-pro-preview"
+  ],
+
+  // GPT spread: 6.1 sol = the newest flagship; 6 astra and 6 luna = the other GPT-6 variants, luna as the light tier (its name
+  // follows 5.6's sol / terra / luna, largest to smallest; the Hub publishes no prices to confirm it)
+  "claude3gpt3": [
+    "azure/anthropic/claude-opus-5-5",
+    "azure/anthropic/claude-sonnet-5-5",
+    "azure/anthropic/claude-haiku-5-5",
+    "openai/openai/gpt-6.1-sol",
+    "openai/openai/gpt-6-astra",
+    "openai/openai/gpt-6-luna"
+  ],
+
+  "custom": [
+    "azure/anthropic/claude-opus-5-5"
+  ],
+
+  // added to any preset, e.g. "openai/openai/gpt-6-sol", "nvidia/deepseek-ai/deepseek-v4-pro", "nvidia/qwen/qwen3.5-122b-a10b"
+  "add": ["perplexity/perplexity/sonar", "perplexity/perplexity/sonar-deep-research"],
+
+  // taken out of any preset (exact ids)
+  "exclude": [],
+
+  // never offered, whatever the preset ("*" = any text, case-insensitive), each with why
+  "deny": [
+    { "pattern": "*kimi*", "why": "J389/J392: kimi-k3 passed a short 'reply ok' test but answered a full agent prompt with garbled words; Angus: never choose it again" }
+  ],
+
+  // Models that aren't on the laptop's lists need their details here (api: "openai-completions" for Claude, Gemini and open
+  // models; "openai-responses" for OpenAI GPT). Ids found in the laptop's ~/.pi/agent/models.json or docker/world/nv-inference-models.json
+  // need nothing.
+  "details": {
+    "perplexity/perplexity/sonar": { "name": "sonar (Inference Hub, web search)", "api": "openai-completions", "reasoning": false, "input": ["text"], "contextWindow": 128000, "maxTokens": 8000 },
+    "perplexity/perplexity/sonar-deep-research": { "name": "sonar-deep-research (Inference Hub, web search)", "api": "openai-completions", "reasoning": false, "input": ["text"], "contextWindow": 128000, "maxTokens": 16000 },
+    "gcp/google/gemini-3.1-pro-preview": { "api": "openai-completions", "contextWindow": 1048576, "maxTokens": 65536 },
+    "nvidia/deepseek-ai/deepseek-v4-pro": { "api": "openai-completions", "contextWindow": 128000, "maxTokens": 32000 },
+    "nvidia/qwen/qwen3.5-122b-a10b": { "api": "openai-completions", "contextWindow": 262144, "maxTokens": 32000 },
+    "nvidia/nvidia/nemotron-3-super-120b-long-ctx": { "api": "openai-completions", "contextWindow": 1000000, "maxTokens": 32000 }
+  }
+}

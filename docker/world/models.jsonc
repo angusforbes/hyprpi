@@ -1,0 +1,64 @@
+// docker/world/models.jsonc: which NVIDIA Inference Hub ("nv-inference") models the sandboxed world (world G, sandbox world-g)
+// offers (J500). Edit freely, then run `node docker/world/pi-models.mjs world-g` (add --dry-run first to see the change). The
+// sandbox keeps its own key in its pi auth.json; nothing here touches it. lib/models-resolve.mjs turns this file into the model
+// list on the laptop; lib/nv-models.mjs's applyModels writes it into the sandbox's pi (through sbx). The setting below reproduces
+// what G ran on 2026-10-12: the standard list (preset "catalog"), gpt-6-astra as the default and as Thoughts-G's model.
+// (The Doorman's own sandbox, doorman-g, has its own single model and isn't set from here.)
+{
+  // Which set to start from (the same choices in omnistation/models.jsonc and docker/world/models.jsonc; lib/models-resolve.mjs):
+  //   "short"  = the short list below
+  //   "laptop" = every nv-inference model on this laptop's scoped model list (pi's enabledModels in ~/.pi/agent/settings.json),
+  //              read when setup runs, minus "deny" below
+  //   "claude3gpt3" = three Claude and three GPT models (the list below; Angus, 2026-10-12)
+  //   "custom" = the "custom" list below
+  //   "catalog" = every model on hyprpi's standard tested list (docker/world/nv-inference-models.json: 32 OpenAI + 12 Claude)
+  // "add" and "exclude" then apply on top of any preset, and "default" is always included.
+  "preset": "catalog",
+
+  // pi's default model for new agents
+  "default": "openai/openai/gpt-6-astra",
+
+  "short": [
+    "azure/anthropic/claude-opus-5-5",
+    "azure/anthropic/claude-sonnet-5-5",
+    "azure/anthropic/claude-haiku-4-5",
+    "openai/openai/gpt-6.1-sol",
+    "gcp/google/gemini-3.1-pro-preview"
+  ],
+
+  // GPT spread: 6.1 sol = the newest flagship; 6 astra and 6 luna = the other GPT-6 variants, luna as the light tier (its name
+  // follows 5.6's sol / terra / luna, largest to smallest; the Hub publishes no prices to confirm it)
+  "claude3gpt3": [
+    "azure/anthropic/claude-opus-5-5",
+    "azure/anthropic/claude-sonnet-5-5",
+    "azure/anthropic/claude-haiku-5-5",
+    "openai/openai/gpt-6.1-sol",
+    "openai/openai/gpt-6-astra",
+    "openai/openai/gpt-6-luna"
+  ],
+
+  "custom": [
+    "azure/anthropic/claude-opus-5-5"
+  ],
+
+  // added to any preset, e.g. "openai/openai/gpt-6-sol", "nvidia/deepseek-ai/deepseek-v4-pro", "nvidia/qwen/qwen3.5-122b-a10b"
+  "add": [],
+
+  // taken out of any preset (exact ids)
+  "exclude": [],
+
+  // never offered, whatever the preset ("*" = any text, case-insensitive), each with why
+  "deny": [
+    { "pattern": "*kimi*", "why": "J389/J392: kimi-k3 passed a short 'reply ok' test but answered a full agent prompt with garbled words; Angus: never choose it again" }
+  ],
+
+  // Models that aren't on the laptop's lists need their details here (api: "openai-completions" for Claude, Gemini and open
+  // models; "openai-responses" for OpenAI GPT). Ids found in the laptop's ~/.pi/agent/models.json or docker/world/nv-inference-models.json
+  // need nothing.
+  "details": {
+    "gcp/google/gemini-3.1-pro-preview": { "api": "openai-completions", "contextWindow": 1048576, "maxTokens": 65536 },
+    "nvidia/deepseek-ai/deepseek-v4-pro": { "api": "openai-completions", "contextWindow": 128000, "maxTokens": 32000 },
+    "nvidia/qwen/qwen3.5-122b-a10b": { "api": "openai-completions", "contextWindow": 262144, "maxTokens": 32000 },
+    "nvidia/nvidia/nemotron-3-super-120b-long-ctx": { "api": "openai-completions", "contextWindow": 1000000, "maxTokens": 32000 }
+  }
+}
