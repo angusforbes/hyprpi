@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # brev-image "<prompt>" [steps] [size]: text to image on this Brev box's GPU (SDXL-Turbo, brev/image/server.py). Prints the
-# PNG's path and the seconds it took. Made for agents: pi's bash tool runs it. The laptop copies new images to ~/Downloads/brev
+# PNG's path and the seconds it took. Made for agents: pi's bash tool runs it. The laptop copies new images to ~/Brev
 # with `omnistation/world X images`.
 set -euo pipefail
 [[ -n "${1:-}" ]] || { echo 'usage: brev-image "<prompt>" [steps 1-8, default 4] [size 256-1024, default 512]' >&2; exit 2; }

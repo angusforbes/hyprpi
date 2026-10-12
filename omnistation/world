@@ -135,9 +135,9 @@ case "$cmd" in
     setsid -f node "$H/omnistation/world-status.mjs" "$WL" </dev/null >/dev/null 2>&1 || true
     echo "opened agent $NAME on workspace $WS (world $WL${LABEL:+, $LABEL})" ;;
   images)
-    # J483: copy the remote machine's new generated images (~/workspace/outputs: brev-image's PNGs) to ~/Downloads/brev and
+    # J483: copy the remote machine's new generated images (~/workspace/outputs: brev-image's PNGs) to ~/Brev and
     # print each as a file:// link. Only plain names (letters, digits, . _ -; brev-image makes no others) are copied.
-    dest="${HYPRPI_IMAGES_DIR:-$HOME/Downloads/brev}"; mkdir -p "$dest"
+    dest="${HYPRPI_IMAGES_DIR:-$HOME/Brev}"; mkdir -p "$dest"
     names=$("${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && python3 -c 'import os,re; [print(f) for f in sorted(os.listdir(\".\")) if re.fullmatch(r\"[A-Za-z0-9][A-Za-z0-9._-]*[.]png\", f) and os.path.isfile(f)]' || true" 2>/dev/null) || { echo "world: couldn't reach world $WL's machine (ssh failed)" >&2; exit 3; }  # (review) whole names only: one with a newline in it never matches
     new=(); while IFS= read -r n; do n="${n%$'\r'}"; [[ "$n" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.png$ && ! -e "$dest/$n" ]] && new+=("$n"); done <<< "$names"
     (( ${#new[@]} )) || { echo "no new images on world $WL"; exit 0; }
