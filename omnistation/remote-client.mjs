@@ -287,14 +287,19 @@ async function submit(text) {
   const m = t.match(/^\/model(?:\s+(.*))?$/); if (m) return pickModel((m[1] || "").trim());
   editor.addToHistory?.(t);
   if (!st.connected) { outbox.push(text); paintChrome(); return; } // sent as soon as the link is up (the first connect takes seconds)
+  await send(text);
+}
+// one prompt to the remote pi; "steer" is harmless when it is idle (it just starts) and needed when it is busy, so a prompt
+// is never refused because our idea of "busy" lags behind (review: queued offline prompts went out together)
+async function send(text) {
   try {
-    const r = await rpc(st.streaming ? { type: "prompt", message: text, streamingBehavior: "steer" } : { type: "prompt", message: text });
+    const r = await rpc({ type: "prompt", message: text, streamingBehavior: "steer" });
     if (r?.disposition === "queued") { st.pending++; paintChrome(); }
   } catch (e) {
     // (review) a dropped link after pi accepted it but before the answer came back: it may have been sent; never call it "not sent"
     st.lastErr = e.message === "connection lost" ? "the connection dropped while sending: it may have arrived (the history shows it after the reconnect); it's also back in the editor, don't resend blindly"
       : `not sent (${e.message}); it's back in the editor`;
-    editor.setText(text); paintChrome();
+    editor.setText([editor.getText(), text].filter(Boolean).join("\n\n")); paintChrome(); // appended: several failures don't overwrite each other
   }
 }
 editor.onSubmit = (text) => { if (DEBUG) process.stderr.write(`submit ${JSON.stringify(text)}\n`); editor.setText(""); submit(text); };
@@ -365,7 +370,7 @@ function connect() {
     while ((i = buf.indexOf("\n")) >= 0) {
       const l = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1); if (!l) continue;
       let r; try { r = scrub(JSON.parse(l)); } catch { continue; }
-      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(() => { for (const t of outbox.splice(0)) submit(t); paintChrome(); }); continue; }
+      if (r.type === "broker_hello") { hello = true; everConnected = true; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(async () => { for (const t of outbox.splice(0)) await send(t); paintChrome(); }); continue; }
       if (r.type === "broker_pong") continue;
       if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
       else if (booting && r.type !== "response" && r.type !== "extension_ui_request") continue; // already in the coming snapshot
