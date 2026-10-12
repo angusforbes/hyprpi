@@ -9,6 +9,7 @@
 // offline with a hint, and no new connection is tried for a while (a `tsh ssh` with an expired login is never started, so it
 // can't open a browser to log in).
 import { spawn, execFile } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,8 +37,8 @@ export const remoteOf = (letter) => remoteWorlds().find((w) => w.letter === lett
 
 const ALLOWED = new Set(["list", "agent.prompt", "agent.interrupt", "thoughts.get", "thoughts.send"]);
 // The loop, on the remote machine. Its environment is remote.sh's (the headless daemon's socket and state).
-const LOOP = 'import(process.argv[1]+"/lib/client.mjs").then(async(c)=>{const fs=await import("node:fs"),os=await import("node:os");const S=os.homedir()+"/"+process.argv[2]+"/sessions/";const rl=(await import("node:readline")).createInterface({input:process.stdin});process.stdout.write(JSON.stringify({id:0,ok:true,ready:true})+"\\n");rl.on("line",async(l)=>{let q;try{q=JSON.parse(l);}catch{return;}const out=(o)=>process.stdout.write(JSON.stringify({id:q.id,...o})+"\\n");try{if(q.t==="call"){const k=await c.connect({timeout:5000});try{out({ok:true,r:await k.call(q.m,q.p,{timeoutMs:30000})});}finally{k.close();}}else if(q.t==="file"){const f=fs.realpathSync(String(q.f));if(!f.startsWith(S)||!/^[a-z][a-z0-9-]{0,30}\\/[^/]+\\.jsonl$/.test(f.slice(S.length)))throw new Error("not a session file");if(fs.statSync(f).size>24e6)throw new Error("session file too large");out({ok:true,b:fs.readFileSync(f).toString("base64")});}else throw new Error("bad request");}catch(e){out({ok:false,e:String(e&&e.message||e).slice(0,300)});}});rl.on("close",()=>process.exit(0));}).catch((e)=>{process.stderr.write(String(e.message||e));process.exit(1);})';
-const remoteCmd = (w) => { if (!/^\.hyprpi-[a-i]$/.test(w.dir)) throw new Error("bad remote dir"); return `export HYPRPI_STATE="$HOME/${w.dir}/state" HYPRPI_SOCKET="$HOME/${w.dir}/run/daemon.sock" HYPRPI_NO_ADOPT=1 PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; unset HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY DISPLAY; exec node --input-type=module -e '${LOOP}' "$HOME/hyprpi" ${w.dir}`; };
+const LOOP = 'import(process.argv[1]+"/lib/client.mjs").then(async(c)=>{const fs=await import("node:fs"),os=await import("node:os");const S=os.homedir()+"/"+process.argv[2]+"/sessions/",N=String(process.argv[3]||"");const rl=(await import("node:readline")).createInterface({input:process.stdin});process.stdout.write(JSON.stringify({n:N,id:0,ok:true,ready:true})+"\\n");rl.on("line",async(l)=>{let q;try{q=JSON.parse(l);}catch{return;}const out=(o)=>process.stdout.write(JSON.stringify({n:N,id:q.id,...o})+"\\n");try{if(q.t==="call"){const k=await c.connect({timeout:5000});try{out({ok:true,r:await k.call(q.m,q.p,{timeoutMs:30000})});}finally{k.close();}}else if(q.t==="file"){const f=fs.realpathSync(String(q.f));if(!f.startsWith(S)||!/^[a-z][a-z0-9-]{0,30}\\/[^/]+\\.jsonl$/.test(f.slice(S.length)))throw new Error("not a session file");if(fs.statSync(f).size>24e6)throw new Error("session file too large");out({ok:true,b:fs.readFileSync(f).toString("base64")});}else throw new Error("bad request");}catch(e){out({ok:false,e:String(e&&e.message||e).slice(0,300)});}});rl.on("close",()=>process.exit(0));}).catch((e)=>{process.stderr.write(String(e.message||e));process.exit(1);})';
+const remoteCmd = (w, nonce) => { if (!/^\.hyprpi-[a-i]$/.test(w.dir) || !/^[0-9a-f]{32}$/.test(nonce)) throw new Error("bad remote dir"); return `export HYPRPI_STATE="$HOME/${w.dir}/state" HYPRPI_SOCKET="$HOME/${w.dir}/run/daemon.sock" HYPRPI_NO_ADOPT=1 PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; unset HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY DISPLAY; exec node --input-type=module -e '${LOOP}' "$HOME/hyprpi" ${w.dir} ${nonce}`; };
 
 // ---- offline: the Teleport login (when the ssh argv is tsh) and the last connection failure
 const down = new Map(); // name -> { until, why }
@@ -53,13 +54,22 @@ const markDown = (name, why) => { down.set(name, { until: Date.now() + RETRY_MS,
 
 // ---- the bridge: one long-lived connection per remote world
 const bridges = new Map(); // name -> { p, buf, pending, next, dead, ready: Promise }
-async function bridge(w) {
-  let b = bridges.get(w.name);
-  if (b && !b.dead && b.p.exitCode === null) { await b.ready; return b; }
+// (RemoteReview MED) creation is serialized per world: concurrent first requests share ONE connection (no orphans)
+const creating = new Map(); // name -> Promise<bridge>
+function bridge(w) {
+  const b = bridges.get(w.name);
+  if (b && !b.dead && b.p.exitCode === null) return b.ready.then(() => b);
+  let c = creating.get(w.name);
+  if (!c) { c = makeBridge(w).finally(() => creating.delete(w.name)); creating.set(w.name, c); }
+  return c;
+}
+async function makeBridge(w) {
+  let b;
   const off = offline(w.name); if (off) throw Object.assign(new Error(off), { offline: true });
   if (path.basename(w.ssh[0]) === "tsh") { const why = await tshValid(w.ssh[0]); if (why) { markDown(w.name, why); throw Object.assign(new Error(why), { offline: true }); } }
   const args = path.basename(w.ssh[0]) === "ssh" ? ["-o", "BatchMode=yes", ...w.ssh.slice(1)] : w.ssh.slice(1); // never a prompt
-  const p = spawn(w.ssh[0], [...args, remoteCmd(w)], { stdio: ["pipe", "pipe", "pipe"] });
+  const nonce = crypto.randomBytes(16).toString("hex"); // (RemoteReview MED) every real reply carries it: a banner or motd line can't pose as one
+  const p = spawn(w.ssh[0], [...args, remoteCmd(w, nonce)], { stdio: ["pipe", "pipe", "pipe"] });
   let err = "";
   b = { p, buf: "", pending: new Map(), next: 1, dead: false };
   const fail = (why) => {
@@ -83,10 +93,11 @@ async function bridge(w) {
     let i; while ((i = b.buf.indexOf("\n")) >= 0) {
       const line = b.buf.slice(0, i); b.buf = b.buf.slice(i + 1);
       if (!line.startsWith("{")) continue; // a login banner or motd line before the loop starts
-      let m; try { m = JSON.parse(line); } catch { return fail("bad reply"); }
-      const x = b.pending.get(m?.id); if (!x) continue;
+      let m; try { m = JSON.parse(line); } catch { if (!b.readyDone) continue; return fail("bad reply"); }
+      if (!m || typeof m !== "object" || m.n !== nonce || !Number.isInteger(m.id)) { if (!b.readyDone) continue; return fail("bad reply"); } // only the loop's own lines
+      const x = b.pending.get(m.id); if (!x) continue;
+      if (m.id === 0) { if (m.ok !== true || m.ready !== true) { x.reject(new Error("bad handshake")); return fail("bad handshake"); } b.pending.delete(0); clearTimeout(x.timer); b.readyDone = true; down.delete(w.name); x.resolve(); continue; }
       b.pending.delete(m.id); clearTimeout(x.timer);
-      if (m.id === 0) { b.readyDone = true; down.delete(w.name); x.resolve(); continue; }
       if (m.ok === true) x.resolve(m);
       else if (m.ok === false) x.reject(Object.assign(new Error(String(m.e || "error").slice(0, 300)), { inner: true }));
       else { x.reject(new Error("bad reply")); return fail("bad reply"); }
