@@ -78,6 +78,12 @@ try {
   await c.call("guest.pin", { address: "0xf6", pinned: false });
   const dz2 = await c.call("guest.dismiss", { address: "0xf6" }); await sleep(300);
   ok("unpinned, it is dismissed to its home (65)", where()["0xf6"] === 65 && dz2?.home === 65, JSON.stringify(dz2));
+  // (J477Check) a pin belongs to the window, not its address: a new G window that reuses a pinned one's address isn't pinned
+  await c.call("guest.pin", { address: "0xf6", pinned: true });
+  { const st = JSON.parse(fs.readFileSync(W, "utf8")); const g = st.clients.find((x) => x.address === "0xf6"); g.pid = 206; g.title = "🐳 G: π - Replacement - world-g"; g.workspace = { id: 61, name: "61" }; fs.writeFileSync(W, JSON.stringify(st));
+    const hw = path.join(xs, "hyprpi", "worlds", "world-g", "windows.json"), h = JSON.parse(fs.readFileSync(hw, "utf8")); h.windows["0xf6"] = { kind: "agent", home: 66, pid: 206 }; fs.writeFileSync(hw, JSON.stringify(h)); }
+  const dz3 = await c.call("guest.dismiss", { address: "0xf6" }); await sleep(300);
+  ok("a window reusing a pinned window's address isn't pinned (it is dismissed home)", !dz3?.pinned && where()["0xf6"] === 66, JSON.stringify(dz3));
   c.close();
 } finally { d.kill("SIGTERM"); await sleep(400); fs.rmSync(S, { recursive: true, force: true }); }
 console.log(fails ? `sandbox-summon: ${fails} FAILED` : "sandbox-summon: all pass");
