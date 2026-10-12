@@ -52,7 +52,10 @@ const PORT = Number(process.env.HYPRPI_REMOTE_PORT) || 8897;
 const PHONE_CFG = loadConfig().phone || {};
 const UPLOAD_DIR = expandHome(PHONE_CFG.uploadDir || "~/Phone");
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch { /* there */ }
-const FILE_ROOTS = [...new Set([...(PHONE_CFG.folders || []), PHONE_CFG.uploadDir || "~/Phone"].map(expandHome))]
+// W7/J494: phone.extraDirs = more folders browsed read-only like phone.folders (default ~/Brev, the cloud box's synced folder);
+// each is added only when it exists. Uploads still go to uploadDir only.
+const EXTRA_DIRS = (Array.isArray(PHONE_CFG.extraDirs) ? PHONE_CFG.extraDirs : ["~/Brev"]).map(expandHome).filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } });
+const FILE_ROOTS = [...new Set([...(PHONE_CFG.folders || []).map(expandHome), ...EXTRA_DIRS, expandHome(PHONE_CFG.uploadDir || "~/Phone")])]
   .filter((d) => d !== UPLOAD_DIR || (() => { try { return !fs.lstatSync(d).isSymbolicLink(); } catch { return false; } })()) // the upload inbox: never through a link
   .map((d) => { try { return fs.realpathSync(d); } catch { return d; } });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);

@@ -66,7 +66,7 @@ from the page itself (Origin check). There is no shell and no file writing.
 
 ## Run it
 
-- Folders: what it may read, where uploads go and the Obsidian vault are `phone.folders`, `phone.uploadDir` and `phone.vault` in `~/.config/hyprpi/config.json` (see the main README, Config).
+- Folders: `phone.extraDirs` (default `["~/Brev"]`, W7/J494: the Brev cloud box's synced folder; only if it exists) adds browse/open/download-only folders to the Files tab, read with the same rules as the others (real paths under the root, no hidden parts, symlinks can't leave). Uploads still go only to `~/Phone`: not into Brev. What it may read, where uploads go and the Obsidian vault are `phone.folders`, `phone.uploadDir` and `phone.vault` in `~/.config/hyprpi/config.json` (see the main README, Config).
 - Service (installed, starts at login): `systemctl --user restart hyprpi-remote-control`
 - Logs: `journalctl --user -u hyprpi-remote-control -f`
 - Install on another machine: `hyprpi remote install` (or `hyprpi integration install remote`): writes the unit with this checkout's path and enables it; `hyprpi remote status` shows it
