@@ -5,7 +5,8 @@
 #
 #   remote.sh install            clone (or update) hyprpi into ~/hyprpi from its public repo; check node 22+ and pi (install pi
 #                                into ~/.local with npm if it's missing, the version hyprpi is tested with)
-#   remote.sh start [NAME]       start the headless daemon and one agent NAME (default alpha) in tmux; both outlive ssh
+#   remote.sh start [NAME]       start the headless daemon and one agent NAME (default alpha) in tmux; both outlive ssh. Its room is
+#                                its world's (HYPRPI_H_WS, default 71 = world H): the laptop shows it on that workspace
 #   remote.sh attach [NAME]      attach this terminal to agent NAME's pi (what a world H window runs); detach = close the window
 #   remote.sh status             daemon and agents, as hyprpi sees them
 #   remote.sh stop [NAME|all]    stop an agent (its session file stays, so `start NAME` resumes it), or everything
@@ -51,10 +52,12 @@ case "$cmd" in
     if tmux has-session -t "hyprpi-h-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
     # its pi session is resumed when it ran before (the newest session of this agent id), else a new one starts
     sess=$(ls -t "$ROOT/sessions/$NAME"/*.jsonl 2>/dev/null | head -1 || true)
-    tmux new-session -d -s "hyprpi-h-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $DIR/bin/hyprpi new --id h-$NAME --name $NAME --cwd $WORK -- --session-dir $ROOT/sessions/$NAME ${sess:+--session $sess}"
+    tmux new-session -d -s "hyprpi-h-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $DIR/bin/hyprpi new --id h-$NAME --name $NAME --cwd $WORK --workspace ${HYPRPI_H_WS:-71} -- --session-dir $ROOT/sessions/$NAME ${sess:+--session $sess}"
+    tmux set-option -t "hyprpi-h-$NAME" status off >/dev/null 2>&1 || true  # the window looks like any hyprpi agent: no tmux bar
     sleep 2; tmux has-session -t "hyprpi-h-$NAME" 2>/dev/null && echo "agent $NAME started (tmux session hyprpi-h-$NAME)" || { echo "remote.sh: agent $NAME exited at once" >&2; exit 4; } ;;
   attach)
     tmux has-session -t "hyprpi-h-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null
+    tmux set-option -t "hyprpi-h-$NAME" status off >/dev/null 2>&1 || true
     exec tmux attach -t "hyprpi-h-$NAME" ;;
   status)
     tmux ls 2>/dev/null | grep '^hyprpi-h-' || echo "nothing running"
