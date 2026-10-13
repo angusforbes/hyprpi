@@ -285,6 +285,11 @@ PYK
     secrets_ok || exit 3
     [[ -S "$HYPRPI_SOCKET" ]] || { echo '{"error":"the daemon on this machine is not running"}'; exit 0; }
     exec env HYPRPI_REMOTE_WORLD="${W^^}" node "$DIR/lib/remote-thoughts.mjs" "${W^^}" ;;
+  link)
+    # J555: the world's panel link: the laptop's omnistation/rlink.mjs runs this over one ssh and carries every laptop panel's
+    # connection to this daemon through it (omnistation/rlink-remote.mjs; stdout carries the frames, nothing else may print)
+    secrets_ok >&2 || exit 3
+    exec node "$DIR/omnistation/rlink-remote.mjs" ;;
   panel)
     # J480: one of the world's panels (room = Stream, board = Projects, search = Thoughts, agents), run HERE against this
     # machine's daemon, in the ssh terminal the laptop's panel window opened (omnistation/world X panel KIND)
