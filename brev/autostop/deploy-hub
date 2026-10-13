@@ -53,7 +53,8 @@ for pf in "$LST/pause" "$LST"/boxes/*/pause; do
   put "$pf" "\$HOME/.local/state/brev-autostop/$rel" 644; echo "deploy-hub: pause carried over: $rel"
 done
 # 3. ssh config for the other boxes, linger, the timer
-run "${SSH[@]}" 'set -e; ln -sfn $HOME/.local/share/brev-autostop/brev-autostop $HOME/.local/bin/brev-autostop; timeout 120 brev refresh >/dev/null 2>&1 || echo "deploy-hub: brev refresh failed (the boxes may not be reachable over ssh yet)" >&2
+run "${SSH[@]}" 'set -e; ln -sfn $HOME/.local/share/brev-autostop/brev-autostop $HOME/.local/bin/brev-autostop; sudo -n ln -sfn $HOME/.local/share/brev-autostop/brev-autostop /usr/local/bin/brev-autostop 2>/dev/null || true; # (also on the PATH of a plain `ssh HOST brev-autostop status`)
+  timeout 120 brev refresh >/dev/null 2>&1 || echo "deploy-hub: brev refresh failed (the boxes may not be reachable over ssh yet)" >&2
   [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] || sudo -n loginctl enable-linger "$USER"
   systemctl --user daemon-reload; systemctl --user enable --now brev-autostop.timer >/dev/null 2>&1; systemctl --user is-active brev-autostop.timer >/dev/null
   h=$HOME/.local/state/brev-autostop/heartbeat; [ ! -f "$h" ] || touch -d "2000-01-01" "$h"; # (backdated, not removed: a backup reading its content meanwhile is not misled)
