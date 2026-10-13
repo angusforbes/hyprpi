@@ -22,11 +22,11 @@ Angus: "b yes at $20", then "lets actually add warnings for $50, $20, $10, $5, $
 - One alert per level crossed, sharper each time: $50 normal; $20 and $10 "⚠ … top up soon"; $5 and $1 "🚨 almost gone … now"; $0 "🚨 GONE … NOW". All but $50 are critical (phone priority high). Each alert names the next level. If several levels are crossed between reads, one alert goes out, for the lowest.
 - A level re-arms when credit is back at or above it (a top-up). It only warns: auto-stop never stops boxes for credit.
 - A failed API read is logged once and sends no alert; the idle-stop runs regardless.
-- `brev-autostop status` shows: "credit warnings at $50, $20, $10, $5, $1, $0: last read $229.90 at …".
+- `brev-autostop status` shows: "credit warnings at $50, $20, $10, $5, $1, $0: last read $NNN.NN at …".
 
 ## Tested (hub)
-- Fake billing server, walking 229.90 → 60 → 49.99 → 45 → 19.99 → 15 → 9.99 → 4.99 → 4.50 → 0.99 → 0 → -0.50 → -1 → 30 → 15 → 250 → 7. Each level fired exactly once on the way down. After the top-up to $30 it re-armed below $50 and $15 then fired the $20 level again (correct: the $30 top-up re-armed it). After $250 everything re-armed, and $7 fired the $10 level.
-- Real API: reads $229.90; the timer run result is success. The mathbac-a100 pause is unchanged (until Wed 16:40 UTC), and idle-stop is unchanged.
+- Fake billing server, walking a high balance → 60 → 49.99 → 45 → 19.99 → 15 → 9.99 → 4.99 → 4.50 → 0.99 → 0 → -0.50 → -1 → 30 → 15 → 250 → 7. Each level fired exactly once on the way down. After the top-up to $30 it re-armed below $50 and $15 then fired the $20 level again (correct: the $30 top-up re-armed it). After $250 everything re-armed, and $7 fired the $10 level.
+- Real API: reads the real balance; the timer run result is success. The training box's pause is unchanged, and idle-stop is unchanged.
 
 ## Undo
 Remove the `credit_warn_usd` line from the hub's config (the code is then inert), or reverse-apply the patches.
