@@ -35,14 +35,20 @@ SSHARGS="-o ConnectTimeout=20 -o BatchMode=yes -o ServerAliveInterval=15 -o Serv
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
 [[ -f "$LOG" ]] && (( $(wc -l < "$LOG") > 2000 )) && { tail -n 1000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; }
 
+# A pair's state folder name (HubSyncCheck547: by pair, not by box, so two pairs on one box never share a failure count):
+# BOX for the usual workspace/shared; any other remote folder: "+" and a hash of box and folder (a box name never has "+", so
+# the two kinds never collide)
+pairkey() { if [[ "$2" == workspace/shared ]]; then echo "$1"; else echo "+$(printf '%s\0%s' "$1" "$2" | sha256sum | cut -c1-16)"; fi; }
 # The pairs: lines of "LOCAL<TAB>BOX<TAB>REMOTE<TAB>OPTS"
 pairs() {
   if [[ -n "${BREV_SYNC_BOX:-}" ]]; then printf '%s\t%s\t%s\t%s\n' "${BREV_SYNC_DIR:-$HOME/Brev}" "$BREV_SYNC_BOX" "${BREV_SYNC_REMOTE:-workspace/shared}" "pullworld"; return; fi
   if [[ ! -f "$CONF" ]]; then printf '%s\t%s\t%s\t%s\n' "$HOME/Brev" hyprpi-l40s workspace/shared "pull ignore=Hub"; return; fi
-  local l a b c rest
+  local l a b c rest seen=" "
   while IFS= read -r l || [[ -n "$l" ]]; do
     l="${l%%#*}"; read -r a b c rest <<< "$l"; [[ -n "$a" && -n "$b" && -n "$c" ]] || continue
     [[ "$b" =~ ^[A-Za-z0-9._-]+$ && "$c" =~ ^[A-Za-z0-9._/-]+$ && "$c" != *..* ]] || { log "config: bad line skipped: $l"; continue; }
+    [[ "$seen" == *" $b:$c "* ]] && { log "config: $b:~/$c is already in another pair; line skipped: $l"; continue; } # one laptop folder per box folder
+    seen+="$b:$c "
     printf '%s\t%s\t%s\t%s\n' "${a/#\~/$HOME}" "$b" "$c" "$rest"
   done < "$CONF"
 }
@@ -50,7 +56,7 @@ pairs() {
 if [[ "${1:-}" == status ]]; then
   ls_out="$(timeout 60 brev ls 2>/dev/null)"
   while IFS=$'\t' read -r -u 4 LOCAL BOX REMOTE OPTS; do
-    P="$ST"; [[ -z "${BREV_SYNC_BOX:-}" ]] && P="$ST/pairs/$BOX"
+    P="$ST"; [[ -z "${BREV_SYNC_BOX:-}" ]] && P="$ST/pairs/$(pairkey "$BOX" "$REMOTE")"
     echo "$LOCAL <-> $BOX:~/$REMOTE${OPTS:+ ($OPTS)}: box $(awk -v b="$BOX" '$1==b{print $2}' <<< "$ls_out"); last state: $(cat "$P/state" 2>/dev/null), failures in a row: $(cat "$P/fails" 2>/dev/null || echo 0)$([[ -f "$P/alerted" ]] && echo ", alerted")"
   done 4< <(pairs)
   echo "--- log (last 12)"; tail -n 12 "$LOG" 2>/dev/null; exit 0
@@ -79,7 +85,7 @@ pull_ssh() {
 any_failed=0
 sync_pair() { # LOCAL BOX REMOTE OPTS
   local LOCAL="$1" BOX="$2" REMOTE="$3" OPTS="$4" P="$ST" TAG="" why="" rc prc=0 pulled="" out status now fails o
-  [[ -z "${BREV_SYNC_BOX:-}" ]] && { P="$ST/pairs/$BOX"; TAG="[$BOX] "; }
+  [[ -z "${BREV_SYNC_BOX:-}" ]] && { P="$ST/pairs/$(pairkey "$BOX" "$REMOTE")"; TAG="[$BOX${REMOTE:+:$REMOTE}] "; [[ "$REMOTE" == workspace/shared ]] && TAG="[$BOX] "; }
   mkdir -p "$P" "$LOCAL"
   local NAME="${LOCAL/#$HOME/\~} <-> $BOX:~/$REMOTE"
   pstate() { local was; was="$(cat "$P/state" 2>/dev/null)"; [[ "$was" == "$1" ]] || { log "$TAG$1${2:+: $2}"; echo "$1" > "$P/state"; }; }
