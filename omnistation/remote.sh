@@ -108,6 +108,21 @@ case "$cmd" in
       if [[ ! -e "$p" ]]; then node -e 'const fs=require("fs"),[p,n]=process.argv.slice(1);fs.writeFileSync(p,JSON.stringify({user:{name:n}},null,2)+"\n")' "$p" "$HYPRPI_REMOTE_USER_NAME"
       else node -e 'const fs=require("fs"),[p,n]=process.argv.slice(1);const s=fs.readFileSync(p,"utf8");const t=s.replace(/"user"\s*:\s*\{\s*"name"\s*:\s*""\s*\}/,JSON.stringify({user:{name:n}}).slice(1,-1));if(t!==s)fs.writeFileSync(p,t)' "$p" "$HYPRPI_REMOTE_USER_NAME"; fi  # the default file the daemon wrote: only an EMPTY name is filled in
     fi
+    # J528: the laptop's phone push settings (hyprpi.jsonc "phone.ntfy": topic, server, kinds …), so this world pushes its bonks and
+    # decisions to the same topic (a hub box pushes even while the laptop sleeps). Replaces this machine's "phone" entry.
+    if [[ -n "${HYPRPI_REMOTE_NTFY:-}" ]]; then
+      node -e '
+        const fs = require("fs"), [p, raw] = process.argv.slice(1); let n; try { n = JSON.parse(raw); } catch { process.exit(0); }
+        if (!n || typeof n !== "object" || typeof n.topic !== "string") process.exit(0);
+        const keep = { enabled: !!n.enabled, server: String(n.server || "https://ntfy.sh"), topic: n.topic, kinds: Array.isArray(n.kinds) ? n.kinds.map(String) : ["bonk", "decision"], maxPerHour: Number(n.maxPerHour) || 12, click: String(n.click || "") };
+        const line = `"phone": ${JSON.stringify({ ntfy: keep })}`;
+        let s = ""; try { s = fs.readFileSync(p, "utf8"); } catch { fs.writeFileSync(p, JSON.stringify({ phone: { ntfy: keep } }, null, 2) + "\n"); process.exit(0); }
+        try { const j = JSON.parse(s); j.phone = { ...(j.phone || {}), ntfy: keep }; fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n"); process.exit(0); } catch { /* jsonc with comments */ }
+        let t = s.replace(/"phone"\s*:\s*\{\s*"ntfy"\s*:\s*\{[^{}]*\}\s*\}/, line);
+        if (t === s) { const m = /^\s*\{/m.exec(s); if (!m) process.exit(0); const i = m.index + m[0].length; t = s.slice(0, i) + "\n  " + line + "," + s.slice(i); } // first entry: no comma after a // comment
+        fs.writeFileSync(p, t);' "$p" "$HYPRPI_REMOTE_NTFY"
+      echo "phone pushes: $(node -e 'try{const n=JSON.parse(process.argv[1]);console.log((n.enabled?"on":"off")+", topic "+n.topic)}catch{console.log("?")}' "$HYPRPI_REMOTE_NTFY")"
+    fi
     echo "hyprpi $(git -C "$DIR" log -1 --format=%h 2>/dev/null || cat "$DIR/.version" 2>/dev/null) in $DIR; pi $(pi --version 2>/dev/null | head -1); node $(node -v)"
     echo "next: log pi in once (run \`pi\` here, /login), then: remote.sh start" ;;
   start)

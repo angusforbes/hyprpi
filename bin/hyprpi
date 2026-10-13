@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { request, connect } from "../lib/client.mjs";
 import { ROOT, socketPath, runtimeDir, loadConfig, instanceKey, stateDir as stateDirOf } from "../lib/paths.mjs";
 import * as hypr from "../lib/hypr.mjs";
@@ -22,6 +23,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi post [--room R] TEXT post to a room as you (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
   hyprpi thoughts new W [--handoff FILE]   a fresh session for world W's Thoughts (the old one archived, never deleted)
+  hyprpi ntfy [config [--json] | test]   phone pushes (J528): the ntfy settings in hyprpi.jsonc "phone.ntfy", or a test push
   hyprpi thoughts alert W TEXT   a ⚠ line in world W's Thoughts thread (no turn; for background jobs, once per problem)
   hyprpi thoughts [--room R] [--via voice] TEXT   a message to a world's Thoughts (default: the world you're on); --via voice marks it 🎤 (dictation)
   hyprpi dictate [--to hp:ID|proj:NAME] TEXT   a dictation: the focused world's Thoughts (🎤), or the agent /
@@ -652,6 +654,7 @@ const commands = {
     const quiet = flag("--quiet");
     // --decision "question": blocked on a decision from Angus (`ding`); it becomes a Decide item (N68).
     const decision = opt("--decision", "");
+    const note = opt("--note", ""); // J528: a plain bonk's message (shown in its phone push)
     const given = opt("--agent", ""); // (recheck J337: consumed before reading the state, as before; required only below)
     const me = () => given || agentId();
     const status = args[0];
@@ -664,8 +667,27 @@ const commands = {
       return;
     }
     const id = me();
-    const r = await request("agent.update", { agent_id: id, status, quiet, ...(decision && status === "blocked" ? { decision } : {}) });
+    const r = await request("agent.update", { agent_id: id, status, quiet, ...(decision && status === "blocked" ? { decision } : {}), ...(note && status === "blocked" && !decision ? { note: note.slice(0, 1000) } : {}) });
     console.log(r.status);
+  },
+  // J528: the phone push settings (hyprpi.jsonc "phone.ntfy"), read straight from the file (no daemon needed; brev-autostop
+  // uses `hyprpi ntfy config --json`), and a test push.
+  ntfy: async () => {
+    const { ntfyConfig, phoneMessage } = await import("../lib/ntfy.mjs");
+    const n = ntfyConfig();
+    if (args[0] === "config" || !args[0]) {
+      if (flag("--json")) return console.log(JSON.stringify(n));
+      console.log(`phone pushes: ${n.enabled ? "on" : "off"} · server ${n.server} · topic ${n.topic || "(none)"} · kinds ${n.kinds.join(", ")} · at most ${n.maxPerHour}/hour${n.click ? ` · tap opens ${n.click}` : ""}\n(~/.config/hyprpi/hyprpi.jsonc "phone": { "ntfy": … })`);
+      return;
+    }
+    if (args[0] === "test") {
+      if (!n.topic) die("no phone.ntfy.topic in hyprpi.jsonc");
+      const { title, message } = phoneMessage("bonk", { world: "", agent: "hyprpi", text: `Test: phone pushes from hyprpi on ${os.hostname()} work${n.enabled ? "" : " (note: phone.ntfy.enabled is false, so hyprpi itself sends none)"}.` });
+      const r = await fetch(n.server, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic: n.topic, title, message, tags: ["white_check_mark"] }), signal: AbortSignal.timeout(10000) });
+      if (!r.ok) die(`${n.server} answered ${r.status}`);
+      return console.log(`test push sent to ${n.server}/${n.topic}`);
+    }
+    die("usage: hyprpi ntfy [config [--json] | test]");
   },
   // Called by the Hyprland click hook with the clicked window's address.
   seen: async () => { if (!args[0]) die("usage: hyprpi seen WINDOW_ADDRESS"); console.log(JSON.stringify(await request("agent.seen", { address: args[0] }))); },
