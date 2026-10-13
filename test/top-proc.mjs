@@ -278,8 +278,9 @@ const pidsOf = (r, id) => (G(r, id) || r.unattributed.find((u) => u.id === id) |
 const kids = [];
 try {
   const tag = "j557-" + process.pid;
-  const root = spawn("sh", ["-c", "sleep 30 & sleep 30 & wait"], { stdio: "ignore" }); kids.push(root);
-  const busy = spawn("sh", ["-c", "i=0; while [ $i -lt 3000000 ]; do i=$((i+1)); done; sleep 30"], { stdio: "ignore" }); kids.push(busy);
+  // every dummy gets its own process group (detached: pgid = its pid), so cleanup can signal exactly that group
+  const root = spawn("sh", ["-c", "sleep 30 & sleep 30 & wait"], { stdio: "ignore", detached: true }); kids.push(root);
+  const busy = spawn("sh", ["-c", "i=0; while [ $i -lt 3000000 ]; do i=$((i+1)); done; sleep 30"], { stdio: "ignore", detached: true }); kids.push(busy);
   const det = spawn("sleep", ["30"], { stdio: "ignore", detached: true, env: { PATH: process.env.PATH, HYPRPI_AGENT_ID: tag } }); kids.push(det);
   await sleep(150);
   const owners = [{ id: "root", name: "Root" + tag, world: "T", pids: [root.pid], envIds: [] }, { id: "busy", name: "Busy" + tag, world: "T", pids: [busy.pid], envIds: [] }, { id: "det", name: "Det" + tag, world: "T", pids: [], envIds: [tag] }, { id: "nothing", name: "N" + tag, world: "T", pids: [], envIds: [] }];
@@ -298,17 +299,18 @@ try {
   ok("B unrelated system processes excluded (pid 1, kernel threads)", !b2.processes.some((p) => p.pid === 1 || p.pid === 2 || p.ppid === 2));
   console.log(`info B: real scan saw ${b2.scan.processesSeen} processes, ${b2.unattributed.length} unattributed pi bucket(s), ${b2.processes.length} agent-related processes; limitations: ${b2.limitations.join(" | ") || "none"}`);
 } finally {
-  for (const k of kids) { try { process.kill(k.pid); } catch {} }
-  // their sleep children (only ours: we started them) die with the shells' process group only if signalled;
-  // kill any sleep whose parent is one of our shells
-  for (const k of kids) {
-    try {
-      for (const n of fs.readdirSync("/proc")) {
-        if (!/^\d+$/.test(n)) continue;
-        try { const st = parseStat(fs.readFileSync(`/proc/${n}/stat`, "latin1")); if (st && st.ppid === k.pid && st.comm === "sleep") process.kill(st.pid); } catch {}
-      }
-    } catch {}
-  }
+  // Signal only the process groups we created (pgid = each dummy's own pid), never a broad pkill or our own
+  // group; then wait for the leaders to close and check that nothing in those groups is left.
+  const groups = kids.map((k) => k.pid).filter((p) => p > 0 && p !== process.pid);
+  const closed = kids.map((k) => (k.exitCode !== null || k.signalCode !== null ? Promise.resolve() : new Promise((r) => k.once("close", r))));
+  for (const g of groups) { try { process.kill(-g, "SIGTERM"); } catch {} }
+  await Promise.race([Promise.all(closed), sleep(3000)]);
+  const pgrpOf = (n) => { try { const t = fs.readFileSync(`/proc/${n}/stat`, "latin1"); return Number(t.slice(t.lastIndexOf(")") + 2).split(" ")[2]); } catch { return null; } };
+  const leftIn = () => fs.readdirSync("/proc").filter((n) => /^\d+$/.test(n) && groups.includes(pgrpOf(n)));
+  let left = leftIn();
+  for (let i = 0; left.length && i < 20; i++) { await sleep(100); left = leftIn(); }
+  if (left.length) for (const g of groups) { try { process.kill(-g, "SIGKILL"); } catch {} }
+  ok("B cleanup: no process left in the dummies' own process groups", left.length === 0, left.join(","));
 }
 
 // ---- C) cost on the real /proc at a 2 s cadence, with every live Pi process on this machine as an owner
