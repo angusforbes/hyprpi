@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { ProcSampler, parseStat, isPiArgv } from "../lib/top-proc.mjs";
 
 let fails = 0;
@@ -230,6 +230,50 @@ const pidsOf = (r, id) => (G(r, id) || r.unattributed.find((u) => u.id === id) |
   ok("A5 periodic full scan every fullScanEvery samples; the new root has CPU once seen twice", x4.scan.full && G(x4, "D").cpuPercent === 0, [x4.scan, G(x4, "D")]);
 }
 
+// ---- A6) monitor (own pid), rootPiCount, getconf failure
+{
+  const R6 = mkRoot("monitor"); writeSystem(R6, { up: 1000 });
+  writeProc(R6, { pid: 77, ppid: 1, comm: "node-MainThread", start: 100, utime: 10, rss: 500, argv: ["node", "/x/bin/hyprpi", "top"] }); // the monitor: not agent-related
+  writeProc(R6, { pid: 20, ppid: 1, comm: "pi", start: 200, rss: 10 });
+  writeProc(R6, { pid: 21, ppid: 20, comm: "pi", start: 300, rss: 10 }); // an in-process helper pi under root 20
+  writeProc(R6, { pid: 30, ppid: 1, comm: "python3", start: 400, rss: 10 }); // a proxy root
+  writeProc(R6, { pid: 31, ppid: 30, comm: "pi", start: 500, rss: 10 });
+  writeProc(R6, { pid: 40, ppid: 1, comm: "pi", start: 600, rss: 10 });
+  writeProc(R6, { pid: 41, ppid: 1, comm: "pi", start: 700, rss: 10 });
+  writeProc(R6, { pid: 50, ppid: 1, comm: "sleep", start: 800, rss: 10, env: { HYPRPI_AGENT_ID: "env-only" } });
+  writeProc(R6, { pid: 51, ppid: 1, comm: "pi", start: 900, rss: 10, env: { HYPRPI_AGENT_ID: "env-only" } });
+  let m6 = 0;
+  const s6 = new ProcSampler({ procRoot: R6, clockTicks: 100, pageSize: 4096, now: () => m6, fullScanEvery: 1000, selfPid: 77 });
+  const own6 = [
+    { id: "P", pids: [20], envIds: [] }, { id: "Q", pids: [30], envIds: [] }, { id: "TWO", pids: [40, 41], envIds: [] },
+    { id: "ENV", pids: [], envIds: ["env-only"] }, { id: "NONE", pids: [], envIds: [] },
+  ];
+  const y1 = await s6.sample(own6);
+  ok("A6 monitor on the first sample: pid + RSS, CPU unknown", y1.monitor.pid === 77 && y1.monitor.rssBytes === 500 * 4096 && y1.monitor.cpuPercent === null, y1.monitor);
+  m6 += 2000; writeSystem(R6, { up: 1002 });
+  writeProc(R6, { pid: 77, ppid: 1, comm: "node-MainThread", start: 100, utime: 12, rss: 600, argv: ["node", "/x/bin/hyprpi", "top"] });
+  const y2 = await s6.sample(own6);
+  ok("A6 monitor read fresh between full scans: CPU 1 %, RSS 600 pages", !y2.scan.full && y2.monitor.cpuPercent === 1 && y2.monitor.rssBytes === 600 * 4096, [y2.scan.full, y2.monitor]);
+  ok("A6 an unrelated monitor stays out of processes and totals", !y2.processes.some((p) => p.pid === 77) && y2.totals.processCount === 8, y2.totals);
+  const rp = (id) => [G(y2, id).piCount, G(y2, id).rootPiCount];
+  ok("A6 rootPiCount: Pi root with a helper pi → piCount 2, rootPiCount 1", JSON.stringify(rp("P")) === "[2,1]", rp("P"));
+  ok("A6 rootPiCount: Python proxy root → 0 (its pi child is not a root)", JSON.stringify(rp("Q")) === "[1,0]", rp("Q"));
+  ok("A6 rootPiCount: two Pi roots → 2", JSON.stringify(rp("TWO")) === "[2,2]", rp("TWO"));
+  ok("A6 rootPiCount without a live root uses the oldest member (sleep → 0)", JSON.stringify(rp("ENV")) === "[1,0]", rp("ENV"));
+  ok("A6 rootPiCount of an empty owner is 0", G(y2, "NONE").rootPiCount === 0);
+  ok("A6 main fixture: kitty root 0, pi root 1, bucket 1", G(r1, "id-A").rootPiCount === 0 && G(r1, "id-B").rootPiCount === 1 && r1.unattributed.every((u) => u.rootPiCount === 1));
+  // a monitor that IS attributed (under an owner's root) counts there as normal and is still reported
+  const s7 = new ProcSampler({ procRoot: R6, clockTicks: 100, pageSize: 4096, now: () => 0, selfPid: 21 });
+  const z = await s7.sample(own6);
+  ok("A6 an attributed monitor counts in its group and in monitor", G(z, "P").pids.includes(21) && z.monitor.pid === 21 && z.monitor.rssBytes === 10 * 4096);
+  // getconf unavailable: refuse clearly instead of guessing CLK_TCK / PAGESIZE; injected values need no getconf
+  const mod = new URL("../lib/top-proc.mjs", import.meta.url).href;
+  const code = `import(${JSON.stringify(mod)}).then(({ProcSampler}) => { try { new ProcSampler(); console.log("NO-THROW"); } catch (e) { console.log("THREW " + e.message); } try { new ProcSampler({ clockTicks: 100, pageSize: 4096 }); console.log("INJECTED-OK"); } catch (e) { console.log("INJECTED-THREW " + e.message); } })`;
+  const g = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { PATH: path.join(T, "no-bin") }, encoding: "utf8" });
+  ok("A6 getconf missing → constructor throws a clear error", /THREW top-proc: getconf CLK_TCK failed .*pass clockTicks explicitly/.test(g.stdout), (g.stdout + g.stderr).trim().replace(/\n/g, " | "));
+  ok("A6 injected clockTicks/pageSize need no getconf", /INJECTED-OK/.test(g.stdout), g.stdout.trim().replace(/\n/g, " | "));
+}
+
 // ---- B) real /proc with our own tiny dummies
 const kids = [];
 try {
@@ -249,6 +293,7 @@ try {
   ok("B real detached HYPRPI_AGENT_ID match", JSON.stringify(G(b2, "det").pids) === JSON.stringify([det.pid]));
   ok("B real RSS > 0 and uptime ≥ 0", G(b2, "root").rssBytes > 0 && G(b2, "root").uptimeSeconds >= 0);
   ok("B real system numbers present", b2.system.cpuPercent != null && b2.system.cpuCores >= 1 && b2.system.memoryTotalBytes > 0 && b1.system.uptimeSeconds > 0);
+  ok("B monitor = this test process, read fresh, with CPU and RSS", b2.monitor.pid === process.pid && b2.monitor.rssBytes > 0 && typeof b2.monitor.cpuPercent === "number", b2.monitor);
   ok("B owner with nothing: null metrics", G(b2, "nothing").rssBytes === null && G(b2, "nothing").processCount === 0);
   ok("B unrelated system processes excluded (pid 1, kernel threads)", !b2.processes.some((p) => p.pid === 1 || p.pid === 2 || p.ppid === 2));
   console.log(`info B: real scan saw ${b2.scan.processesSeen} processes, ${b2.unattributed.length} unattributed pi bucket(s), ${b2.processes.length} agent-related processes; limitations: ${b2.limitations.join(" | ") || "none"}`);
