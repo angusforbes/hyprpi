@@ -25,7 +25,7 @@ const { loadConfig } = await import(path.join(HERE, "../lib/paths.mjs"));
 const { REMOTE_MARK } = await import(path.join(HERE, "../lib/sandbox-icon.mjs"));
 const { validateStatus } = await import(path.join(HERE, "../docker/world/g-status.mjs"));
 const rworld = await import(path.join(HERE, "../remote-control/rworld.mjs"));
-const { pickAutoOpens } = await import(path.join(HERE, "auto-open.mjs")); // J543
+const { pickAutoOpens, pickNotices } = await import(path.join(HERE, "auto-open.mjs")); // J543
 const SIZE = Number(loadConfig().worldSize) || 10, idx = WL.charCodeAt(0) - 64, LO = (idx - 1) * SIZE + 1, HI = idx * SIZE;
 const DIR = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "worlds", `world-${wl}`);
 fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
@@ -94,7 +94,26 @@ async function tick() {
     lastList = { world: `world-${wl}`, room: WL, at: Date.now(), agents, thoughts: ok.thoughts, dropped: ok.dropped, badge: REMOTE_MARK, where: "remote" };
     write("agents.json", lastList);
     autoOpen(l.agents || [], agents); // J543
+    playNotices(l.notices); // J543
   } catch { /* offline or slow: the report ages */ }
+}
+// J543 (parity): the world's bonks, dings and chimes, played HERE as a local agent's are: bonk / ding = ~/.local/bin/bonk (its sound
+// and "Agent X 📡 needs you" toast; a click runs `hyprpi focus <x>-NAME`, which the laptop daemon hands to `world X focus NAME`), the
+// done chime and the "request" knock = hyprpi's own sounds (assets/sounds), as the shell plays them. Never an old one (pickNotices).
+const noticeSt = {};
+function playNotices(list) {
+  let cfg = {}; try { cfg = loadConfig(); } catch { /* defaults */ }
+  for (const n of pickNotices(list, noticeSt, Date.now())) {
+    if (n.kind === "chime" || n.kind === "request") {
+      if (n.kind === "chime" && cfg.chime === false) continue;
+      execFile("paplay", [path.join(HERE, "..", "assets", "sounds", `${n.kind === "chime" ? "done" : "request"}.mp3`)], { timeout: 15000 }, () => {});
+      continue;
+    }
+    const env = { ...process.env, BONK_NAME: `${n.icon ? n.icon + " " : ""}${n.name || n.id || "an agent"} ${REMOTE_MARK}` };
+    delete env.HYPRPI_AGENT_ID; if (n.id) env.BONK_FOCUS_AGENT = n.id; else delete env.BONK_FOCUS_AGENT;
+    const bonk = process.env.HYPRPI_BONK || path.join(os.homedir(), ".local", "bin", "bonk");
+    execFile(bonk, [...(n.kind === "ding" ? ["--ding"] : []), n.text || (n.kind === "ding" ? "a decision is waiting" : "needs you")], { env, timeout: 30000 }, () => {});
+  }
 }
 for (;;) {
   // (review) whoever no longer holds the lock (two took over the same stale one at once) leaves; the holder stays

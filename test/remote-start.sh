@@ -45,4 +45,10 @@ ok "pi-entry: the agent's own pi (HYPRPI_RPC_NAME) is served by hbroker under it
 ok "pi-entry: an older agent (HYPRPI_NAME only) still is" '[[ "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_NAME=omni-alpha "$T/pe/pi-entry" -e x)" == *"serve omni-alpha -- -e x" ]]'
 ok "pi-entry: a one-shot pi -p with an agent's env (the daemon's topic labels) is plain pi" '[[ "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_NAME=omni-alpha "$T/pe/pi-entry" -p --no-session hi)" == "pi -p --no-session hi" ]]'
 ok "pi-entry: --mode rpc (Thoughts) is plain pi; a display name that isn't a slug is never served" '[[ "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_RPC_NAME=farside "$T/pe/pi-entry" --mode rpc)" == "pi --mode rpc" && "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_NAME=Farside "$T/pe/pi-entry" -e x)" == "pi -e x" ]]'
+# bonk / ding (written by install): mark the agent blocked through hyprpi, quietly, with the message
+bl=$(grep -m1 -F '# bonk on this machine (omnistation/remote.sh, J543)' "$R/omnistation/remote.sh"); dl=$(grep -m1 -F '/bonk" --ding "$@"' "$R/omnistation/remote.sh")
+( ROOT="$T/pe"; DIR="$T/pe/hp"; mkdir -p "$ROOT/bin"; eval "${bl}"; eval "${dl%%; chmod*}"; chmod 755 "$ROOT/bin/bonk" "$ROOT/bin/ding" )
+printf '#!/bin/sh\necho "timeout $*"\n' > "$T/pe/timeout"; chmod 755 "$T/pe/timeout"
+ok "bonk: a hyprpi agent's bonk marks it blocked quietly with its message" '[[ "$(pe HYPRPI_AGENT_ID=h-x "$T/pe/bin/bonk" look at this)" == "timeout 5 node $T/pe/hp/bin/hyprpi status blocked --quiet --note look at this" ]]'
+ok "ding: the question becomes a decision" '[[ "$(pe HYPRPI_AGENT_ID=h-x "$T/pe/bin/ding" ship it?)" == *"status blocked --quiet --decision ship it?" ]]'
 (( fails )) && { echo "FAIL ($fails)"; exit 1; }; echo PASS

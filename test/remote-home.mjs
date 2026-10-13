@@ -10,6 +10,7 @@
 //   5. world H itself still works: talk to Thoughts-H is delivered
 //   6. open_agent / spawn_agent inside world H start the agent through ~/.hyprpi-h/remote.sh start (a stub here) and the list
 //      marks it "opened", which the laptop's world-status.mjs turns into its window
+//   8. bonk / ding / request / chime of its agents are kept as notices in the list; the laptop plays each new one once
 //   7. started with an agent's identity in its env (an agent's own ensure), the daemon passes none of it to the pi it runs
 //   node test/remote-home.mjs   (exit 0 = pass)
 import fs from "node:fs"; import os from "node:os"; import path from "node:path"; import { spawn, spawnSync } from "node:child_process";
@@ -100,6 +101,22 @@ try {
     await agent.call("agent.update", { session: sess, status: "working" }).catch(() => {});
     await agent.call("agent.update", { session: sess, status: "done" }).catch(() => {});
     for (let i = 0; i < 40 && !/pi -p/.test(fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : ""); i++) await sleep(200); }
+  { // 8 J543 parity: bonk / ding / chime / request of this machine's agents are kept as notices for the laptop
+    await agent.call("agent.update", { status: "working" }).catch(() => {});
+    await agent.call("agent.update", { status: "blocked", quiet: true, note: "please look at the A100 run" });
+    await agent.call("agent.update", { status: "working" }); await agent.call("agent.update", { status: "blocked", quiet: true, decision: "ship it now or wait?" });
+    await agent.call("agent.update", { status: "working" }); await agent.call("agent.update", { status: "blocked" });
+    await agent.call("agent.update", { status: "working" }); await agent.call("agent.update", { status: "done" });
+    const ns = (await api.call("list", {})).notices || [];
+    const kinds = ns.filter((n) => n.id === "h-omni-alpha").map((n) => `${n.kind}:${n.text}`);
+    ok("8 notices: bonk with its text, ding with the question, request, chime", ["bonk:please look at the A100 run", "ding:ship it now or wait?", "request:", "chime:"].every((k) => kinds.includes(k)), JSON.stringify(kinds));
+    const { pickNotices } = await import(path.join(ROOT, "omnistation/auto-open.mjs"));
+    const st = {}, now = Date.now();
+    ok("8 laptop: a first look plays nothing old", pickNotices(ns, st, now).length === 0);
+    const fresh = [...ns, { ts: now + 10, kind: "ding", id: "h-omni-alpha", name: "omni\x1b[31m-alpha", text: "a\nb" }, { ts: now + 11, kind: "rm -rf", id: "x" }];
+    const p1 = pickNotices(fresh, st, now + 20), p2 = pickNotices(fresh, st, now + 30);
+    ok("8 laptop: a new one plays once, cleaned (no control characters), unknown kinds dropped", p1.length === 1 && p1[0].kind === "ding" && p1[0].id === "h-omni-alpha" && !/[\x00-\x1f]/.test(p1[0].name + p1[0].text) && p2.length === 0, JSON.stringify([p1, p2]));
+  }
   { const pl = fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : "";
     ok("7 started with an agent's env, the daemon's own pi calls (a topic label's pi -p too) carry no agent identity", /pi -p/.test(pl) && !/RPC=1|NAME=omni|ID=h-/.test(pl), pl.slice(0, 300)); }
   api.close?.(); agent.close?.();

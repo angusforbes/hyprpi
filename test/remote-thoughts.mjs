@@ -56,6 +56,7 @@ try {
   const st0 = await api.call("restore.status", {}).catch(() => null); const plan = st0?.plan || st0;
   ok("J536 restore status answers", !!plan, JSON.stringify(st0 || null).slice(0, 200));
   if (plan) ok("J536 a restore never offers a laptop agent in world H (one in world A still is)", !(plan.agents || []).some((a) => String(a.world).toUpperCase() === "H") && (plan.agents || []).some((a) => a.id === "hp-open-a"), JSON.stringify((plan.agents || []).map((a) => a.id)));
+  { const e = await err(() => api.call("agent.focus", { agent: "h-omni-alpha" })); ok("J543 hyprpi focus of a remote agent goes to world H focus (refused here only because this daemon is isolated)", /hypr actions disabled/.test(e), e); }
   // 2
   const got = [];
   const agent = await connect({ path: laptop.sock, onEvent: (ev, data) => got.push({ ev, data }) });

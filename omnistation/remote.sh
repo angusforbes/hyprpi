@@ -35,6 +35,8 @@ export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
 # under running agents (Omnistation's platform installs the latest pi into ~/.npm-global), so hyprpi runs ITS OWN pi, the version
 # hyprpi pins (docker/PI_VERSION), from ~/.hyprpi-<x>/pi (install puts it there); it comes first on the PATH of everything here
 [[ -x "$ROOT/pi/bin/pi" ]] && export PATH="$ROOT/pi/bin:$PATH"
+# J543: bonk / ding for the agents here (install writes them): no sound or desktop on this machine, hyprpi carries them to the laptop
+[[ -x "$ROOT/bin/bonk" ]] && export PATH="$ROOT/bin:$PATH"
 # J532: the laptop's theme colours (world X's panels draw in world X's colour, as on the laptop); world X copies them here
 [[ -f "$ROOT/theme/colors.toml" ]] && export HYPRPI_THEME_COLORS="$ROOT/theme/colors.toml"
 unset HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY DISPLAY  # headless: never a desktop, even if one is around
@@ -110,6 +112,11 @@ case "$cmd" in
     [[ -f "$ROOT/hbroker.mjs" ]] || { echo "remote.sh: $ROOT/hbroker.mjs is missing (world-h setup copies it)" >&2; exit 3; }
     printf '#!/usr/bin/env bash\n# hyprpi'"'"'s pi command on this machine (omnistation/remote.sh, J471)\nn="${HYPRPI_RPC_NAME:-${HYPRPI_NAME:-}}"\nif [[ "${HYPRPI_REMOTE_RPC:-}" == 1 && "$n" =~ ^[a-z][a-z0-9-]{0,30}$ && " $* " != *" -p "* && " $* " != *" --print "* && " $* " != *" --mode "* && " $* " != *" --no-session "* ]]; then exec node %q serve "$n" -- "$@"; fi\nexec pi "$@"\n' "$ROOT/hbroker.mjs" > "$ROOT/pi-entry"; chmod 755 "$ROOT/pi-entry"
     node -e 'const fs=require("fs"),[c,e]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(c,"utf8"));j.pi=e;fs.writeFileSync(c,JSON.stringify(j,null,2)+"\n")' "$c" "$ROOT/pi-entry"
+    # J543 (parity): `bonk` / `ding` (the skill every agent knows) for the agents here: they mark the agent blocked through hyprpi,
+    # quietly, with the message; the daemon keeps it as a notice and the laptop plays the sound and shows the toast (world-status.mjs)
+    mkdir -p "$ROOT/bin"
+    printf '#!/usr/bin/env bash\n# bonk on this machine (omnistation/remote.sh, J543): the laptop plays it (sound + toast; a click opens the agent)\nd=; [[ ${1:-} == --ding || ${1:-} == --decide ]] && { d=1; shift; }\n[[ -n ${HYPRPI_AGENT_ID:-} ]] || { echo "bonk: only a hyprpi agent can bonk from here" >&2; exit 0; }\nif [[ -n $d && -n ${*:-} ]]; then exec timeout 5 node %q status blocked --quiet --decision "$*"; elif [[ -n ${*:-} ]]; then exec timeout 5 node %q status blocked --quiet --note "$*"; else exec timeout 5 node %q status blocked --quiet; fi\n' "$DIR/bin/hyprpi" "$DIR/bin/hyprpi" "$DIR/bin/hyprpi" > "$ROOT/bin/bonk"
+    printf '#!/usr/bin/env bash\nexec "$(dirname "$0")/bonk" --ding "$@"\n' > "$ROOT/bin/ding"; chmod 755 "$ROOT/bin/bonk" "$ROOT/bin/ding"
     # J480: the world's Thoughts model (the binding's "thoughtsModel", e.g. a model served on this machine) and the human's
     # name for the panels (the laptop's; else the panels here would say the remote login's name, e.g. "Ubuntu")
     if [[ "${HYPRPI_REMOTE_THOUGHTS_MODEL:-}" =~ ^[A-Za-z0-9._/:-]+$ ]]; then node -e 'const fs=require("fs"),[c,m]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(c,"utf8"));j.thoughtsModel=m;fs.writeFileSync(c,JSON.stringify(j,null,2)+"\n")' "$c" "$HYPRPI_REMOTE_THOUGHTS_MODEL"; fi
