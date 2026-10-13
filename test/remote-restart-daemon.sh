@@ -37,4 +37,9 @@ ok "no lock file: a daemon is started and answers" '[[ $rc == 0 && "$o" == *"dae
 pkill -f "$T/hyprpi/bin/hyprpi"; sleep 0.3; rm -f "$T/up"
 (cd "$T"; HYPRPI_STATE="$T/other" setsid node "$T/hyprpi/bin/hyprpi" daemon >/dev/null 2>&1 &); sleep 0.5; op=$(cat "$T/.hyprpi-i/run/daemon.lock"); o=$(run); rc=$?
 ok "another world's daemon is not killed" '[[ $rc == 3 ]] && kill -0 "$op"'
+# 5: a daemon that ignores TERM gets KILL (through its pidfd) and a new one answers
+pkill -f "$T/hyprpi/bin/hyprpi"; sleep 0.3; rm -f "$T/up" "$T/.hyprpi-i/run/daemon.lock"
+cp "$T/hyprpi/bin/hyprpi" "$T/hyprpi/bin/hyprpi.normal"; sed -i 's/process.on("SIGTERM", () => {/process.on("SIGTERM", () => { return;/' "$T/hyprpi/bin/hyprpi"
+start_fake; old=$(cat "$T/.hyprpi-i/run/daemon.lock"); cp "$T/hyprpi/bin/hyprpi.normal" "$T/hyprpi/bin/hyprpi"; rm -f "$T/up"; o=$(run); rc=$?
+ok "a daemon ignoring TERM is killed and replaced" '[[ $rc == 0 && "$o" == *"daemon restarted"* ]] && ! kill -0 "$old" 2>/dev/null'
 echo "$pass passed, $fail failed"; exit $(( fail > 0 ))

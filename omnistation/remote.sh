@@ -192,21 +192,34 @@ case "$cmd" in
     # J530 (a slip on Omnistation): restarts THIS world's daemon only. Never `pgrep -f "bin/hyprpi daemon"`: the tmux SERVER's command
     # line contains that text too (it is the first session's command), and killing it ends every agent's session.
     # (review) The pid comes from the lock file and must be exactly this world's daemon: argv node $DIR/bin/hyprpi daemon, and its
-    # HYPRPI_STATE this world's state. Its start time is checked before each signal, so a reused pid is never signalled. Sockets and
+    # HYPRPI_STATE this world's state. It is signalled through a pidfd opened before its identity is checked again, so a reused pid is never signalled. Sockets and
     # tmux sessions are left to the daemon's own lock-protected start; tmux targets are exact (=name). Success = the daemon answers.
     lockf="$ROOT/run/daemon.lock"
     isdaemon() { local cl; [[ -r /proc/$1/cmdline ]] || return 1; mapfile -d '' -t cl < /proc/$1/cmdline
       [[ "${#cl[@]}" -eq 3 && "${cl[0]##*/}" == node && "${cl[1]}" == "$DIR/bin/hyprpi" && "${cl[2]}" == daemon ]] || return 1
       tr '\0' '\n' < /proc/$1/environ 2>/dev/null | grep -qxF "HYPRPI_STATE=$HYPRPI_STATE"; }
-    started() { awk '{print $22}' /proc/$1/stat 2>/dev/null; }
     answers() { timeout 8 node -e 'import(process.argv[1]).then(async (c) => { await c.request("list", {}, { timeout: 2000, timeoutMs: 4000 }); process.exit(0); }).catch(() => process.exit(1))' "$DIR/lib/client.mjs" >/dev/null 2>&1; }
     secrets_ok || exit 5 # (before anything is stopped: a refusal must leave the old daemon running)
     pid=""; [[ -f "$lockf" ]] && pid=$(tr -cd '0-9' 2>/dev/null < "$lockf" || true)
     if [[ -n "$pid" ]] && isdaemon "$pid"; then
-      t0=$(started "$pid"); kill "$pid" 2>/dev/null || true
-      for _ in $(seq 20); do [[ "$(started "$pid")" == "$t0" ]] || break; sleep 0.5; done
-      [[ "$(started "$pid")" == "$t0" ]] && isdaemon "$pid" && { kill -9 "$pid" 2>/dev/null || true; sleep 1; } # (live) it can ignore TERM
-      [[ "$(started "$pid")" == "$t0" ]] && { echo "remote.sh: the daemon (pid $pid) won't stop: nothing else changed" >&2; exit 3; }
+      # (review) signalled through a pidfd opened BEFORE the identity is checked again: a pid reused in between can't be hit
+      python3 - "$pid" "$DIR/bin/hyprpi" "HYPRPI_STATE=$HYPRPI_STATE" <<'PYK' || { echo "remote.sh: the daemon (pid $pid) wasn't stopped: nothing else changed" >&2; exit 3; }
+import os, select, signal, sys
+pid, bin_, st = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+fd = os.pidfd_open(pid)
+def same():
+    try:
+        a = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")[:-1]
+        e = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+    except OSError: return False
+    return len(a) == 3 and os.path.basename(a[0]) == b"node" and a[1] == bin_.encode() and a[2] == b"daemon" and st.encode() in e
+if not same(): sys.exit(0 if select.select([fd], [], [], 0)[0] else 3)  # gone already: fine; another process now: refuse
+def wait(t): return bool(select.select([fd], [], [], t)[0])  # readable = it exited
+signal.pidfd_send_signal(fd, signal.SIGTERM)
+if not wait(10):
+    signal.pidfd_send_signal(fd, signal.SIGKILL)  # (live) it can ignore TERM; the pidfd still names the same process
+    if not wait(5): sys.exit(3)
+PYK
     elif [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then echo "remote.sh: pid $pid in daemon.lock isn't world ${W^^}'s daemon: not killing it" >&2; exit 3; fi
     # an agent's own `hyprpi ensure` often starts the new one within a second or two; else one is started here, in tmux
     for _ in $(seq 6); do answers && break; sleep 0.5; done
