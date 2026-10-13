@@ -195,7 +195,13 @@ try {
   await sleep(4000); // past the gate
   await alpha.call("room.post", { text: `look ${req({ act: "open", url: "https://evil.example/a", n: nonce })} here` });
   await sleep(2500);
-  ok("an unsolicited request printed by an agent does nothing (wrong nonce after a click; right nonce, no click)", openLog().length + hyprLog().length + lines("world.log").length === before && !openLog().some((l) => /evil/.test(l)), openLog().join(" | ") + " / " + read("relay.log"));
+  // (ParityCheck) the strongest forgery: the RIGHT nonce, printed right after an unrelated click (inside the gate): only the
+  // panel's scrub (lib/client.mjs) stops it
+  at = scr.find("hello see");
+  if (at) await click(at, { ms: 50 });
+  await alpha.call("room.post", { text: `now ${req({ act: "open", url: "https://evil.example/c", n: nonce })} ok` });
+  await sleep(2500);
+  ok("an unsolicited request printed by an agent does nothing (wrong nonce after a click; right nonce, no click; right nonce right after a click)", openLog().length + hyprLog().length + lines("world.log").length === before && !openLog().some((l) => /evil/.test(l)), openLog().join(" | ") + " / " + read("relay.log"));
   // J543: lib/client.mjs now cuts terminal commands (OSC …) out of daemon strings in a remote panel, so they don't even reach the
   // relay (its nonce and gate checks are covered by test/pty-relay-unit.py)
   ok("… neither reached the relay (the panel cut the escape out of the agent's text)", !/evil/.test(read("relay.log")) && !/"act": "open", "url": "https:\/\/evil/.test(read("relay.log")), read("relay.log"));
