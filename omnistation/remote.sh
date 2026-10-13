@@ -122,7 +122,7 @@ case "$cmd" in
       node -e '
         const fs = require("fs"), [p, raw] = process.argv.slice(1); let n; try { n = JSON.parse(raw); } catch { process.exit(0); }
         if (!n || typeof n !== "object" || typeof n.topic !== "string") process.exit(0);
-        const keep = { enabled: !!n.enabled, server: String(n.server || "https://ntfy.sh"), topic: n.topic, kinds: Array.isArray(n.kinds) ? n.kinds.map(String) : ["bonk", "decision"], maxPerHour: Number(n.maxPerHour) || 12, click: String(n.click || "") };
+        const keep = { enabled: !!n.enabled, server: String(n.server || "https://ntfy.sh"), topic: n.topic, kinds: Array.isArray(n.kinds) ? n.kinds.map(String) : ["bonk", "decision"], maxPerHour: Number.isFinite(Number(n.maxPerHour)) && n.maxPerHour !== null && n.maxPerHour !== "" ? Math.max(0, Number(n.maxPerHour)) : 12, click: String(n.click || "") };
         const line = `"phone": ${JSON.stringify({ ntfy: keep })}`;
         let s = ""; try { s = fs.readFileSync(p, "utf8"); } catch { fs.writeFileSync(p, JSON.stringify({ phone: { ntfy: keep } }, null, 2) + "\n"); process.exit(0); }
         try { const j = JSON.parse(s); j.phone = { ...(j.phone || {}), ntfy: keep }; fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n"); process.exit(0); } catch { /* jsonc with comments */ }

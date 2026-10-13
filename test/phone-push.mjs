@@ -23,6 +23,8 @@ const now = Date.now();
 const m = phoneMessage("decision", { world: "A", agent: "Atlas", project: "boards", text: "N3: Ship it?", options: [{ key: "a", text: "now" }, { key: "b", text: "later" }], recommend: "a" });
 ok("A title names the decision and world", m.title.startsWith("🔔 Decision (world A): N3: Ship it?"), m.title);
 ok("A body: World A · Atlas · @boards, question, options", m.message === "World A · Atlas · @boards\nN3: Ship it?\na. now (recommended)\nb. later", JSON.stringify(m.message));
+const m9 = phoneMessage("decision", { text: "pick", options: Array.from({ length: 9 }, (_, i) => ({ key: String(i + 1), text: `option ${i + 1}` })), recommend: "9" });
+ok("A all 9 options shown, the recommended last one too", /\n9\. option 9 \(recommended\)$/.test(m9.message), JSON.stringify(m9.message));
 ok("A bonk title names the agent", phoneMessage("bonk", { world: "B", agent: "Bolt", text: "look" }).title === "❗ Bolt needs you (world B)");
 
 // ---- R) omnistation/remote.sh install's edit of a remote world's hyprpi.jsonc (its node snippet, run as remote.sh runs it)
@@ -31,6 +33,7 @@ ok("A bonk title names the agent", phoneMessage("bonk", { world: "B", agent: "Bo
   const src = fs.readFileSync(path.join(ROOT, "omnistation/remote.sh"), "utf8");
   const a = src.indexOf("node -e '\n        const fs = require(\"fs\"), [p, raw]"), b = src.indexOf("' \"$p\" \"$HYPRPI_REMOTE_NTFY\"", a);
   const code = src.slice(a + "node -e '".length, b), R = fs.mkdtempSync(path.join(os.tmpdir(), "j528r-")), nt = JSON.stringify({ enabled: true, topic: "angus-brev" });
+  { const f = path.join(R, "zero.jsonc"); spawnSync(process.execPath, ["-e", code, f, JSON.stringify({ enabled: true, topic: "t-zero-1", maxPerHour: 0 })]); ok("R maxPerHour 0 (no cap) is copied as 0", parseJsonc(fs.readFileSync(f, "utf8")).phone.ntfy.maxPerHour === 0); }
   const edit = (name, text) => { const f = path.join(R, name); if (text !== null) fs.writeFileSync(f, text); spawnSync(process.execPath, ["-e", code, f, nt]); return fs.readFileSync(f, "utf8"); };
   const cases = {
     "no file": [null], "plain JSON": ['{ "user": { "name": "A" } }'],
@@ -90,6 +93,12 @@ try {
   ok("B a new block later → one more push", pushes().length === 2 && pushes()[1].message.includes("one more thing"));
   await upd({ status: "working" });
 
+  // B2) a bonk while already blocked (here on the decision below it would be the same): a new message is pushed once
+  await upd({ status: "blocked", quiet: true, note: "also: the disk is nearly full" }); await sleep(200);
+  ok("B a second, different bonk during the same block → one push", pushes().length === 3 && pushes()[2].message.includes("disk is nearly full"), String(pushes().length));
+  await upd({ status: "blocked", quiet: true, note: "also: the disk is nearly full" }); await upd({ status: "blocked", quiet: true }); await sleep(200);
+  ok("B the same message again, or a bare blocked → no push", pushes().length === 3);
+  fs.writeFileSync(PUSH, fs.readFileSync(PUSH, "utf8").split("\n").slice(0, 2).join("\n") + "\n"); // the counts below go on from the first 2 bonks
   // C) a Decide item from the agent
   const r = await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: "Ship the new boards today?", options: ["yes, today", "wait for review"], recommend: "b" });
   await sleep(200); P = pushes();
@@ -119,11 +128,11 @@ try {
   ok("E job report / next / done / heard / room post / Angus's own Decide item → no push", pushes().length === 4, JSON.stringify(pushes().slice(4)));
 
   // F) maxPerHour, enabled false
-  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 7 }); await sleep(50); // 6 sent this hour (2 held + 4 above)
+  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 8 }); await sleep(50); // 7 sent this hour (2 held + 3 bonks + 2 decisions)
   for (let i = 0; i < 3; i++) await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: `burst question ${i}`, options: ["a", "b"] });
   await sleep(300);
-  ok("F maxPerHour 7: a burst of 3 more sends only 1 (7 in the last hour)", pushes().length === 5, String(pushes().length));
-  ok("F what went over is logged, not queued", /phone push: over 7\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
+  ok("F maxPerHour 8: a burst of 3 more sends only 1 (8 in the last hour)", pushes().length === 5, String(pushes().length));
+  ok("F what went over is logged, not queued", /phone push: over 8\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
   setPolicy({ enabled: false, topic: "j528-test", maxPerHour: 100 }); await sleep(50);
   await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: "while off", options: ["a"] });
   await upd({ status: "working" }); await upd({ status: "blocked", quiet: true, note: "while off" }); await sleep(300);
