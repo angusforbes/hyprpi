@@ -102,6 +102,9 @@ try {
   ok("B a second, different bonk during the same block → one push", pushes().length === 3 && pushes()[2].message.includes("disk is nearly full"), String(pushes().length));
   await upd({ status: "blocked", quiet: true, note: "also: the disk is nearly full" }); await upd({ status: "blocked", quiet: true }); await sleep(200);
   ok("B the same message again, or a bare blocked → no push", pushes().length === 3);
+  const long = "x".repeat(400);
+  await upd({ status: "blocked", quiet: true, note: long + " FIRST" }); await upd({ status: "blocked", quiet: true, note: long + " SECOND" }); await sleep(200);
+  ok("B two long messages that differ only at the end → two pushes", pushes().length === 5, String(pushes().length));
   fs.writeFileSync(PUSH, fs.readFileSync(PUSH, "utf8").split("\n").slice(0, 2).join("\n") + "\n"); // the counts below go on from the first 2 bonks
   // C) a Decide item from the agent
   const r = await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: "Ship the new boards today?", options: ["yes, today", "wait for review"], recommend: "b" });
@@ -132,11 +135,11 @@ try {
   ok("E job report / next / done / heard / room post / Angus's own Decide item → no push", pushes().length === 4, JSON.stringify(pushes().slice(4)));
 
   // F) maxPerHour, enabled false
-  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 9 }); await sleep(50); // 8 sent this hour (3 held + 3 bonks + 2 decisions)
+  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 11 }); await sleep(50); // 10 sent this hour (3 held + 5 bonks + 2 decisions)
   for (let i = 0; i < 3; i++) await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: `burst question ${i}`, options: ["a", "b"] });
   await sleep(300);
-  ok("F maxPerHour 9: a burst of 3 more sends only 1 (9 in the last hour)", pushes().length === 5, String(pushes().length));
-  ok("F what went over is logged, not queued", /phone push: over 9\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
+  ok("F maxPerHour 11: a burst of 3 more sends only 1 (11 in the last hour)", pushes().length === 5, String(pushes().length));
+  ok("F what went over is logged, not queued", /phone push: over 11\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
   setPolicy({ enabled: false, topic: "j528-test", maxPerHour: 100 }); await sleep(50);
   await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: "while off", options: ["a"] });
   await upd({ status: "working" }); await upd({ status: "blocked", quiet: true, note: "while off" }); await sleep(300);
