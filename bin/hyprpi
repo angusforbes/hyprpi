@@ -265,6 +265,9 @@ async function cmdNew() {
     if (given.some((x) => x === "--model" || x.startsWith("--model=") || x === "--session" || x.startsWith("--session=") || x === "--resume" || x === "-r" || x === "--continue" || x === "-c" || x === "--fork" || x.startsWith("--fork=")) || twinOf) return [];
     let m = ""; try { const { loadPolicy } = await import("../lib/policy.mjs"); m = String(loadPolicy().routing?.newAgentModel || "").trim(); } catch { /* no policy: pi's default */ }
     if (!m) return [];
+    // J543 (live: hub-alpha's fresh start on the hub came up on anthropic/claude-opus-5-5, which that box can't reach): on a remote
+    // world's machine the model is the box's own name for it (lib/routing.mjs localModel)
+    try { if ((await import("../lib/remote-world.mjs")).remoteHome()) m = (await import("../lib/routing.mjs")).localModel(m); } catch { /* as configured */ }
     try { const { allowedBy } = await import("../lib/modellist.mjs"); if (!allowedBy(m)) { process.stderr.write(`hyprpi: routing.newAgentModel ${m} isn't on the scoped model list (enabledModels); starting on pi's default\n`); return []; } }
     catch (e) { process.stderr.write(`hyprpi: routing.newAgentModel ${m}: ${e.message}; starting on pi's default\n`); return []; }
     return ["--model", m];

@@ -182,9 +182,14 @@ case "$cmd" in
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: the daemon didn't start (tmux attach -t hyprpi-$W-daemon shows why)" >&2; exit 4; }
     if [[ "${HYPRPI_START_NEW:-}" == 1 ]] && { tmux has-session -t "=hyprpi-$W-$NAME" 2>/dev/null || [[ -e "$ROOT/sessions/$NAME" ]]; }; then echo "remote.sh: $NAME is taken (a new agent needs a new name)" >&2; exit 3; fi
+    # J543: the daemon restarting it (upkeep refresh, /restart): its old session ends first (its pi has exited); wait for that
+    if [[ "${HYPRPI_START_RESTART:-}" == 1 ]]; then for _ in $(seq 40); do tmux has-session -t "=hyprpi-$W-$NAME" 2>/dev/null || break; sleep 0.5; done; fi
     if tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
     # its pi session is resumed when it ran before (the newest session of this agent id), else a new one starts
     sess=$(ls -t "$ROOT/sessions/$NAME"/*.jsonl 2>/dev/null | head -1 || true)
+    # J543: a restart names its session (one of this agent's own), or asks for a fresh one (an upkeep refresh: the handoff is its welcome)
+    if [[ "${HYPRPI_START_RESTART:-}" == 1 && "${HYPRPI_START_FRESH:-}" == 1 ]]; then sess=""
+    elif [[ "${HYPRPI_START_RESTART:-}" == 1 && -f "${HYPRPI_START_SESSION:-}" && "$(dirname "$(readlink -f "$HYPRPI_START_SESSION")")" == "$(readlink -f "$ROOT/sessions/$NAME")" ]]; then sess="$HYPRPI_START_SESSION"; fi
     # its icon: a normal agent icon, steady for its name (the world's 📡 goes after the name, like 🐳 for a sandbox: J471 v2)
     icon=$(node -e 'import(process.argv[1]).then((m) => console.log(m.sbxIcon(undefined, process.argv[2])))' "$DIR/lib/sandbox-icon.mjs" "$NAME" 2>/dev/null || true)
     # J543 (parity: open_agent / spawn_agent on this machine): the daemon starts its new agents through here, with their own name,

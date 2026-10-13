@@ -36,6 +36,14 @@ C=$(cat "$T/cmd-last")
 ok "bad values fall back to the defaults (name = slug, its own icon, ~/work, ws 71, no pi flags)" '[[ $rc == 0 && "$C" == *"--name bad --icon "* && "$C" != *"a\$(id)"* && "$C" == *"--cwd $H/work --workspace 71 -- --session-dir "* ]]'
 SLUG=plain; run >/dev/null; C=$(cat "$T/cmd-last")
 ok "a plain start (world X new / SUPER+A) is as before" '[[ "$C" == *"new --id h-plain --name plain --icon "* && "$C" == *"--workspace 71 -- --session-dir "* ]]'
+# J543: a restart by the daemon (upkeep refresh / restart): waits for the old tmux session to end, then fresh or on the named session
+mkdir -p "$H/.hyprpi-h/sessions/plain"; touch "$H/.hyprpi-h/sessions/plain/old.jsonl"; sleep 1; touch "$H/.hyprpi-h/sessions/plain/new.jsonl"
+SLUG=plain; ( sleep 2; rm -f "$T/s-hyprpi-h-plain" ) & run HYPRPI_START_RESTART=1 HYPRPI_START_FRESH=1 >/dev/null; C=$(cat "$T/cmd-last")
+ok "restart, fresh: waits for the old session to end, then starts with no --session" '[[ "$C" == *"new --id h-plain"* && "$C" != *"--session "* ]]'
+rm -f "$T/s-hyprpi-h-plain"; run HYPRPI_START_RESTART=1 HYPRPI_START_SESSION="$H/.hyprpi-h/sessions/plain/old.jsonl" >/dev/null; C=$(cat "$T/cmd-last")
+ok "restart on a named session of its own (not the newest)" '[[ "$C" == *"--session $H/.hyprpi-h/sessions/plain/old.jsonl"* ]]'
+rm -f "$T/s-hyprpi-h-plain"; touch "$T/elsewhere.jsonl"; run HYPRPI_START_RESTART=1 HYPRPI_START_SESSION="$T/elsewhere.jsonl" >/dev/null; C=$(cat "$T/cmd-last")
+ok "a session outside its own folder is ignored (its newest is resumed)" '[[ "$C" == *"--session $H/.hyprpi-h/sessions/plain/new.jsonl"* ]]'
 # pi-entry (written by install): built here from install's own printf line, then run with a stand-in node/pi
 line=$(grep -m1 "^    printf '#!/usr/bin/env bash" "$R/omnistation/remote.sh")
 ( ROOT="$T/pe"; mkdir -p "$ROOT"; eval "${line%%; chmod*}" ) && chmod 755 "$T/pe/pi-entry"

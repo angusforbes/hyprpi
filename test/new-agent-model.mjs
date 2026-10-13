@@ -46,6 +46,15 @@ setKey(""); r = run([]);
 ok("an empty key: pi's own default", r.ran && r.models.length === 0, JSON.stringify(r));
 setKey("someprovider/not-on-the-list"); r = run([]);
 ok("a model off the scoped list (J397) is skipped with a warning, not fatal", r.models.length === 0 && /isn't on the scoped model list/.test(r.out), r.out.slice(-200));
+// J543: on a remote world's machine (state ~/.hyprpi-<x>/state) the key's model is the box's own name for it (the hub: only
+// nv-inference in its models.json, no enabledModels), so a fresh start there never comes up on a model it can't reach
+{ const PD = path.join(T, "pidir"); fs.mkdirSync(PD, { recursive: true }); fs.writeFileSync(path.join(PD, "settings.json"), "{}");
+  fs.writeFileSync(path.join(PD, "models.json"), JSON.stringify({ providers: { "nv-inference": { models: [{ id: "azure/anthropic/claude-opus-5-5" }, { id: "azure/anthropic/claude-sonnet-5-5" }] } } }));
+  setKey("anthropic/claude-opus-5-5"); fs.mkdirSync(path.join(T, ".hyprpi-i", "state"), { recursive: true });
+  r = run([], { HYPRPI_STATE: path.join(T, ".hyprpi-i", "state"), PI_CODING_AGENT_DIR: PD });
+  ok("J543 on a remote machine the key's model is the box's own (nv-inference/azure/anthropic/claude-opus-5-5)", r.last === "nv-inference/azure/anthropic/claude-opus-5-5", JSON.stringify(r.models) + r.out.slice(-200));
+  r = run([], { PI_CODING_AGENT_DIR: PD });
+  ok("J543 … and on the laptop it stays as configured", r.last === "anthropic/claude-opus-5-5", JSON.stringify(r.models)); }
 // (J534Check) the config's "--" splits pi's options: a --model after it is prompt text, so the key's model still goes in
 fs.writeFileSync(path.join(cfg, "config.json"), JSON.stringify({ pi: path.join(T, "fakepi"), piArgs: ["--"] })); setKey("anthropic/claude-opus-5-5");
 r = run(["--", "--model", "x"]); { const a = fs.existsSync(argvFile) ? "" : ""; }
