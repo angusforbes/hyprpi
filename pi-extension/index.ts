@@ -408,10 +408,24 @@ export default function hyprpi(pi: ExtensionAPI) {
     if (ctx?.mode !== "tui" || !process.env.HYPRPI_AGENT_ID || typeof ctx.ui?.setHeader !== "function") return;
     try {
       const P: any = PiAgent;
+      const marks: any = { truecolor: markLines("truecolor"), "256color": markLines("256color") }; // loaded once: a missing or bad file leaves pi's header
+      // a header line cut to the window's width (escape codes kept, colour reset at the cut)
+      const fit = (line: string, width: number) => {
+        if (!(width > 0)) return line;
+        let out = "", n = 0, i = 0;
+        while (i < line.length) {
+          const m = /^\x1b\[[0-9;?]*[A-Za-z]/.exec(line.slice(i));
+          if (m) { out += m[0]; i += m[0].length; continue; }
+          const ch = String.fromCodePoint(line.codePointAt(i)!);
+          if (n >= width) return out + "\x1b[0m";
+          out += ch; n++; i += ch.length;
+        }
+        return out;
+      };
       ctx.ui.setHeader((_tui: any, theme: any) => ({
-        render(_width: number): string[] {
+        render(width: number): string[] {
           const mode = theme.getColorMode?.() === "256color" ? "256color" : "truecolor";
-          const [a, b, c] = markLines(mode);
+          const [a, b, c] = marks[mode];
           const hint = (k: string, d: string) => (typeof P.keyHint === "function" ? P.keyHint(k, d) : theme.fg("dim", d));
           const raw = (k: string, d: string) => (typeof P.rawKeyHint === "function" ? P.rawKeyHint(k, d) : `${k} ${theme.fg("dim", d)}`);
           const key = (k: string, f: string) => (typeof P.keyText === "function" ? P.keyText(k) : f);
@@ -421,7 +435,7 @@ export default function hyprpi(pi: ExtensionAPI) {
             `${b} ${hints}`,
             `${c} ${theme.fg("dim", "hyprpi agent · /hotkeys lists every key")}`,
             theme.fg("dim", "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi."),
-          ];
+          ].map((l) => fit(l, width));
         },
         invalidate() {},
       }));
