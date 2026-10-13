@@ -14,10 +14,13 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), "j534-")), cfg = path.join(T, "c
 fs.mkdirSync(cfg, { recursive: true });
 fs.writeFileSync(path.join(T, "fakepi"), `#!/bin/sh\necho "$@" > ${argvFile}\n`, { mode: 0o755 });
 fs.writeFileSync(path.join(cfg, "config.json"), JSON.stringify({ pi: path.join(T, "fakepi"), piArgs: [] }));
+// (J553) pi's model registry, for the scoped-list check: a stand-in `pi --list-models` (the real pi runs through mise, which refuses
+// to start with this test's private XDG_STATE_HOME: "config files … are not trusted", so every listed model looked unlisted)
+fs.writeFileSync(path.join(T, "listpi"), `#!/bin/sh\nprintf 'provider model context\\nanthropic claude-opus-5-5 1M\\nanthropic claude-sonnet-5-5 1M\\nanthropic claude-haiku-4-5 200K\\n'\n`, { mode: 0o755 });
 const run = (args, env = {}) => {
   try { fs.unlinkSync(argvFile); } catch { /* */ }
   // (J534Check) every path isolated: config, socket, state, runtime and state homes; any daemon `hyprpi new` starts is reaped below
-  const e = { ...process.env, XDG_CONFIG_HOME: path.join(T, "cfg"), XDG_RUNTIME_DIR: path.join(T, "run"), XDG_STATE_HOME: path.join(T, "xstate"), HYPRPI_SOCKET: path.join(T, "s.sock"), HYPRPI_STATE: path.join(T, "st"), HYPRLAND_INSTANCE_SIGNATURE: "j534-none", ...env };
+  const e = { ...process.env, XDG_CONFIG_HOME: path.join(T, "cfg"), XDG_RUNTIME_DIR: path.join(T, "run"), XDG_STATE_HOME: path.join(T, "xstate"), HYPRPI_SOCKET: path.join(T, "s.sock"), HYPRPI_STATE: path.join(T, "st"), HYPRLAND_INSTANCE_SIGNATURE: "j534-none", HYPRPI_PI: path.join(T, "listpi"), ...env };
   for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_FROM_DAEMON", "HYPRPI_TWIN_OF", "HYPRPI_ROUTER"]) if (!(k in env)) delete e[k];
   fs.mkdirSync(e.XDG_RUNTIME_DIR, { recursive: true, mode: 0o700 });
   const r = spawnSync("script", ["-qec", ["node", path.join(ROOT, "bin/hyprpi"), "new", ...args].map((x) => `'${x}'`).join(" "), "/dev/null"], { env: e, encoding: "utf8", timeout: 30000 });
