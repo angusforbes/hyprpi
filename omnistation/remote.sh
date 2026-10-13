@@ -206,7 +206,8 @@ case "$cmd" in
       python3 - "$pid" "$DIR/bin/hyprpi" "HYPRPI_STATE=$HYPRPI_STATE" <<'PYK' || { echo "remote.sh: the daemon (pid $pid) wasn't stopped: nothing else changed" >&2; exit 3; }
 import os, select, signal, sys
 pid, bin_, st = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-fd = os.pidfd_open(pid)
+try: fd = os.pidfd_open(pid)
+except ProcessLookupError: sys.exit(0)  # (review) already gone: fine
 def same():
     try:
         a = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")[:-1]
@@ -215,9 +216,12 @@ def same():
     return len(a) == 3 and os.path.basename(a[0]) == b"node" and a[1] == bin_.encode() and a[2] == b"daemon" and st.encode() in e
 if not same(): sys.exit(0 if select.select([fd], [], [], 0)[0] else 3)  # gone already: fine; another process now: refuse
 def wait(t): return bool(select.select([fd], [], [], t)[0])  # readable = it exited
-signal.pidfd_send_signal(fd, signal.SIGTERM)
+def send(sig):
+    try: signal.pidfd_send_signal(fd, sig)
+    except ProcessLookupError: pass  # exited meanwhile
+send(signal.SIGTERM)
 if not wait(10):
-    signal.pidfd_send_signal(fd, signal.SIGKILL)  # (live) it can ignore TERM; the pidfd still names the same process
+    send(signal.SIGKILL)  # (live) it can ignore TERM; the pidfd still names the same process
     if not wait(5): sys.exit(3)
 PYK
     elif [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then echo "remote.sh: pid $pid in daemon.lock isn't world ${W^^}'s daemon: not killing it" >&2; exit 3; fi

@@ -4,7 +4,10 @@
 set -uo pipefail
 R="$(cd "$(dirname "$0")/.." && pwd)"; mkdir -p "$HOME/.cache"; T="$(mktemp -d -p "$HOME/.cache" j530rd.XXXX)"; pass=0; fail=0 # (not under /tmp: remote.sh refuses a world folder below a folder others can write)
 ok() { if eval "$2"; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
-cleanup() { pkill -f "$T/hyprpi/bin/hyprpi" 2>/dev/null; rm -rf "$T"; }; trap cleanup EXIT
+PIDS=() # every fixture process, killed by pid at the end (never pkill -f)
+fakes() { for p in /proc/[0-9]*; do [[ "$(tr '\0' ' ' < $p/cmdline 2>/dev/null)" == "node $T/hyprpi/bin/hyprpi daemon " ]] && echo "${p#/proc/}"; done; }
+stop_fakes() { for p in $(fakes); do kill "$p" 2>/dev/null; done; sleep 0.3; for p in $(fakes); do kill -9 "$p" 2>/dev/null; done; }
+cleanup() { stop_fakes; for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; rm -rf "$T"; }; trap cleanup EXIT
 mkdir -p "$T/.hyprpi-i/run" "$T/hyprpi/bin" "$T/hyprpi/lib" "$T/bin"; chmod 700 "$T/.hyprpi-i" "$T/.hyprpi-i/run"
 cp "$R/omnistation/remote.sh" "$T/.hyprpi-i/remote.sh"
 # the fake daemon: writes its pid to the lock, removes it on TERM (as the real one does)
@@ -27,18 +30,18 @@ start_fake; old=$(cat "$T/.hyprpi-i/run/daemon.lock"); o=$(run); new=$(cat "$T/.
 ok "a running daemon is stopped and a new one answers" '[[ "$o" == *"daemon restarted"* && -n "$new" && "$new" != "$old" ]] && ! kill -0 "$old" 2>/dev/null'
 ok "tmux targets are exact (=name)" 'grep -q -- "kill-session -t =hyprpi-i-daemon" "$T/tmux.calls"'
 # 2: the lock names another process (pid reuse): refused, nothing killed
-pkill -f "$T/hyprpi/bin/hyprpi"; sleep 0.3; rm -f "$T/up"; sleep 300 & sp=$!; echo "$sp" > "$T/.hyprpi-i/run/daemon.lock"; : > "$T/tmux.calls"; o=$(run); rc=$?
+stop_fakes; rm -f "$T/up"; sleep 300 & sp=$!; PIDS+=("$sp"); echo "$sp" > "$T/.hyprpi-i/run/daemon.lock"; : > "$T/tmux.calls"; o=$(run); rc=$?
 ok "a lock pid that isn't this world's daemon is refused, and not killed" '[[ $rc == 3 && "$o" == *"not killing"* ]] && kill -0 $sp && [[ ! -s "$T/tmux.calls" ]]'
 kill $sp
 # 3: no lock (cleanly stopped): a daemon is started
 rm -f "$T/.hyprpi-i/run/daemon.lock" "$T/up"; : > "$T/tmux.calls"; o=$(run); rc=$?
 ok "no lock file: a daemon is started and answers" '[[ $rc == 0 && "$o" == *"daemon restarted"* ]] && grep -q new-session "$T/tmux.calls"'
 # 4: another world's daemon (same argv, other HYPRPI_STATE) named in the lock: refused
-pkill -f "$T/hyprpi/bin/hyprpi"; sleep 0.3; rm -f "$T/up"
+stop_fakes; rm -f "$T/up"
 (cd "$T"; HYPRPI_STATE="$T/other" setsid node "$T/hyprpi/bin/hyprpi" daemon >/dev/null 2>&1 &); sleep 0.5; op=$(cat "$T/.hyprpi-i/run/daemon.lock"); o=$(run); rc=$?
 ok "another world's daemon is not killed" '[[ $rc == 3 ]] && kill -0 "$op"'
 # 5: a daemon that ignores TERM gets KILL (through its pidfd) and a new one answers
-pkill -f "$T/hyprpi/bin/hyprpi"; sleep 0.3; rm -f "$T/up" "$T/.hyprpi-i/run/daemon.lock"
+stop_fakes; rm -f "$T/up" "$T/.hyprpi-i/run/daemon.lock"
 cp "$T/hyprpi/bin/hyprpi" "$T/hyprpi/bin/hyprpi.normal"; sed -i 's/process.on("SIGTERM", () => {/process.on("SIGTERM", () => { return;/' "$T/hyprpi/bin/hyprpi"
 start_fake; old=$(cat "$T/.hyprpi-i/run/daemon.lock"); cp "$T/hyprpi/bin/hyprpi.normal" "$T/hyprpi/bin/hyprpi"; rm -f "$T/up"; o=$(run); rc=$?
 ok "a daemon ignoring TERM is killed and replaced" '[[ $rc == 0 && "$o" == *"daemon restarted"* ]] && ! kill -0 "$old" 2>/dev/null'
