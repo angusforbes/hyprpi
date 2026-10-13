@@ -102,7 +102,11 @@ async function ensureDaemon() {
   fs.mkdirSync(runtimeDir(), { recursive: true, mode: 0o700 });
   const logFile = path.join(runtimeDir(), `${instanceKey()}.log`);
   const out = fs.openSync(logFile, "a");
-  const child = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { detached: true, stdio: ["ignore", out, out], env: process.env });
+  // J543 (ParityClient: world H's daemon, started by omni-alpha's own ensure, carried HYPRPI_REMOTE_RPC=1 HYPRPI_NAME=omni-alpha, so
+  // every pi it ran became "hbroker serve omni-alpha" and stole the agent's RPC socket: its window stuck on "reconnecting"): the
+  // daemon never inherits an agent's identity
+  const denv = { ...process.env }; for (const k of Object.keys(denv)) if (/^(HYPRPI_AGENT_ID|HYPRPI_WORKSPACE|HYPRPI_TWIN_OF|HYPRPI_NAME|HYPRPI_ICON|HYPRPI_REMOTE_RPC|HYPRPI_RPC_NAME|HYPRPI_REMOTE_WORLD|PI_SESSION.*)$/.test(k)) delete denv[k];
+  const child = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { detached: true, stdio: ["ignore", out, out], env: denv });
   child.unref();
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 100));

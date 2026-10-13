@@ -10,6 +10,7 @@
 //   5. world H itself still works: talk to Thoughts-H is delivered
 //   6. open_agent / spawn_agent inside world H start the agent through ~/.hyprpi-h/remote.sh start (a stub here) and the list
 //      marks it "opened", which the laptop's world-status.mjs turns into its window
+//   7. started with an agent's identity in its env (an agent's own ensure), the daemon passes none of it to the pi it runs
 //   node test/remote-home.mjs   (exit 0 = pass)
 import fs from "node:fs"; import os from "node:os"; import path from "node:path"; import { spawn, spawnSync } from "node:child_process";
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -32,10 +33,13 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), "j543-")), ROOTH = path.join(T, 
 fs.mkdirSync(path.join(S, "rooms"), { recursive: true }); fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
 fs.writeFileSync(path.join(ROOTH, "ws"), "71\n");
 fs.writeFileSync(path.join(S, "rooms", "A.jsonl"), ""); // a stray file from the old fake world A
-fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10 }));
+// pi: a stand-in that notes the agent identity it was given (J543: the daemon an agent's ensure started had omni-alpha's) and is cat
+const PI = path.join(T, "pi"); fs.writeFileSync(PI, `#!/bin/sh\necho "pi $1 RPC=\${HYPRPI_REMOTE_RPC:-} NAME=\${HYPRPI_NAME:-} ID=\${HYPRPI_AGENT_ID:-}" >> ${JSON.stringify(path.join(T, "pi.log"))}\n[ "$1" = --version ] && exit 0\nexec cat\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: PI, worldSize: 10 }));
 fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } } }));
 const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_NOTIFY_TEST: "1" };
 for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_WORKSPACE", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "HYPRPI_REMOTE_HOME", "HYPRPI_SANDBOX_WORLD"]) delete env[k];
+Object.assign(env, { HYPRPI_REMOTE_RPC: "1", HYPRPI_NAME: "omni-alpha", HYPRPI_AGENT_ID: "h-omni-alpha", HYPRPI_REMOTE_WORLD: "H" }); // as when omni-alpha's own ensure starts it
 const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(T, "d.log"), "w"), fs.openSync(path.join(T, "d.err"), "w")] });
 for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await sleep(200);
 try {
@@ -91,6 +95,13 @@ try {
   ok("6 the list marks it opened here (the laptop opens its window)", fl?.opened?.by === "Thoughts-H" && fl.opened.at > 0, JSON.stringify(fl?.opened || null));
   ok("6 omni-alpha (not opened by the daemon) isn't marked", !((await api.call("list", {})).agents || []).find((x) => x.id === "h-omni-alpha")?.opened);
   fa.close?.();
+  { // a finished turn makes the daemon label the agent's topic with a one-shot `pi -p` (the call that stole omni-alpha's socket)
+    const sess = path.join(T, "omni.jsonl"); fs.writeFileSync(sess, JSON.stringify({ type: "message", message: { role: "user", content: "fix the parity of remote worlds" } }) + "\n");
+    await agent.call("agent.update", { session: sess, status: "working" }).catch(() => {});
+    await agent.call("agent.update", { session: sess, status: "done" }).catch(() => {});
+    for (let i = 0; i < 40 && !/pi -p/.test(fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : ""); i++) await sleep(200); }
+  { const pl = fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : "";
+    ok("7 started with an agent's env, the daemon's own pi calls (a topic label's pi -p too) carry no agent identity", /pi -p/.test(pl) && !/RPC=1|NAME=omni|ID=h-/.test(pl), pl.slice(0, 300)); }
   api.close?.(); agent.close?.();
 } finally {
   d.kill(); await sleep(300);

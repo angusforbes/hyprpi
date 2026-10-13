@@ -36,6 +36,13 @@ C=$(cat "$T/cmd-last")
 ok "bad values fall back to the defaults (name = slug, its own icon, ~/work, ws 71, no pi flags)" '[[ $rc == 0 && "$C" == *"--name bad --icon "* && "$C" != *"a\$(id)"* && "$C" == *"--cwd $H/work --workspace 71 -- --session-dir "* ]]'
 SLUG=plain; run >/dev/null; C=$(cat "$T/cmd-last")
 ok "a plain start (world X new / SUPER+A) is as before" '[[ "$C" == *"new --id h-plain --name plain --icon "* && "$C" == *"--workspace 71 -- --session-dir "* ]]'
-# pi-entry (written by install): HYPRPI_RPC_NAME first
-grep -q 'serve "${HYPRPI_RPC_NAME:-$HYPRPI_NAME}"' "$R/omnistation/remote.sh"; ok "pi-entry serves HYPRPI_RPC_NAME (the slug) before HYPRPI_NAME" '[[ $? == 0 ]]'
+# pi-entry (written by install): built here from install's own printf line, then run with a stand-in node/pi
+line=$(grep -m1 "^    printf '#!/usr/bin/env bash" "$R/omnistation/remote.sh")
+( ROOT="$T/pe"; mkdir -p "$ROOT"; eval "${line%%; chmod*}" ) && chmod 755 "$T/pe/pi-entry"
+printf '#!/bin/sh\necho "node $*"\n' > "$T/pe/node"; printf '#!/bin/sh\necho "pi $*"\n' > "$T/pe/pi"; chmod 755 "$T/pe/node" "$T/pe/pi"
+pe() { env -i PATH="$T/pe:/usr/bin:/bin" "$@"; }
+ok "pi-entry: the agent's own pi (HYPRPI_RPC_NAME) is served by hbroker under its slug" '[[ "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_RPC_NAME=farside HYPRPI_NAME=Farside "$T/pe/pi-entry" -e x --session-dir d)" == "node "*"hbroker.mjs serve farside -- -e x --session-dir d" ]]'
+ok "pi-entry: an older agent (HYPRPI_NAME only) still is" '[[ "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_NAME=omni-alpha "$T/pe/pi-entry" -e x)" == *"serve omni-alpha -- -e x" ]]'
+ok "pi-entry: a one-shot pi -p with an agent's env (the daemon's topic labels) is plain pi" '[[ "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_NAME=omni-alpha "$T/pe/pi-entry" -p --no-session hi)" == "pi -p --no-session hi" ]]'
+ok "pi-entry: --mode rpc (Thoughts) is plain pi; a display name that isn't a slug is never served" '[[ "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_RPC_NAME=farside "$T/pe/pi-entry" --mode rpc)" == "pi --mode rpc" && "$(pe HYPRPI_REMOTE_RPC=1 HYPRPI_NAME=Farside "$T/pe/pi-entry" -e x)" == "pi -e x" ]]'
 (( fails )) && { echo "FAIL ($fails)"; exit 1; }; echo PASS
