@@ -18,3 +18,11 @@ outs = {"icon-180.png": base, "icon-360.png": up(base, 2), "icon-540.png": up(ba
         "icon-192.png": render(grid, size=192, pad=0.11), "icon-512.png": render(grid, size=512, pad=0.11),
         "icon-maskable-512.png": render(grid, size=512, pad=0.167), "favicon.png": render(grid, size=64, pad=0.06)}
 for name, im in outs.items(): im.save(os.path.join(OUT, name)); print(name, im.size)
+
+# J537: the same grid as data, the one source for anything else that draws the mark (hyprpi's agent windows draw it in
+# the terminal: lib/hypi-mark.mjs). Rows top to bottom (row 0 is the P's top row), "." = empty, letters = COL.
+import json
+with open(os.path.join(OUT, "..", "assets", "hypi-mark.json"), "w") as f:
+    json.dump({"name": "mirrored-y", "from": "remote-control/icon-options/pixel/make-final.py (J61; J537)",
+               "colors": {k: list(v) for k, v in COL.items() if k in "CBY"}, "grid": grid}, f, indent=1)
+

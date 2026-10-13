@@ -1,6 +1,6 @@
 {
- "name": "f2",
- "from": "remote-control/icon-options/pixel/make8.py (J61 round 8; J537)",
+ "name": "mirrored-y",
+ "from": "remote-control/icon-options/pixel/make-final.py (J61; J537)",
  "colors": {
   "C": [
    230,
@@ -20,7 +20,7 @@
  },
  "grid": [
   "C.....CCC.",
-  "CCC.B.B.C.",
+  "CCC...B.C.",
   "C.C.B.BB.Y",
   "C.CBB.B..Y",
   "....B.....",
