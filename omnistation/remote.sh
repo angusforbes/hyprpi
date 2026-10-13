@@ -204,7 +204,9 @@ case "$cmd" in
     secrets_ok || exit 5
     tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
-    [[ -S "$HYPRPI_SOCKET" ]] && echo "daemon restarted (world ${W^^})" || { echo "remote.sh: the daemon didn't come back (tmux attach -t hyprpi-$W-daemon)" >&2; exit 4; } ;;
+    for _ in $(seq 20); do np=$(tr -cd '0-9' < "$ROOT/run/daemon.lock" 2>/dev/null); [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && break; sleep 0.5; done
+    # (an agent's own `hyprpi ensure` may have started one first: that one counts too)
+    [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && echo "daemon restarted (world ${W^^}, pid $np)" || { echo "remote.sh: the daemon didn't come back (tmux attach -t hyprpi-$W-daemon)" >&2; exit 4; } ;;
   thoughts-relay)
     # J530: a message for this world's Thoughts from the laptop (JSON on stdin); prints its answer (lib/remote-thoughts.mjs)
     secrets_ok || exit 3
