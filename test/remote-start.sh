@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# J543: omnistation/remote.sh start with the daemon's HYPRPI_START_* (open_agent / spawn_agent on a remote world's machine), against a
+# stand-in tmux (records the command, no real sessions) in a temp HOME. Checks: the agent runs `hyprpi new` with its display name,
+# icon, folder, model, thinking and workspace; its RPC socket goes by the slug (HYPRPI_RPC_NAME); bad values fall back to the
+# defaults; a new agent whose slug is taken is refused; pi-entry serves HYPRPI_RPC_NAME before HYPRPI_NAME.
+#   bash test/remote-start.sh   (exit 0 = pass)
+set -uo pipefail
+R="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$HOME/.cache"; T=$(mktemp -d "$HOME/.cache/j543-start-XXXXXX") # (remote.sh refuses a world-writable /tmp on the way); trap '[[ -n "${KEEP:-}" ]] || rm -rf "$T"' EXIT
+fails=0; ok() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails+1)); fi; }
+H="$T/home"; mkdir -p "$H/.hyprpi-h/run" "$H/bin" "$H/work" "$H/proj"; chmod 700 "$H" "$H/.hyprpi-h"
+cp "$R/omnistation/remote.sh" "$H/.hyprpi-h/remote.sh"
+cat > "$H/bin/tmux" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$T/tmux.log"
+case "\$1" in
+  has-session) t="\${3#=}"; [[ "\$t" == hyprpi-h-daemon || -e "$T/s-\$t" ]] ;;
+  new-session) for ((i=1; i<=\$#; i++)); do [[ "\${!i}" == -s ]] && { j=\$((i+1)); touch "$T/s-\${!j}"; }; done; printf '%s\n' "\${@: -1}" > "$T/cmd-last" ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod 755 "$H/bin/tmux"
+python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$H/.hyprpi-h/run/daemon.sock"
+run() { env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" HYPRPI_DIR="$R" HYPRPI_REMOTE_WS=71 HYPRPI_REMOTE_WORK="$H/work" "$@" bash "$H/.hyprpi-h/remote.sh" start "$SLUG" 2>"$T/err"; }
+SLUG=farside; run HYPRPI_START_NEW=1 HYPRPI_START_DISPLAY=Farside HYPRPI_START_ICON=🔭 HYPRPI_START_CWD="$H/proj" HYPRPI_START_MODEL=anthropic/claude-opus-5-5 HYPRPI_START_THINKING=high HYPRPI_START_WS=74 >/dev/null; rc=$?
+C=$(cat "$T/cmd-last" 2>/dev/null); [[ -n "${KEEP:-}" ]] && echo "$C" >&2
+ok "starts (rc $rc: $(head -c 200 "$T/err"))" '[[ $rc == 0 ]]'
+ok "id h-farside, display name Farside, icon, folder" '[[ "$C" == *"new --id h-farside --name Farside --icon "@(🔭|\$\'"'"'\\360\\237\\224\\255\'"'"')" --cwd $H/proj "* ]]'
+ok "workspace 74, model and thinking passed to pi" '[[ "$C" == *"--workspace 74 -- --model anthropic/claude-opus-5-5 --thinking high --session-dir "* ]]'
+ok "its socket goes by the slug (HYPRPI_RPC_NAME=farside), RPC mode" '[[ "$C" == *"HYPRPI_RPC_NAME=\"farside\""* || "$C" == *"HYPRPI_RPC_NAME=farside"* ]] && [[ "$C" == *HYPRPI_REMOTE_RPC* ]]'
+ok "tmux session hyprpi-h-farside in the folder" 'grep -q -- "new-session -d -s hyprpi-h-farside -c $H/proj" "$T/tmux.log"'
+SLUG=farside; run HYPRPI_START_NEW=1 HYPRPI_START_DISPLAY=Farside >/dev/null; rc=$?
+ok "a NEW agent whose slug is taken is refused" '[[ $rc == 3 ]] && grep -q taken "$T/err"'
+SLUG=bad; run HYPRPI_START_NEW=1 HYPRPI_START_DISPLAY='x"; rm -rf ~;' HYPRPI_START_ICON='a$(id)' HYPRPI_START_CWD=/nonexistent HYPRPI_START_MODEL='m; id' HYPRPI_START_THINKING=huge HYPRPI_START_WS=5 >/dev/null; rc=$?
+C=$(cat "$T/cmd-last")
+ok "bad values fall back to the defaults (name = slug, its own icon, ~/work, ws 71, no pi flags)" '[[ $rc == 0 && "$C" == *"--name bad --icon "* && "$C" != *"a\$(id)"* && "$C" == *"--cwd $H/work --workspace 71 -- --session-dir "* ]]'
+SLUG=plain; run >/dev/null; C=$(cat "$T/cmd-last")
+ok "a plain start (world X new / SUPER+A) is as before" '[[ "$C" == *"new --id h-plain --name plain --icon "* && "$C" == *"--workspace 71 -- --session-dir "* ]]'
+# pi-entry (written by install): HYPRPI_RPC_NAME first
+grep -q 'serve "${HYPRPI_RPC_NAME:-$HYPRPI_NAME}"' "$R/omnistation/remote.sh"; ok "pi-entry serves HYPRPI_RPC_NAME (the slug) before HYPRPI_NAME" '[[ $? == 0 ]]'
+(( fails )) && { echo "FAIL ($fails)"; exit 1; }; echo PASS

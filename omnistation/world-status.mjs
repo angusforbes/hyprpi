@@ -25,6 +25,7 @@ const { loadConfig } = await import(path.join(HERE, "../lib/paths.mjs"));
 const { REMOTE_MARK } = await import(path.join(HERE, "../lib/sandbox-icon.mjs"));
 const { validateStatus } = await import(path.join(HERE, "../docker/world/g-status.mjs"));
 const rworld = await import(path.join(HERE, "../remote-control/rworld.mjs"));
+const { pickAutoOpens } = await import(path.join(HERE, "auto-open.mjs")); // J543
 const SIZE = Number(loadConfig().worldSize) || 10, idx = WL.charCodeAt(0) - 64, LO = (idx - 1) * SIZE + 1, HI = idx * SIZE;
 const DIR = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "worlds", `world-${wl}`);
 fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
@@ -57,10 +58,24 @@ function windowAgent(pid) {
 }
 
 let lastWin = "", lastSeenWindow = Date.now(), listAt = 0, lastList = null;
+// J543 (parity: Thoughts-H's open_agent "reported Farside … as opened, but none ever came live" on the laptop): an agent the remote
+// world's daemon opened itself (open_agent / spawn_agent there; its list says "opened": { at, by }) gets its window here, silently on
+// its workspace, as a local open does: once per agent (auto-opened.json), only within 15 min of its start, never one that has a window
+const AUTO = path.join(DIR, "auto-opened.json");
+let autoOpened = {}; try { autoOpened = JSON.parse(fs.readFileSync(AUTO, "utf8")) || {}; } catch { /* none yet */ }
+function autoOpen(raw, agents) {
+  const now = Date.now(); let changed = false;
+  for (const o of pickAutoOpens(raw, agents, autoOpened, now, LO, HI)) {
+    autoOpened[o.id] = now; changed = true;
+    execFile(path.join(HERE, "world"), [WL, "open", o.launch], { env: { ...process.env, HYPRPI_OPEN_WS: String(o.ws) }, timeout: 120000 }, () => {});
+  }
+  for (const [id, t] of Object.entries(autoOpened)) if (now - t > 7 * 864e5) { delete autoOpened[id]; changed = true; } // a week
+  if (changed) write("auto-opened.json", autoOpened);
+}
 async function tick() {
   const cl = await clients(); if (!cl) return;
   const mine = cl.filter((c) => c.class === `hyprpi.${wl}-agent` && Number.isInteger(c.pid)).map((c) => ({ c, name: windowAgent(c.pid) })).filter((x) => x.name);
-  if (mine.length) lastSeenWindow = Date.now();
+  if (mine.length || cl.some((c) => c.class === `hyprpi.${wl}-panel`)) lastSeenWindow = Date.now(); // J543: the world's panels keep it too
   const windows = Object.fromEntries(mine.map(({ c, name }) => [c.address, { kind: "agent", home: c.workspace?.id || LO, pid: c.pid, name }]));
   const v = JSON.stringify(windows);
   if (v !== lastWin) { write("windows.json", { world: `world-${wl}`, lo: LO, hi: HI, badge: REMOTE_MARK, where: "remote", windows }); lastWin = v; }
@@ -78,6 +93,7 @@ async function tick() {
     const agents = ok.agents.map((a) => { const launch = launchOf(a.id), m = launch && mine.find((x) => x.name === launch); return { ...a, ...(launch ? { launch } : {}), ws: m ? m.c.workspace.id : 0, ...(m ? { address: m.c.address } : {}) }; });
     lastList = { world: `world-${wl}`, room: WL, at: Date.now(), agents, thoughts: ok.thoughts, dropped: ok.dropped, badge: REMOTE_MARK, where: "remote" };
     write("agents.json", lastList);
+    autoOpen(l.agents || [], agents); // J543
   } catch { /* offline or slow: the report ages */ }
 }
 for (;;) {

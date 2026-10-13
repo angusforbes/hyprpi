@@ -106,7 +106,7 @@ case "$cmd" in
     # J471: hyprpi starts agents through pi-entry, which runs pi in RPC mode behind hbroker for an agent started by `start`
     # (HYPRPI_REMOTE_RPC=1) and is plain pi for everything else (the daemon's own pi calls)
     [[ -f "$ROOT/hbroker.mjs" ]] || { echo "remote.sh: $ROOT/hbroker.mjs is missing (world-h setup copies it)" >&2; exit 3; }
-    printf '#!/usr/bin/env bash\n# hyprpi'"'"'s pi command on this machine (omnistation/remote.sh, J471)\nif [[ "${HYPRPI_REMOTE_RPC:-}" == 1 && -n "${HYPRPI_NAME:-}" ]]; then exec node %q serve "$HYPRPI_NAME" -- "$@"; fi\nexec pi "$@"\n' "$ROOT/hbroker.mjs" > "$ROOT/pi-entry"; chmod 755 "$ROOT/pi-entry"
+    printf '#!/usr/bin/env bash\n# hyprpi'"'"'s pi command on this machine (omnistation/remote.sh, J471)\nif [[ "${HYPRPI_REMOTE_RPC:-}" == 1 && -n "${HYPRPI_RPC_NAME:-${HYPRPI_NAME:-}}" ]]; then exec node %q serve "${HYPRPI_RPC_NAME:-$HYPRPI_NAME}" -- "$@"; fi\nexec pi "$@"\n' "$ROOT/hbroker.mjs" > "$ROOT/pi-entry"; chmod 755 "$ROOT/pi-entry"
     node -e 'const fs=require("fs"),[c,e]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(c,"utf8"));j.pi=e;fs.writeFileSync(c,JSON.stringify(j,null,2)+"\n")' "$c" "$ROOT/pi-entry"
     # J480: the world's Thoughts model (the binding's "thoughtsModel", e.g. a model served on this machine) and the human's
     # name for the panels (the laptop's; else the panels here would say the remote login's name, e.g. "Ubuntu")
@@ -172,14 +172,28 @@ case "$cmd" in
     tmux has-session -t "=hyprpi-$W-daemon" 2>/dev/null || tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: the daemon didn't start (tmux attach -t hyprpi-$W-daemon shows why)" >&2; exit 4; }
+    if [[ "${HYPRPI_START_NEW:-}" == 1 ]] && { tmux has-session -t "=hyprpi-$W-$NAME" 2>/dev/null || [[ -e "$ROOT/sessions/$NAME" ]]; }; then echo "remote.sh: $NAME is taken (a new agent needs a new name)" >&2; exit 3; fi
     if tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
     # its pi session is resumed when it ran before (the newest session of this agent id), else a new one starts
     sess=$(ls -t "$ROOT/sessions/$NAME"/*.jsonl 2>/dev/null | head -1 || true)
     # its icon: a normal agent icon, steady for its name (the world's 📡 goes after the name, like 🐳 for a sandbox: J471 v2)
     icon=$(node -e 'import(process.argv[1]).then((m) => console.log(m.sbxIcon(undefined, process.argv[2])))' "$DIR/lib/sandbox-icon.mjs" "$NAME" 2>/dev/null || true)
+    # J543 (parity: open_agent / spawn_agent on this machine): the daemon starts its new agents through here, with their own name,
+    # icon, folder, model, thinking, fork and workspace (HYPRPI_START_*, each checked; anything else falls back to the defaults).
+    # NAME stays the slug: tmux session, RPC socket (HYPRPI_RPC_NAME) and the laptop's window (world X open NAME) go by it.
+    disp="$NAME"; [[ "${HYPRPI_START_DISPLAY:-}" =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,59}$ ]] && disp="$HYPRPI_START_DISPLAY"
+    ic="${HYPRPI_START_ICON:-}"; [[ -n "$ic" && ${#ic} -le 32 && ! "$ic" =~ [[:alnum:][:space:][:cntrl:]\'\"\\\$\`] ]] && icon="$ic"
+    [[ -n "${HYPRPI_START_CWD:-}" && -d "${HYPRPI_START_CWD}" ]] && WORK="$HYPRPI_START_CWD"
+    pa=()
+    [[ "${HYPRPI_START_MODEL:-}" =~ ^[A-Za-z0-9._:@~/-]{1,120}$ ]] && pa+=(--model "$HYPRPI_START_MODEL")
+    [[ "${HYPRPI_START_THINKING:-}" =~ ^(off|minimal|low|medium|high|xhigh|max)$ ]] && pa+=(--thinking "$HYPRPI_START_THINKING")
+    [[ -z "$sess" && -n "${HYPRPI_START_FORK:-}" && -f "${HYPRPI_START_FORK}" ]] && pa+=(--fork "$HYPRPI_START_FORK")
+    sws="$HYPRPI_REMOTE_WS"; [[ "${HYPRPI_START_WS:-}" =~ ^[0-9]{1,3}$ ]] && (( HYPRPI_START_WS >= HYPRPI_REMOTE_WS && HYPRPI_START_WS < HYPRPI_REMOTE_WS + 10 )) && sws="$HYPRPI_START_WS"
+    pas=""; (( ${#pa[@]} )) && pas="$(printf '%q ' "${pa[@]}")"
+    export HYPRPI_RPC_NAME="$NAME"
     export HYPRPI_REMOTE_WORLD="${W^^}"
     if [[ "${HYPRPI_REMOTE_MIRROR:-}" == 1 ]]; then export HYPRPI_REMOTE_RPC=0; else export HYPRPI_REMOTE_RPC=1; fi
-    tmux new-session -d -s "hyprpi-$W-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT HYPRPI_REMOTE_RPC HYPRPI_REMOTE_WORLD PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") new --id $W-$NAME --name $NAME --icon $(printf %q "$icon") --cwd $(printf %q "$WORK") --workspace $(printf %q "$HYPRPI_REMOTE_WS") -- --session-dir $(printf %q "$ROOT/sessions/$NAME") ${sess:+--session $(printf %q "$sess")}"  # (Ledger: every path quoted for the tmux command string)
+    tmux new-session -d -s "hyprpi-$W-$NAME" -c "$WORK" "$(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT HYPRPI_REMOTE_RPC HYPRPI_REMOTE_WORLD HYPRPI_RPC_NAME PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") new --id $W-$NAME --name $(printf %q "$disp") --icon $(printf %q "$icon") --cwd $(printf %q "$WORK") --workspace $(printf %q "$sws") -- $pas--session-dir $(printf %q "$ROOT/sessions/$NAME") ${sess:+--session $(printf %q "$sess")}"  # (Ledger: every path quoted for the tmux command string)
     tmux set-option -t "hyprpi-$W-$NAME" status off >/dev/null 2>&1 || true  # the window looks like any hyprpi agent: no tmux bar
     sleep 2; tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null && echo "agent $NAME started (tmux session hyprpi-$W-$NAME)" || { echo "remote.sh: agent $NAME exited at once" >&2; exit 4; } ;;
   connect)

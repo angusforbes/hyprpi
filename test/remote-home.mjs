@@ -8,6 +8,8 @@
 //   3. thoughts.ask to Thoughts-A, thoughts.send / room.post / board.get for A, relayAsk for A: refused with why
 //   4. open_agent (thoughts.open) and spawn_agent (orch.spawn) for world A are refused; `hyprpi new` on A's workspace is refused
 //   5. world H itself still works: talk to Thoughts-H is delivered
+//   6. open_agent / spawn_agent inside world H start the agent through ~/.hyprpi-h/remote.sh start (a stub here) and the list
+//      marks it "opened", which the laptop's world-status.mjs turns into its window
 //   node test/remote-home.mjs   (exit 0 = pass)
 import fs from "node:fs"; import os from "node:os"; import path from "node:path"; import { spawn, spawnSync } from "node:child_process";
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -19,6 +21,13 @@ ok("0 remoteHome: from the state path, the env, and off elsewhere",
   remoteHome({ HYPRPI_STATE: "/home/u/.hyprpi-h/state" }) === "H" && remoteHome({ HYPRPI_STATE: "/home/u/.hyprpi-i/state/" }) === "I"
   && remoteHome({ HYPRPI_STATE: "/home/u/.local/state/hyprpi" }) === "" && remoteHome({}) === "" && remoteHome({ HYPRPI_REMOTE_HOME: "c" }) === "C"
   && remoteHome({ HYPRPI_STATE: "/x/.hyprpi-h/state", HYPRPI_REMOTE_HOME: "-" }) === "" && remoteHome({ HYPRPI_STATE: "/x/.hyprpi-h/state", HYPRPI_SANDBOX_WORLD: "G" }) === "");
+{ // J543: which remote agents the laptop's world-status opens a window for (omnistation/auto-open.mjs)
+  const { pickAutoOpens } = await import(path.join(ROOT, "omnistation/auto-open.mjs"));
+  const now = 1e12, raw = [{ id: "h-farside", workspace: 74, opened: { at: now - 5000, by: "Thoughts-H" } }, { id: "h-omni-alpha", workspace: 71 }, { id: "h-old", opened: { at: now - 3600e3 } }, { id: "h-win", opened: { at: now } }, { id: "h-done", opened: { at: now } }, { id: "h-far", workspace: 5, opened: { at: now } }];
+  const ag = [{ id: "h-farside", launch: "farside" }, { id: "h-omni-alpha", launch: "omni-alpha" }, { id: "h-old", launch: "old" }, { id: "h-win", launch: "win", address: "0x1" }, { id: "h-done", launch: "done" }, { id: "h-far", launch: "far" }];
+  const got = pickAutoOpens(raw, ag, { "h-done": now - 1000 }, now, 71, 80);
+  ok("0 auto-open: only daemon-opened, recent, windowless, not yet opened; its workspace (or the world's first)", JSON.stringify(got) === JSON.stringify([{ id: "h-farside", launch: "farside", ws: 74 }, { id: "h-far", launch: "far", ws: 71 }]), JSON.stringify(got));
+}
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j543-")), ROOTH = path.join(T, ".hyprpi-h"), S = path.join(ROOTH, "state"), cfg = path.join(T, "cfg"), sock = path.join(T, "d.sock");
 fs.mkdirSync(path.join(S, "rooms"), { recursive: true }); fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
 fs.writeFileSync(path.join(ROOTH, "ws"), "71\n");
@@ -62,6 +71,26 @@ try {
   // 5
   const t3 = await agent.call("talk", { to: ["Thoughts-H"], text: "status?", mode: "talk" });
   ok("5 talk to Thoughts-H (this machine's own) is delivered", (t3.delivered || []).includes("Thoughts-H"), JSON.stringify(t3));
+  // 6 J543 parity: open_agent / spawn_agent INSIDE world H start the agent the remote.sh way (no Hyprland here), and the list marks it
+  { const e = await err(() => api.call("thoughts.open", { room: "H", task: "fix it", angus: "fix it", name: "Nohere" }));
+    ok("6 without remote.sh here: open_agent says so", /remote\.sh is missing/.test(e), e); }
+  fs.writeFileSync(path.join(ROOTH, "remote.sh"), `#!/usr/bin/env bash\n{ echo "ARGS $*"; env | grep '^HYPRPI_START_\\|^HYPRPI_AGENT_ID=' | sort; echo; } >> ${JSON.stringify(path.join(T, "starts.log"))}\n`, { mode: 0o755 });
+  fs.mkdirSync(path.join(ROOTH, "sessions", "taken"), { recursive: true });
+  const o = await api.call("thoughts.open", { room: "H", task: "fix the parity gaps", angus: "fix the parity gaps", name: "Farside", icon: "🔭", model: "", thinking: "high", cwd: T });
+  ok("6 open_agent in world H answers with the agent", o.agent === "Farside" && /^H/.test(o.workspace), JSON.stringify(o));
+  const o2 = await api.call("thoughts.open", { room: "H", task: "x", angus: "x", name: "Taken" });
+  const o3 = await api.call("orch.spawn", { thoughts: "H", prompt: "help with X", name: "Helper" });
+  for (let i = 0; i < 30 && (fs.existsSync(path.join(T, "starts.log")) ? fs.readFileSync(path.join(T, "starts.log"), "utf8").split("ARGS").length : 0) < 4; i++) await sleep(200);
+  const log = fs.existsSync(path.join(T, "starts.log")) ? fs.readFileSync(path.join(T, "starts.log"), "utf8") : "";
+  ok("6 remote.sh start farside with its name, icon, folder, thinking and workspace", /ARGS start farside\n/.test(log) && /HYPRPI_START_DISPLAY=Farside/.test(log) && /HYPRPI_START_ICON=🔭/.test(log) && log.includes(`HYPRPI_START_CWD=${T}`) && /HYPRPI_START_THINKING=high/.test(log) && /HYPRPI_START_NEW=1/.test(log) && /HYPRPI_START_WS=7[2-9]/.test(log) && !/HYPRPI_AGENT_ID=/.test(log), log.slice(0, 600));
+  ok("6 a slug that is taken (a session folder) gets a new one", /ARGS start taken-2\n/.test(log) && o2.agent === "Taken", log.match(/ARGS start taken\S*/)?.[0]);
+  ok("6 spawn_agent as Thoughts-H starts one too", /ARGS start helper\n/.test(log) && o3.name === "Helper", JSON.stringify(o3));
+  const fa = await connect({ path: sock, onEvent: () => {} });
+  await fa.call("agent.hello", { agent_id: "h-farside", pid: process.pid, name: "Farside", want_workspace: 72, cwd: T });
+  const fl = ((await api.call("list", {})).agents || []).find((x) => x.id === "h-farside");
+  ok("6 the list marks it opened here (the laptop opens its window)", fl?.opened?.by === "Thoughts-H" && fl.opened.at > 0, JSON.stringify(fl?.opened || null));
+  ok("6 omni-alpha (not opened by the daemon) isn't marked", !((await api.call("list", {})).agents || []).find((x) => x.id === "h-omni-alpha")?.opened);
+  fa.close?.();
   api.close?.(); agent.close?.();
 } finally {
   d.kill(); await sleep(300);
