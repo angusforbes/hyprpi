@@ -15,6 +15,7 @@ from PIL import Image
 base = render(grid, size=180, pad=0.11); maskb = render(grid, size=180, pad=0.167)   # mark 140 px wide = 78% of the tile (Angus: it looked small); maskable inside the 80% circle
 def up(im, k): return im.resize((im.size[0] * k, im.size[1] * k), Image.NEAREST)
 outs = {"icon-180.png": base, "icon-360.png": up(base, 2), "icon-540.png": up(base, 3), "icon-maskable-540.png": up(maskb, 3),
+        "icon-1024.png": render(grid, size=1024, pad=0.11),  # J61: iOS shows the tile at ~203 px on a 3× phone, so it UPscaled the 180 (blur); a big one is only scaled down
         "icon-192.png": render(grid, size=192, pad=0.11), "icon-512.png": render(grid, size=512, pad=0.11),
         "icon-maskable-512.png": render(grid, size=512, pad=0.167), "favicon.png": render(grid, size=64, pad=0.06)}
 for name, im in outs.items(): im.save(os.path.join(OUT, name)); print(name, im.size)
