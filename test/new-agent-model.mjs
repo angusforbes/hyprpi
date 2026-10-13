@@ -48,7 +48,8 @@ setKey("someprovider/not-on-the-list"); r = run([]);
 ok("a model off the scoped list (J397) is skipped with a warning, not fatal", r.models.length === 0 && /isn't on the scoped model list/.test(r.out), r.out.slice(-200));
 // (J534Check) the config's "--" splits pi's options: a --model after it is prompt text, so the key's model still goes in
 fs.writeFileSync(path.join(cfg, "config.json"), JSON.stringify({ pi: path.join(T, "fakepi"), piArgs: ["--"] })); setKey("anthropic/claude-opus-5-5");
-r = run(["--model", "x"]); ok("options are read from the whole argv up to its first --", r.ran && r.models[0] === "anthropic/claude-opus-5-5", JSON.stringify(r));
+r = run(["--", "--model", "x"]); { const a = fs.existsSync(argvFile) ? "" : ""; }
+ok("options are read from the whole argv up to its first --: the key's model goes in, the caller's --model x after the config's -- is prompt text", r.ran && r.models[0] === "anthropic/claude-opus-5-5" && r.models.includes("x"), JSON.stringify(r));
 // reap any daemon a `hyprpi new` started in this test (found by our temp paths in its environment)
 for (const pid of fs.readdirSync("/proc").filter((x) => /^\d+$/.test(x))) { try { if (fs.readFileSync(`/proc/${pid}/environ`, "utf8").includes(T)) process.kill(Number(pid), "SIGTERM"); } catch { /* gone or not ours */ } }
 fs.rmSync(T, { recursive: true, force: true });
