@@ -70,7 +70,9 @@ class Relay:
         Enter never counts as a typed one, and a split Shift+Insert or click still counts. A kept ESC older than TAIL_S was a
         lone Esc key: it is taken on its own, so a later Enter isn't read as Alt+Enter."""
         now = time.monotonic() if now is None else now
-        if self.in_tail and now - self.in_tail_t > TAIL_S: self.classify(self.in_tail, now); self.in_tail = b""
+        # (ParityCheck) only a LONE kept ESC times out; a cut-off CSI / SS3 / mouse / paste mark waits (bounded) for its end however
+        # late the next read comes, else a paste start split by a slow read would let its Enter open the gate
+        if self.in_tail == b"\x1b" and now - self.in_tail_t > TAIL_S: self.classify(self.in_tail, now); self.in_tail = b""
         data = self.in_tail + data
         m = INCOMPLETE.search(data)
         if m and len(data) - m.start() <= 64: data, self.in_tail, self.in_tail_t = data[:m.start()], data[m.start():], now
