@@ -15,7 +15,7 @@ cat > "$T/bin/tailscale" <<EOF
 #!/usr/bin/env bash
 echo "tailscale \$*" >> "$T/calls"
 case "\$1" in
-  status) [[ -f "$T/ts" ]] && printf '{\n\t"BackendState" :\t"Running",\n "Self": {"DNSName": "%s.tail1c2031.ts.net."}}\n' "\$(cat "$T/ts")" || echo '{"BackendState": "NeedsLogin"}';;
+  status) [[ -f "$T/ts" ]] && printf '{\n\t"BackendState" :\t"Running",\n "Self": {"DNSName": "%s.tail0example.ts.net."}}\n' "\$(cat "$T/ts")" || echo '{"BackendState": "NeedsLogin"}';;
   up) for a in "\$@"; do case "\$a" in --auth-key=file:*) f="\${a#--auth-key=file:}"; cp "\$f" "$T/key-seen"; stat -c %a "\$f" > "$T/key-mode";; --hostname=*) echo "\${a#--hostname=}" > "$T/ts";; esac; done
       [[ "\$(cat "$T/key-seen")" == tskey-auth-FAKE123 ]] || { echo "invalid key tskey-auth-WRONG"; rm -f "$T/ts"; exit 1; };;
   set) [[ -f "$T/set-fails" ]] && exit 1; [[ "\$*" == *"--netfilter-mode=off"* ]] && echo 0 > "$T/nf";;
@@ -41,7 +41,7 @@ ok "no key file yet: says so, exit 0, nothing joined" '[[ "$o" == *"no Tailscale
 printf 'tskey-auth-FAKE123\n' > "$KF"; chmod 644 "$KF"; o=$(run "$T/on.json")
 ok "a key file readable by others is refused" '[[ "$o" == *"600 in a 700 folder"* && ! -f "$T/ts" ]]'
 chmod 600 "$KF"; o=$(run "$T/on.json"); rc=$?
-ok "joins: tailnet name printed, hostname from the ssh target" '[[ $rc == 0 && "$o" == *"tailnet hub.tail1c2031.ts.net"* ]]'
+ok "joins: tailnet name printed, hostname from the ssh target" '[[ $rc == 0 && "$o" == *"tailnet hub.tail0example.ts.net"* ]]'
 ok "joins with --netfilter-mode=off (Brev's ssh proxy comes from 100.64.0.0/10)" 'grep -q -- "--netfilter-mode=off" "$T/calls"'
 ok "Tailscale SSH on by default" 'grep -q -- "--ssh" "$T/calls"'
 ok "the key reached tailscale up through a 600 file, then was removed" '[[ "$(cat "$T/key-seen")" == tskey-auth-FAKE123 && "$(cat "$T/key-mode")" == 600 ]] && ! grep -rqs FAKE123 "$T/box"'
