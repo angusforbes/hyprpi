@@ -50,9 +50,22 @@ if (cmd === "connect") {
 } else if (cmd === "serve") {
   const dd = rest.indexOf("--");
   const piArgs = dd >= 0 ? rest.slice(dd + 1) : rest;
-  fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
-  try { fs.unlinkSync(SOCK); } catch {}
   const log = (m) => process.stderr.write(`[hbroker ${new Date().toISOString().slice(11, 19)}] ${m}\n`);
+  // J543 (seen on world H: a daemon restarted from an agent's own `hyprpi ensure` inherited HYPRPI_REMOTE_RPC=1 and
+  // HYPRPI_NAME, so pi-entry ran each of its one-shot `pi -p …` calls as "hbroker serve AGENT", twice a second; each one
+  // unlinked the live agent's socket, so its windows found "isn't running" and stayed disconnected):
+  // (1) a one-shot pi (-p / --print, or any mode but rpc) is never an agent: run it as plain pi and leave the socket alone
+  if (piArgs.some((a) => a === "-p" || a === "--print" || /^--print=/.test(a)) || (piArgs.includes("--mode") && piArgs[piArgs.indexOf("--mode") + 1] !== "rpc")) {
+    const p = spawn(process.env.HYPRPI_REMOTE_PI || "pi", piArgs, { stdio: "inherit" });
+    p.on("error", (e) => { process.stderr.write(`hbroker: couldn't start pi: ${e.message}\n`); process.exit(127); });
+    p.on("exit", (code, sig) => process.exit(code ?? (sig ? 1 : 0)));
+    for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, () => { try { p.kill(s); } catch {} });
+  } else {
+  fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
+  // (2) a live broker already serving this agent keeps its socket: this one refuses instead of unlinking it
+  const live = await new Promise((res) => { const c = net.connect(SOCK); c.on("connect", () => { c.destroy(); res(true); }); c.on("error", () => res(false)); });
+  if (live) { log(`agent ${NAME} is already served on ${SOCK}: not starting a second broker`); process.exit(6); }
+  try { fs.unlinkSync(SOCK); } catch {}
   const pi = spawn(process.env.HYPRPI_REMOTE_PI || "pi", ["--mode", "rpc", ...piArgs], { stdio: ["pipe", "pipe", "inherit"], env: process.env });
   const clients = new Map(); // n -> socket
   let nextN = 1;
@@ -80,17 +93,20 @@ if (cmd === "connect") {
     }
     for (const sock of clients.values()) send(sock, r);
   }));
-  pi.on("error", (e) => { log(`couldn't start pi: ${e.message}`); try { fs.unlinkSync(SOCK); } catch {} process.exit(3); });
+  // (3) the socket file is removed only while it is still ours (never another broker's that replaced it)
+  let myIno = 0;
+  const unlinkMine = () => { try { if (myIno && fs.statSync(SOCK).ino === myIno) fs.unlinkSync(SOCK); } catch {} };
+  pi.on("error", (e) => { log(`couldn't start pi: ${e.message}`); unlinkMine(); process.exit(3); });
   pi.stdin.on("error", () => {});
   pi.on("exit", (code, sig) => {
     log(`pi exited (${sig || code}); closing`);
     for (const s of clients.values()) { send(s, { type: "broker_error", error: `pi exited (${sig || code})` }); s.end(); }
-    try { fs.unlinkSync(SOCK); } catch {}
+    unlinkMine();
     process.exit(code ?? 1);
   });
   for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, () => { try { pi.kill("SIGTERM"); } catch {} });
 
-  const srv = net.createServer((sock) => {
+  const onClient = (sock) => {
     const n = nextN++; clients.set(n, sock);
     log(`client ${n} connected (${clients.size} now)`);
     send(sock, { type: "broker_hello", agent: NAME, pid: pi.pid, clients: clients.size, cwd: process.cwd(), home: os.homedir() });
@@ -113,6 +129,14 @@ if (cmd === "connect") {
       if (!clients.size) for (const id of pendingUi.keys()) { toPi({ type: "extension_ui_response", id, cancelled: true }); pendingUi.delete(id); }
     };
     sock.on("close", bye); sock.on("error", bye);
-  });
-  srv.listen(SOCK, () => { fs.chmodSync(SOCK, 0o600); log(`agent ${NAME}: pi ${pi.pid} in RPC mode, serving ${SOCK}`); });
+  };
+  const serve = () => {
+    const srv = net.createServer(onClient);
+    srv.on("error", (e) => log(`couldn't serve ${SOCK}: ${e.message}`));
+    srv.listen(SOCK, () => { fs.chmodSync(SOCK, 0o600); myIno = fs.statSync(SOCK).ino; log(`agent ${NAME}: pi ${pi.pid} in RPC mode, serving ${SOCK}`); });
+  };
+  serve();
+  // (4) its socket file gone (removed by something else): serve it again, so windows can reach this pi again
+  setInterval(() => { if (!myIno) return; try { fs.statSync(SOCK); } catch (e) { if (e.code === "ENOENT") { log(`${SOCK} was removed: serving it again`); myIno = 0; serve(); } } }, 5000).unref();
+  }
 } else { console.error("hbroker: usage: hbroker.mjs serve|connect NAME"); process.exit(2); }
