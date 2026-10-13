@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# deploy-hub HOST [WORLD] (J526, Angus: "brev guards"): run brev-autostop on the always-on Brev box HOST (e.g. hub, world I), so
+# Brev boxes are stopped even while the laptop sleeps, and make the laptop's copy its backup. Idempotent; run it again after a
+# change to brev-autostop. On HOST:
+#   - the script and the example config go to ~/.local/share/brev-autostop/ (each written to a temp file, then renamed, so a
+#     run in progress finishes on the old one); ~/.local/bin/brev-autostop links to it;
+#   - its config ~/.config/hyprpi/brev-autostop.conf, made once from the laptop's (same boxes, limits and exclusions) plus
+#     `exclude HOST` (it never stops itself); later runs only add `exclude HOST` if missing;
+#   - ~/.config/hyprpi/brev-autostop.env: alerts go to world WORLD's Thoughts thread through HOST's own hyprpi (no laptop needed);
+#   - `brev refresh` (its ssh config for the other boxes), linger (the timer runs with nobody logged in), and the user timer.
+# On the laptop: `exclude HOST` in its config, and BREV_AUTOSTOP_PRIMARY=HOST in ~/.config/hyprpi/brev-autostop.env, so the
+# laptop copy only acts when HOST's copy hasn't run for 15 min (brev-autostop's backup mode).
+# Never starts, stops or probes a box itself; `--dry` prints what it would do.
+set -euo pipefail
+HOST="${1:-}"; WORLD="${2:-I}"; DRY=""; [[ "${3:-}" == --dry || "${2:-}" == --dry ]] && { DRY=1; [[ "${2:-}" == --dry ]] && WORLD=I; }
+[[ "$HOST" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ && "$WORLD" =~ ^[A-Ia-i]$ ]] || { echo "usage: deploy-hub HOST [WORLD] [--dry]" >&2; exit 2; }
+wl="${WORLD,,}"; WORLD="${WORLD^^}"
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=20 -o ControlMaster=no -o ControlPath=none "$HOST")
+LCONF="${BREV_AUTOSTOP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/brev-autostop.conf}"
+LENV="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/brev-autostop.env"
+run() { if [[ -n "$DRY" ]]; then echo "DRY: $*"; else "$@"; fi; }
+put() { # put LOCALFILE REMOTEPATH MODE: a temp file there, then an atomic rename
+  if [[ -n "$DRY" ]]; then echo "DRY: copy $1 → $HOST:$2"; return; fi
+  "${SSH[@]}" "set -e; mkdir -p \"\$(dirname $2)\"; t=\$(mktemp $2.XXXXXX); cat > \"\$t\"; chmod $3 \"\$t\"; mv -f \"\$t\" $2" < "$1"
+}
+[[ -f "$LCONF" ]] || { echo "deploy-hub: no laptop config at $LCONF (run brev-autostop install first)" >&2; exit 2; }
+
+# 1. the files
+put "$HERE/brev-autostop" '$HOME/.local/share/brev-autostop/brev-autostop' 755
+put "$HERE/brev-autostop.conf.example" '$HOME/.local/share/brev-autostop/brev-autostop.conf.example' 644
+put "$HERE/hub/brev-autostop.service" '$HOME/.config/systemd/user/brev-autostop.service' 644
+put "$HERE/hub/brev-autostop.timer" '$HOME/.config/systemd/user/brev-autostop.timer' 644
+envf="$(mktemp)"; trap 'rm -f "$envf"' EXIT
+cat > "$envf" <<EOF
+# written by deploy-hub (J526): this copy is the main one; its alerts go to world $WORLD's Thoughts thread
+BREV_AUTOSTOP_WORLD=$WORLD
+BREV_AUTOSTOP_HYPRPI=/home/ubuntu/hyprpi/bin/hyprpi
+HYPRPI_STATE=/home/ubuntu/.hyprpi-$wl/state
+HYPRPI_SOCKET=/home/ubuntu/.hyprpi-$wl/run/daemon.sock
+HYPRPI_NO_ADOPT=1
+EOF
+"${SSH[@]}" 'echo $HOME' 2>/dev/null | grep -qx /home/ubuntu || sed -i "s|/home/ubuntu|$("${SSH[@]}" 'echo $HOME')|g" "$envf"
+put "$envf" '$HOME/.config/hyprpi/brev-autostop.env' 600
+# 2. its config: the laptop's, once; always `exclude HOST`
+if [[ -n "$DRY" ]]; then echo "DRY: config on $HOST (from $LCONF if missing) + exclude $HOST"
+elif ! "${SSH[@]}" 'test -f $HOME/.config/hyprpi/brev-autostop.conf'; then { cat "$LCONF"; grep -qx "exclude $HOST" "$LCONF" || printf '\n# the always-on box itself (J526)\nexclude %s\n' "$HOST"; } > "$envf.c"; put "$envf.c" '$HOME/.config/hyprpi/brev-autostop.conf' 644; rm -f "$envf.c"; echo "deploy-hub: config on $HOST made from the laptop's"
+else "${SSH[@]}" "grep -qx 'exclude $HOST' \$HOME/.config/hyprpi/brev-autostop.conf || printf '\\n# the always-on box itself (J526)\\nexclude %s\\n' '$HOST' >> \$HOME/.config/hyprpi/brev-autostop.conf"; fi
+# 3. ssh config for the other boxes, linger, the timer
+run "${SSH[@]}" 'set -e; ln -sfn $HOME/.local/share/brev-autostop/brev-autostop $HOME/.local/bin/brev-autostop; timeout 120 brev refresh >/dev/null 2>&1 || echo "deploy-hub: brev refresh failed (the boxes may not be reachable over ssh yet)" >&2
+  [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] || sudo -n loginctl enable-linger "$USER"
+  systemctl --user daemon-reload; systemctl --user enable --now brev-autostop.timer >/dev/null 2>&1; systemctl --user is-active brev-autostop.timer >/dev/null
+  systemctl --user start brev-autostop.service; test -f $HOME/.local/state/brev-autostop/heartbeat' # (one run now: its heartbeat exists before the laptop stands down, so there is no gap)
+echo "deploy-hub: brev-autostop runs on $HOST every 5 min (alerts: world $WORLD's Thoughts)"
+# 4. the laptop: never stop the hub; act only as the backup
+if [[ -n "$DRY" ]]; then echo "DRY: laptop: exclude $HOST in $LCONF; BREV_AUTOSTOP_PRIMARY=$HOST in $LENV"; exit 0; fi
+grep -qx "exclude $HOST" "$LCONF" || printf '\n# the always-on box that runs the main copy (J526)\nexclude %s\n' "$HOST" >> "$LCONF"
+mkdir -p "$(dirname "$LENV")"; printf '# written by deploy-hub (J526): this laptop copy only acts when %s'"'"'s copy has not run for 15 min\nBREV_AUTOSTOP_PRIMARY=%s\n' "$HOST" "$HOST" > "$LENV.tmp" && mv -f "$LENV.tmp" "$LENV"
+systemctl --user daemon-reload 2>/dev/null || true
+echo "deploy-hub: the laptop's copy is now its backup (acts only if $HOST's copy hasn't run for 15 min)"

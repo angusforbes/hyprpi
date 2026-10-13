@@ -8,3 +8,5 @@ ExecStart=%h/Harness/hyprpi/brev/autostop/brev-autostop run
 Nice=10
 TimeoutStartSec=10min
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# J526: BREV_AUTOSTOP_PRIMARY=hub here makes this (laptop) copy the hub copy's backup (written by deploy-hub)
+EnvironmentFile=-%h/.config/hyprpi/brev-autostop.env

@@ -1,0 +1,10 @@
+[Unit]
+Description=J526 run brev-autostop every 5 minutes (on the always-on Brev box)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

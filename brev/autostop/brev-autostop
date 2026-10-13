@@ -108,6 +108,8 @@ case "${1:-run}" in
     out="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)" || echo "brev ls failed"
     p="$(cat "$ST/pause" 2>/dev/null)"; [[ -n "$p" ]] && { [[ "$p" == 0 ]] && echo "ALL PAUSED until resume" || echo "ALL PAUSED until $(date -d "@$p" '+%a %H:%M')"; }
     echo "config $CONF: default ${DEFAULT_IDLE} min, GPU busy above ${GPU_BUSY}%"
+    [[ -n "${BREV_AUTOSTOP_PRIMARY:-}" ]] && echo "BACKUP of the copy on $BREV_AUTOSTOP_PRIMARY: $(cat "$ST/role" 2>/dev/null || echo "not run yet") (acts only when that copy hasn't run for ${BREV_AUTOSTOP_STALE_MIN:-15} min)"
+    [[ -f "$ST/heartbeat" ]] && echo "this copy last ran $(( ($(now) - $(cat "$ST/heartbeat")) / 60 )) min ago"
     for b in $( { rows "$out" | awk '{print $1}'; ls "$ST/boxes" 2>/dev/null; } | sort -u); do
       [[ "$b" =~ $NAME_RE ]] || continue; use "$b"
       st="$(rows "$out" | awk -v b="$b" '$1==b{print $2}')"; la="$(get last_act)"
@@ -130,6 +132,28 @@ alert() { # $1 = text, $2 = urgency: both channels, each best effort; says which
 exec 9>"$ST/lock"; flock -n 9 || exit 0
 [[ -f "$ST/log" && $(wc -l < "$ST/log") -gt 500 ]] && { tail -n 400 "$ST/log" > "$ST/log.tmp" && mv "$ST/log.tmp" "$ST/log"; }
 [[ -f "$ST/pause" ]] && { p="$(cat "$ST/pause")"; [[ "$p" != 0 && "$p" -le "$(now)" ]] && { rm -f "$ST/pause"; log "pause (all boxes) ended"; }; }
+now > "$ST/heartbeat" # (J526) "this copy ran": a backup copy elsewhere reads it
+
+# J526 (Angus: "brev guards"): the main copy runs on the always-on Brev box "hub", so boxes are stopped while the laptop sleeps.
+# A copy with BREV_AUTOSTOP_PRIMARY=<ssh host> (the laptop's) is only its backup: each run it asks the primary how long ago its
+# copy last ran (its heartbeat; the age is computed there, so the clocks don't matter). Under BREV_AUTOSTOP_STALE_MIN (15): it
+# stands by and does nothing. Stale, missing or unreachable: it acts as usual and says so ONCE; one more notice when the primary
+# is back. So the two never both act unless the laptop can't reach a hub that is in fact fine.
+PRIMARY="${BREV_AUTOSTOP_PRIMARY:-}"
+if [[ -n "$PRIMARY" ]]; then
+  [[ "$PRIMARY" =~ $NAME_RE ]] || { log "bad BREV_AUTOSTOP_PRIMARY: nothing done"; exit 0; }
+  STALE_MIN="${BREV_AUTOSTOP_STALE_MIN:-15}"
+  hb="$(timeout -k 5 45 "$SSH" -o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=no -o ControlPath=none "$PRIMARY" 'f=$HOME/.local/state/brev-autostop/heartbeat; if [ -f "$f" ]; then echo "age $(( $(date +%s) - $(cat "$f") ))"; else echo "age none"; fi' 2>/dev/null | awk '$1=="age"{print $2}' | tail -1)"
+  BOX="(backup)"
+  if [[ "$hb" =~ ^-?[0-9]+$ ]] && (( hb < STALE_MIN * 60 )); then
+    if [[ -f "$ST/primary_down" ]]; then rm -f "$ST/primary_down"; alert "Brev auto-stop: the copy on $PRIMARY is running again; the laptop's backup copy stands by." normal; fi
+    [[ "$(cat "$ST/role" 2>/dev/null)" == standby ]] || { echo standby > "$ST/role"; log "backup: $PRIMARY's copy ran $(( hb / 60 )) min ago: standing by"; }
+    exit 0
+  fi
+  why="$([[ "$hb" =~ ^[0-9]+$ ]] && echo "hasn't run for $(( hb / 60 )) min" || { [[ "$hb" == none ]] && echo "has never run (no heartbeat)" || echo "can't be reached over ssh"; })"
+  if [[ ! -f "$ST/primary_down" ]]; then now > "$ST/primary_down"; alert "Brev auto-stop: the copy on $PRIMARY $why, so the laptop's backup copy is checking the Brev boxes until it's back." critical; fi
+  [[ "$(cat "$ST/role" 2>/dev/null)" == acting ]] || { echo acting > "$ST/role"; log "backup: $PRIMARY's copy $why: acting"; }
+fi
 
 # the box-side probe (read-only; ages computed on the box, so the two clocks don't matter)
 probe='now=$(date +%s); newest() { find -H "$@" -type f -printf "%T@\n" 2>/dev/null | sort -n | tail -1 | cut -d. -f1; }

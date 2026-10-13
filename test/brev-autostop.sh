@@ -26,6 +26,11 @@ cat > "$F/bin/ssh" <<'EOF'
 F="$(cd "$(dirname "$0")/.." && pwd)"
 echo "ssh $*" >> "$F/sshcalls"
 [[ -f "$F/sshfail" ]] && exit 255
+last="${@: -1}"
+if [[ "$last" != "bash -s" ]]; then # J526: a plain remote command (the backup copy asking the primary for its heartbeat)
+  host="${@: -2:1}"; [[ -f "$F/hubfail" ]] && exit 255; echo "$host" >> "$F/hubcalls"
+  mkdir -p "$F/home-$host"; HOME="$F/home-$host" bash -c "$last"; exit
+fi
 [[ -f "$F/sshhold" ]] && { touch "$F/sshheld"; while [[ -f "$F/sshhold" ]]; do sleep 0.1; done; }
 box=""; for a; do [[ "$a" == "bash -s" ]] && break; box="$a"; done # the argument just before the remote command
 h="$F/home"; [[ -d "$F/home-$box" ]] && h="$F/home-$box"
@@ -46,7 +51,7 @@ fixture() { # every activity file N minutes old
   for f in "$H/.hyprpi-i/sessions/s1/a.jsonl" "$H/.hyprpi-i/state/thoughts/I.thread.jsonl" "$H/.hyprpi-i/state/boards/I.jsonl" "$H/workspace/outputs/x.png" "$H/workspace/shared/n.txt"; do echo x > "$f"; touch -d "-$1 min" "$f"; done
 }
 gpu_on() { printf '#!/usr/bin/env bash\nF="%s"; f="$F/gpu-$BOXNAME"; [[ -f "$f" ]] || f="$F/gpu"; [[ -f "$f" ]] && cat "$f"\n' "$F" > "$F/bin/nvidia-smi"; chmod +x "$F/bin/nvidia-smi"; }
-fresh() { rm -f "$F/stopresult"; rm -rf "$F/bin/nvidia-smi" "$F"/gpu* "$F/more" "$F/nemo" "$F"/home-* "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
+fresh() { rm -rf "$F/stopresult" "$F/hubfail" "$F/hubcalls" "$F/home-hub"; rm -rf "$F/bin/nvidia-smi" "$F"/gpu* "$F/more" "$F/nemo" "$F"/home-* "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
 started_ago() { mkdir -p "$F/state/boxes/hyprpi-l40s"; echo $(( $(date +%s) - $1 * 60 )) > "$F/state/boxes/hyprpi-l40s/running_since"; } # pretend the timer first saw it RUNNING N min ago
 run() { "$S" run; }
 pass=0; fail=0
@@ -299,6 +304,31 @@ printf 'exclude keep-me-box\nunhealthy hyprpi-l40s 120\n' > "$CF"; fresh; echo U
 ok "unhealthy hyprpi-l40s 120 → no stop at 90 min" '[[ $(stops) == 0 ]]'
 printf 'exclude keep-me-box\ndefault_unhealthy_min 20\n' > "$CF"; BREV_AUTOSTOP_CONFIG="$CF" run
 ok "default_unhealthy_min 20 → stopped at 90 min" '[[ $(stops) == 1 ]]'
+
+# --- J526: the laptop copy as the hub copy's backup ---------------------------------------------------------------------------
+hub_ran() { mkdir -p "$F/home-hub/.local/state/brev-autostop"; echo $(( $(date +%s) - $1 * 60 )) > "$F/home-hub/.local/state/brev-autostop/heartbeat"; }
+backup() { BREV_AUTOSTOP_PRIMARY=hub run; }
+# 36. the hub's copy ran 3 min ago → the backup does nothing, even with an idle box
+fresh; fixture 120; echo RUNNING > "$F/status"; hub_ran 3; backup; started_ago 120; backup; backup
+ok "backup, hub fresh (3 min) → only the heartbeat question: no probe, no stop, no notice" '[[ $(stops) == 0 && $(notices) == 0 && $(wc -l < "$F/hubcalls") == 3 ]] && ! grep -q "bash -s" "$F/sshcalls"'
+ok "…and one 'standing by' log line" '[[ $(grep -c "standing by" "$F/state/log") == 1 ]]'
+# 37. the hub's heartbeat is 20 min old → the backup acts (stops the idle box) and says so once
+hub_ran 20; backup; backup; backup
+ok "backup, hub stale (20 min) → acts: one stop, one 'backup is checking' alert" '[[ $(stops) == 1 && $(cnt "^notify.*backup copy is checking") == 1 && $(cnt "^hyprpi thoughts alert A .*backup copy is checking") == 1 ]]'
+# 38. the hub comes back → one notice, then standby again (no more stops or alerts)
+echo RUNNING > "$F/status"; started_ago 120; hub_ran 1; backup; backup
+ok "hub back → one 'running again' notice, standing by, no stop" '[[ $(stops) == 1 && $(cnt "^notify.*running again") == 1 ]]'
+# 39. the hub can't be reached, or has never run → acts, alert names why, once
+fresh; fixture 120; echo RUNNING > "$F/status"; touch "$F/hubfail"; backup; started_ago 120; backup; backup
+ok "hub unreachable → acts (one stop), one alert 'can't be reached'" '[[ $(stops) == 1 && $(cnt "^notify.*can.t be reached") == 1 ]]'
+fresh; fixture 120; echo RUNNING > "$F/status"; backup; started_ago 120; backup
+ok "hub never ran (no heartbeat) → acts, alert says so" '[[ $(stops) == 1 && $(cnt "^notify.*never run") == 1 ]]'
+# 40. without BREV_AUTOSTOP_PRIMARY it is the main copy: never asks anyone (the hub's own copy)
+fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; run
+ok "no PRIMARY → no heartbeat question, acts as before; writes its own heartbeat" '[[ ! -f "$F/hubcalls" && $(stops) == 1 && -f "$F/state/heartbeat" ]]'
+# 41. a bad PRIMARY value is refused, nothing done
+fresh; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_PRIMARY='x;rm -rf /' run; started_ago 120; BREV_AUTOSTOP_PRIMARY='x;rm -rf /' run
+ok "bad PRIMARY → nothing done" '[[ $(stops) == 0 && ! -f "$F/hubcalls" ]]'
 
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run

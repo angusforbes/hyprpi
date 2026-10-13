@@ -1,0 +1,12 @@
+[Unit]
+Description=J526 brev-autostop on the always-on Brev box (stops idle / stuck Brev instances; alerts in this world's Thoughts)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/brev-autostop/brev-autostop run
+Nice=10
+TimeoutStartSec=10min
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# written by deploy-hub: BREV_AUTOSTOP_WORLD, BREV_AUTOSTOP_HYPRPI and the world's HYPRPI_STATE / HYPRPI_SOCKET
+EnvironmentFile=%h/.config/hyprpi/brev-autostop.env
