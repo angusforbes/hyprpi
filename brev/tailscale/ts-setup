@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# brev/tailscale/ts-setup BINDING.json WORLD_LETTER SSH-ARGV…: runs on the LAPTOP during `omnistation/world X setup` (J525).
+# Off unless the binding has "tailscale": true, or { "hostname": "…", "ssh": true|false, "authKeyFile": "…" }. Then the machine joins
+# Angus's tailnet through brev/tailscale/ts-join.sh: the auth key is read from a laptop secrets file (default
+# ~/.config/hyprpi-secrets/tailscale-authkey, 600 in a 700 folder) and sent over ssh on stdin, never printed, never kept there.
+# A machine already in the tailnet gets no key (idempotent). Tailscale SSH is on unless "ssh": false.
+# Exit 0 also when it's off, or when there's no key yet (it says so).
+set -uo pipefail
+CONF="$1"; wl="$2"; shift 2; SSH=("$@")
+H="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+tsc=$(jq -c '.tailscale // false' "$CONF" 2>/dev/null) || { echo "ts-setup: can't read $CONF" >&2; exit 2; }
+[[ "$tsc" == false || "$tsc" == null ]] && exit 0
+obj=$(jq -r '(.tailscale|type)=="object"' "$CONF")
+hn=""; [[ "$obj" == true ]] && hn=$(jq -r '.tailscale.hostname // ""' "$CONF")
+[[ -n "$hn" ]] || hn=$(printf '%s' "${SSH[-1]##*@}" | tr 'A-Z_.' 'a-z--' | tr -cd 'a-z0-9-')
+[[ "$hn" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { echo "ts-setup: bad tailscale hostname \"$hn\" (set \"tailscale\": {\"hostname\": …} in $CONF)" >&2; exit 2; }
+sshf=ssh; [[ "$obj" == true && "$(jq -r '.tailscale.ssh' "$CONF")" == false ]] && sshf=""
+kf=""; [[ "$obj" == true ]] && kf=$(jq -r '.tailscale.authKeyFile // ""' "$CONF")
+kf="${kf:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi-secrets/tailscale-authkey}"; kf="${kf/#\~/$HOME}"
+"${SSH[@]}" "mkdir -p ~/.hyprpi-$wl && cat > ~/.hyprpi-$wl/ts-join.sh" < "$H/brev/tailscale/ts-join.sh" || { echo "ts-setup: can't reach the machine" >&2; exit 3; }
+if "${SSH[@]}" "tailscale status --json 2>/dev/null | grep -q '\"BackendState\": *\"Running\"'" 2>/dev/null; then in=/dev/null
+elif [[ ! -f "$kf" ]]; then echo "ts-setup: no Tailscale auth key at $kf: not joined yet (brev/README.md, Tailscale, says how to make one)"; exit 0
+elif (( (8#$(stat -c %a "$kf") & 077) || (8#$(stat -c %a "$(dirname "$kf")") & 077) )); then echo "ts-setup: $kf must be 600 in a 700 folder: not joined" >&2; exit 2
+else in="$kf"; fi
+out=$("${SSH[@]}" "bash ~/.hyprpi-$wl/ts-join.sh $(printf %q "$hn") $sshf" < "$in" 2>/dev/null | tr -d '\r' | tail -1) || true
+echo "world: ${out:-tailscale: no answer from the machine}"
+[[ "$out" == tailnet* ]]

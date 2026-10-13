@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# J525: brev/tailscale/ts-setup + ts-join.sh with a fake ssh (runs the remote command locally in a scratch HOME) and fake
+# tailscale / sudo / systemctl. Never touches the real tailnet; the fake key never appears in any output.
+set -uo pipefail
+R="$(cd "$(dirname "$0")/.." && pwd)"; T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+pass=0; fail=0; ok() { if eval "$2"; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
+mkdir -p "$T/bin" "$T/box" "$T/lap/.config/hyprpi-secrets"; chmod 700 "$T/lap/.config/hyprpi-secrets"
+# the "box": HOME=$T/box; tailscale state in $T/ts (Running or not), calls logged
+cat > "$T/bin/fakessh" <<EOF
+#!/usr/bin/env bash
+shift  # the host
+HOME="$T/box" PATH="$T/bin:\$PATH" bash -c "\$*"
+EOF
+cat > "$T/bin/tailscale" <<EOF
+#!/usr/bin/env bash
+echo "tailscale \$*" >> "$T/calls"
+case "\$1" in
+  status) [[ -f "$T/ts" ]] && printf '{"BackendState": "Running", "Self": {"DNSName": "%s.tail1c2031.ts.net."}}\n' "\$(cat "$T/ts")" || echo '{"BackendState": "NeedsLogin"}';;
+  up) for a in "\$@"; do case "\$a" in --auth-key=file:*) f="\${a#--auth-key=file:}"; cp "\$f" "$T/key-seen"; stat -c %a "\$f" > "$T/key-mode";; --hostname=*) echo "\${a#--hostname=}" > "$T/ts";; esac; done
+      [[ "\$(cat "$T/key-seen")" == tskey-auth-FAKE123 ]] || { echo "invalid key tskey-auth-WRONG"; rm -f "$T/ts"; exit 1; };;
+  set) ;;
+esac
+EOF
+printf '#!/usr/bin/env bash\n"$@"\n' > "$T/bin/sudo"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/systemctl"
+chmod +x "$T/bin/"*
+export XDG_CONFIG_HOME="$T/lap/.config" HOME="$T/lap"
+KF="$T/lap/.config/hyprpi-secrets/tailscale-authkey"
+run() { PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" "$1" i "$T/bin/fakessh" ubuntu@hyprpi-home 2>&1; }
+echo '{"ssh":["ssh","hyprpi-home"]}' > "$T/off.json"; o=$(run "$T/off.json")
+ok "off by default: nothing sent, no output" '[[ -z "$o" && ! -f "$T/calls" ]]'
+echo '{"ssh":["ssh","hyprpi-home"],"tailscale":true}' > "$T/on.json"; o=$(run "$T/on.json")
+ok "no key file yet: says so, exit 0, nothing joined" '[[ "$o" == *"no Tailscale auth key"* && ! -f "$T/ts" ]]'
+printf 'tskey-auth-FAKE123\n' > "$KF"; chmod 644 "$KF"; o=$(run "$T/on.json")
+ok "a key file readable by others is refused" '[[ "$o" == *"600 in a 700 folder"* && ! -f "$T/ts" ]]'
+chmod 600 "$KF"; o=$(run "$T/on.json"); rc=$?
+ok "joins: tailnet name printed, hostname from the ssh target" '[[ $rc == 0 && "$o" == *"tailnet hyprpi-home.tail1c2031.ts.net"* ]]'
+ok "Tailscale SSH on by default" 'grep -q -- "--ssh" "$T/calls"'
+ok "the key reached tailscale up through a 600 file, then was removed" '[[ "$(cat "$T/key-seen")" == tskey-auth-FAKE123 && "$(cat "$T/key-mode")" == 600 ]] && ! grep -rqs FAKE123 "$T/box"'
+ok "the key is never on a command line or in the output" '! grep -q FAKE123 "$T/calls" && [[ "$o" != *FAKE123* ]]'
+: > "$T/calls"; o=$(run "$T/on.json")
+ok "second run: already in the tailnet, no key sent, no up" '[[ "$o" == *"tailnet hyprpi-home"* ]] && ! grep -q " up" "$T/calls"'
+rm -f "$T/ts"; echo '{"ssh":["ssh","x"],"tailscale":{"hostname":"home-box","ssh":false}}' > "$T/obj.json"; : > "$T/calls"; o=$(run "$T/obj.json")
+ok "object form: own hostname, ssh false = no --ssh" '[[ "$o" == *"tailnet home-box"* ]] && ! grep -q -- "--ssh" "$T/calls"'
+rm -f "$T/ts"; printf 'tskey-auth-WRONG\n' > "$KF"; o=$(run "$T/on.json"); rc=$?
+ok "a refused key: clear failure, nonzero, key text masked" '[[ $rc != 0 && "$o" == *"up failed"* && "$o" != *tskey-auth-WRONG* ]]'
+echo '{"ssh":["ssh","x"],"tailscale":{"hostname":"Bad Name"}}' > "$T/bad.json"; o=$(run "$T/bad.json"); rc=$?
+ok "a bad hostname is refused" '[[ $rc == 2 && "$o" == *"bad tailscale hostname"* ]]'
+echo "$pass passed, $fail failed"; exit $(( fail > 0 ))

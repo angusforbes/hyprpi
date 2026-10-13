@@ -61,6 +61,16 @@ How it differs from the Omnistation world (H):
 - Qwen2.5-3B-Instruct answers in about 1-2 s and makes simple tool calls (it ran `nvidia-smi -L` through pi's bash tool), but it is weak as an agent. A 7B AWQ model (or a bigger GPU) is the next step.
 - pi's system prompt alone is about 7k tokens, so keep the context at 32k or more.
 
+## Tailscale (optional, J525)
+
+A world's machine can join Angus's tailnet, for direct remote control (Tailscale SSH, its MagicDNS name, the phone's tailnet). It's off unless the binding (`~/.config/hyprpi/remote/<letter>.json`) has `"tailscale": true`, or `"tailscale": { "hostname": "…", "ssh": true, "authKeyFile": "…" }`. Then `omnistation/world X setup` runs brev/tailscale/ts-setup: it installs Tailscale on the machine if needed and joins as the hostname (default: the ssh host name), with Tailscale SSH unless `"ssh": false`. A machine already in the tailnet is left as it is.
+
+The auth key: Angus makes it in the Tailscale admin console under Settings, Keys (reusable off, ephemeral off, pre-approved, tag `tag:brev`, a short expiry since it's only used to join), and puts it on the laptop himself, 600 in a 700 folder (default path `~/.config/hyprpi-secrets/tailscale-authkey`):
+
+- `mkdir -p -m700 ~/.config/hyprpi-secrets && install -m600 /dev/stdin ~/.config/hyprpi-secrets/tailscale-authkey` (paste, Enter, Ctrl-D)
+
+Setup sends it to the machine on stdin over ssh; there it goes into a 600 temp file for `tailscale up` and is removed at once, never on a command line, never printed. A tagged device needs two entries in the tailnet's access controls: a tag owner (`"tagOwners": {"tag:brev": ["autogroup:admin"]}`) and an SSH rule for Tailscale SSH (`{"action": "accept", "src": ["autogroup:member"], "dst": ["tag:brev"], "users": ["ubuntu"]}`). Test: `bash test/tailscale-setup.sh` (a fake ssh and tailscale; no real tailnet).
+
 ## Notes for long jobs (e.g. RL training, J512)
 
 - Stop the box with `brev stop NAME` only. Never shut it down from inside (`sudo shutdown -h now`): tested 2026-10-12 on the Crusoe L40S, Brev listed it STOPPED after about 3 minutes, but its control plane kept it as "running", so `brev start` failed ("invalid environment status transition from running to starting"). After a `brev stop` it was stuck in "stopping_failed" and still couldn't be started. So an in-box idle shutdown is not a safe backstop.
