@@ -57,6 +57,12 @@ try {
   ok("3 no answer yet", (await rapi.call("thoughts.relayResult", { request_id })).answer === null);
   await rapi.call("thoughts.answer", { room: "I", request_id, text: "one: hub-alpha" });
   ok("3 answer_agent's text comes back from relayResult", (await rapi.call("thoughts.relayResult", { request_id })).answer === "one: hub-alpha");
+  // (review) no letter: the launcher asks the daemon which world it is on; a remote one is refused too
+  { const n = spawnSync(process.execPath, [path.join(ROOT, "lib/remote-world.mjs")], { env: { ...laptop.env, PATH: process.env.PATH }, encoding: "utf8", timeout: 5000 }); ok("4 no letter: the daemon's current world decides (A here: not remote)", n.status === 1); }
+  // (review) depth 1 across the relay: a relayed question from Thoughts-A makes Thoughts-I owe an answer; it can't ask back until it answers
+  const q2 = await rapi.call("thoughts.relayAsk", { room: "I", from: "Thoughts-A", fromThoughts: "A", text: "and now?" });
+  ok("3 owing a relayed Thoughts question, Thoughts-I can't ask one back", /answer Thoughts-A first/.test(await err(() => rapi.call("thoughts.ask", { room: "I", agent: "Thoughts-B", question: "x" }))));
+  await rapi.call("thoughts.answer", { room: "I", request_id: q2.request_id, text: "done" });
   // 4
   const run = (l) => spawnSync(path.join(ROOT, "mockups/search-tui"), [l], { env: { ...laptop.env, PATH: process.env.PATH, HYPRPI_ALLOW_HYPR: "1" }, encoding: "utf8", timeout: 5000 });
   const h = run("H"); ok("4 the laptop's panel launcher refuses remote world H", h.status === 0 && /runs on its remote machine/.test(h.stderr), h.stderr);
