@@ -240,6 +240,7 @@ credit_check() {
   cents="$(jq -r '.credit_details.remaining_credits // empty' <<<"$j" 2>/dev/null)"
   [[ "$cents" =~ ^-?[0-9]+$ ]] || { credit_fail "billingprofile has no credit_details.remaining_credits"; return 0; }
   [[ -f "$ST/credit_fail" ]] && { rm -f "$ST/credit_fail"; log "credit: billingprofile readable again"; }
+  [[ -f "$ST/credit_fail_alerted" ]] && { rm -f "$ST/credit_fail_alerted"; alert "Brev auto-stop can read the Brev credit balance again (\$$(usd "$cents")); low-credit warnings are working." normal; }
   echo "$cents" > "$ST/credit_cents"; echo "$T" > "$ST/credit_last"
   # the lowest level crossed: below $N (N > 0), or at/below $0 for level 0
   hit=""; for lv in $levels; do if (( lv > 0 ? cents < lv * 100 : cents <= 0 )); then hit="$lv"; fi; done
@@ -262,7 +263,14 @@ credit_check() {
   echo "$hit" > "$ST/credit_low"
   return 0
 }
-credit_fail() { [[ -f "$ST/credit_fail" ]] || { echo "$(now)" > "$ST/credit_fail"; log "credit: $1 (no alert; retrying in ${hrs:-3} h)"; }; }
+credit_fail() { # (J548 review) logged once per failure spell; if reads keep failing for a day, ONE alert, since warnings are then off
+  if [[ ! -f "$ST/credit_fail" ]]; then echo "$(now)" > "$ST/credit_fail"; log "credit: $1 (no alert yet; retrying in ${hrs:-3} h)"; return 0; fi
+  local since; since="$(cat "$ST/credit_fail" 2>/dev/null)"; [[ "$since" =~ ^[0-9]+$ ]] || return 0
+  if (( $(now) - since >= 86400 )) && [[ ! -f "$ST/credit_fail_alerted" ]]; then
+    now > "$ST/credit_fail_alerted"; local BOX="(credit)"
+    alert "Brev auto-stop has not been able to read the Brev credit balance for a day ($1), so the low-credit warnings are not working. Check the brev login on $(hostname) (brev ls / brev login)." normal
+  fi
+}
 
 # One run at a time (a hand run next to the timer's): a second one just leaves.
 exec 9>"$ST/lock"; flock -n 9 || exit 0

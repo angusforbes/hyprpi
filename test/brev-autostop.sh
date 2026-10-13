@@ -434,6 +434,44 @@ ok "phone test → hyprpi read once, posted to first.example/first-topic" '[[ "$
 rm -f "$F/hpn" "$F/ntfy"; fresh; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-2" BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; rm -f "$F/hpn"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-2" BREV_AUTOSTOP_CONFIG="$PC" run
 ok "a stop's alert → hyprpi read once, same answer for topic and server" '[[ "$(cat "$F/hpn")" == 1 ]] && grep -qF "https://first.example/first-topic" "$F/ntfy"'
 
+# --- J548: low-credit warnings (hub-alpha's J1) -------------------------------------------------------------------------------
+# a billing stub: curl that answers .../organizations/ORG/billingprofile from $F/credit (cents), or fails when $F/creditfail
+printf '#!/usr/bin/env bash\nF="%s"; echo "curl $*" >> "$F/curlcalls"; for a; do case "$a" in @*) cat "${a#@}" >> "$F/curlhdr";; esac; done\n[[ -f "$F/creditfail" ]] && { echo "curl: (22) 401" >&2; exit 22; }\necho "{\\"credit_details\\":{\\"remaining_credits\\":$(cat "$F/credit")}}"\n' "$F" > "$F/bin/billcurl"; chmod +x "$F/bin/billcurl"
+echo '{"access_token":"SECRET-TOKEN-123"}' > "$F/creds"; CC="$F/credit.conf"; printf 'exclude keep-me-box\ncredit_warn_usd 50 20 10 5 1 0\ncredit_org org-Test123\n' > "$CC"
+credit_run() { echo "$1" > "$F/credit"; BREV_AUTOSTOP_CONFIG="$CC" BREV_AUTOSTOP_CURL="$F/bin/billcurl" BREV_AUTOSTOP_CREDENTIALS="$F/creds" BREV_AUTOSTOP_CREDIT_FORCE=1 run; }
+calerts() { cnt "^hyprpi thoughts alert A .*[Cc]redit"; }
+fresh; rm -f "$F/curlcalls" "$F/curlhdr" "$F/creditfail"; echo STOPPED > "$F/status"
+credit_run 22990; credit_run 6000
+ok "credit \$229.90 → \$60 (above every level) → no alert; read via the org's billingprofile" '[[ $(calerts) == 0 ]] && grep -q "organizations/org-Test123/billingprofile" "$F/curlcalls"'
+ok "…the token goes on a file descriptor: never in curl's arguments or the log" '! grep -qs SECRET-TOKEN "$F/curlcalls" "$F/state/log" "$F/calls" && grep -q "Bearer SECRET-TOKEN-123" "$F/curlhdr"'
+credit_run 4999; credit_run 4500
+ok "below \$50 → one alert (normal), not repeated at \$45" '[[ $(calerts) == 1 && $(cnt "^notify.*-u normal.*credit getting low") == 1 ]]'
+credit_run 1999
+ok "below \$20 → one critical alert naming the next level (\$10)" '[[ $(calerts) == 2 ]] && grep -q "Next warning: \$10" "$F/calls" && [[ $(cnt "^notify.*-u critical.*Brev credit low") == 1 ]]'
+credit_run 450
+ok "jump to \$4.50 (crosses \$10 and \$5) → ONE alert for the lowest (\$5)" '[[ $(calerts) == 3 ]] && grep -q "below \$5)" "$F/calls"'
+credit_run 0; credit_run -50
+ok "\$0 → one GONE alert, not repeated below 0" '[[ $(calerts) == 4 && $(cnt "GONE") -ge 1 ]]'
+credit_run 3000; credit_run 1500
+ok "top-up to \$30 re-arms \$20: \$15 alerts again" '[[ $(calerts) == 5 ]]'
+credit_run 25000; credit_run 700
+ok "top-up to \$250 re-arms all: \$7 alerts the \$10 level" '[[ $(calerts) == 6 ]] && tail -3 "$F/calls" | grep -q "below \$10)"'
+# read failures: logged once, no alert; a day of failures → one alert; working again → one notice
+touch "$F/creditfail"; credit_run 700; credit_run 700; credit_run 700
+ok "read failing → no alert, one log line, the run still succeeds" '[[ $(calerts) == 6 && $(grep -c "credit: billingprofile call failed" "$F/state/log") == 1 ]]'
+echo $(( $(date +%s) - 25*3600 )) > "$F/state/credit_fail"; credit_run 700; credit_run 700
+ok "failing for over a day → one alert that warnings aren't working" '[[ $(cnt "^hyprpi thoughts alert A .*not been able to read the Brev credit") == 1 ]]'
+rm -f "$F/creditfail"; credit_run 700
+ok "…readable again → one notice" '[[ $(cnt "^hyprpi thoughts alert A .*can read the Brev credit balance again") == 1 ]]'
+# interval: without FORCE it reads at most every credit_check_hours (hourly when low)
+rm -f "$F/curlcalls"; echo 6000 > "$F/credit"; echo $(( $(date +%s) - 600 )) > "$F/state/credit_try"; BREV_AUTOSTOP_CONFIG="$CC" BREV_AUTOSTOP_CURL="$F/bin/billcurl" BREV_AUTOSTOP_CREDENTIALS="$F/creds" run
+ok "read 10 min ago → not read again" '[[ ! -f "$F/curlcalls" ]]'
+# no credit_warn_usd line → never reads; a backup copy never reads
+rm -f "$F/curlcalls"; printf 'exclude keep-me-box\n' > "$F/nocredit.conf"; echo 100 > "$F/credit"; BREV_AUTOSTOP_CONFIG="$F/nocredit.conf" BREV_AUTOSTOP_CURL="$F/bin/billcurl" BREV_AUTOSTOP_CREDENTIALS="$F/creds" BREV_AUTOSTOP_CREDIT_FORCE=1 run
+ok "no credit_warn_usd → no read" '[[ ! -f "$F/curlcalls" ]]'
+hub_ran 1; BREV_AUTOSTOP_PRIMARY=hub BREV_AUTOSTOP_CONFIG="$CC" BREV_AUTOSTOP_CURL="$F/bin/billcurl" BREV_AUTOSTOP_CREDENTIALS="$F/creds" BREV_AUTOSTOP_CREDIT_FORCE=1 run
+ok "a backup copy (standing by) → no read" '[[ ! -f "$F/curlcalls" ]]'
+
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
 ok "brev ls's header lines are not instances" '[[ ! -d "$F/state/boxes/You" && ! -d "$F/state/boxes/NAME" ]]'
