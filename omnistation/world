@@ -63,20 +63,20 @@ R="HYPRPI_REMOTE_WS=$WS bash ~/.hyprpi-$wl/remote.sh"
 # laptop's Omarchy colours (~/.hyprpi-<x>/theme/colors.toml, remote.sh points them at it). Sent in the background, only when the
 # laptop's colours changed since the last copy, so it never slows a window down.
 push_theme() {
-  local src="$HOME/.local/state/omarchy/current/theme/colors.toml" mark="${XDG_CACHE_HOME:-$HOME/.cache}/hyprpi-remote/theme-$wl.sha"
+  local src="$HOME/.local/state/omarchy/current/theme/colors.toml" mark="${XDG_CACHE_HOME:-$HOME/.cache}/hyprpi-remote/theme-$wl-$(printf '%s ' "${SSH[@]}" | sha256sum | cut -c1-12).sha" # (review) per destination
   [[ -f "$src" ]] || return 0
   local sum; sum=$(sha256sum "$src" | cut -c1-64)
-  [[ "$(cat "$mark" 2>/dev/null)" == "$sum" ]] && return 0
+  [[ "${1:-}" != force && "$(cat "$mark" 2>/dev/null)" == "$sum" ]] && return 0
   mkdir -p "$(dirname "$mark")"
   local send='mkdir -p ~/.hyprpi-'"$wl"'/theme && cat > ~/.hyprpi-'"$wl"'/theme/colors.toml.new && mv ~/.hyprpi-'"$wl"'/theme/colors.toml.new ~/.hyprpi-'"$wl"'/theme/colors.toml'
-  if [[ "${1:-}" == sync ]]; then "${SSH[@]}" "$send" < "$src" >/dev/null 2>&1 && echo "$sum" > "$mark"; return 0; fi # (a panel: before it starts there)
+  if [[ "${1:-}" == sync || "${1:-}" == force ]]; then "${SSH[@]}" "$send" < "$src" >/dev/null 2>&1 && echo "$sum" > "$mark"; return 0; fi # (a panel: before it starts there)
   ( "${SSH[@]}" "$send" < "$src" >/dev/null 2>&1 && echo "$sum" > "$mark" ) </dev/null >/dev/null 2>&1 &
   disown || true
 }
 case "$cmd" in
   binding) jq -n --arg w "$WL" --argjson ws "$WS" --arg label "$LABEL" --arg dir "~/.hyprpi-$wl" --arg conf "$CONF" --args '{world:$w, ssh:$ARGS.positional, workspace:$ws, label:$label, remoteDir:$dir, conf:$conf}' "${SSH[@]}" ;;
   setup)
-    push_theme sync # J532
+    push_theme force # J532: setup always copies it (a rebuilt or new machine)
     # J516 (Angus: auto-stop "should be part of our hyprpi brev install when we first set up a brev instance"): a Brev box gets the
     # laptop's idle auto-stop first (timer enabled if missing, the instance registered, one line saying so); not a Brev box: silent
     "$H/brev/autostop/brev-autostop" setup-hook "$CONF" || echo "world: couldn't turn on Brev auto-stop (brev-autostop install by hand)" >&2
@@ -194,7 +194,7 @@ case "$cmd" in
     push_theme # J532: the panels there draw in this world's colour
     # (J471 v2) the world's agents listed on the laptop like any world's (summon, pop-ups, agents panel): one status helper per world
     setsid -f node "$H/omnistation/world-status.mjs" "$WL" </dev/null >/dev/null 2>&1 || true
-    echo "opened agent $NAME on workspace $WS (world $WL${LABEL:+, $LABEL})" ;;
+    echo "opened agent $NAME on workspace $OWS (world $WL${LABEL:+, $LABEL})" ;;
   images)
     # J483: copy the remote machine's new generated images (~/workspace/outputs: brev-image's PNGs) to ~/Brev and
     # print each as a file:// link. Only plain names (letters, digits, . _ -; brev-image makes no others) are copied.
