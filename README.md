@@ -165,6 +165,7 @@ Run `hyprpi help` for the full text. Skipped as internal: `seen` (called by the 
 
 - `hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [--here] [--no-focus] [-- PI_ARGS...]` — open a Pi agent in its own terminal window (SUPER+A); starts in the focused terminal's or agent's folder unless `--cwd`
 - `hyprpi list [--json]` — live agents and rooms
+- `hyprpi top [--once] [--json] [--sort cpu|mem|uptime|priority]` — read-only process-tree CPU/RSS and context snapshot, grouped by world; refreshes every 2 s, c/m/u/p sort, arrows scroll/pan, q quits. [Metrics, priority formula and limits](docs/top.md).
 - `hyprpi room --toggle` — jump to the current world's agents panel, or open it here (what clicking the current world in the bar does)
 - `hyprpi search [ROOM] [--toggle]` — open the search (Thoughts) window for a room
 - `hyprpi find [--room R] [--ai] QUERY` — search from the terminal, by keyword or with `--ai`
