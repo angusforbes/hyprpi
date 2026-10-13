@@ -36,8 +36,9 @@ CONF="${HYPRPI_REMOTE_CONF:-$CDIR/$wl.json}"
 [[ -f "$CONF" || -n "${HYPRPI_REMOTE_CONF:-}" || ! -f "$CDIR/world-$wl.json" ]] || CONF="$CDIR/world-$wl.json"
 [[ -f "$CONF" ]] || { echo "world: world $WL isn't bound to a remote machine; write $CDIR/$wl.json: { \"ssh\": [\"ssh\", \"user@host\"] }" >&2; exit 2; }
 # J525 (review): a binding with "tailscale" makes setup send a secret key to the machine its "ssh" names, so before ANYTHING the
-# binding names is run, it and its folders must be yours and not writable by others (brev/tailscale/ts-setup --check)
-if [[ "$(jq -c '.tailscale // false' "$CONF" 2>/dev/null)" != false && "$(jq -c '.tailscale // false' "$CONF" 2>/dev/null)" != null ]]; then
+# binding names is run, it and its folders must be yours and not writable by others (brev/tailscale/ts-setup --check); the same for
+# a binding with "modelsKeySource" (an inference key is sent)
+if [[ "$(jq -c '.tailscale // false' "$CONF" 2>/dev/null)" != false && "$(jq -c '.tailscale // false' "$CONF" 2>/dev/null)" != null ]] || [[ -n "$(jq -r '.modelsKeySource // empty' "$CONF" 2>/dev/null)" ]]; then
   "$H/brev/tailscale/ts-setup" --check "$CONF" || exit 2
 fi
 mapfile -t SSH < <(jq -r '.ssh[]' "$CONF" | grep -vxE -- '-tt?')
@@ -103,7 +104,10 @@ case "$cmd" in
       elif ! "$H/brev/tailscale/ts-setup" --check "$CONF"; then echo "world: not sending the key (binding not safe)" >&2
       else
         kq=$(printf %q "$mkey"); kq="${kq/#\\~/\$HOME}"
-        "${SSH[@]}" "f=$kq; [ -s \"\$f\" ] && { cat >/dev/null; echo 'world: the machine already has its inference key (kept)'; exit 0; }; umask 077; mkdir -p \"\$(dirname \"\$f\")\" && chmod 700 \"\$(dirname \"\$f\")\" && tr -d '\r' > \"\$f.new\" && [ -s \"\$f.new\" ] && chmod 600 \"\$f.new\" && mv \"\$f.new\" \"\$f\" && echo 'world: inference key placed on the machine' || { rm -f \"\$f.new\"; echo 'world: placing the inference key failed'; }" < "$msrc"
+        # (review) a unique private staging file, removed on any exit or signal; the transfer's failure is reported, setup goes on
+        if ! "${SSH[@]}" "f=$kq; [ -s \"\$f\" ] && { cat >/dev/null; echo 'world: the machine already has its inference key (kept)'; exit 0; }; umask 077; d=\"\$(dirname \"\$f\")\"; mkdir -p \"\$d\" && chmod 700 \"\$d\" || exit 3; t=\"\$(mktemp \"\$d/.key.XXXXXX\")\" || exit 3; trap 'rm -f \"\$t\"' EXIT HUP INT TERM; tr -d '\r' > \"\$t\" && [ -s \"\$t\" ] && chmod 600 \"\$t\" && mv \"\$t\" \"\$f\" && echo 'world: inference key placed on the machine' || { echo 'world: placing the inference key failed'; exit 4; }" < "$msrc"; then
+          echo "world: sending the inference key failed; the rest of setup goes on" >&2
+        fi
       fi
     fi
     if nvm=$(node "$H/lib/models-resolve.mjs" --config "$H/$mcfg"); then
