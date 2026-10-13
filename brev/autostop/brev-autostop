@@ -16,7 +16,8 @@
 #      and a ⚠ line in world A's Thoughts thread (hyprpi thoughts alert). A failed stop alerts once, then retries hourly quietly.
 # A box that can't be read (ssh fails) is never stopped on a guess. Instances to leave alone go in the LIVE config only (exclude NAME). Boxes are handled independently.
 # Config (J516): ~/.config/hyprpi/brev-autostop.conf, made from brev/autostop/brev-autostop.conf.example on first use:
-#   default_idle_min 45 · gpu_busy_pct 10 · idle NAME MIN · exclude NAME · box NAME (registered by setup; just the default)
+#   default_idle_min 45 · gpu_busy_pct 10 · idle NAME MIN · default_unhealthy_min 45 · unhealthy NAME MIN · exclude NAME ·
+#   box NAME (registered by setup; just the default)
 # Commands: run (the timer) · status · pause [NAME] [N(m|h|d)] · resume [NAME] · install [NAME] (link + enable the timer, register
 # NAME) · setup-hook BINDING.json (what `world X setup` runs: install for the binding's box when it is a Brev instance) · config.
 # Env (for tests too): BREV_AUTOSTOP_CONFIG, _WORLD (Thoughts thread), _STATE (dir), _BREV / _SSH / _NOTIFY / _HYPRPI /
@@ -44,6 +45,8 @@ cfg() { [[ -f "$CONF" ]] && tr -d '\r' < "$CONF" | grep -v '^[[:space:]]*#'; } #
 DEFAULT_IDLE="$(cfg | awk '$1=="default_idle_min" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; DEFAULT_IDLE="${DEFAULT_IDLE:-45}"
 GPU_BUSY="$(cfg | awk '$1=="gpu_busy_pct" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; GPU_BUSY="${GPU_BUSY:-10}"
 excluded() { cfg | awk -v b="$1" '$1=="exclude" && $2==b{f=1} END{exit !f}'; }
+DEFAULT_UNH="$(cfg | awk '$1=="default_unhealthy_min" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; DEFAULT_UNH="${DEFAULT_UNH:-45}"
+unhealthy_min() { local v; v="$(cfg | awk -v b="$1" '$1=="unhealthy" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo "${v:-$DEFAULT_UNH}"; }
 idle_min() { local v; v="$(cfg | awk -v b="$1" '$1=="idle" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo "${v:-$DEFAULT_IDLE}"; }
 
 # --- per-box state: $ST/boxes/<name>/ ------------------------------------------------------------------------------------------
@@ -199,6 +202,46 @@ check_box() { # $1 = a RUNNING instance; never exits the script (each box on its
 
 # No config (exclusions unknown): never probe or stop anything; say so once. `brev-autostop install` makes it.
 if [[ ! -f "$CONF" ]]; then [[ "$(cat "$ST/state" 2>/dev/null)" == no-config ]] || { echo no-config > "$ST/state"; log "no config at $CONF: nothing done (run brev-autostop install)"; }; exit 0; fi
+# J523 (Angus: "if it's unhealthy stop it and alert me"): a box stuck UNHEALTHY (or in a failed stop) may still bill. After
+# unhealthy_min (default 45) without a break: ONE `brev stop`, then ONE alert with the status brev ls gives right after. If the
+# stop fails, or the box later lands in a failed-stop state (J512: a stop on a wedged box can end in stopping_failed), ONE more
+# alert; after that it retries at most hourly and says nothing more until the box is STOPPED (then one "now stopped" notice).
+# A paused box is never stopped: it only gets the one alert. Excluded boxes are never touched (the loop skips them).
+UNH_FILES=(unh_since unh_tried unh_paused_alerted unh_failed_alerted)
+bad_state() { [[ "${1^^}" == UNHEALTHY || "${1^^}" =~ FAIL ]]; }
+unhealthy_box() { # $1 = name, $2 = its status (UNHEALTHY or a failed state)
+  use "$1"; local st="$2" T since lim tried out2 after sout
+  T="$(now)"; lim="$(unhealthy_min "$BOX")"
+  rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed" # (its idle watch starts over)
+  since="$(get unh_since)"; [[ -n "$since" ]] || { since="$T"; put unh_since "$T"; }
+  if [[ -n "$(get unh_tried)" && "${st^^}" =~ FAIL && -z "$(get unh_failed_alerted)" ]]; then
+    put unh_failed_alerted "$T"; alert "Brev auto-stop: $BOX is now '$st' after the stop it tried (a stop on a wedged box can do this). It may still bill; check the Brev console. Retrying the stop at most hourly, no more alerts." critical
+  fi
+  if (( T - since < lim * 60 )); then state "unhealthy" "box $BOX is $st: watching (stop after ${lim} min of this)"; return 0; fi
+  if paused_until >/dev/null; then
+    [[ -n "$(get unh_paused_alerted)" ]] || { put unh_paused_alerted "$T"; alert "Brev auto-stop: $BOX has been $st for $(mins $(( T - since ))) min. It is paused, so it was NOT stopped; it may still bill (brev stop $BOX by hand, or brev-autostop resume $BOX)." critical; }
+    state "unhealthy-paused" "box $BOX is $st but paused: alerted, not stopping"; return 0
+  fi
+  tried="$(get unh_tried)"
+  if [[ -n "$tried" ]] && (( T - tried < 3600 )); then state "unhealthy-tried" "box $BOX still $st: retrying the stop at most hourly"; return 0; fi
+  if [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]]; then log "DRY: would stop $BOX ($st for $(mins $(( T - since ))) min)"; return 0; fi
+  log "stopping $BOX: $st for $(mins $(( T - since ))) min"; put unh_tried "$T"
+  local ok=1; sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1)" || ok=0
+  out2="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)"; after="$(rows "$out2" | awk -v b="$BOX" '$1==b{print $2}')"; after="${after:-unknown}"
+  if [[ -n "$tried" ]]; then # a retry: quiet unless it worked
+    [[ "${after^^}" == STOPPED ]] && { alert "Brev auto-stop: $BOX is STOPPED now (it had been $st)." normal; rm -f "${UNH_FILES[@]/#/$D/}"; put state "stopped"; }
+    log "retried the stop of $BOX: $([[ $ok == 1 ]] && echo ok || echo failed), status now $after"; return 0
+  fi
+  if [[ $ok == 1 && "${after^^}" =~ ^(STOPPED|STOPPING)$ ]]; then
+    alert "Brev auto-stop: $BOX had been $st for $(mins $(( T - since ))) min, so it ran 'brev stop $BOX'. Status now: $after." normal
+  else
+    put unh_failed_alerted "$T"
+    alert "Brev auto-stop: $BOX had been $st for $(mins $(( T - since ))) min; 'brev stop $BOX' $([[ $ok == 1 ]] && echo "ran" || echo "failed ($(tr '\n' ' ' <<<"$sout" | cut -c1-160))"), status now: $after. It may still bill; check the Brev console. Retrying at most hourly, no more alerts." critical
+  fi
+  [[ "${after^^}" == STOPPED ]] && { rm -f "${UNH_FILES[@]/#/$D/}"; put state "stopped"; }
+  return 0
+}
+
 # Brev's own view: every instance and its status
 out="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)"; rc=$?
 if [[ $rc -ne 0 ]]; then
@@ -210,12 +253,14 @@ while read -r name status _; do
   [[ "$name" =~ $NAME_RE && -n "${status:-}" ]] || continue
   seen[$name]=1
   if excluded "$name"; then continue; fi                               # never touched, never even probed
+  if bad_state "$status"; then unhealthy_box "$name" "$status"; continue; fi
+  use "$name"; rm -f "${UNH_FILES[@]/#/$D/}" # (any other status ends an unhealthy spell)
   if [[ "$status" == RUNNING ]]; then check_box "$name" || fail=1; continue; fi
-  use "$name"; rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed"
+  rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed"
   state "not-running" "box $name is $status: nothing to do"
 done < <(rows "$out")
 for d in "$ST/boxes"/*/; do # a box that left the list (deleted): forget its watch state, quietly
   b="$(basename "$d")"; [[ -n "${seen[$b]:-}" || ! -d "$d" ]] && continue
-  use "$b"; rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed"; state "not-listed" "box $b is not listed: nothing to do"
+  use "$b"; rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed" "${UNH_FILES[@]/#/$D/}"; state "not-listed" "box $b is not listed: nothing to do"
 done
 exit $fail

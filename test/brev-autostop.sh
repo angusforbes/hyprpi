@@ -18,7 +18,7 @@ case "$1" in
   ls) st="$(cat "$F/status")"; [[ "$st" == error ]] && { echo "api error" >&2; exit 1; }
       echo "You have 3 instances in Org test"; echo " NAME STATUS BUILD"; [[ "$st" != absent ]] && echo " hyprpi-l40s $st COMPLETED"; echo " keep-me-box $(cat "$F/nemo" 2>/dev/null || echo STOPPED) COMPLETED"; [[ -f "$F/more" ]] && sed 's/^/ /' "$F/more"; exit 0;;
   stop) echo "stop $2" >> "$F/calls"; echo "stop $2" >> "$F/allcalls"; [[ -f "$F/stophang" ]] && { trap "" TERM; sleep 30; }; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }
-        if [[ "$2" == hyprpi-l40s ]]; then echo STOPPED > "$F/status"; else sed -i "s/^$2 RUNNING/$2 STOPPED/" "$F/more"; fi; exit 0;;
+        if [[ "$2" == hyprpi-l40s ]]; then if [[ -f "$F/stopresult" ]]; then cp "$F/stopresult" "$F/status"; else echo STOPPED > "$F/status"; fi; else sed -i "s/^$2 RUNNING/$2 STOPPED/" "$F/more"; fi; exit 0;;
 esac
 EOF
 cat > "$F/bin/ssh" <<'EOF'
@@ -46,7 +46,7 @@ fixture() { # every activity file N minutes old
   for f in "$H/.hyprpi-i/sessions/s1/a.jsonl" "$H/.hyprpi-i/state/thoughts/I.thread.jsonl" "$H/.hyprpi-i/state/boards/I.jsonl" "$H/workspace/outputs/x.png" "$H/workspace/shared/n.txt"; do echo x > "$f"; touch -d "-$1 min" "$f"; done
 }
 gpu_on() { printf '#!/usr/bin/env bash\nF="%s"; f="$F/gpu-$BOXNAME"; [[ -f "$f" ]] || f="$F/gpu"; [[ -f "$f" ]] && cat "$f"\n' "$F" > "$F/bin/nvidia-smi"; chmod +x "$F/bin/nvidia-smi"; }
-fresh() { rm -rf "$F/bin/nvidia-smi" "$F"/gpu* "$F/more" "$F/nemo" "$F"/home-* "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
+fresh() { rm -f "$F/stopresult"; rm -rf "$F/bin/nvidia-smi" "$F"/gpu* "$F/more" "$F/nemo" "$F"/home-* "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
 started_ago() { mkdir -p "$F/state/boxes/hyprpi-l40s"; echo $(( $(date +%s) - $1 * 60 )) > "$F/state/boxes/hyprpi-l40s/running_since"; } # pretend the timer first saw it RUNNING N min ago
 run() { "$S" run; }
 pass=0; fail=0
@@ -245,6 +245,49 @@ rm -f "$F/startok"; i4="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BRE
 ok "install: timer enabled but won't start → exit 1, says so, no 'auto-stop is on'" '[[ $rc4 == 1 ]] && grep -q "won.t start" <<<"$i4" && ! grep -q "auto-stop is on" <<<"$i4"'
 touch "$F/startok"; i5="$(BREV_AUTOSTOP_CONFIG="$IC" BREV_AUTOSTOP_BIN="$IB" BREV_AUTOSTOP_SYSTEMCTL="$SC" "$S" install z9 2>&1)"
 ok "…when it starts: 'started brev-autostop.timer' + 'auto-stop is on for z9'" 'grep -q "started brev-autostop.timer" <<<"$i5" && grep -q "auto-stop is on for z9" <<<"$i5"'
+
+# --- J523: a box stuck UNHEALTHY -----------------------------------------------------------------------------------------------
+unh_ago() { mkdir -p "$F/state/boxes/hyprpi-l40s"; echo $(( $(date +%s) - $1 * 60 )) > "$F/state/boxes/hyprpi-l40s/unh_since"; }
+tried_ago() { echo $(( $(date +%s) - $1 * 60 )) > "$F/state/boxes/hyprpi-l40s/unh_tried"; }
+crit() { cnt "^notify.*-u critical"; }
+# 30. under the limit: nothing; at the limit: one stop + one alert with the status after it
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 30; run; run
+ok "UNHEALTHY 30 min (< 45) → no stop, no alert, no ssh" '[[ $(stops) == 0 && $(notices) == 0 && ! -f "$F/sshcalls" ]]'
+unh_ago 50; run
+ok "UNHEALTHY 50 min → one brev stop + one notice + one Thoughts line, with the status after it" '[[ $(stops) == 1 && $(notices) == 1 && $(thoughts) == 1 ]] && grep -q "Status now: STOPPED" "$F/calls"'
+run; run
+ok "…then STOPPED: nothing more" '[[ $(stops) == 1 && $(notices) == 1 ]]'
+# 31. the stop fails: one critical alert, quiet hourly retries, one notice when a retry works
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; touch "$F/stopfail"; run; run; run
+ok "stop fails → one critical alert with the status, no retry within the hour" '[[ $(stops) == 1 && $(notices) == 1 && $(crit) == 1 ]] && grep -q "status now: UNHEALTHY" "$F/calls"'
+tried_ago 61; run
+ok "…an hour later: retried, no new alert" '[[ $(stops) == 2 && $(notices) == 1 ]]'
+rm -f "$F/stopfail"; tried_ago 61; run
+ok "…a retry that works: one 'STOPPED now' notice" '[[ $(stops) == 3 && $(notices) == 2 ]] && grep -q "is STOPPED now" "$F/calls"'
+# 32. the stop lands in a failed state (J512): one alert saying so, then quiet hourly retries
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; echo STOPPING_FAILED > "$F/stopresult"; run
+ok "stop → STOPPING_FAILED right away → one critical alert naming it" '[[ $(stops) == 1 && $(crit) == 1 ]] && grep -q "status now: STOPPING_FAILED" "$F/calls"'
+run; run; tried_ago 61; run
+ok "…still STOPPING_FAILED: no more alerts, one quiet retry after the hour" '[[ $(stops) == 2 && $(notices) == 1 ]]'
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; echo STOPPING > "$F/stopresult"; run
+ok "stop → STOPPING: one normal notice with that status" '[[ $(stops) == 1 && $(notices) == 1 && $(crit) == 0 ]] && grep -q "Status now: STOPPING" "$F/calls"'
+echo STOPPING_FAILED > "$F/status"; run; run
+ok "…later STOPPING_FAILED: one more (critical) alert, then none" '[[ $(notices) == 2 && $(crit) == 1 ]] && grep -q "now .STOPPING_FAILED. after the stop" "$F/calls"'
+# 33. a paused box: alerted once, never stopped
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; "$S" pause hyprpi-l40s 24h >/dev/null; run; run; run
+ok "paused + UNHEALTHY 50 min → one alert, no stop" '[[ $(stops) == 0 && $(notices) == 1 && $(crit) == 1 ]] && grep -q "paused, so it was NOT stopped" "$F/calls"'
+"$S" resume hyprpi-l40s >/dev/null; run
+ok "…resumed → stopped, with its own outcome notice" '[[ $(stops) == 1 && $(notices) == 2 ]] && grep -q "Status now: STOPPED" "$F/calls"'
+# 34. an excluded box, UNHEALTHY for hours: untouched
+fresh; echo STOPPED > "$F/status"; echo UNHEALTHY > "$F/nemo"; for i in 1 2 3; do run; done; mkdir -p "$F/state/boxes/keep-me-box"; echo $(( $(date +%s) - 300*60 )) > "$F/state/boxes/keep-me-box/unh_since"; run
+ok "excluded box UNHEALTHY → never stopped, no alert" '[[ $(stops) == 0 && $(notices) == 0 ]]'
+# 35. UNHEALTHY → RUNNING → UNHEALTHY starts a new spell; per-box limit; config default
+fresh; fixture 5; echo UNHEALTHY > "$F/status"; run; unh_ago 40; echo RUNNING > "$F/status"; run; echo UNHEALTHY > "$F/status"; run
+ok "a RUNNING moment ends the spell (a new one starts at 0) → no stop" '[[ $(stops) == 0 ]]'
+printf 'exclude keep-me-box\nunhealthy hyprpi-l40s 120\n' > "$CF"; fresh; echo UNHEALTHY > "$F/status"; BREV_AUTOSTOP_CONFIG="$CF" run; unh_ago 90; BREV_AUTOSTOP_CONFIG="$CF" run
+ok "unhealthy hyprpi-l40s 120 → no stop at 90 min" '[[ $(stops) == 0 ]]'
+printf 'exclude keep-me-box\ndefault_unhealthy_min 20\n' > "$CF"; BREV_AUTOSTOP_CONFIG="$CF" run
+ok "default_unhealthy_min 20 → stopped at 90 min" '[[ $(stops) == 1 ]]'
 
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
