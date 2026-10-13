@@ -30,9 +30,11 @@ const laptop = await daemon("lap", (S, cfg) => {
   fs.writeFileSync(fake, `#!/usr/bin/env bash\ncat > "${S}/relayed.json"; echo "\${@: -1}" > "${S}/relayed.cmd"; echo '{"answer":"Thoughts-H here: Browserbox is live"}'\n`, { mode: 0o700 });
   fs.writeFileSync(path.join(cfg, "hyprpi", "remote", "h.json"), JSON.stringify({ ssh: [fake, "omni"] }), { mode: 0o600 });
   // J536: a closed laptop agent of world H and one of world A, both resumable: only A's is offered back
-  const now = Date.now(); for (const [id, room] of [["hp-inh", "H"], ["hp-ina", "A"]]) { const f = path.join(S, `${id}.jsonl`); fs.writeFileSync(f, "{}\n"); fs.appendFileSync(path.join(S, "reg.tmp"), ""); }
+  const now = Date.now(); for (const [id, room] of [["hp-inh", "H"], ["hp-ina", "A"], ["hp-open-h", "H"], ["hp-open-a", "A"]]) { const f = path.join(S, `${id}.jsonl`); fs.writeFileSync(f, "{}\n"); fs.appendFileSync(path.join(S, "reg.tmp"), ""); }
   fs.writeFileSync(path.join(S, "agents.json"), JSON.stringify({ "hp-inh": { id: "hp-inh", name: "Inh", room: "H", workspace: 72, session: path.join(S, "hp-inh.jsonl"), resumable: true, updatedAt: now, cwd: S },
-    "hp-ina": { id: "hp-ina", name: "Ina", room: "A", workspace: 2, session: path.join(S, "hp-ina.jsonl"), resumable: true, updatedAt: now, cwd: S } }));
+    "hp-ina": { id: "hp-ina", name: "Ina", room: "A", workspace: 2, session: path.join(S, "hp-ina.jsonl"), resumable: true, updatedAt: now, cwd: S },
+    "hp-open-h": { id: "hp-open-h", name: "OpenH", room: "H", workspace: 73, session: path.join(S, "hp-open-h.jsonl"), open: true, pid: 999999, updatedAt: now, cwd: S },
+    "hp-open-a": { id: "hp-open-a", name: "OpenA", room: "A", workspace: 3, session: path.join(S, "hp-open-a.jsonl"), open: true, pid: 999998, updatedAt: now, cwd: S } }));
 });
 const remote = await daemon("rem");
 try {
@@ -49,6 +51,11 @@ try {
   const dorm = ((await api.call("list", {})).dormant || []).map((d) => d.id);
   ok("J536 a closed laptop agent of world H isn't offered back; one of world A is", !dorm.includes("hp-inh") && dorm.includes("hp-ina"), JSON.stringify(dorm));
   ok("J536 resuming it into world H is refused", /is a remote world/.test(await err(() => api.call("agent.resume", { agent: "hp-inh" }))));
+  ok("J536 moving a laptop agent to world H (letter or workspace) is refused", /is a remote world/.test(await err(() => api.call("agent.move", { agent: "x", to: "H" }))) && /is a remote world/.test(await err(() => api.call("agent.move", { agent: "x", to: "72" }))));
+  ok("J536 spinning a laptop project out to world H is refused", /is a remote world/.test(await err(() => api.call("project.spinout", { project: "x", to: "H" }))));
+  const st0 = await api.call("restore.status", {}).catch(() => null); const plan = st0?.plan || st0;
+  ok("J536 restore status answers", !!plan, JSON.stringify(st0 || null).slice(0, 200));
+  if (plan) ok("J536 a restore never offers a laptop agent in world H (one in world A still is)", !(plan.agents || []).some((a) => String(a.world).toUpperCase() === "H") && (plan.agents || []).some((a) => a.id === "hp-open-a"), JSON.stringify((plan.agents || []).map((a) => a.id)));
   // 2
   const got = [];
   const agent = await connect({ path: laptop.sock, onEvent: (ev, data) => got.push({ ev, data }) });
@@ -72,6 +79,14 @@ try {
   const q2 = await rapi.call("thoughts.relayAsk", { room: "I", from: "Thoughts-A", fromThoughts: "A", text: "and now?" });
   ok("3 owing a relayed Thoughts question, Thoughts-I can't ask one back", /answer Thoughts-A first/.test(await err(() => rapi.call("thoughts.ask", { room: "I", agent: "Thoughts-B", question: "x" }))));
   await rapi.call("thoughts.answer", { room: "I", request_id: q2.request_id, text: "done" });
+  // J536 (review): plain new on a world bound by the old file name (world-h.json) still goes remote, never local
+  { const cfg2 = fs.mkdtempSync(path.join(os.tmpdir(), "j536-cfg-")); fs.mkdirSync(path.join(cfg2, "hyprpi", "remote"), { recursive: true });
+    fs.writeFileSync(path.join(cfg2, "hyprpi", "remote", "world-h.json"), JSON.stringify({ ssh: ["true", "x"] }), { mode: 0o600 });
+    const n = spawnSync(process.execPath, [path.join(ROOT, "bin/hyprpi"), "new", "--workspace", "72"], { env: { ...laptop.env, XDG_CONFIG_HOME: cfg2, PATH: process.env.PATH }, encoding: "utf8", timeout: 15000 });
+    ok("J536 plain new with only world-h.json goes the remote way", /no remote agent started/.test(n.stderr + n.stdout), (n.stderr + n.stdout).slice(-200));
+    const t = spawnSync(process.execPath, [path.join(ROOT, "bin/hyprpi"), "new", "--id", "hp-x", "--workspace", "72"], { env: { ...laptop.env, XDG_CONFIG_HOME: cfg2, PATH: process.env.PATH }, encoding: "utf8", timeout: 15000 });
+    ok("J536 a laptop resume onto world H is refused (world-h.json too)", /is a remote world/.test(t.stderr + t.stdout), (t.stderr + t.stdout).slice(-200));
+    fs.rmSync(cfg2, { recursive: true, force: true }); }
   // 4
   const run = (l) => spawnSync(path.join(ROOT, "mockups/search-tui"), [l], { env: { ...laptop.env, PATH: process.env.PATH, HYPRPI_ALLOW_HYPR: "1" }, encoding: "utf8", timeout: 5000 });
   const h = run("H"); ok("4 the laptop's panel launcher refuses remote world H", h.status === 0 && /runs on its remote machine/.test(h.stderr), h.stderr);
