@@ -18,7 +18,7 @@ safe() { local f="$1" p rest c depth=0
     c="${rest%%/*}"; [[ "$rest" == */* ]] && rest="${rest#*/}" || rest=""
     [[ -z "$c" || "$c" == . ]] && continue; [[ "$c" == .. ]] && { p="$(dirname "$p")"; continue; }
     p="${p%/}/$c"
-    if [[ -L "$p" ]]; then (( ++depth <= 20 )) || return 1; local t; t="$(readlink "$p")"; [[ "$t" == /* ]] || t="$(dirname "$p")/$t"; p="$(dirname "$p")"; rest="$t${rest:+/$rest}"; rest="${rest#/}"; [[ "$t" == /* ]] && p=/; continue; fi
+    if [[ -L "$p" ]]; then (( ++depth <= 20 )) || return 1; local lo; lo="$(stat -c %U "$p")"; [[ "$lo" == "$(id -un)" || "$lo" == root ]] || return 1; # (review) a link must be yours or root's: in a sticky folder its owner could swap it local t; t="$(readlink "$p")"; [[ "$t" == /* ]] || t="$(dirname "$p")/$t"; p="$(dirname "$p")"; rest="$t${rest:+/$rest}"; rest="${rest#/}"; [[ "$t" == /* ]] && p=/; continue; fi
     [[ -e "$p" ]] || return 1
     if [[ -n "$rest" ]]; then okdir "$p" above || return 1; else okdir "$p" last || return 1; fi
   done; }

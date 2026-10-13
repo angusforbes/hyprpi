@@ -59,4 +59,12 @@ printf '#!/usr/bin/env bash\ntouch "%s/evil-ran"\n' "$T" > "$T/bin/evilssh"; chm
 printf '{"ssh":["%s/bin/evilssh","x"],"tailscale":true}' "$T" > "$T/evil.json"; chmod 666 "$T/evil.json"
 o=$(HYPRPI_REMOTE_CONF="$T/evil.json" "$R/omnistation/world" I setup 2>&1); rc=$?
 ok "world setup with an unsafe tailscale binding runs none of its commands" '[[ $rc == 2 && ! -e "$T/evil-ran" && "$o" == *"writable by others"* ]]'
+# a link owned by someone else (a stat stub says so for that one path): refused
+ln -s "$T/safe.json" "$T/foreign-link.json"
+cat > "$T/bin/stat" <<EOF2
+#!/usr/bin/env bash
+if [[ "\$*" == *"%U"* && "\${@: -1}" == "$T/foreign-link.json" ]]; then echo nobody; else exec /usr/bin/stat "\$@"; fi
+EOF2
+chmod +x "$T/bin/stat"; o=$(PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" --check "$T/foreign-link.json" 2>&1); rc=$?; rm -f "$T/bin/stat"
+ok "a binding link owned by someone else: refused" '[[ $rc == 2 ]]'
 echo "$pass passed, $fail failed"; exit $(( fail > 0 ))
