@@ -30,7 +30,7 @@ Keys: c CPU, m memory, u uptime, p priority; j/k or up/down to scroll; PgUp/PgDn
 
 ## Attribution and limits
 
-Agent names, worlds, status, models and registered identities come from hyprpi. Local root PIDs and the nearest registered ancestor take precedence. Detached helpers can be linked by an explicit agent identity in their environment. A nested registered agent is a separate owner; no process is charged to two rows. Recognizable unowned Pi process trees are shown as Unattributed instead of silently discarded or assigned by a similar-looking name.
+Agent names, worlds, status, models and registered identities come from hyprpi. Local root PIDs and the nearest registered ancestor take precedence. Detached helpers can be linked by an explicit agent identity in their environment. An unknown explicit agent ID cannot fall through to another agent with a reused name; a matching world marker can still identify that world's aggregate transport. A nested registered agent is a separate owner; no process is charged to two rows. Recognizable unowned Pi process trees are shown as Unattributed instead of silently discarded or assigned by a similar-looking name.
 
 Only selected identity markers are read from process environments; full environments and command lines, including prompts and credentials, are not included in the output. Permission errors, disappearing processes and missing telemetry do not turn into fabricated measurements. Unidentifiable orphan processes without an agent marker cannot be proved to be agent work; the host-wide header still includes their machine load.
 

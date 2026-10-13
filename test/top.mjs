@@ -38,6 +38,10 @@ test("registered helpers and headless workers are combined without counting root
   const result = assembleSnapshot(data, { ...frame, groups: [{ ...frame.groups[0], piCount: 4, rootPiCount: 1 }] });
   assert.equal(result.agents[0].helpers, 5);
 });
+test("unknown mirror helper count stays unknown rather than zero", () => {
+  const result = assembleSnapshot({ ...metadata, agents: [{ ...metadata.agents[1], helpers: null, inProcessHelpers: null, registeredHelpers: [] }] }, frame);
+  assert.equal(result.agents[0].helpers, null);
+});
 test("monitor can be outside all agent trees", () => { const result = assembleSnapshot(metadata, { ...frame, processes: [], monitor: { pid: process.pid, cpuPercent: 0.25, rssBytes: 5000 } }); assert.equal(result.monitor.cpuPercent, 0.25); });
 test("sampler limitations survive assembly", () => assert.ok(assembleSnapshot(metadata, { ...frame, limitations: ["permission denied"] }).warnings.includes("permission denied")));
 test("unknown CPU is not rendered as zero machine CPU", () => assert.match(renderTop({ ...snapshot, totals: { ...snapshot.totals, cpuPercent: null } }).join("\n"), /\?% CPU \(\?% machine\)/));

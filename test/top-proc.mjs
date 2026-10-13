@@ -274,6 +274,26 @@ const pidsOf = (r, id) => (G(r, id) || r.unattributed.find((u) => u.id === id) |
   ok("A6 injected clockTicks/pageSize need no getconf", /INJECTED-OK/.test(g.stdout), g.stdout.trim().replace(/\n/g, " | "));
 }
 
+// ---- A7) explicit unknown identities cannot fall through to a reused name; Unicode name-only markers work
+{
+  const R7 = mkRoot("identity-barrier"); writeSystem(R7);
+  writeProc(R7, { pid: 200, ppid: 1, comm: "pi", env: { HYPRPI_AGENT_ID: "old-agent", HYPRPI_NAME: "ReusedName" } });
+  writeProc(R7, { pid: 201, ppid: 200, comm: "sleep" });
+  writeProc(R7, { pid: 202, ppid: 1, comm: "pi", env: { HYPRPI_AGENT_ID: "remote-old", HYPRPI_NAME: "ReusedName", HYPRPI_REMOTE_WORLD: "H" } });
+  writeProc(R7, { pid: 203, ppid: 1, comm: "pi", env: { HYPRPI_NAME: "Éclair" } });
+  writeProc(R7, { pid: 204, ppid: 1, comm: "pi", env: { HYPRPI_AGENT_ID: "current-agent", HYPRPI_NAME: "Éclair" } });
+  writeProc(R7, { pid: 205, ppid: 1, comm: "pi", env: { HYPRPI_AGENT_ID: "current-agent", HYPRPI_REMOTE_WORLD: "H" } });
+  const r = await new ProcSampler({ procRoot: R7, clockTicks: 100, pageSize: 4096, selfPid: 999 }).sample([
+    { id: "current-agent", name: "ReusedName", world: "A", pids: [], envIds: ["current-agent"] },
+    { id: "unicode-agent", name: "Éclair", world: "B", pids: [], envIds: [] },
+    { id: "transport:H", name: "H transport", world: "H", pids: [], envIds: [], envWorld: "H", remote: true },
+  ]);
+  ok("A7 unknown explicit id blocks reused-name attribution and descendants", JSON.stringify(r.unattributed.find((u) => u.pids.includes(200))?.pids) === "[200,201]");
+  ok("A7 known explicit id beats name and world markers", JSON.stringify(G(r, "current-agent").pids) === "[204,205]");
+  ok("A7 unknown remote id can still identify aggregate world transport", JSON.stringify(G(r, "transport:H").pids) === "[202]");
+  ok("A7 UTF-8 name-only identity matches the daemon's name", JSON.stringify(G(r, "unicode-agent").pids) === "[203]");
+}
+
 // ---- B) real /proc with our own tiny dummies
 const kids = [];
 try {
