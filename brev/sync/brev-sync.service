@@ -1,5 +1,5 @@
 [Unit]
-Description=J494 two-way sync of ~/Brev with the Brev box (~/workspace/shared); skips quietly while the box is stopped
+Description=J494/J547 two-way sync of the laptop folders in ~/.config/hyprpi/brev-sync.conf with their Brev boxes (~/Brev, ~/Brev/Hub); each pair pauses while its box is stopped
 After=network-online.target
 
 [Service]
