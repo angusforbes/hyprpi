@@ -479,10 +479,10 @@ BREV_AUTOSTOP_CONFIG="$CC" BREV_AUTOSTOP_CURL="$F/bin/leakcurl" BREV_AUTOSTOP_CR
 ok "bash -x: the token is not in the trace; curl's error text is cleaned before the log" '! grep -q SECRET-TOKEN "$F/trace" "$F/state/log" && grep -q "billingprofile call failed" "$F/state/log"'
 echo $(( $(date +%s) - 25*3600 )) > "$F/state/credit_fail"; BREV_AUTOSTOP_DRY=1 BREV_AUTOSTOP_CONFIG="$CC" BREV_AUTOSTOP_CURL="$F/bin/leakcurl" BREV_AUTOSTOP_CREDENTIALS="$F/creds" BREV_AUTOSTOP_CREDIT_FORCE=1 run
 ok "DRY: the day-long failure alert is only logged" '[[ $(cnt "not been able to read") == 0 ]] && grep -q "DRY: would alert that the credit" "$F/state/log"'
-printf '#!/usr/bin/env bash\nif [[ "$1 $2" == "org ls" ]]; then echo "Your organizations:"; echo " NAME ID"; echo " * My Personal Org org-Test123"; exit 0; fi\nF="%s"; [[ "$1" == ls ]] && { echo " NAME STATUS"; exit 0; }\n' "$F" > "$F/bin/brev-org"; chmod +x "$F/bin/brev-org"
+printf '#!/usr/bin/env bash\nif [[ "$1 $2" == "org ls" ]]; then echo "Your organizations:"; echo " NAME ID"; echo " * org-Other123 Personal org-Test123"; exit 0; fi\nF="%s"; [[ "$1" == ls ]] && { echo " NAME STATUS"; exit 0; }\n' "$F" > "$F/bin/brev-org"; chmod +x "$F/bin/brev-org"
 printf 'exclude keep-me-box\ncredit_warn_usd 50\n' > "$F/noorg.conf"; rm -f "$F/curlcalls"; echo 6000 > "$F/credit"
 BREV_AUTOSTOP_BREV="$F/bin/brev-org" BREV_AUTOSTOP_CONFIG="$F/noorg.conf" BREV_AUTOSTOP_CURL="$F/bin/billcurl" BREV_AUTOSTOP_CREDENTIALS="$F/creds" BREV_AUTOSTOP_CREDIT_FORCE=1 run
-ok "no credit_org, an org name with spaces → the org-… id is used" 'grep -q "organizations/org-Test123/billingprofile" "$F/curlcalls"'
+ok "no credit_org, an org name with spaces that looks like an id → the id column (last) is used" 'grep -q "organizations/org-Test123/billingprofile" "$F/curlcalls"'
 # brev ls failing: the credit read still happens (and its failures count toward the day-long alert)
 fresh; echo error > "$F/status"; rm -f "$F/curlcalls" "$F/state/credit_fail"; touch "$F/creditfail"; BREV_AUTOSTOP_CONFIG="$CC" BREV_AUTOSTOP_CURL="$F/bin/billcurl" BREV_AUTOSTOP_CREDENTIALS="$F/creds" BREV_AUTOSTOP_CREDIT_FORCE=1 run
 ok "brev ls failing → the credit is still read; its failure is tracked" '[[ -f "$F/curlcalls" && -f "$F/state/credit_fail" ]]'

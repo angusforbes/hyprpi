@@ -237,7 +237,7 @@ credit_check_inner() {
   [[ "${BREV_AUTOSTOP_CREDIT_FORCE:-}" == 1 || ! "$last" =~ ^[0-9]+$ ]] || (( T - last >= hrs * 3600 )) || return 0
   echo "$T" > "$ST/credit_try"
   org="$(cfg | awk '$1=="credit_org"{v=$2} END{print v}')"
-  [[ -n "$org" ]] || org="$(timeout -k 10 60 "$BREV" org ls 2>/dev/null | awk '$1=="*"{for(i=2;i<=NF;i++) if($i~/^org-[A-Za-z0-9]+$/){print $i; exit}}')" # (the id column, whatever the name's words)
+  [[ -n "$org" ]] || org="$(timeout -k 10 60 "$BREV" org ls 2>/dev/null | awk '$1=="*"{id=""; for(i=2;i<=NF;i++) if($i~/^org-[A-Za-z0-9]+$/) id=$i; print id; exit}')" # (the id column is the last one: whatever the name's words, even a name that looks like an id)
   tok="$(jq -r '.access_token // empty' "${BREV_AUTOSTOP_CREDENTIALS:-$HOME/.brev/credentials.json}" 2>/dev/null)"
   if [[ ! "$org" =~ ^org-[A-Za-z0-9]+$ || -z "$tok" ]]; then credit_fail "no org id or no brev login token"; return 0; fi
   # (the token goes to curl on a file descriptor, never on its command line or in the log)
