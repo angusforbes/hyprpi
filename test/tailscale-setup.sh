@@ -25,20 +25,20 @@ printf '#!/usr/bin/env bash\n"$@"\n' > "$T/bin/sudo"; printf '#!/usr/bin/env bas
 chmod +x "$T/bin/"*
 export XDG_CONFIG_HOME="$T/lap/.config" HOME="$T/lap"
 KF="$T/lap/.config/hyprpi-secrets/tailscale-authkey"
-run() { PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" "$1" i "$T/bin/fakessh" ubuntu@hyprpi-home 2>&1; }
-echo '{"ssh":["ssh","hyprpi-home"]}' > "$T/off.json"; o=$(run "$T/off.json")
+run() { PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" "$1" i "$T/bin/fakessh" ubuntu@hub 2>&1; }
+echo '{"ssh":["ssh","hub"]}' > "$T/off.json"; o=$(run "$T/off.json")
 ok "off by default: nothing sent, no output" '[[ -z "$o" && ! -f "$T/calls" ]]'
-echo '{"ssh":["ssh","hyprpi-home"],"tailscale":true}' > "$T/on.json"; o=$(run "$T/on.json")
+echo '{"ssh":["ssh","hub"],"tailscale":true}' > "$T/on.json"; o=$(run "$T/on.json")
 ok "no key file yet: says so, exit 0, nothing joined" '[[ "$o" == *"no Tailscale auth key"* && ! -f "$T/ts" ]]'
 printf 'tskey-auth-FAKE123\n' > "$KF"; chmod 644 "$KF"; o=$(run "$T/on.json")
 ok "a key file readable by others is refused" '[[ "$o" == *"600 in a 700 folder"* && ! -f "$T/ts" ]]'
 chmod 600 "$KF"; o=$(run "$T/on.json"); rc=$?
-ok "joins: tailnet name printed, hostname from the ssh target" '[[ $rc == 0 && "$o" == *"tailnet hyprpi-home.tail1c2031.ts.net"* ]]'
+ok "joins: tailnet name printed, hostname from the ssh target" '[[ $rc == 0 && "$o" == *"tailnet hub.tail1c2031.ts.net"* ]]'
 ok "Tailscale SSH on by default" 'grep -q -- "--ssh" "$T/calls"'
 ok "the key reached tailscale up through a 600 file, then was removed" '[[ "$(cat "$T/key-seen")" == tskey-auth-FAKE123 && "$(cat "$T/key-mode")" == 600 ]] && ! grep -rqs FAKE123 "$T/box"'
 ok "the key is never on a command line or in the output" '! grep -q FAKE123 "$T/calls" && [[ "$o" != *FAKE123* ]]'
 : > "$T/calls"; o=$(run "$T/on.json")
-ok "second run: already in the tailnet, no key sent, no up" '[[ "$o" == *"tailnet hyprpi-home"* ]] && ! grep -q " up" "$T/calls"'
+ok "second run: already in the tailnet, no key sent, no up" '[[ "$o" == *"tailnet hub"* ]] && ! grep -q " up" "$T/calls"'
 rm -f "$T/ts"; echo '{"ssh":["ssh","x"],"tailscale":{"hostname":"home-box","ssh":false}}' > "$T/obj.json"; : > "$T/calls"; o=$(run "$T/obj.json")
 ok "object form: own hostname, ssh false = no --ssh" '[[ "$o" == *"tailnet home-box"* ]] && ! grep -q -- "--ssh" "$T/calls"'
 rm -f "$T/ts"; printf 'tskey-auth-WRONG\n' > "$KF"; o=$(run "$T/on.json"); rc=$?
