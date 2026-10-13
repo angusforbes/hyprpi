@@ -126,8 +126,23 @@ case "$cmd" in
         const line = `"phone": ${JSON.stringify({ ntfy: keep })}`;
         let s = ""; try { s = fs.readFileSync(p, "utf8"); } catch { fs.writeFileSync(p, JSON.stringify({ phone: { ntfy: keep } }, null, 2) + "\n"); process.exit(0); }
         try { const j = JSON.parse(s); j.phone = { ...(j.phone || {}), ntfy: keep }; fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n"); process.exit(0); } catch { /* jsonc with comments */ }
-        let t = s.replace(/"phone"\s*:\s*\{\s*"ntfy"\s*:\s*\{[^{}]*\}\s*\}/, line);
-        if (t === s) { const m = /^\s*\{/m.exec(s); if (!m) process.exit(0); const i = m.index + m[0].length; t = s.slice(0, i) + "\n  " + line + "," + s.slice(i); } // first entry: no comma after a // comment
+        // A small scanner (strings with escapes, // and /* */ comments skipped): the top-level "phone" entry, key to the end of
+        // its value, is replaced whole (whatever it holds); none: it becomes the first entry (no comma after a // comment).
+        let i = 0, depth = 0, first = -1, keyAt = -1, end = -1;
+        const skipStr = (j) => { j++; while (j < s.length && s[j] !== "\"") j += s[j] === "\\" ? 2 : 1; return j + 1; };
+        const skipCom = (j) => s[j + 1] === "/" ? (s.indexOf("\n", j) < 0 ? s.length : s.indexOf("\n", j)) : (s.indexOf("*/", j + 2) < 0 ? s.length : s.indexOf("*/", j + 2) + 2);
+        while (i < s.length) {
+          const c = s[i];
+          if (c === "/" && (s[i + 1] === "/" || s[i + 1] === "*")) { i = skipCom(i); continue; }
+          if (c === "\"") { const j = skipStr(i); if (depth === 1 && keyAt < 0 && s.slice(i, j) === "\"phone\"") keyAt = i; i = j; continue; }
+          if (c === "{" || c === "[") { if (depth === 0 && first < 0) first = i; depth++; }
+          else if (c === "}" || c === "]") { depth--; if (keyAt >= 0 && end < 0 && depth === 1) { end = i + 1; break; } }
+          i++;
+        }
+        let t;
+        if (keyAt >= 0 && end > keyAt) t = s.slice(0, keyAt) + line + s.slice(end);
+        else if (first >= 0) t = s.slice(0, first + 1) + "\n  " + line + "," + s.slice(first + 1);
+        else process.exit(0);
         fs.writeFileSync(p, t);' "$p" "$HYPRPI_REMOTE_NTFY"
       echo "phone pushes: $(node -e 'try{const n=JSON.parse(process.argv[1]);console.log((n.enabled?"on":"off")+", topic "+n.topic)}catch{console.log("?")}' "$HYPRPI_REMOTE_NTFY")"
     fi

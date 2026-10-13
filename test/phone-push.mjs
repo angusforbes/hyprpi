@@ -25,6 +25,26 @@ ok("A title names the decision and world", m.title.startsWith("🔔 Decision (wo
 ok("A body: World A · Atlas · @boards, question, options", m.message === "World A · Atlas · @boards\nN3: Ship it?\na. now (recommended)\nb. later", JSON.stringify(m.message));
 ok("A bonk title names the agent", phoneMessage("bonk", { world: "B", agent: "Bolt", text: "look" }).title === "❗ Bolt needs you (world B)");
 
+// ---- R) omnistation/remote.sh install's edit of a remote world's hyprpi.jsonc (its node snippet, run as remote.sh runs it)
+{
+  const { parseJsonc } = await import("../lib/policy.mjs");
+  const src = fs.readFileSync(path.join(ROOT, "omnistation/remote.sh"), "utf8");
+  const a = src.indexOf("node -e '\n        const fs = require(\"fs\"), [p, raw]"), b = src.indexOf("' \"$p\" \"$HYPRPI_REMOTE_NTFY\"", a);
+  const code = src.slice(a + "node -e '".length, b), R = fs.mkdtempSync(path.join(os.tmpdir(), "j528r-")), nt = JSON.stringify({ enabled: true, topic: "angus-brev" });
+  const edit = (name, text) => { const f = path.join(R, name); if (text !== null) fs.writeFileSync(f, text); spawnSync(process.execPath, ["-e", code, f, nt]); return fs.readFileSync(f, "utf8"); };
+  const cases = {
+    "no file": [null], "plain JSON": ['{ "user": { "name": "A" } }'],
+    "jsonc, a phone entry with comments, braces in strings, extra keys": ['// c\n{\n  "user": { "name": "A" }, // x\n  "phone": { // p\n    "ntfy": { "topic": "old}", "x": { "a": 1 } /* } */ }\n  },\n  "z": "\\"phone\\""\n}\n'],
+    "jsonc without a phone entry, ending in a // comment": ['// c\n{\n  "user": { "name": "A" } // x\n}\n'],
+    "a nested \"phone\" only": ['{\n  "x": { "phone": 1 } // y\n}\n'],
+  };
+  for (const [n, [t]] of Object.entries(cases)) {
+    const out = edit(n.replace(/\W+/g, "-"), t); let j = null; try { j = parseJsonc(out); } catch { /* bad */ }
+    ok(`R remote.sh hyprpi.jsonc edit, ${n}: parses, one phone entry with the new topic, the rest kept`, j?.phone?.ntfy?.topic === "angus-brev" && j.phone.ntfy.enabled === true && (out.match(/"phone"\s*:/g) || []).length === 1 + (n.includes("nested") ? 1 : 0) && (!t || !/"user"/.test(t) || j.user?.name === "A") && (!/"z"/.test(t || "") || j.z === '"phone"'), out);
+  }
+  fs.rmSync(R, { recursive: true, force: true });
+}
+
 // ---- B..F) daemon
 const S = fs.mkdtempSync(path.join(os.tmpdir(), "j528-")), cfg = path.join(S, "cfg"), sock = path.join(S, "d.sock"), PUSH = path.join(S, "pushes.jsonl");
 fs.mkdirSync(path.join(S, "boards")); fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
@@ -33,7 +53,11 @@ const POL = path.join(cfg, "hyprpi", "hyprpi.jsonc");
 const setPolicy = (ntfy) => fs.writeFileSync(POL, JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } }, phone: { ntfy } }));
 setPolicy({ enabled: true, topic: "j528-test", server: "https://ntfy.example", kinds: ["bonk", "decision"], maxPerHour: 12 });
 fs.writeFileSync(path.join(S, "boards", "A.json"), JSON.stringify({ room: "A", projects: [{ id: "p-bd", name: "boards", title: "the boards", icon: "📋", status: "active", members: ["hp-atlas"], writer: "hp-atlas", created: now, updated: now, by: "x", where: null, next_step: null, seq: { D: 0, N: 0, H: 0 }, items: [] }] }));
-const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j528-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_TEST: "1", HYPRPI_PHONE_PUSH_LOG: PUSH, XDG_STATE_HOME: path.join(S, "xdg") };
+const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j528-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_TEST: "1", HYPRPI_PHONE_PUSH_LOG: PUSH, XDG_STATE_HOME: path.join(S, "xdg"), HYPRPI_HELD_PUSH_MS: "500" };
+// two held sandbox messages: one for world A's room panel, one reviewed in a Doorman window (reviewIn, filed under room G)
+const PEND = path.join(S, "xdg", "hyprpi", "sbx-relay", "pending"); fs.mkdirSync(PEND, { recursive: true });
+fs.writeFileSync(path.join(PEND, "sb1--aaaaaa.json"), JSON.stringify({ id: "sb1--aaaaaa", at: "2026-10-13T10:00:00Z", sandbox: "sb1", rooms: ["A"], shown: ["Atlas (room A)"], text: "may I read your notes?" }));
+fs.writeFileSync(path.join(PEND, "sb2--bbbbbb.json"), JSON.stringify({ id: "sb2--bbbbbb", at: "2026-10-13T10:01:00Z", sandbox: "sb2", rooms: ["G"], reviewIn: "doorman-g", shown: ["Bolt (room G)"], text: "a GPU lease for 1 h" }));
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
 const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(S, "d.log"), "w"), fs.openSync(path.join(S, "d.err"), "w")] });
 const pushes = () => { try { return fs.readFileSync(PUSH, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
@@ -45,6 +69,15 @@ try {
   await agent.call("agent.hello", { agent_id: "hp-atlas", pid: process.pid, name: "Atlas", icon: "🗺", want_workspace: 2, cwd: S });
   const upd = (p) => agent.call("agent.update", { agent_id: "hp-atlas", ...p });
 
+  // H) held sandbox messages: one decision push each, the Doorman one says where to answer; never again on later scans
+  await sleep(1500);
+  const H = pushes().filter((x) => x.key.startsWith("decision:held:"));
+  ok("H two held messages → two decision pushes", H.length === 2, JSON.stringify(H));
+  ok("H the room-panel one: world A, its text, 1/1+/2", /World A · sandbox sb1\nHeld message to Atlas: may I read your notes\?\n1\. approve/.test(H.find((x) => x.key.includes("sb1"))?.message || "") && /Answer it in world A's room panel/.test(H.find((x) => x.key.includes("sb1"))?.message || ""), JSON.stringify(H[0]?.message));
+  ok("H the Doorman-reviewed one is pushed too, pointing at its window", /Doorman window \(doorman-g\)/.test(H.find((x) => x.key.includes("sb2"))?.message || ""), JSON.stringify(H[1]?.message));
+  await sleep(1200);
+  ok("H no repeat on later scans", pushes().filter((x) => x.key.startsWith("decision:held:")).length === 2);
+  fs.writeFileSync(PUSH, ""); // the rest counts from zero
   // B) bonk
   await upd({ status: "working" }); await upd({ status: "blocked", quiet: true, note: "the build needs your password" }); await sleep(200);
   let P = pushes();
@@ -86,11 +119,11 @@ try {
   ok("E job report / next / done / heard / room post / Angus's own Decide item → no push", pushes().length === 4, JSON.stringify(pushes().slice(4)));
 
   // F) maxPerHour, enabled false
-  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 5 }); await sleep(50);
+  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 7 }); await sleep(50); // 6 sent this hour (2 held + 4 above)
   for (let i = 0; i < 3; i++) await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: `burst question ${i}`, options: ["a", "b"] });
   await sleep(300);
-  ok("F maxPerHour 5: a burst of 3 more sends only 1 (5 in the last hour)", pushes().length === 5, String(pushes().length));
-  ok("F what went over is logged, not queued", /phone push: over 5\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
+  ok("F maxPerHour 7: a burst of 3 more sends only 1 (7 in the last hour)", pushes().length === 5, String(pushes().length));
+  ok("F what went over is logged, not queued", /phone push: over 7\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
   setPolicy({ enabled: false, topic: "j528-test", maxPerHour: 100 }); await sleep(50);
   await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: "while off", options: ["a"] });
   await upd({ status: "working" }); await upd({ status: "blocked", quiet: true, note: "while off" }); await sleep(300);
