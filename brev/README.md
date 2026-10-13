@@ -25,6 +25,8 @@ How it differs from the Omnistation world (H):
 - After a stop: on AWS types (g4dn, g5, g6) the root EBS disk survives a stop, and there is no /home/ubuntu/workspace at first; ~/.cache, however, is a link to an instance-store NVMe (/opt/dlami/nvme), which is wiped. On types that come with /home/ubuntu/workspace, only that folder survives. Either way: keep everything under /home/ubuntu/workspace (create it on AWS), never in ~/.cache.
 - Allowed work: check your organisation's rules for what may run on a cloud box; typically personal experiments and public work only, with no company code, keys or internal names there.
 
+Pricing for NVIDIA employees (seen in Brev's console, 2026-10-12): compute up to $0.35/h and storage up to $0.10/h are free, and the console shows such a configuration as "Free" (e.g. Nebius cpu-d3.8vcpu-32gb with 256 GiB: $0.32/h + $0.04/h). The CLI (`brev search`, `brev create`) shows only list prices, so create a box that should be free from the console, where the price is shown. GPU types cost more than $0.35/h; whether the first $0.35/h of them is free isn't known yet (check Billing & Usage).
+
 ## Setup (as tested)
 
 1. Pick a STOPPABLE GPU type: `brev search gpu --stoppable --sort price --wide` (Features column: S = stoppable; the others can only be deleted, so they bill until then). Ask Angus first, with the type, its $/h and the S flag. Tested: g4dn.xlarge (T4 16 GB, 16 GB RAM, $0.63/h: one small model at a time) and l40s-48gb.1x (Crusoe, L40S 48 GB, 147 GB RAM, $1.74/h: a text model and an image model side by side). Avoid 1-vCPU / 4 GB RAM types: too small for vLLM plus pi.
