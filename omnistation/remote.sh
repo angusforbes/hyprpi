@@ -163,6 +163,21 @@ case "$cmd" in
         fs.writeFileSync(p, t);' "$p" "$HYPRPI_REMOTE_NTFY"
       echo "phone pushes: $(node -e 'try{const n=JSON.parse(process.argv[1]);console.log((n.enabled?"on":"off")+", topic "+n.topic)}catch{console.log("?")}' "$HYPRPI_REMOTE_NTFY")"
     fi
+    # J547 (Angus: "a shared folder for the hub cpu instance, like ~/Brev/Hub"): when the laptop syncs a folder of this machine
+    # (HYPRPI_REMOTE_SHARED="REMOTE|LAPTOP", from its brev-sync.conf), this machine's agents learn where hand-offs go: a marked
+    # block in ~/.pi/agent/AGENTS.md (pi reads it in every session), replaced on each setup and removed when there's no pair.
+    ag="$HOME/.pi/agent/AGENTS.md"; mkdir -p "$(dirname "$ag")"
+    blk=""
+    if [[ "${HYPRPI_REMOTE_SHARED:-}" =~ ^([A-Za-z0-9._/-]+)\|([A-Za-z0-9._/~-]+)$ && "${BASH_REMATCH[1]}" != *..* ]]; then
+      rf="${BASH_REMATCH[1]}"; lf="${BASH_REMATCH[2]}"; mkdir -p "$HOME/$rf"
+      blk="<!-- hyprpi:shared-folder (J547; written by omnistation/remote.sh install, replaced on every setup) -->
+## Shared folder with Angus's laptop
+
+\`~/$rf\` on this machine syncs both ways with \`$lf\` on Angus's laptop (brev-sync, about every 2 minutes while this machine runs). Put hand-offs for Angus or for laptop agents there (results, reports, images, files to review), and look there for files he or his agents leave for you. Angus can also open them on his phone (the phone app's Files tab shows ~/Brev). If both sides change the same file, the newer one wins and the other is kept next to it as \"name (conflict_on_DATE).ext\". Keep secrets and keys out of it.
+<!-- /hyprpi:shared-folder -->"
+    fi
+    if [[ -f "$ag" ]]; then sed -i '/^<!-- hyprpi:shared-folder /,/^<!-- \/hyprpi:shared-folder -->$/d' "$ag"; t="$(cat "$ag")"; if [[ -n "$t" ]]; then printf '%s\n' "$t" > "$ag"; else : > "$ag"; fi; fi # (and no blank lines left behind)
+    if [[ -n "$blk" ]]; then { [[ -s "$ag" ]] && printf '\n'; printf '%s\n' "$blk"; } >> "$ag"; echo "shared folder: ~/$rf <-> laptop $lf (noted in $ag)"; fi
     echo "hyprpi $(git -C "$DIR" log -1 --format=%h 2>/dev/null || cat "$DIR/.version" 2>/dev/null) in $DIR; pi $(pi --version 2>/dev/null | head -1); node $(node -v)"
     echo "next: log pi in once (run \`pi\` here, /login), then: remote.sh start" ;;
   start)

@@ -1,69 +1,63 @@
 #!/usr/bin/env bash
-# J494 (Angus: "a shared folder that acts as a drop box on brev / 2 way / Make sure I can see brev folder on phone too"):
-# ~/Brev on the laptop <-> ~/workspace/shared on the Brev box, two-way, with Unison (the same static 2.54.0 binary on both
-# sides). Run by brev-sync.timer (systemd user, every 2 min). Each run:
-#   1. asks Brev (its API, not the box) whether the box is RUNNING; if not, it exits quietly (one log line when that changes),
-#      so a stopped box costs nothing and is never started;
-#   2. pulls brev-image's new PNGs from ~/workspace/outputs into ~/Brev (omnistation/world <letter> images);
-#   3. syncs ~/Brev <-> ~/workspace/shared both ways. Conflicts: the newer copy wins and the other is kept next to it
-#      (copyonconflict: "name (conflict_on_DATE).ext"); overwritten or deleted files are also kept in ~/.unison/backup on the
-#      side that lost them (the last 3). A whole replica gone empty is never propagated (confirmbigdel stops the run).
-# The box-side folder is NOT ~/workspace/outputs, so files arriving from the laptop never touch what an idle check watches
-# (outputs/*.png, ~/.hyprpi-i session and state files). ssh by itself doesn't count as activity there.
-# Settings (env, e.g. in a systemd drop-in): BREV_SYNC_BOX, BREV_SYNC_WORLD, BREV_SYNC_DIR, BREV_SYNC_REMOTE, BREV_SYNC_UNISON.
-#   brev-sync          one run (what the timer does)
-#   brev-sync status   the box's state, the last runs, and what's in both folders
+# J494 (Angus: "a shared folder that acts as a drop box on brev / 2 way / Make sure I can see brev folder on phone too") and
+# J547 (Angus: "we should make a shared folder for the hub cpu instsance, like ~/Brev/Hub or something"): two-way synced folders
+# between this laptop and Brev boxes, with Unison (the same static 2.54.0 binary on both sides). Run by brev-sync.timer (systemd
+# user, every 2 min). The PAIRS are in ~/.config/hyprpi/brev-sync.conf, one per line:
+#     LOCAL-FOLDER  BOX  REMOTE-FOLDER  [pull] [ignore=PATH …]
+#   e.g. ~/Brev      hyprpi-l40s  workspace/shared  pull ignore=Hub
+#        ~/Brev/Hub  hub          workspace/shared
+#   (REMOTE-FOLDER is relative to the box's home; pull: also copy brev-image's new PNGs from the box's ~/workspace/outputs into
+#   LOCAL-FOLDER; ignore=PATH: a path under LOCAL-FOLDER that this pair never syncs, e.g. another pair's folder inside it.)
+#   No file: the one J494 pair, ~/Brev <-> hyprpi-l40s:~/workspace/shared (pull, ignore=Hub). BREV_SYNC_BOX set (tests, a drop-in):
+#   one pair from BREV_SYNC_BOX / BREV_SYNC_DIR / BREV_SYNC_REMOTE, pulling with `omnistation/world BREV_SYNC_WORLD images`.
+# Each pair, each run:
+#   1. asks Brev (its API, not the box) whether its box is RUNNING; if not, the pair pauses quietly (one log line when that
+#      changes), so a stopped box costs nothing and is never started;
+#   2. (pull) copies new generated images from the box's ~/workspace/outputs;
+#   3. syncs both ways. Conflicts: the newer copy wins and the other is kept next to it ("name (conflict_on_DATE).ext");
+#      overwritten or deleted files are kept in ~/.unison/backup on the side that lost them (the last 3). A whole replica gone
+#      empty is never propagated (confirmbigdel stops that pair's run).
+# The box-side folder is NOT ~/workspace/outputs, so files arriving from the laptop never count as box activity for an idle check
+# that watches outputs and the hyprpi session files. ssh by itself doesn't count as activity there.
+# Failures (J497), per pair: a failure while its box is RUNNING makes the run exit 1 (systemd shows it failed); after
+# BREV_SYNC_ALERT_AFTER (3) in a row Angus gets ONE alert naming the pair (a ⚠ line in Thoughts-A + a desktop notification), and
+# one "working again" when it next succeeds. A box that stops, even mid-run, is a pause, not a failure.
+#   brev-sync          one run of every pair (what the timer does)
+#   brev-sync status   each pair's box state, failures, the last log lines
 set -uo pipefail
 H="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
-BOX="${BREV_SYNC_BOX:-hyprpi-l40s}"; WL="${BREV_SYNC_WORLD:-I}"
-LOCAL="${BREV_SYNC_DIR:-$HOME/Brev}"; REMOTE="${BREV_SYNC_REMOTE:-workspace/shared}"
 UNISON="${BREV_SYNC_UNISON:-$HOME/.local/lib/unison-2.54.0/unison}"
-ST="${XDG_STATE_HOME:-$HOME/.local/state}/brev-sync"; mkdir -p "$ST" "$LOCAL"
+ST="${XDG_STATE_HOME:-$HOME/.local/state}/brev-sync"; mkdir -p "$ST"
+CONF="${BREV_SYNC_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/brev-sync.conf}"
 LOG="$ST/sync.log"
+ALERT_AFTER="${BREV_SYNC_ALERT_AFTER:-3}"; ALERT_WORLD="${BREV_SYNC_ALERT_WORLD:-A}"
+SSHARGS="-o ConnectTimeout=20 -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
-# one line per change of state, not one per run (no spam while the box is stopped)
-state() { local was; was="$(cat "$ST/state" 2>/dev/null)"; [[ "$was" == "$1" ]] || { log "$1${2:+: $2}"; echo "$1" > "$ST/state"; }; }
-# keep the log short
 [[ -f "$LOG" ]] && (( $(wc -l < "$LOG") > 2000 )) && { tail -n 1000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; }
 
+# The pairs: lines of "LOCAL<TAB>BOX<TAB>REMOTE<TAB>OPTS"
+pairs() {
+  if [[ -n "${BREV_SYNC_BOX:-}" ]]; then printf '%s\t%s\t%s\t%s\n' "${BREV_SYNC_DIR:-$HOME/Brev}" "$BREV_SYNC_BOX" "${BREV_SYNC_REMOTE:-workspace/shared}" "pullworld"; return; fi
+  if [[ ! -f "$CONF" ]]; then printf '%s\t%s\t%s\t%s\n' "$HOME/Brev" hyprpi-l40s workspace/shared "pull ignore=Hub"; return; fi
+  local l a b c rest
+  while IFS= read -r l || [[ -n "$l" ]]; do
+    l="${l%%#*}"; read -r a b c rest <<< "$l"; [[ -n "$a" && -n "$b" && -n "$c" ]] || continue
+    [[ "$b" =~ ^[A-Za-z0-9._-]+$ && "$c" =~ ^[A-Za-z0-9._/-]+$ && "$c" != *..* ]] || { log "config: bad line skipped: $l"; continue; }
+    printf '%s\t%s\t%s\t%s\n' "${a/#\~/$HOME}" "$b" "$c" "$rest"
+  done < "$CONF"
+}
+
 if [[ "${1:-}" == status ]]; then
-  echo "box $BOX: $(brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"; echo "last state: $(cat "$ST/state" 2>/dev/null), failures in a row: $(cat "$ST/fails" 2>/dev/null || echo 0)$([[ -f "$ST/alerted" ]] && echo ", alerted")"
-  echo "--- log (last 10)"; tail -n 10 "$LOG" 2>/dev/null; echo "--- $LOCAL"; ls -la "$LOCAL"; exit 0
+  ls_out="$(timeout 60 brev ls 2>/dev/null)"
+  while IFS=$'\t' read -r -u 4 LOCAL BOX REMOTE OPTS; do
+    P="$ST"; [[ -z "${BREV_SYNC_BOX:-}" ]] && P="$ST/pairs/$BOX"
+    echo "$LOCAL <-> $BOX:~/$REMOTE${OPTS:+ ($OPTS)}: box $(awk -v b="$BOX" '$1==b{print $2}' <<< "$ls_out"); last state: $(cat "$P/state" 2>/dev/null), failures in a row: $(cat "$P/fails" 2>/dev/null || echo 0)$([[ -f "$P/alerted" ]] && echo ", alerted")"
+  done 4< <(pairs)
+  echo "--- log (last 12)"; tail -n 12 "$LOG" 2>/dev/null; exit 0
 fi
 
 exec 9>"$ST/lock"; flock -n 9 || exit 0   # a run still going (slow network): skip this one
 
-status="$(timeout 60 brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
-if [[ "$status" != RUNNING ]]; then state "paused" "box $BOX is ${status:-unknown (brev ls failed)}"; echo 0 > "$ST/fails"; exit 0; fi
-
-SSHARGS="-o ConnectTimeout=20 -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
-# 2. new generated images (world <letter> images skips names already in ~/Brev)
-pulled="$(HYPRPI_IMAGES_DIR="$LOCAL" timeout 300 "$H/omnistation/world" "$WL" images 2>&1)"; prc=$?
-[[ $prc -eq 0 ]] && grep -q "^file://" <<< "$pulled" && log "pulled from outputs: $(grep -c '^file://' <<< "$pulled") image(s)"
-# 3. two-way
-out="$(timeout 900 "$UNISON" "$LOCAL" "ssh://$BOX/$REMOTE" -batch -auto -times -prefer newer -copyonconflict \
-  -backup 'Name *' -maxbackups 3 -confirmbigdel -ignore 'Name .*.unison.tmp' -ignore 'Name .unison.*' \
-  -servercmd .local/bin/unison -sshargs "$SSHARGS" -logfile "$ST/unison.log" -ui text 2>&1)"; rc=$?
-# Unison: 0 = nothing to do or all done, 1 = all done but some skipped, 2 = non-fatal failures, 3 = fatal (e.g. no connection).
-# Conflicts aren't failures (-prefer newer settles them and -copyonconflict keeps the other copy), so 1 and 2 are real problems.
-why=""
-case $rc in
-  0) state "ok"; c="$(grep -E 'Synchronization complete' <<< "$out" | tail -1)"; [[ -n "$c" ]] && log "$c" ;;
-  1|2) why="unison exit $rc (some files not synced): $(grep -E 'failed|Error|skipped' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; state "partial" "$why"; log "$(tail -n 5 <<< "$out" | tr '\n' ' ' | cut -c1-600)" ;;
-  *) why="unison exit $rc: $(grep -v -E '^(Pseudo|Warning: Perm|mux_client|ControlSocket)' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; state "unreachable" "$why" ;;
-esac
-[[ -z "$why" && $prc -ne 0 ]] && { why="pulling new images failed (world $WL images, exit $prc): $(tail -n 2 <<< "$pulled" | tr '\n' ' ' | cut -c1-300)"; state "pull-failed" "$why"; }
-# J497 v2: a run can take minutes; a box that stopped (or is stopping) meanwhile is a pause, not a failure
-if [[ -n "$why" ]]; then
-  now="$(timeout 60 brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
-  if [[ "$now" != RUNNING ]]; then state "paused" "box $BOX went ${now:-unknown (brev ls failed)} during the run"; echo 0 > "$ST/fails"; exit 0; fi
-fi
-
-# J497 (Angus: "shouldn't we notice a failure"): a failure while the box is RUNNING makes this run fail (systemd shows it),
-# and after ALERT_AFTER failures in a row Angus gets ONE alert: a ⚠ line in world ALERT_WORLD's Thoughts thread
-# (hyprpi thoughts alert) and a desktop notification. One "working again" notice when a run succeeds after an alert.
-# A stopped box (above) is a pause, not a failure: it neither counts nor alerts.
-ALERT_AFTER="${BREV_SYNC_ALERT_AFTER:-3}"; ALERT_WORLD="${BREV_SYNC_ALERT_WORLD:-A}"
 alert() { # $1 = text; both channels, each best effort; fails (1) when neither delivered
   local sent=""
   hyprpi thoughts alert "$ALERT_WORLD" "$1" >/dev/null 2>&1 && sent="Thoughts-$ALERT_WORLD"
@@ -71,17 +65,66 @@ alert() { # $1 = text; both channels, each best effort; fails (1) when neither d
   log "alert (${sent:-NO channel reached; tried Thoughts-$ALERT_WORLD and desktop}): $1"
   [[ -n "$sent" ]]
 }
-fails="$(cat "$ST/fails" 2>/dev/null || echo 0)"; [[ "$fails" =~ ^[0-9]+$ ]] || fails=0
-if [[ -n "$why" ]]; then
-  fails=$((fails + 1)); echo "$fails" > "$ST/fails"
-  # one alert per outage: none again until a run has succeeded (a stopped-box pause in between doesn't end the outage);
-  # "alerted" only once a channel delivered, so an undelivered alert is tried again on the next failed run
-  if (( fails >= ALERT_AFTER )) && [[ ! -f "$ST/alerted" ]]; then
-    alert "brev-sync: ~/Brev <-> $BOX:~/$REMOTE has failed $fails runs in a row while the box is running. Last: $why. Details: brev-sync status, ~/.local/state/brev-sync/." && touch "$ST/alerted"
+
+# New PNGs from the box's ~/workspace/outputs into $1 (plain names only, ones not already there). -> exit code; prints how many.
+pull_ssh() {
+  local dest="$1" box="$2" names n new=()
+  names=$(timeout 120 ssh $SSHARGS "$box" "cd ~/workspace/outputs 2>/dev/null && python3 -c 'import os,re; [print(f) for f in sorted(os.listdir(\".\")) if re.fullmatch(r\"[A-Za-z0-9][A-Za-z0-9._-]*[.]png\", f) and os.path.isfile(f)]' || true" 2>/dev/null) || return 3
+  while IFS= read -r n; do n="${n%$'\r'}"; [[ "$n" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.png$ && ! -e "$dest/$n" ]] && new+=("$n"); done <<< "$names"
+  (( ${#new[@]} )) || { echo 0; return 0; }
+  timeout 300 ssh $SSHARGS "$box" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$dest" || return 4
+  echo "${#new[@]}"
+}
+
+any_failed=0
+sync_pair() { # LOCAL BOX REMOTE OPTS
+  local LOCAL="$1" BOX="$2" REMOTE="$3" OPTS="$4" P="$ST" TAG="" why="" rc prc=0 pulled="" out status now fails o
+  [[ -z "${BREV_SYNC_BOX:-}" ]] && { P="$ST/pairs/$BOX"; TAG="[$BOX] "; }
+  mkdir -p "$P" "$LOCAL"
+  local NAME="${LOCAL/#$HOME/\~} <-> $BOX:~/$REMOTE"
+  pstate() { local was; was="$(cat "$P/state" 2>/dev/null)"; [[ "$was" == "$1" ]] || { log "$TAG$1${2:+: $2}"; echo "$1" > "$P/state"; }; }
+  status="$(awk -v b="$BOX" '$1==b{print $2}' <<< "$LS")"
+  if [[ "$status" != RUNNING ]]; then pstate "paused" "box $BOX is ${status:-unknown (brev ls failed)}"; echo 0 > "$P/fails"; return 0; fi
+  # 2. new generated images
+  if [[ " $OPTS " == *" pullworld "* ]]; then
+    pulled="$(HYPRPI_IMAGES_DIR="$LOCAL" timeout 300 "$H/omnistation/world" "${BREV_SYNC_WORLD:-I}" images 2>&1)"; prc=$?
+    [[ $prc -eq 0 ]] && grep -q "^file://" <<< "$pulled" && log "${TAG}pulled from outputs: $(grep -c '^file://' <<< "$pulled") image(s)"
+  elif [[ " $OPTS " == *" pull "* ]]; then
+    pulled="$(pull_ssh "$LOCAL" "$BOX")"; prc=$?
+    [[ $prc -eq 0 && "$pulled" =~ ^[1-9] ]] && log "${TAG}pulled from outputs: $pulled image(s)"
   fi
-  echo "brev-sync: $why" >&2
-  exit 1
-fi
-echo 0 > "$ST/fails"
-if [[ -f "$ST/alerted" ]]; then rm -f "$ST/alerted"; alert "brev-sync: working again (~/Brev <-> $BOX:~/$REMOTE synced)." normal; fi
-exit 0
+  # 3. two-way (ignore=PATH: another pair's folder inside this one)
+  local ign=(); for o in $OPTS; do [[ "$o" == ignore=* && "${o#ignore=}" =~ ^[A-Za-z0-9._/-]+$ ]] && ign+=(-ignore "Path ${o#ignore=}"); done
+  out="$(timeout 900 "$UNISON" "$LOCAL" "ssh://$BOX/$REMOTE" -batch -auto -times -prefer newer -copyonconflict \
+    -backup 'Name *' -maxbackups 3 -confirmbigdel -ignore 'Name .*.unison.tmp' -ignore 'Name .unison.*' "${ign[@]}" \
+    -servercmd .local/bin/unison -sshargs "$SSHARGS" -logfile "$ST/unison.log" -ui text 2>&1)"; rc=$?
+  # Unison: 0 = done, 1 = some skipped, 2 = non-fatal failures, 3 = fatal (e.g. no connection). Conflicts aren't failures.
+  case $rc in
+    0) pstate "ok"; local c; c="$(grep -E 'Synchronization complete' <<< "$out" | tail -1)"; [[ -n "$c" ]] && log "$TAG$c" ;;
+    1|2) why="unison exit $rc (some files not synced): $(grep -E 'failed|Error|skipped' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; pstate "partial" "$why"; log "$TAG$(tail -n 5 <<< "$out" | tr '\n' ' ' | cut -c1-600)" ;;
+    *) why="unison exit $rc: $(grep -v -E '^(Pseudo|Warning: Perm|mux_client|ControlSocket)' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; pstate "unreachable" "$why" ;;
+  esac
+  [[ -z "$why" && $prc -ne 0 ]] && { why="pulling new images failed (exit $prc): $(tail -n 2 <<< "$pulled" | tr '\n' ' ' | cut -c1-300)"; pstate "pull-failed" "$why"; }
+  # J497 v2: a box that stopped (or is stopping) during the run is a pause, not a failure
+  if [[ -n "$why" ]]; then
+    now="$(timeout 60 brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
+    if [[ "$now" != RUNNING ]]; then pstate "paused" "box $BOX went ${now:-unknown (brev ls failed)} during the run"; echo 0 > "$P/fails"; return 0; fi
+  fi
+  fails="$(cat "$P/fails" 2>/dev/null || echo 0)"; [[ "$fails" =~ ^[0-9]+$ ]] || fails=0
+  if [[ -n "$why" ]]; then
+    fails=$((fails + 1)); echo "$fails" > "$P/fails"
+    # one alert per outage (until a run succeeds); "alerted" only once a channel delivered
+    if (( fails >= ALERT_AFTER )) && [[ ! -f "$P/alerted" ]]; then
+      alert "brev-sync: $NAME has failed $fails runs in a row while the box is running. Last: $why. Details: brev-sync status, ~/.local/state/brev-sync/." && touch "$P/alerted"
+    fi
+    echo "brev-sync: $NAME: $why" >&2
+    any_failed=1; return 1
+  fi
+  echo 0 > "$P/fails"
+  if [[ -f "$P/alerted" ]]; then rm -f "$P/alerted"; alert "brev-sync: working again ($NAME synced)." normal; fi
+  return 0
+}
+
+LS="$(timeout 60 brev ls 2>/dev/null)"
+while IFS=$'\t' read -r -u 4 L B R O; do sync_pair "$L" "$B" "$R" "$O" </dev/null; done 4< <(pairs) # (ssh and unison never see the list)
+exit $any_failed

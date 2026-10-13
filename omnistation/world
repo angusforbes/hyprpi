@@ -96,7 +96,11 @@ case "$cmd" in
     un=$(node -e 'import(process.argv[1]).then(m=>console.log(m.userName())).catch(()=>{})' "$H/lib/policy.mjs" 2>/dev/null | tr -cd "A-Za-z .'-")
     tm=$(jq -r '.thoughtsModel // empty' "$CONF" | tr -cd 'A-Za-z0-9._/:-')
     nt=$(node "$H/bin/hyprpi" ntfy config --json 2>/dev/null | tr -d '\n')  # J528: the laptop's phone push settings go along
-    "${SSH[@]}" "HYPRPI_REMOTE_USER_NAME=$(printf %q "$un") HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") HYPRPI_REMOTE_NTFY=$(printf %q "$nt") $R install"
+    # J547: a brev-sync pair for this machine (~/.config/hyprpi/brev-sync.conf, its BOX = the binding's ssh host, e.g. "hub") tells
+    # the machine's agents where hand-offs go: "REMOTE-FOLDER|LAPTOP-FOLDER"; none = no such note there
+    sc="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/brev-sync.conf"; shr=""
+    [[ -f "$sc" ]] && shr=$(awk -v b="${SSH[-1]}" '{sub(/#.*/, "")} $2==b && NF>=3 {print $3 "|" $1; exit}' "$sc" | tr -cd 'A-Za-z0-9._/~|-')
+    "${SSH[@]}" "HYPRPI_REMOTE_USER_NAME=$(printf %q "$un") HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") HYPRPI_REMOTE_NTFY=$(printf %q "$nt") HYPRPI_REMOTE_SHARED=$(printf %q "$shr") $R install"
     # J525 (Angus: Tailscale "as part of our hyprpi brev setup? or at least as an option for direct remote control"): off unless the
     # binding has "tailscale" (true, or { "hostname": …, "ssh": true|false, "authKeyFile": … }). The machine joins Angus's tailnet
     # (brev/tailscale/ts-join.sh) with an auth key from a laptop secrets file, sent over ssh on stdin, never printed or kept
