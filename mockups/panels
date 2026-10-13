@@ -32,6 +32,7 @@ import { strictClients, withPanelLock } from "./../lib/panel-find.mjs";
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
 let wantWs = Number(opt("--workspace")) || null;
+const dryRun = args.includes("--dry") && (args.splice(args.indexOf("--dry"), 1), true); // J530: a remote world's keys, without acting
 // Exact columns by default: the panels float and are placed by pixel, so the widths are
 // identical every time. --tile uses dwindle instead (tiled, but only as even as the tree).
 const tiled = args.includes("--tile") && (args.splice(args.indexOf("--tile"), 1), true);
@@ -50,6 +51,7 @@ const clients = () => hypr.clients().catch(() => []);
   try { worlds = fs.readdirSync(dir).filter((f) => /^[a-z0-9-]+\.json$/.test(f)).map((f) => ({ name: f.slice(0, -5), ...JSON.parse(fs.readFileSync(`${dir}/${f}`, "utf8")) })); } catch { /* none */ }
   const aw = wantWs || (await hypr.activeWorkspace().catch(() => null))?.id;
   const w = worlds.find((x) => Array.isArray(x.workspaces) && aw >= x.workspaces[0] && aw <= x.workspaces[1]);
+  if (w && dryRun) { console.log(`--dry: world ${w.name} is sandboxed (its panels come from docker/world/world.sh): nothing done`); process.exit(0); } // J530
   if (w) {
     const KIND = { "1": "router", "2": "room", "4": "board", "3": "search" };
     const envOf = (pid) => { try { return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); } catch { return []; } };
@@ -82,6 +84,8 @@ const clients = () => hypr.clients().catch(() => []);
     const KIND = { "1": "agents", "2": "room", "4": "board", "3": "search" };
     const TITLE = { agents: "router", room: "room", board: "board", search: "search" };
     const mine = (await clients()).filter((c) => c.class === `hyprpi.${L.toLowerCase()}-panel`);
+    // J530: --dry says what a panel key would do on this workspace (which window, or which remote panel it opens), and does nothing
+    if (dryRun) { for (const n of only) { const kind = KIND[n]; if (!kind) continue; const c = mine.find((x) => (x.title || "") === `hyprpi-${TITLE[kind]} ${L}`); console.log(c ? `${n}: world ${L}'s remote ${kind} panel ${c.address} (class ${c.class}, ws ${c.workspace?.id}) → here (ws ${aw})` : `${n}: open world ${L}'s remote ${kind} panel on ws ${aw} (omnistation/world ${L} panel ${kind})`); } process.exit(0); }
     let last = null;
     for (const n of only) {
       const kind = KIND[n]; if (!kind) continue;
@@ -94,6 +98,8 @@ const clients = () => hypr.clients().catch(() => []);
     process.exit(0);
   }
 }
+
+if (dryRun) { console.log("--dry: only for a remote world's panels (this isn't one): nothing done"); process.exit(0); } // J530: never act on a dry run
 
 // Window titles: "hyprpi-router C" (panel 1), "hyprpi-room C" (2), "hyprpi-search C" (3)
 // — that is how an existing window is recognised. Deliberately no " · <ROOM>" ending: the
