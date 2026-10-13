@@ -117,11 +117,18 @@ case "${1:-run}" in
       on)
         if ! topic >/dev/null; then (umask 077; mkdir -p "$(dirname "$NTFY_FILE")"; t="$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 28)"; [[ ${#t} -ge 24 ]] && printf 'brevstop-%s\n' "$t" > "$NTFY_FILE"); chmod 600 "$NTFY_FILE"; echo "made a new topic in $NTFY_FILE (600)"; fi
         topic >/dev/null || { echo "brev-autostop: no valid topic in $NTFY_FILE" >&2; exit 1; }
+        chmod 600 "$NTFY_FILE" # (always: it is the password)
+        if [[ -n "$prim" ]]; then # the primary first: the same topic, or nothing is turned on anywhere
+          ro="$(timeout -k 5 45 "$SSH" -o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=no -o ControlPath=none "$prim" "\$HOME/.local/bin/brev-autostop phone set-topic" < "$NTFY_FILE" 2>/dev/null)"
+          [[ "$ro" == *"topic stored"* ]] || { echo "brev-autostop: couldn't give $prim the topic; phone notifications NOT turned on (try again, or: brev-autostop phone topic | ssh $prim brev-autostop phone set-topic)" >&2; exit 1; }
+          echo "$prim: $ro"
+        fi
         set_phone on; log "phone notifications on"; echo "phone notifications on (server $NTFY_SERVER; topic: brev-autostop phone topic)"
-        if [[ -n "$prim" ]]; then timeout -k 5 45 "$SSH" -o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=no -o ControlPath=none "$prim" "\$HOME/.local/bin/brev-autostop phone set-topic" < "$NTFY_FILE" 2>/dev/null | sed "s/^/$prim: /"; onprim on; fi
-        exit 0;;
+        onprim on; exit 0;;
       off) set_phone off; log "phone notifications off"; echo "phone notifications off"; onprim off; exit 0;;
-      set-topic) (umask 077; mkdir -p "$(dirname "$NTFY_FILE")"; head -c 200 | tr -d ' \r\n' > "$NTFY_FILE.new"; echo >> "$NTFY_FILE.new"); chmod 600 "$NTFY_FILE.new"; mv -f "$NTFY_FILE.new" "$NTFY_FILE"; topic >/dev/null && echo "topic stored (600)" || { echo "brev-autostop: that topic isn't valid" >&2; exit 1; }; exit 0;;
+      set-topic) # (validated BEFORE it replaces anything: a bad value leaves a working topic as it was)
+        nt="$(head -c 200 | tr -d ' \r\n')"; [[ "$nt" =~ ^[A-Za-z0-9_-]{20,64}$ ]] || { echo "brev-autostop: that topic isn't valid; nothing changed" >&2; exit 1; }
+        (umask 077; mkdir -p "$(dirname "$NTFY_FILE")"; printf '%s\n' "$nt" > "$NTFY_FILE.new"); chmod 600 "$NTFY_FILE.new"; mv -f "$NTFY_FILE.new" "$NTFY_FILE"; echo "topic stored (600)"; exit 0;;
       topic) topic || { echo "no topic yet (brev-autostop phone on)" >&2; exit 1; }; exit 0;;
       test) BOX="(test)"; if phone_post "Brev auto-stop" "Test: phone notifications from brev-autostop on $(hostname) work. You'll get one when a box is stopped or stuck." default; then echo "test sent"; log "phone: test sent"; else echo "test NOT sent ($(phone_on && echo "is ntfy.sh reachable?" || echo "phone notifications are off"))" >&2; exit 1; fi; exit 0;;
       status) echo "phone notifications: $(phone_on && echo on || echo off); topic file: $([[ -n "$(topic)" ]] && echo "$NTFY_FILE (set)" || echo "none"); server $NTFY_SERVER"; exit 0;;

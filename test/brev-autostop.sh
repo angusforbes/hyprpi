@@ -393,6 +393,15 @@ mkdir -p "$F/home-hub/.local/bin"; printf '#!/usr/bin/env bash\nif [[ "$*" == "p
 echo "$tp" > "$F/ntfy-topic"; rm -f "$F/hubtopic" "$F/hubphone"; BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub "$S" phone on >/dev/null
 ok "phone on (backup) → the hub gets the same topic and 'phone on'" '[[ "$(tr -d "\n" < "$F/hubtopic")" == "$tp" ]] && grep -qx "phone on" "$F/hubphone"'
 
+# 50. (PhoneCheck) set-topic with a bad value keeps the good topic; phone on re-tightens a loose file; a failed transfer turns nothing on
+echo "$tp" > "$F/ntfy-topic"; echo "bad value" | BREV_AUTOSTOP_CONFIG="$PC" "$S" phone set-topic 2>/dev/null; rc=$?
+ok "set-topic with a bad value → exit 1, the old topic kept" '[[ $rc == 1 && "$(cat "$F/ntfy-topic")" == "$tp" ]]'
+chmod 644 "$F/ntfy-topic"; BREV_AUTOSTOP_CONFIG="$PC" "$S" phone on >/dev/null
+ok "phone on → the topic file is 600 again" '[[ $(stat -c %a "$F/ntfy-topic") == 600 ]]'
+BREV_AUTOSTOP_CONFIG="$PC" "$S" phone off >/dev/null; printf '#!/usr/bin/env bash\n[[ "$*" == "phone set-topic" ]] && exit 1; echo "$*" >> "%s/hubphone"\n' "$F" > "$F/home-hub/.local/bin/brev-autostop"; rm -f "$F/hubphone"
+BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub "$S" phone on >/dev/null 2>&1; rc=$?
+ok "phone on with a primary that won't take the topic → exit 1, on nowhere" '[[ $rc == 1 && ! -f "$F/hubphone" ]] && grep -qx "notify_phone off" "$PC"'
+
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
 ok "brev ls's header lines are not instances" '[[ ! -d "$F/state/boxes/You" && ! -d "$F/state/boxes/NAME" ]]'
