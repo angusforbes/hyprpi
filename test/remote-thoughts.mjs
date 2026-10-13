@@ -29,6 +29,10 @@ const laptop = await daemon("lap", (S, cfg) => {
   const fake = path.join(S, "fakessh");
   fs.writeFileSync(fake, `#!/usr/bin/env bash\ncat > "${S}/relayed.json"; echo "\${@: -1}" > "${S}/relayed.cmd"; echo '{"answer":"Thoughts-H here: Browserbox is live"}'\n`, { mode: 0o700 });
   fs.writeFileSync(path.join(cfg, "hyprpi", "remote", "h.json"), JSON.stringify({ ssh: [fake, "omni"] }), { mode: 0o600 });
+  // J536: a closed laptop agent of world H and one of world A, both resumable: only A's is offered back
+  const now = Date.now(); for (const [id, room] of [["hp-inh", "H"], ["hp-ina", "A"]]) { const f = path.join(S, `${id}.jsonl`); fs.writeFileSync(f, "{}\n"); fs.appendFileSync(path.join(S, "reg.tmp"), ""); }
+  fs.writeFileSync(path.join(S, "agents.json"), JSON.stringify({ "hp-inh": { id: "hp-inh", name: "Inh", room: "H", workspace: 72, session: path.join(S, "hp-inh.jsonl"), resumable: true, updatedAt: now, cwd: S },
+    "hp-ina": { id: "hp-ina", name: "Ina", room: "A", workspace: 2, session: path.join(S, "hp-ina.jsonl"), resumable: true, updatedAt: now, cwd: S } }));
 });
 const remote = await daemon("rem");
 try {
@@ -40,6 +44,11 @@ try {
   const lst = await api.call("list", {}).catch(() => ({}));
   const thH = (lst.thoughts || []).find((t) => t.room === "H");
   ok("1 the lists mark world H remote", thH?.remote === true && (sub.rooms || []).some((r) => r.id === "H" && r.remote === true), JSON.stringify(thH || null));
+  // J536: no laptop agent is placed in a remote world
+  ok("J536 open_agent (thoughts.open) into world H is refused", /is a remote world/.test(await err(() => api.call("thoughts.open", { room: "H", task: "x", name: "Nope" }))));
+  const dorm = ((await api.call("list", {})).dormant || []).map((d) => d.id);
+  ok("J536 a closed laptop agent of world H isn't offered back; one of world A is", !dorm.includes("hp-inh") && dorm.includes("hp-ina"), JSON.stringify(dorm));
+  ok("J536 resuming it into world H is refused", /is a remote world/.test(await err(() => api.call("agent.resume", { agent: "hp-inh" }))));
   // 2
   const got = [];
   const agent = await connect({ path: laptop.sock, onEvent: (ev, data) => got.push({ ev, data }) });
