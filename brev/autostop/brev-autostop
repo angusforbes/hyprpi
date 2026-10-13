@@ -57,6 +57,8 @@ excluded() { cfg | awk -v b="$1" '$1=="exclude" && $2==b{f=1} END{exit !f}'; }
 DEFAULT_UNH="$(cfg | awk '$1=="default_unhealthy_min" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; DEFAULT_UNH="${DEFAULT_UNH:-45}"
 MARGIN=0 # (J526) extra minutes while a backup copy is acting: a primary that is in fact still working stops the box first
 unhealthy_min() { local v; v="$(cfg | awk -v b="$1" '$1=="unhealthy" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo $(( ${v:-$DEFAULT_UNH} + MARGIN )); }
+credit_warn() { cfg | awk '$1=="credit_warn_usd"{l=""; for(i=2;i<=NF;i++) if ($i~/^[0-9]+$/) l=l" "$i+0} END{print l}' | tr ' ' '\n' | grep . | sort -rn -u | tr '\n' ' ' | sed 's/ $//'; } # (J1) levels, high to low; empty = off
+usd() { local c="$1" s=""; [[ "$c" == -* ]] && { s="-"; c="${c#-}"; }; printf '%s%d.%02d' "$s" $(( 10#$c / 100 )) $(( 10#$c % 100 )); }
 idle_min() { local v; v="$(cfg | awk -v b="$1" '$1=="idle" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo $(( ${v:-$DEFAULT_IDLE} + MARGIN )); }
 
 # --- per-box state: $ST/boxes/<name>/ ------------------------------------------------------------------------------------------
@@ -189,6 +191,8 @@ case "${1:-run}" in
     echo "phone notifications: $(phone_on && [[ -n "$(topic)" ]] && echo on || echo off)"
     [[ -n "${BREV_AUTOSTOP_PRIMARY:-}" ]] && echo "BACKUP of the copy on $BREV_AUTOSTOP_PRIMARY: $(cat "$ST/role" 2>/dev/null || echo "not run yet") (acts only when that copy hasn't run for ${BREV_AUTOSTOP_STALE_MIN:-15} min)"
     [[ -f "$ST/heartbeat" ]] && echo "this copy last ran $(( ($(now) - $(cat "$ST/heartbeat")) / 60 )) min ago"
+    cw="$(credit_warn)"; if [[ -n "$cw" ]]; then cc="$(cat "$ST/credit_cents" 2>/dev/null)"; ct="$(cat "$ST/credit_last" 2>/dev/null)"
+      echo "credit warnings at \$${cw// /, \$}: $([[ "$cc" =~ ^-?[0-9]+$ ]] && echo "last read \$$(usd "$cc")$([[ -n "$ct" ]] && date -d "@$ct" '+ at %a %H:%M')" || echo "not read yet")$([[ -f "$ST/credit_low" ]] && echo " · alerted below \$$(cat "$ST/credit_low")")$([[ -n "${BREV_AUTOSTOP_PRIMARY:-}" ]] && echo " · checked by $BREV_AUTOSTOP_PRIMARY, not this backup")"; fi
     for b in $( { rows "$out" | awk '{print $1}'; ls "$ST/boxes" 2>/dev/null; } | sort -u); do
       [[ "$b" =~ $NAME_RE ]] || continue; use "$b"
       st="$(rows "$out" | awk -v b="$b" '$1==b{print $2}')"; la="$(get last_act)"
@@ -207,6 +211,58 @@ alert() { # $1 = text, $2 = urgency: every channel, each best effort; says which
   phone_post "Brev box $BOX" "$1" "$([[ "${2:-normal}" == critical ]] && echo high || echo default)" && sent="${sent:+$sent + }phone"
   log "notice (${sent:-no channel reached}): $1"
 }
+
+# --- J1 (Angus: "b yes at $20"): low-credit warning ------------------------------------------------------------------------
+# `credit_warn_usd 50 20 10 5 1 0` in the config (one or more dollar levels; Angus: "all the way down to $0 so i feel
+# increasing pressure"): every credit_check_hours (default 3; hourly once under $20) the main copy (not a laptop backup, so one alert)
+# reads the org's billing profile (GET …/organizations/ORG/billingprofile with the brev CLI's own login token; its
+# credit_details.remaining_credits is in cents; NOT /credits, which says $0). Each level crossed: ONE alert (Thoughts + desktop
+# + phone), sharper as it falls (level 0 = at or below $0); several crossed between reads: one alert for the lowest. A level
+# re-arms once credit is back at or above it (a top-up). It only warns: it never stops a box. A failed read is
+# logged once per failure spell and changes nothing. Org: `credit_org ORG-ID` in the config, else brev's active org.
+# Env: BREV_AUTOSTOP_BILLING_URL (base, …/api), BREV_AUTOSTOP_CREDENTIALS (token file), BREV_AUTOSTOP_CREDIT_FORCE=1 (ignore
+# the interval, for a test), BREV_AUTOSTOP_DRY=1 (log the alert instead of sending it).
+credit_check() {
+  local levels hrs last org tok j cents T lv hit prev BOX="(credit)"
+  levels="$(credit_warn)"; [[ -n "$levels" ]] || return 0
+  [[ -z "${BREV_AUTOSTOP_PRIMARY:-}" ]] || return 0
+  hrs="$(cfg | awk '$1=="credit_check_hours" && $2~/^[0-9]+$/ && $2>0{v=$2+0} END{print v}')"; hrs="${hrs:-3}"
+  last="$(cat "$ST/credit_cents" 2>/dev/null)"; [[ "$last" =~ ^-?[0-9]+$ ]] && (( last < 2000 )) && hrs=1 # (low: every hour)
+  T="$(now)"; last="$(cat "$ST/credit_try" 2>/dev/null)"
+  [[ "${BREV_AUTOSTOP_CREDIT_FORCE:-}" == 1 || ! "$last" =~ ^[0-9]+$ ]] || (( T - last >= hrs * 3600 )) || return 0
+  echo "$T" > "$ST/credit_try"
+  org="$(cfg | awk '$1=="credit_org"{v=$2} END{print v}')"
+  [[ -n "$org" ]] || org="$(timeout -k 10 60 "$BREV" org ls 2>/dev/null | awk '$1=="*"{print $3; exit}')"
+  tok="$(jq -r '.access_token // empty' "${BREV_AUTOSTOP_CREDENTIALS:-$HOME/.brev/credentials.json}" 2>/dev/null)"
+  if [[ ! "$org" =~ ^org-[A-Za-z0-9]+$ || -z "$tok" ]]; then credit_fail "no org id or no brev login token"; return 0; fi
+  # (the token goes to curl on a file descriptor, never on its command line or in the log)
+  j="$("$CURL" -fsS -m 30 -H @<(printf 'Authorization: Bearer %s\n' "$tok") "${BREV_AUTOSTOP_BILLING_URL:-https://brevapi2.us-west-2-prod.control-plane.brev.dev/api}/organizations/$org/billingprofile" 2>&1)" || { credit_fail "billingprofile call failed: $(head -c 160 <<<"$j" | tr '\n' ' ')"; return 0; }
+  cents="$(jq -r '.credit_details.remaining_credits // empty' <<<"$j" 2>/dev/null)"
+  [[ "$cents" =~ ^-?[0-9]+$ ]] || { credit_fail "billingprofile has no credit_details.remaining_credits"; return 0; }
+  [[ -f "$ST/credit_fail" ]] && { rm -f "$ST/credit_fail"; log "credit: billingprofile readable again"; }
+  echo "$cents" > "$ST/credit_cents"; echo "$T" > "$ST/credit_last"
+  # the lowest level crossed: below $N (N > 0), or at/below $0 for level 0
+  hit=""; for lv in $levels; do if (( lv > 0 ? cents < lv * 100 : cents <= 0 )); then hit="$lv"; fi; done
+  prev="$(cat "$ST/credit_low" 2>/dev/null)"; [[ "$prev" =~ ^[0-9]+$ ]] || prev=""
+  if [[ -z "$hit" ]]; then
+    [[ -n "$prev" ]] && { rm -f "$ST/credit_low"; log "credit: back to \$$(usd "$cents"), above every warning level: re-armed"; }
+    return 0
+  fi
+  if [[ -n "$prev" ]] && (( hit >= prev )); then
+    (( hit > prev )) && { echo "$hit" > "$ST/credit_low"; log "credit: back up to \$$(usd "$cents"): re-armed below \$$hit"; }
+    return 0
+  fi
+  local msg urg=critical
+  if (( hit == 0 )); then msg="🚨 Brev credit is GONE: \$$(usd "$cents") left. Boxes may be stopped or blocked by Brev at any moment. Top up in the Brev console NOW."
+  elif (( hit <= 5 )); then msg="🚨 Brev credit almost gone: \$$(usd "$cents") left (below \$$hit). Top up in the Brev console now."
+  elif (( hit <= 20 )); then msg="⚠ Brev credit low: \$$(usd "$cents") left (below \$$hit). Top up in the Brev console soon."
+  else msg="Brev credit getting low: \$$(usd "$cents") left (below \$$hit). Time to get more credits."; urg=normal; fi
+  msg+=" Next warning: $(n=""; for lv in $levels; do (( lv < hit )) && { n="\$$lv"; break; }; done; echo "${n:-none (this is the last)}"). (auto-stop never stops boxes for credit) ${CREDIT_TAG:-}"
+  if [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]]; then log "DRY: would alert ($urg): $msg"; else alert "$msg" "$urg"; fi
+  echo "$hit" > "$ST/credit_low"
+  return 0
+}
+credit_fail() { [[ -f "$ST/credit_fail" ]] || { echo "$(now)" > "$ST/credit_fail"; log "credit: $1 (no alert; retrying in ${hrs:-3} h)"; }; }
 
 # One run at a time (a hand run next to the timer's): a second one just leaves.
 exec 9>"$ST/lock"; flock -n 9 || exit 0
@@ -358,6 +414,7 @@ if [[ $rc -ne 0 ]]; then
 fi
 echo ok > "$ST/state"
 now > "$ST/heartbeat" # (J526) "this copy is working" (brev ls answered and there is a config): a backup copy elsewhere reads it
+credit_check # (J1) every few hours; after brev ls, which refreshes the login token; never stops anything
 declare -A seen=(); fail=0
 while read -r name status _; do
   [[ "$name" =~ $NAME_RE && -n "${status:-}" ]] || continue

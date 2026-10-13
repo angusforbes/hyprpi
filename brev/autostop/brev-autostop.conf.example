@@ -9,6 +9,10 @@
 #   unhealthy NAME N     this instance's own UNHEALTHY limit
 #   exclude NAME         never stop this instance and never probe it
 #   box NAME             registered by `world X setup` (brev-autostop install NAME); uses the default
+#   credit_warn_usd 50 20 10 5 1 0   (J1) dollar levels: one alert as the org's Brev credit (billingprofile
+#                        remaining_credits) drops below each (0 = at or below $0), sharper each time; a level re-arms after a
+#                        top-up back above it. Only warns, never stops a box. No line = off
+#   credit_check_hours N how often the credit is read (3; hourly once under $20)   ·   credit_org ORG-ID   which org (default: brev's active org)
 #   notify_phone on|off  alerts also as phone push notifications through ntfy.sh (J527); set it with `brev-autostop phone on`
 #                        / `phone off` (on also makes the topic file ~/.config/hyprpi/brev-autostop.ntfy, 600; never put
 #                        the topic here)
