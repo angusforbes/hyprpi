@@ -30,12 +30,13 @@ BarWidget {
 
   // ---- theme palette ------------------------------------------------------
   // World order: A blue, B red, C cyan, D yellow, E magenta, F green,
-  // G orange, H brown, I foreground. Falls back to colorN keys, then accent.
+  // G orange, H brown, I lime and J pink (hyprpi's world-colors.toml, J535). Falls back to colorN keys, then accent.
   // (B is red rather than magenta: a clearer second colour.)
   readonly property var paletteKeys: [
     ["blue", "color4"], ["red", "color1"], ["cyan", "color6"],
     ["yellow", "color3"], ["magenta", "color5"], ["green", "color2"],
-    ["orange", "color11"], ["brown", "color9"], ["foreground", "color7"]
+    ["orange", "color11"], ["brown", "color9"], ["world_i", "foreground", "color7"],
+    ["world_j", "foreground", "color7"]
   ]
   property var themeColors: ({})
 
@@ -49,10 +50,32 @@ BarWidget {
     themeColors = out
   }
 
+  // J535 (Angus: "let's use lime for I and pink for J"): worlds I and J take hyprpi's own colours (world_i, world_j in
+  // ~/Harness/hyprpi/lib/tui/world-colors.toml, or $HYPRPI_WORLD_COLORS): the theme has only 8. Same list as lib/tui/term.mjs
+  // (test/world-colors.mjs checks).
+  property var worldExtras: ({})
+  function parseWorldExtras(raw) {
+    var out = {}
+    var lines = String(raw || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/^\s*(world_[a-z])\s*=\s*["']?(#[0-9A-Fa-f]{6})/)
+      if (m) out[m[1]] = m[2]
+    }
+    worldExtras = out
+  }
+  FileView {
+    path: Quickshell.env("HYPRPI_WORLD_COLORS") || (Quickshell.env("HOME") + "/Harness/hyprpi/lib/tui/world-colors.toml")
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.parseWorldExtras(text())
+    onLoadFailed: root.parseWorldExtras("")
+  }
   function worldColor(w) {
     var keys = paletteKeys[(w - 1) % paletteKeys.length]
     for (var i = 0; i < keys.length; i++) {
-      if (themeColors[keys[i]]) return themeColors[keys[i]]
+      var c = themeColors[keys[i]] || worldExtras[keys[i]]
+      if (c) return c
     }
     return Color.accent
   }
@@ -169,7 +192,7 @@ BarWidget {
   function run(cmd) { if (root.bar) root.bar.run(cmd) }
   function selectWorld(w) { run("hyprctl eval " + Util.shellQuote("hyprwrlds.world(" + w + ")")) }
   // hyprpi (optional): `hyprpi` on PATH (hyprpi integration install path), else the default checkout.
-  function toggleRoom() { run("command -v hyprpi >/dev/null && exec hyprpi room --toggle || exec \"$HOME/Work/hyprpi/bin/hyprpi\" room --toggle") }
+  function toggleRoom() { run("command -v hyprpi >/dev/null && exec hyprpi room --toggle || exec \"$HOME/Harness/hyprpi/bin/hyprpi\" room --toggle") }
   function cycleWorld(delta) { run("hyprctl eval " + Util.shellQuote("hyprwrlds.cycle_world(" + delta + ")")) }
   function focusWorkspace(id) {
     run("hyprctl dispatch " + Util.shellQuote("hl.dsp.focus({ workspace = \"" + id + "\" })"))

@@ -1,0 +1,6 @@
+# hyprpi's own world colours (J535): for worlds the Omarchy theme has no colour for. Worlds A–H take the theme's blue, red,
+# cyan, yellow, magenta, green, orange and brown (so they follow theme switches); these come after them. One source for the
+# panels (lib/tui/term.mjs), the phone app, the hyprwrlds bar, the vimarchy overview and ui/shell.qml; remote worlds get it
+# with their copy of hyprpi. test/world-colors.mjs checks every palette list matches.
+world_i = "#a6b83c"   # Lime (Angus, 2026-10-13: "let's use lime for I")
+world_j = "#e06c9f"   # Pink, kept for world J ("and pink for J"); J itself doesn't exist yet

@@ -84,11 +84,33 @@ ShellRoot {
     command: ["hyprctl", "getoption", "decoration:rounding", "-j"]
     stdout: StdioCollector { onStreamFinished: { try { shell.radius = Math.max(0, Number(JSON.parse(text).int) || 0) } catch (e) {} } }
   }
-  readonly property var worldKeys: ["blue", "red", "cyan", "yellow", "magenta", "green", "orange", "brown", "foreground"]
+  // J535 (Angus: "let's use lime for I and pink for J"): worlds I and J take hyprpi's own colours (world_i, world_j in
+  // ~/Harness/hyprpi/lib/tui/world-colors.toml, or $HYPRPI_WORLD_COLORS): the theme has only 8. Same list as lib/tui/term.mjs
+  // (test/world-colors.mjs checks).
+  property var worldExtras: ({})
+  function parseWorldExtras(raw) {
+    var out = {}
+    var lines = String(raw || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/^\s*(world_[a-z])\s*=\s*["']?(#[0-9A-Fa-f]{6})/)
+      if (m) out[m[1]] = m[2]
+    }
+    worldExtras = out
+  }
+  FileView {
+    path: Quickshell.env("HYPRPI_WORLD_COLORS") || (Quickshell.env("HOME") + "/Harness/hyprpi/lib/tui/world-colors.toml")
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: shell.parseWorldExtras(text())
+    onLoadFailed: shell.parseWorldExtras("")
+  }
+  readonly property var worldKeys: ["blue", "red", "cyan", "yellow", "magenta", "green", "orange", "brown", "world_i", "world_j"]
   function roomColor(room) {
-    var i = "ABCDEFGHI".indexOf(String(room).charAt(0))
+    var i = "ABCDEFGHIJ".indexOf(String(room).charAt(0))
     if (i < 0) return accent
-    return theme[worldKeys[i % worldKeys.length]] || accent
+    var k = worldKeys[i % worldKeys.length]
+    return theme[k] || worldExtras[k] || (i >= 8 ? fg : accent)
   }
   function statusColor(s) {
     if (s === "working") return theme.blue || "#56949f"

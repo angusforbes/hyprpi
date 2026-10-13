@@ -29,6 +29,7 @@ import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
 import { userName } from "../lib/policy.mjs"; // J261
+import { worldHex as termWorldHex } from "../lib/tui/term.mjs"; // J535
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
 import { REVIEW_TAG, CHOICES_LINE, heldFor, firstShow, claimReview, clickAction, reviewGate, heldStatus, statusText, bareChoice, cardForBareNumber, heldById, parseChoice, actOnHeld, reviewPrompt, requestTurn, logHeld, logTurn, heldTurns, relayOutcome } from "../lib/held.mjs"; // J274: held-message review app (J38)
 let worldBar = null;
@@ -38,7 +39,6 @@ const out = (s) => process.stdout.write(s);
 
 // ---- theme: world colours exactly like the bar / room TUI -------------------
 const COLORS = process.env.HYPRPI_THEME_COLORS || `${process.env.HOME}/.local/state/omarchy/current/theme/colors.toml`; // J532: a remote world uses a copy of the laptop's
-const PALETTE = [["blue", "color4"], ["red", "color1"], ["cyan", "color6"], ["yellow", "color3"], ["magenta", "color5"], ["green", "color2"], ["orange", "color11"], ["brown", "color9"], ["foreground", "color7"]];
 let theme = {};
 function loadTheme() {
   theme = {};
@@ -47,7 +47,7 @@ function loadTheme() {
 loadTheme();
 try { fs.watchFile(COLORS, { interval: 2000 }, () => { loadTheme(); render(); }); } catch { /* fine */ }
 const rgb = (hex) => { const n = parseInt(hex, 16); return `${n >> 16};${(n >> 8) & 255};${n & 255}`; };
-const worldHex = (room) => { const i = "ABCDEFGHI".indexOf(String(room)[0]); for (const k of PALETTE[Math.max(0, i) % PALETTE.length]) if (theme[k]) return theme[k]; return null; };
+const worldHex = termWorldHex; // J535: one palette (lib/tui/term.mjs: the theme's 8 colours for A–H, hyprpi's world-colors.toml for I and J)
 const worldFg = (room) => { const h = worldHex(room); return h ? `38;2;${rgb(h)}` : "34"; };
 const worldBg = (room) => { const h = worldHex(room); return h ? `48;2;${rgb(h)}` : "44"; };
 const fg = (c, s) => `${ESC}${c}m${s}${ESC}39m`;
