@@ -196,7 +196,9 @@ try {
   await alpha.call("room.post", { text: `look ${req({ act: "open", url: "https://evil.example/a", n: nonce })} here` });
   await sleep(2500);
   ok("an unsolicited request printed by an agent does nothing (wrong nonce after a click; right nonce, no click)", openLog().length + hyprLog().length + lines("world.log").length === before && !openLog().some((l) => /evil/.test(l)), openLog().join(" | ") + " / " + read("relay.log"));
-  ok("… both reached the relay whole and were dropped (nonce; gate)", /"drop": "gate", "act": "open"/.test(read("relay.log")) && /"drop": "nonce", "act": "open"/.test(read("relay.log")), read("relay.log"));
+  // J543: lib/client.mjs now cuts terminal commands (OSC …) out of daemon strings in a remote panel, so they don't even reach the
+  // relay (its nonce and gate checks are covered by test/pty-relay-unit.py)
+  ok("… neither reached the relay (the panel cut the escape out of the agent's text)", !/evil/.test(read("relay.log")) && !/"act": "open", "url": "https:\/\/evil/.test(read("relay.log")), read("relay.log"));
   ok("… and never reached the screen", !/5379/.test(plain()), plain());
   await closePanel();
 
