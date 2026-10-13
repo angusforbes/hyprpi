@@ -37,6 +37,29 @@ function lines(onLine) {
   };
 }
 
+const LOCK = path.join(RUN, `${NAME}.broker.lock`);
+function isBroker(pid) { // is pid a live "hbroker.mjs serve NAME"? (a reused pid is not)
+  if (!(pid > 0)) return false;
+  try { const a = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0"); const i = a.findIndex((x) => x.endsWith("hbroker.mjs")); return i >= 0 && a[i + 1] === "serve" && a[i + 2] === NAME; } catch { return false; }
+}
+function linkLock() { // the lock file appears atomically WITH its pid in it (never empty for a reader)
+  const tmp = `${LOCK}.${process.pid}`; fs.writeFileSync(tmp, String(process.pid), { mode: 0o600 });
+  try { fs.linkSync(tmp, LOCK); return true; } catch (e) { if (e.code === "EEXIST") return false; throw e; } finally { try { fs.unlinkSync(tmp); } catch {} }
+}
+function takeLock() {
+  if (linkLock()) return true;
+  const holder = () => { try { return Number(fs.readFileSync(LOCK, "utf8").trim()); } catch { return 0; } };
+  if (isBroker(holder())) return false;
+  const guard = `${LOCK}.takeover`; // one taker at a time; a guard left by a crash is ignored after 10 s
+  try { if (Date.now() - fs.statSync(guard).mtimeMs > 10000) fs.unlinkSync(guard); } catch {}
+  let fd; try { fd = fs.openSync(guard, "wx", 0o600); } catch { return false; } // another is taking it over: it wins
+  try {
+    if (isBroker(holder())) return false; // (taken meanwhile)
+    try { fs.unlinkSync(LOCK); } catch {}
+    return linkLock();
+  } finally { fs.closeSync(fd); try { fs.unlinkSync(guard); } catch {} }
+}
+
 if (cmd === "connect") {
   const s = net.connect(SOCK);
   s.on("error", (e) => { process.stdout.write(JSON.stringify({ type: "broker_error", error: `agent ${NAME} isn't running here (${e.code || e.message})` }) + "\n"); process.exit(4); });
@@ -62,7 +85,13 @@ if (cmd === "connect") {
     for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, () => { try { p.kill(s); } catch {} });
   } else {
   fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
-  // (2) a live broker already serving this agent keeps its socket: this one refuses instead of unlinking it
+  // (2) one broker per agent: run/NAME.broker.lock (its pid, made atomically with link()) is taken before anything is probed,
+  // unlinked or listened on, and held for the broker's whole life (ParityCheck: two started at once both ran, and the later
+  // one replaced the first's socket). A stale lock (pid gone, or not "hbroker.mjs serve NAME") is taken over once, under a
+  // second O_EXCL guard so two takers can't both win; the loser exits 6.
+  if (!takeLock()) { log(`agent ${NAME} already has a broker (${LOCK}): not starting a second one`); process.exit(6); }
+  process.on("exit", () => { try { if (fs.readFileSync(LOCK, "utf8").trim() === String(process.pid)) fs.unlinkSync(LOCK); } catch {} });
+  // (and a live broker of an older version, without the lock, keeps its socket too: this one refuses instead of unlinking it)
   const live = await new Promise((res) => { const c = net.connect(SOCK); c.on("connect", () => { c.destroy(); res(true); }); c.on("error", () => res(false)); });
   if (live) { log(`agent ${NAME} is already served on ${SOCK}: not starting a second broker`); process.exit(6); }
   try { fs.unlinkSync(SOCK); } catch {}
