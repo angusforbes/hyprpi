@@ -14,8 +14,11 @@ if ! command -v tailscale >/dev/null; then
 fi
 sudo systemctl enable --now tailscaled >/dev/null 2>&1 || true
 if running; then
-  [[ "$WANT_SSH" == ssh ]] && sudo tailscale set --ssh >/dev/null 2>&1
-  cat >/dev/null; echo "tailnet $(name)"; exit 0  # already joined: the key (if any was sent) is ignored
+  cat >/dev/null  # already joined: the key (if any was sent) is ignored
+  # (review) Tailscale SSH follows the binding both ways, and a failure says so
+  if [[ "$WANT_SSH" == ssh ]]; then sudo tailscale set --ssh >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning on Tailscale SSH failed"; exit 7; }
+  else sudo tailscale set --ssh=false >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning off Tailscale SSH failed"; exit 7; }; fi
+  echo "tailnet $(name)"; exit 0
 fi
 umask 077; kf="$(mktemp)"; trap 'rm -f "$kf"' EXIT
 tr -d '\r\n' > "$kf"

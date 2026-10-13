@@ -10,6 +10,13 @@ CONF="$1"; wl="$2"; shift 2; SSH=("$@")
 H="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 tsc=$(jq -c '.tailscale // false' "$CONF" 2>/dev/null) || { echo "ts-setup: can't read $CONF" >&2; exit 2; }
 [[ "$tsc" == false || "$tsc" == null ]] && exit 0
+# (review) the binding decides where the key goes: it and its folders must be yours and not writable by others
+# (a root-owned sticky folder such as /tmp is fine above a folder of yours: others can't rename or replace what's yours in it)
+safe() { local p o m; p="$(readlink -f "$1")"; while :; do o="$(stat -c %U "$p")"; m=$((8#$(stat -c %a "$p")))
+  [[ "$o" == "$(id -un)" || "$o" == root ]] || return 1
+  (( (m & 022) == 0 )) || { [[ -d "$p" && "$o" == root && $(( m & 01000 )) -ne 0 && "$p" != "$(dirname "$(readlink -f "$1")")" ]] || return 1; }
+  [[ "$p" == / ]] && return 0; p="$(dirname "$p")"; done; }
+safe "$CONF" || { echo "ts-setup: $CONF (or a folder above it) is writable by others or not yours: not sending the Tailscale key" >&2; exit 2; }
 obj=$(jq -r '(.tailscale|type)=="object"' "$CONF")
 hn=""; [[ "$obj" == true ]] && hn=$(jq -r '.tailscale.hostname // ""' "$CONF")
 [[ -n "$hn" ]] || hn=$(printf '%s' "${SSH[-1]##*@}" | tr 'A-Z_.' 'a-z--' | tr -cd 'a-z0-9-')
@@ -18,7 +25,8 @@ sshf=ssh; [[ "$obj" == true && "$(jq -r '.tailscale.ssh' "$CONF")" == false ]] &
 kf=""; [[ "$obj" == true ]] && kf=$(jq -r '.tailscale.authKeyFile // ""' "$CONF")
 kf="${kf:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi-secrets/tailscale-authkey}"; kf="${kf/#\~/$HOME}"
 "${SSH[@]}" "mkdir -p ~/.hyprpi-$wl && cat > ~/.hyprpi-$wl/ts-join.sh" < "$H/brev/tailscale/ts-join.sh" || { echo "ts-setup: can't reach the machine" >&2; exit 3; }
-if "${SSH[@]}" "tailscale status --json 2>/dev/null | grep -q '\"BackendState\": *\"Running\"'" 2>/dev/null; then in=/dev/null
+# (review) parsed, not grepped: python3 on the machine reads BackendState
+if "${SSH[@]}" "tailscale status --json 2>/dev/null | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get(\"BackendState\")==\"Running\" else 1)'" 2>/dev/null; then in=/dev/null
 elif [[ ! -f "$kf" ]]; then echo "ts-setup: no Tailscale auth key at $kf: not joined yet (brev/README.md, Tailscale, says how to make one)"; exit 0
 elif (( (8#$(stat -c %a "$kf") & 077) || (8#$(stat -c %a "$(dirname "$kf")") & 077) )); then echo "ts-setup: $kf must be 600 in a 700 folder: not joined" >&2; exit 2
 else in="$kf"; fi

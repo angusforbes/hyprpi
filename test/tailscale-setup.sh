@@ -15,10 +15,10 @@ cat > "$T/bin/tailscale" <<EOF
 #!/usr/bin/env bash
 echo "tailscale \$*" >> "$T/calls"
 case "\$1" in
-  status) [[ -f "$T/ts" ]] && printf '{"BackendState": "Running", "Self": {"DNSName": "%s.tail1c2031.ts.net."}}\n' "\$(cat "$T/ts")" || echo '{"BackendState": "NeedsLogin"}';;
+  status) [[ -f "$T/ts" ]] && printf '{\n\t"BackendState" :\t"Running",\n "Self": {"DNSName": "%s.tail1c2031.ts.net."}}\n' "\$(cat "$T/ts")" || echo '{"BackendState": "NeedsLogin"}';;
   up) for a in "\$@"; do case "\$a" in --auth-key=file:*) f="\${a#--auth-key=file:}"; cp "\$f" "$T/key-seen"; stat -c %a "\$f" > "$T/key-mode";; --hostname=*) echo "\${a#--hostname=}" > "$T/ts";; esac; done
       [[ "\$(cat "$T/key-seen")" == tskey-auth-FAKE123 ]] || { echo "invalid key tskey-auth-WRONG"; rm -f "$T/ts"; exit 1; };;
-  set) ;;
+  set) [[ -f "$T/set-fails" ]] && exit 1; echo "set \$*" >> "$T/calls";;
 esac
 EOF
 printf '#!/usr/bin/env bash\n"$@"\n' > "$T/bin/sudo"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/systemctl"
@@ -45,4 +45,10 @@ rm -f "$T/ts"; printf 'tskey-auth-WRONG\n' > "$KF"; o=$(run "$T/on.json"); rc=$?
 ok "a refused key: clear failure, nonzero, key text masked" '[[ $rc != 0 && "$o" == *"up failed"* && "$o" != *tskey-auth-WRONG* ]]'
 echo '{"ssh":["ssh","x"],"tailscale":{"hostname":"Bad Name"}}' > "$T/bad.json"; o=$(run "$T/bad.json"); rc=$?
 ok "a bad hostname is refused" '[[ $rc == 2 && "$o" == *"bad tailscale hostname"* ]]'
+rm -f "$T/ts"; printf 'tskey-auth-FAKE123\n' > "$KF"; run "$T/on.json" >/dev/null; touch "$T/set-fails"; o=$(run "$T/on.json"); rc=$?; rm -f "$T/set-fails"
+ok "already joined but Tailscale SSH can't be turned on: a clear failure" '[[ $rc != 0 && "$o" == *"turning on Tailscale SSH failed"* ]]'
+: > "$T/calls"; o=$(run "$T/obj.json"); ok "ssh false on a joined machine turns Tailscale SSH off" 'grep -q -- "--ssh=false" "$T/calls"'
+ok "whitespace-formatted status JSON still counts as Running (no key sent again)" '! grep -q " up" "$T/calls"'
+chmod 666 "$T/on.json"; o=$(run "$T/on.json"); rc=$?; chmod 644 "$T/on.json"
+ok "a binding writable by others: the key is not sent" '[[ $rc == 2 && "$o" == *"writable by others"* ]]'
 echo "$pass passed, $fail failed"; exit $(( fail > 0 ))
