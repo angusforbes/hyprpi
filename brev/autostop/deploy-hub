@@ -56,8 +56,8 @@ done
 run "${SSH[@]}" 'set -e; ln -sfn $HOME/.local/share/brev-autostop/brev-autostop $HOME/.local/bin/brev-autostop; timeout 120 brev refresh >/dev/null 2>&1 || echo "deploy-hub: brev refresh failed (the boxes may not be reachable over ssh yet)" >&2
   [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] || sudo -n loginctl enable-linger "$USER"
   systemctl --user daemon-reload; systemctl --user enable --now brev-autostop.timer >/dev/null 2>&1; systemctl --user is-active brev-autostop.timer >/dev/null
-  t0=$(date +%s); systemctl --user start brev-autostop.service
-  h=$HOME/.local/state/brev-autostop/heartbeat; [ -f "$h" ] && [ "$(cat "$h")" -ge "$t0" ] || { echo "deploy-hub: the run just now there did not work (no new heartbeat: brev ls or the config?); the laptop stays the main copy" >&2; exit 1; }' # (one run now: its heartbeat exists before the laptop stands down, so there is no gap)
+  h=$HOME/.local/state/brev-autostop/heartbeat; rm -f "$h"; systemctl --user start brev-autostop.service
+  [ -s "$h" ] || { echo "deploy-hub: the run just now there did not work (it wrote no heartbeat: brev ls or the config?); the laptop stays the main copy" >&2; exit 1; }' # (one run now: its heartbeat exists before the laptop stands down, so there is no gap)
 echo "deploy-hub: brev-autostop runs on $HOST every 5 min (alerts: world $WORLD's Thoughts)"
 # 4. the laptop: never stop the hub; act only as the backup
 if [[ -n "$DRY" ]]; then echo "DRY: laptop: exclude $HOST in $LCONF; BREV_AUTOSTOP_PRIMARY=$HOST in $LENV"; exit 0; fi
