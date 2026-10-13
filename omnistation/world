@@ -224,6 +224,7 @@ case "$cmd" in
     # (review) one opener at a time per world and kind: the check, the launch and the wait for the new window's loop are all under
     # one lock, so two quick opens can't both launch
     lk="${XDG_RUNTIME_DIR:-/tmp}/hyprpi-panel-$wl-$NAME.lock"; exec 9>"$lk"; flock -w 15 9 || { echo "world: another open of this panel is still running" >&2; exit 3; }
+    setsid -f node "$H/omnistation/world-status.mjs" "$WL" </dev/null >/dev/null 2>&1 || true # J543: the world's panels keep its status helper (auto-open of new agents, sounds) running too (one per world: its lock)
     if pgrep -u "$(id -u)" -f "omnistation/panel-loop\.sh $WL $NAME " >/dev/null; then echo "world $WL's $NAME panel is already open"; exit 0; fi
     PWS="${HYPRPI_PANEL_WS:-$WS}"; [[ "$PWS" =~ ^[0-9]{1,3}$ ]] || { echo "world: bad HYPRPI_PANEL_WS" >&2; exit 2; }
     # the same kitty keys as the host's panels (mockups/room-tui): Shift/Ctrl clicks reach the TUI, CSI-u for Shift+Space/Enter;
@@ -236,7 +237,6 @@ case "$cmd" in
     push_theme sync # J532: before the panel starts there
     hyprctl dispatch "hl.dsp.exec_cmd([[${line}]], { workspace = \"$PWS silent\" })" >/dev/null
     for _ in $(seq 40); do pgrep -u "$(id -u)" -f "omnistation/panel-loop\.sh $WL $NAME " >/dev/null && break; sleep 0.25; done  # hold the lock until it runs
-    setsid -f node "$H/omnistation/world-status.mjs" "$WL" </dev/null >/dev/null 2>&1 || true # J543: the world's panels keep its status helper (auto-open of new agents, sounds) running too
     echo "opened world $WL's $NAME panel on workspace $PWS" ;;
   *) echo "usage: world LETTER setup|new|start|open|focus|status|stop|start-mirror|open-mirror|binding|recover|panel|images [NAME]" >&2; exit 2 ;;
 esac

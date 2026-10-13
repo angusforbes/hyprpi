@@ -137,6 +137,9 @@ try {
     ok("8 laptop: a first look plays nothing old", pickNotices(ns, st, now).length === 0);
     const fresh = [...ns, { ts: now + 10, kind: "ding", id: "h-omni-alpha", name: "omni\x1b[31m-alpha", text: "a\nb" }, { ts: now + 11, kind: "rm -rf", id: "x" }];
     const p1 = pickNotices(fresh, st, now + 20), p2 = pickNotices(fresh, st, now + 30);
+    { const st2 = {}, t0 = Date.now(); pickNotices([], st2, t0); const bl = Array.from({ length: 8 }, (_, i) => ({ ts: t0 + 1000 + i * 10000, kind: "bonk", id: `h-a${i}`, text: `b${i}` }));
+      const got2 = [...pickNotices(bl, st2, t0 + 80000), ...pickNotices(bl, st2, t0 + 86000), ...pickNotices(bl, st2, t0 + 92000)].map((n) => n.id);
+      ok("8 laptop: a backlog after an outage is all played, 4 at a time, none lost or twice", JSON.stringify(got2) === JSON.stringify(bl.map((n) => n.id)), JSON.stringify(got2)); }
     ok("8 laptop: a new one plays once, cleaned (no control characters), unknown kinds dropped", p1.length === 1 && p1[0].kind === "ding" && p1[0].id === "h-omni-alpha" && !/[\x00-\x1f]/.test(p1[0].name + p1[0].text) && p2.length === 0, JSON.stringify([p1, p2]));
   }
   { const pl = fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : "";
