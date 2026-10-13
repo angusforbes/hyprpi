@@ -188,6 +188,21 @@ case "$cmd" in
     [[ "${3:-}" == nostart ]] || tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null 2>&1 || true
     for _ in $(seq 20); do [[ -S "$ROOT/run/$NAME.rpc.sock" ]] && break; sleep 0.5; done
     exec node "$ROOT/hbroker.mjs" connect "$NAME" ;;
+  restart-daemon)
+    # J530 (a slip on Omnistation): restarts this world's daemon ONLY by the pid in its lock file, after checking that pid really is
+    # node running bin/hyprpi daemon. Never `pgrep -f "bin/hyprpi daemon"`: the tmux SERVER's command line contains that text too
+    # (it is the first session's command), and killing it ends every agent's session. The agents keep running (they're in tmux).
+    pid=$(tr -cd '0-9' < "$ROOT/run/daemon.lock" 2>/dev/null)
+    if [[ -n "$pid" && -r /proc/$pid/cmdline ]]; then
+      comm=$(cat /proc/$pid/comm 2>/dev/null); cl=$(tr '\0' ' ' < /proc/$pid/cmdline)
+      if [[ "$comm" == node* && "$cl" == *"bin/hyprpi daemon"* ]]; then kill "$pid"; for _ in $(seq 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+      else echo "remote.sh: pid $pid in daemon.lock isn't the daemon ($comm): not killing it" >&2; exit 3; fi
+    fi
+    tmux kill-session -t "hyprpi-$W-daemon" 2>/dev/null || true; rm -f "$HYPRPI_SOCKET"
+    secrets_ok || exit 5
+    tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
+    for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
+    [[ -S "$HYPRPI_SOCKET" ]] && echo "daemon restarted (world ${W^^})" || { echo "remote.sh: the daemon didn't come back (tmux attach -t hyprpi-$W-daemon)" >&2; exit 4; } ;;
   thoughts-relay)
     # J530: a message for this world's Thoughts from the laptop (JSON on stdin); prints its answer (lib/remote-thoughts.mjs)
     secrets_ok || exit 3

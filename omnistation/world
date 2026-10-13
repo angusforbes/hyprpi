@@ -204,6 +204,7 @@ case "$cmd" in
     (( ${#new[@]} )) || { echo "no new images on world $WL"; exit 0; }
     "${SSH[@]}" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$dest"
     for n in "${new[@]}"; do [[ -f "$dest/$n" ]] && echo "file://$dest/$n"; done ;;
+  restart-daemon) "${SSH[@]}" "$R restart-daemon" ;; # J530: by its lock file's pid only (remote.sh), the agents keep running
   thoughts-relay)
     # J530: a message (JSON on stdin) for this world's Thoughts, which lives on the remote machine; prints its answer (JSON).
     # Used by the laptop daemon for ask_agent / talk / demand to "Thoughts-X" from other worlds.
