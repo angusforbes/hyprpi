@@ -24,6 +24,15 @@
 # _SYSTEMCTL (commands), _BIN (where install links the script), _NOW (laptop epoch), _DRY (1 = say, don't stop), _STOP_TIMEOUT.
 set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# J526: settings written by deploy-hub (~/.config/hyprpi/brev-autostop.env) apply to a hand run too, not just to the timer's;
+# only plain KEY=VALUE lines for BREV_AUTOSTOP_* / HYPRPI_* are read, and a variable already set wins
+ENVF="${BREV_AUTOSTOP_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/brev-autostop.env}"
+if [[ -f "$ENVF" ]]; then
+  while IFS= read -r l; do
+    [[ "$l" =~ ^((BREV_AUTOSTOP|HYPRPI)_[A-Z_]+)=([A-Za-z0-9_./:-]*)$ ]] || continue
+    [[ -n "${!BASH_REMATCH[1]:-}" ]] || export "${BASH_REMATCH[1]}=${BASH_REMATCH[3]}"
+  done < "$ENVF"
+fi
 WORLD="${BREV_AUTOSTOP_WORLD:-A}"
 ST="${BREV_AUTOSTOP_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/brev-autostop}"
 CONF="${BREV_AUTOSTOP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/brev-autostop.conf}"
@@ -46,8 +55,9 @@ DEFAULT_IDLE="$(cfg | awk '$1=="default_idle_min" && $2~/^[0-9]+$/{v=$2+0} END{p
 GPU_BUSY="$(cfg | awk '$1=="gpu_busy_pct" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; GPU_BUSY="${GPU_BUSY:-10}"
 excluded() { cfg | awk -v b="$1" '$1=="exclude" && $2==b{f=1} END{exit !f}'; }
 DEFAULT_UNH="$(cfg | awk '$1=="default_unhealthy_min" && $2~/^[0-9]+$/{v=$2+0} END{print v}')"; DEFAULT_UNH="${DEFAULT_UNH:-45}"
-unhealthy_min() { local v; v="$(cfg | awk -v b="$1" '$1=="unhealthy" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo "${v:-$DEFAULT_UNH}"; }
-idle_min() { local v; v="$(cfg | awk -v b="$1" '$1=="idle" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo "${v:-$DEFAULT_IDLE}"; }
+MARGIN=0 # (J526) extra minutes while a backup copy is acting: a primary that is in fact still working stops the box first
+unhealthy_min() { local v; v="$(cfg | awk -v b="$1" '$1=="unhealthy" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo $(( ${v:-$DEFAULT_UNH} + MARGIN )); }
+idle_min() { local v; v="$(cfg | awk -v b="$1" '$1=="idle" && $2==b && $3~/^[0-9]+$/{v=$3+0} END{print v}')"; echo $(( ${v:-$DEFAULT_IDLE} + MARGIN )); }
 
 # --- per-box state: $ST/boxes/<name>/ ------------------------------------------------------------------------------------------
 D=""; BOX=""
@@ -58,6 +68,11 @@ state() { [[ "$(get state)" == "$1" ]] || { put state "$1"; log "$2"; }; } # one
 paused_until() { local p; for p in "$(cat "$ST/pause" 2>/dev/null)" "$(get pause)"; do [[ -n "$p" ]] && [[ "$p" == 0 || "$p" -gt "$(now)" ]] && { echo "$p"; return 0; }; done; return 1; }
 dur() { local n="${1%[mhd]}" u="${1: -1}" s; [[ "$n" =~ ^[0-9]+$ ]] || return 1; n=$((10#$n)); case "$u" in m) s=60;; h) s=3600;; d) s=86400;; *) s=60;; esac; echo $(( $(now) + n * s )); }
 
+fwd_pause() { # (J526) a backup copy's pause / resume is the primary's too: there it matters (args already checked)
+  [[ -n "${BREV_AUTOSTOP_PRIMARY:-}" && "${BREV_AUTOSTOP_PRIMARY}" =~ $NAME_RE ]] || return 0
+  local a q=""; for a in "$@"; do [[ "$a" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "brev-autostop: not forwarded to $BREV_AUTOSTOP_PRIMARY (odd argument)" >&2; return 0; }; q+=" $a"; done
+  if timeout -k 5 45 "$SSH" -o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=no -o ControlPath=none "$BREV_AUTOSTOP_PRIMARY" "\$HOME/.local/bin/brev-autostop$q" 2>/dev/null | sed "s/^/$BREV_AUTOSTOP_PRIMARY: /"; then :; else echo "brev-autostop: couldn't reach $BREV_AUTOSTOP_PRIMARY: only this (backup) copy is paused there; do it there too: ssh $BREV_AUTOSTOP_PRIMARY brev-autostop $*" >&2; fi
+}
 case "${1:-run}" in
   pause|resume)
     # pause [NAME|all] [N(m|h|d)|forever]: a NAME protects just that box (e.g. a training run); none or "all" = every box; no time or
@@ -70,8 +85,9 @@ case "${1:-run}" in
     [[ "$who" == all ]] && who=""; [[ "$t" == forever ]] && t=""
     [[ -z "$who" || "$who" =~ $NAME_RE ]] || { echo "usage: brev-autostop $1 [NAME|all] [N(m|h|d)|forever]" >&2; exit 2; }
     f="$ST/pause"; [[ -n "$who" ]] && { use "$who"; f="$D/pause"; }
-    if [[ "$1" == resume ]]; then rm -f "$f"; log "resumed by hand${who:+: $who}"; echo "brev-autostop resumed${who:+ for $who}"; exit 0; fi
+    if [[ "$1" == resume ]]; then fwd_pause "$@"; rm -f "$f"; log "resumed by hand${who:+: $who}"; echo "brev-autostop resumed${who:+ for $who}"; exit 0; fi
     until=0; if [[ -n "$t" ]]; then until="$(dur "$t")" || { echo "usage: brev-autostop pause [NAME|all] [N(m|h|d)|forever]" >&2; exit 2; }; fi
+    fwd_pause "$@"
     printf '%s\n' "$until" > "$f"; log "paused by hand${who:+: $who} $([[ -n "$t" ]] && echo "for $t" || echo "until resume")"
     echo "brev-autostop paused ${who:-all boxes} $([[ $until -gt 0 ]] && date -d "@$until" '+until %a %H:%M' || echo "until: brev-autostop resume${who:+ $who}")"; exit 0;;
   config) ensure_conf; echo "$CONF"; exit 0;;
@@ -132,7 +148,6 @@ alert() { # $1 = text, $2 = urgency: both channels, each best effort; says which
 exec 9>"$ST/lock"; flock -n 9 || exit 0
 [[ -f "$ST/log" && $(wc -l < "$ST/log") -gt 500 ]] && { tail -n 400 "$ST/log" > "$ST/log.tmp" && mv "$ST/log.tmp" "$ST/log"; }
 [[ -f "$ST/pause" ]] && { p="$(cat "$ST/pause")"; [[ "$p" != 0 && "$p" -le "$(now)" ]] && { rm -f "$ST/pause"; log "pause (all boxes) ended"; }; }
-now > "$ST/heartbeat" # (J526) "this copy ran": a backup copy elsewhere reads it
 
 # J526 (Angus: "brev guards"): the main copy runs on the always-on Brev box "hub", so boxes are stopped while the laptop sleeps.
 # A copy with BREV_AUTOSTOP_PRIMARY=<ssh host> (the laptop's) is only its backup: each run it asks the primary how long ago its
@@ -146,13 +161,19 @@ if [[ -n "$PRIMARY" ]]; then
   hb="$(timeout -k 5 45 "$SSH" -o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=no -o ControlPath=none "$PRIMARY" 'f=$HOME/.local/state/brev-autostop/heartbeat; if [ -f "$f" ]; then echo "age $(( $(date +%s) - $(cat "$f") ))"; else echo "age none"; fi' 2>/dev/null | awk '$1=="age"{print $2}' | tail -1)"
   BOX="(backup)"
   if [[ "$hb" =~ ^-?[0-9]+$ ]] && (( hb < STALE_MIN * 60 )); then
+    rm -f "$ST/unreach_since"
     if [[ -f "$ST/primary_down" ]]; then rm -f "$ST/primary_down"; alert "Brev auto-stop: the copy on $PRIMARY is running again; the laptop's backup copy stands by." normal; fi
     [[ "$(cat "$ST/role" 2>/dev/null)" == standby ]] || { echo standby > "$ST/role"; log "backup: $PRIMARY's copy ran $(( hb / 60 )) min ago: standing by"; }
     exit 0
   fi
+  if ! [[ "$hb" =~ ^[0-9]+$ ]] && [[ "$hb" != none ]]; then # unreachable: give it STALE_MIN before acting (a network blip is not an outage)
+    [[ -f "$ST/unreach_since" ]] || now > "$ST/unreach_since"
+    if (( $(now) - $(cat "$ST/unreach_since") < STALE_MIN * 60 )); then [[ "$(cat "$ST/role" 2>/dev/null)" == waiting ]] || { echo waiting > "$ST/role"; log "backup: can't reach $PRIMARY: waiting ${STALE_MIN} min before acting"; }; exit 0; fi
+  else rm -f "$ST/unreach_since"; fi
   why="$([[ "$hb" =~ ^[0-9]+$ ]] && echo "hasn't run for $(( hb / 60 )) min" || { [[ "$hb" == none ]] && echo "has never run (no heartbeat)" || echo "can't be reached over ssh"; })"
   if [[ ! -f "$ST/primary_down" ]]; then now > "$ST/primary_down"; alert "Brev auto-stop: the copy on $PRIMARY $why, so the laptop's backup copy is checking the Brev boxes until it's back." critical; fi
   [[ "$(cat "$ST/role" 2>/dev/null)" == acting ]] || { echo acting > "$ST/role"; log "backup: $PRIMARY's copy $why: acting"; }
+  MARGIN="${BREV_AUTOSTOP_BACKUP_MARGIN_MIN:-10}" # (if the primary is only unreachable from here but working, it stops the box first and the box is no longer RUNNING when this copy would)
 fi
 
 # the box-side probe (read-only; ages computed on the box, so the two clocks don't matter)
@@ -272,6 +293,7 @@ if [[ $rc -ne 0 ]]; then
   [[ "$(cat "$ST/state" 2>/dev/null)" == brev-error ]] || { echo brev-error > "$ST/state"; log "brev ls failed (rc $rc): nothing done"; }; exit 0
 fi
 echo ok > "$ST/state"
+now > "$ST/heartbeat" # (J526) "this copy is working" (brev ls answered and there is a config): a backup copy elsewhere reads it
 declare -A seen=(); fail=0
 while read -r name status _; do
   [[ "$name" =~ $NAME_RE && -n "${status:-}" ]] || continue

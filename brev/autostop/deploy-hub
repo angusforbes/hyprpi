@@ -44,17 +44,24 @@ EOF
 put "$envf" '$HOME/.config/hyprpi/brev-autostop.env' 600
 # 2. its config: the laptop's, once; always `exclude HOST`
 if [[ -n "$DRY" ]]; then echo "DRY: config on $HOST (from $LCONF if missing) + exclude $HOST"
-elif ! "${SSH[@]}" 'test -f $HOME/.config/hyprpi/brev-autostop.conf'; then { cat "$LCONF"; grep -qx "exclude $HOST" "$LCONF" || printf '\n# the always-on box itself (J526)\nexclude %s\n' "$HOST"; } > "$envf.c"; put "$envf.c" '$HOME/.config/hyprpi/brev-autostop.conf' 644; rm -f "$envf.c"; echo "deploy-hub: config on $HOST made from the laptop's"
-else "${SSH[@]}" "grep -qx 'exclude $HOST' \$HOME/.config/hyprpi/brev-autostop.conf || printf '\\n# the always-on box itself (J526)\\nexclude %s\\n' '$HOST' >> \$HOME/.config/hyprpi/brev-autostop.conf"; fi
+elif ! "${SSH[@]}" 'test -f $HOME/.config/hyprpi/brev-autostop.conf'; then { cat "$LCONF"; grep -qxF "exclude $HOST" "$LCONF" || printf '\n# the always-on box itself (J526)\nexclude %s\n' "$HOST"; } > "$envf.c"; put "$envf.c" '$HOME/.config/hyprpi/brev-autostop.conf' 644; rm -f "$envf.c"; echo "deploy-hub: config on $HOST made from the laptop's"
+else "${SSH[@]}" "grep -qxF 'exclude $HOST' \$HOME/.config/hyprpi/brev-autostop.conf || printf '\\n# the always-on box itself (J526)\\nexclude %s\\n' '$HOST' >> \$HOME/.config/hyprpi/brev-autostop.conf"; fi
 # 3. ssh config for the other boxes, linger, the timer
 run "${SSH[@]}" 'set -e; ln -sfn $HOME/.local/share/brev-autostop/brev-autostop $HOME/.local/bin/brev-autostop; timeout 120 brev refresh >/dev/null 2>&1 || echo "deploy-hub: brev refresh failed (the boxes may not be reachable over ssh yet)" >&2
   [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] || sudo -n loginctl enable-linger "$USER"
   systemctl --user daemon-reload; systemctl --user enable --now brev-autostop.timer >/dev/null 2>&1; systemctl --user is-active brev-autostop.timer >/dev/null
-  systemctl --user start brev-autostop.service; test -f $HOME/.local/state/brev-autostop/heartbeat' # (one run now: its heartbeat exists before the laptop stands down, so there is no gap)
+  systemctl --user start brev-autostop.service
+  h=$HOME/.local/state/brev-autostop/heartbeat; [ -f "$h" ] && [ $(( $(date +%s) - $(cat "$h") )) -lt 300 ] || { echo "deploy-hub: the first run there did not work (no fresh heartbeat: brev ls or the config?); the laptop stays the main copy" >&2; exit 1; }' # (one run now: its heartbeat exists before the laptop stands down, so there is no gap)
 echo "deploy-hub: brev-autostop runs on $HOST every 5 min (alerts: world $WORLD's Thoughts)"
+# 3b. pauses set on the laptop so far hold on HOST too (same files: epochs, or 0 = until resume)
+LST="${BREV_AUTOSTOP_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/brev-autostop}"
+for pf in "$LST/pause" "$LST"/boxes/*/pause; do
+  [[ -f "$pf" ]] || continue; rel="${pf#"$LST"/}"; [[ "$rel" =~ ^(pause|boxes/[A-Za-z0-9._-]+/pause)$ ]] || continue
+  put "$pf" "\$HOME/.local/state/brev-autostop/$rel" 644; echo "deploy-hub: pause carried over: $rel"
+done
 # 4. the laptop: never stop the hub; act only as the backup
 if [[ -n "$DRY" ]]; then echo "DRY: laptop: exclude $HOST in $LCONF; BREV_AUTOSTOP_PRIMARY=$HOST in $LENV"; exit 0; fi
-grep -qx "exclude $HOST" "$LCONF" || printf '\n# the always-on box that runs the main copy (J526)\nexclude %s\n' "$HOST" >> "$LCONF"
+grep -qxF "exclude $HOST" "$LCONF" || printf '\n# the always-on box that runs the main copy (J526)\nexclude %s\n' "$HOST" >> "$LCONF"
 mkdir -p "$(dirname "$LENV")"; printf '# written by deploy-hub (J526): this laptop copy only acts when %s'"'"'s copy has not run for 15 min\nBREV_AUTOSTOP_PRIMARY=%s\n' "$HOST" "$HOST" > "$LENV.tmp" && mv -f "$LENV.tmp" "$LENV"
 systemctl --user daemon-reload 2>/dev/null || true
 echo "deploy-hub: the laptop's copy is now its backup (acts only if $HOST's copy hasn't run for 15 min)"

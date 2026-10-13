@@ -44,7 +44,7 @@ printf '#!/usr/bin/env bash\necho "notify $*" >> "%s/calls"\n' "$F" > "$F/bin/no
 printf '#!/usr/bin/env bash\necho "hyprpi $*" >> "%s/calls"\n' "$F" > "$F/bin/hyprpi"
 chmod +x "$F/bin/"*
 printf 'exclude keep-me-box\n' > "$F/base.conf"
-export BREV_AUTOSTOP_CONFIG="$F/base.conf" BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
+export BREV_AUTOSTOP_ENV="$F/no-env" BREV_AUTOSTOP_CONFIG="$F/base.conf" BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
 H="$F/home"
 fixture() { # every activity file N minutes old
   rm -rf "$H"; mkdir -p "$H/.hyprpi-i/sessions/s1" "$H/.hyprpi-i/state/thoughts" "$H/.hyprpi-i/state/boards" "$H/workspace/outputs" "$H/workspace/shared"
@@ -320,9 +320,28 @@ echo RUNNING > "$F/status"; started_ago 120; hub_ran 1; backup; backup
 ok "hub back → one 'running again' notice, standing by, no stop" '[[ $(stops) == 1 && $(cnt "^notify.*running again") == 1 ]]'
 # 39. the hub can't be reached, or has never run → acts, alert names why, once
 fresh; fixture 120; echo RUNNING > "$F/status"; touch "$F/hubfail"; backup; started_ago 120; backup; backup
-ok "hub unreachable → acts (one stop), one alert 'can't be reached'" '[[ $(stops) == 1 && $(cnt "^notify.*can.t be reached") == 1 ]]'
+ok "hub unreachable < 15 min → waits: no stop, no alert" '[[ $(stops) == 0 && $(notices) == 0 ]] && grep -q "waiting 15 min" "$F/state/log"'
+echo $(( $(date +%s) - 16*60 )) > "$F/state/unreach_since"; backup; backup
+ok "hub unreachable 16 min → acts (one stop), one alert 'can't be reached'" '[[ $(stops) == 1 && $(cnt "^notify.*can.t be reached") == 1 ]]'
 fresh; fixture 120; echo RUNNING > "$F/status"; backup; started_ago 120; backup
 ok "hub never ran (no heartbeat) → acts, alert says so" '[[ $(stops) == 1 && $(cnt "^notify.*never run") == 1 ]]'
+# 39b. while acting, limits get +10 min (a working primary would stop first)
+fresh; fixture 120; echo RUNNING > "$F/status"; hub_ran 30; backup; started_ago 50; backup
+ok "backup acting, idle 50 min (45+10 margin) → not yet" '[[ $(stops) == 0 ]]'
+started_ago 56; backup
+ok "…idle 56 min → stopped" '[[ $(stops) == 1 ]]'
+# 39c. the hub's brev ls failing writes no heartbeat (so a backup takes over), ours too
+fresh; echo error > "$F/status"; run; run
+ok "brev ls failing → no heartbeat written" '[[ ! -f "$F/state/heartbeat" ]]'
+# 39d. a hand run reads the env file deploy-hub wrote (PRIMARY there → standby with a fresh hub)
+fresh; fixture 120; echo RUNNING > "$F/status"; hub_ran 2; printf 'BREV_AUTOSTOP_PRIMARY=hub\nBAD LINE\nOTHER=x\n' > "$F/envf"; BREV_AUTOSTOP_ENV="$F/envf" run; started_ago 120; BREV_AUTOSTOP_ENV="$F/envf" run
+ok "hand run with the env file → standby (no stop)" '[[ $(stops) == 0 ]] && grep -q "standing by" "$F/state/log"'
+so="$(BREV_AUTOSTOP_ENV="$F/envf" "$S" status 2>/dev/null)"
+ok "…status says BACKUP" 'grep -q "BACKUP of the copy on hub" <<<"$so"'
+# 39e. pause / resume on the backup is passed on to the primary
+mkdir -p "$F/home-hub/.local/bin"; printf '#!/usr/bin/env bash\necho "$*" >> "%s/hubpause"; echo ok-there\n' "$F" > "$F/home-hub/.local/bin/brev-autostop"; chmod +x "$F/home-hub/.local/bin/brev-autostop"; rm -f "$F/hubpause"
+po="$(BREV_AUTOSTOP_PRIMARY=hub "$S" pause train-a100 24h)"; BREV_AUTOSTOP_PRIMARY=hub "$S" resume train-a100 >/dev/null
+ok "pause/resume on the backup → also run on the hub (same arguments)" '[[ "$(cat "$F/hubpause")" == "pause train-a100 24h"$'"'"'\n'"'"'"resume train-a100" ]] && grep -q "hub: ok-there" <<<"$po"'
 # 40. without BREV_AUTOSTOP_PRIMARY it is the main copy: never asks anyone (the hub's own copy)
 fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; run
 ok "no PRIMARY → no heartbeat question, acts as before; writes its own heartbeat" '[[ ! -f "$F/hubcalls" && $(stops) == 1 && -f "$F/state/heartbeat" ]]'
