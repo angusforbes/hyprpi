@@ -193,7 +193,9 @@ case "$cmd" in
     secrets_ok || exit 5
     # J480: the daemon (and the Thoughts it starts) must never look like an agent to pi-entry: a tmux server first started from an
     # agent's environment passed HYPRPI_REMOTE_RPC/HYPRPI_NAME on, and Thoughts-I then ran as "hbroker serve brev-alpha"
-    tmux has-session -t "=hyprpi-$W-daemon" 2>/dev/null || tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
+    # J543 (live: of four agents the daemon started at once, one never started: they raced to create this tmux session and `set -e`
+    # ended the loser): a daemon that already listens (often one an agent's ensure started, outside tmux) needs none, and a lost race is fine
+    [[ -S "$HYPRPI_SOCKET" ]] || tmux has-session -t "=hyprpi-$W-daemon" 2>/dev/null || tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon" || true
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: the daemon didn't start (tmux attach -t hyprpi-$W-daemon shows why)" >&2; exit 4; }
     if [[ "${HYPRPI_START_NEW:-}" == 1 ]] && { tmux has-session -t "=hyprpi-$W-$NAME" 2>/dev/null || [[ -e "$ROOT/sessions/$NAME" ]]; }; then echo "remote.sh: $NAME is taken (a new agent needs a new name)" >&2; exit 3; fi

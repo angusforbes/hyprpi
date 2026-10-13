@@ -36,6 +36,11 @@ C=$(cat "$T/cmd-last")
 ok "bad values fall back to the defaults (name = slug, its own icon, ~/work, ws 71, no pi flags)" '[[ $rc == 0 && "$C" == *"--name bad --icon "* && "$C" != *"a\$(id)"* && "$C" == *"--cwd $H/work --workspace 71 -- --session-dir "* ]]'
 SLUG=plain; run >/dev/null; C=$(cat "$T/cmd-last")
 ok "a plain start (world X new / SUPER+A) is as before" '[[ "$C" == *"new --id h-plain --name plain --icon "* && "$C" == *"--workspace 71 -- --session-dir "* ]]'
+# J543: four agents started at once while the daemon listens outside tmux: all four start (no race on the daemon's tmux session)
+sed -i 's/hyprpi-h-daemon || -e/__none__ || -e/' "$H/bin/tmux"  # this tmux knows no daemon session now
+pids=(); for n in ra rb rc rd; do ( SLUG=$n; run HYPRPI_START_NEW=1 >/dev/null ) & pids+=($!); done; for p in "${pids[@]}"; do wait $p; done
+ok "four at once: all four agents start, no daemon session made (the daemon already listens)" '[[ -e "$T/s-hyprpi-h-ra" && -e "$T/s-hyprpi-h-rb" && -e "$T/s-hyprpi-h-rc" && -e "$T/s-hyprpi-h-rd" ]] && ! grep -q "new-session -d -s hyprpi-h-daemon" "$T/tmux.log"'
+sed -i 's/__none__ || -e/hyprpi-h-daemon || -e/' "$H/bin/tmux"
 # J543: a restart by the daemon (upkeep refresh / restart): waits for the old tmux session to end, then fresh or on the named session
 mkdir -p "$H/.hyprpi-h/sessions/plain"; touch "$H/.hyprpi-h/sessions/plain/old.jsonl"; sleep 1; touch "$H/.hyprpi-h/sessions/plain/new.jsonl"
 SLUG=plain; ( sleep 2; rm -f "$T/s-hyprpi-h-plain" ) & run HYPRPI_START_RESTART=1 HYPRPI_START_FRESH=1 >/dev/null; C=$(cat "$T/cmd-last")
