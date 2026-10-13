@@ -429,12 +429,24 @@ export default function hyprpi(pi: ExtensionAPI) {
           const hint = (k: string, d: string) => (typeof P.keyHint === "function" ? P.keyHint(k, d) : theme.fg("dim", d));
           const raw = (k: string, d: string) => (typeof P.rawKeyHint === "function" ? P.rawKeyHint(k, d) : `${k} ${theme.fg("dim", d)}`);
           const key = (k: string, f: string) => (typeof P.keyText === "function" ? P.keyText(k) : f);
+          const onboarding = theme.fg("dim", "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.");
+          // Ctrl+O (app.tools.expand) expands pi's header to the full key list; this one follows the same state
+          let expanded = false; try { expanded = !!ctx.ui.getToolsExpanded?.(); } catch { /* compact */ }
+          if (expanded) {
+            const full = [hint("app.interrupt", "to interrupt"), hint("app.clear", "to clear"), raw(`${key("app.clear", "ctrl+c")} twice`, "to exit"), hint("app.exit", "to exit (empty)"),
+              hint("app.suspend", "to suspend"), hint("tui.editor.deleteToLineEnd", "to delete to end"), hint("app.thinking.cycle", "to cycle thinking level"),
+              raw(`${key("app.model.cycleForward", "ctrl+p")}/${key("app.model.cycleBackward", "shift+ctrl+p")}`, "to cycle models"), hint("app.model.select", "to select model"),
+              hint("app.tools.expand", "to expand tools"), hint("app.thinking.toggle", "to expand thinking"), hint("app.editor.external", "for external editor"),
+              raw("/", "for commands"), raw("!", "to run bash"), raw("!!", "to run bash (no context)"), hint("app.message.followUp", "to queue follow-up"),
+              hint("app.message.dequeue", "to edit all queued messages"), hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"), raw("drop files", "to attach")];
+            return [`${a} ${theme.fg("dim", `v${P.VERSION || ""}`)}`, `${b} ${full[0]}`, `${c} ${full[1]}`, ...full.slice(2).map((h) => `           ${h}`), onboarding].map((l) => fit(l, width));
+          }
           const hints = [hint("app.interrupt", "interrupt"), raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].join(theme.fg("muted", " · "));
           return [
             `${a} ${theme.fg("dim", `v${P.VERSION || ""}`)}`,
             `${b} ${hints}`,
-            `${c} ${theme.fg("dim", "hyprpi agent · /hotkeys lists every key")}`,
-            theme.fg("dim", "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi."),
+            `${c} ${theme.fg("dim", `Press ${key("app.tools.expand", "ctrl+o")} to show full startup help · hyprpi agent`)}`,
+            onboarding,
           ].map((l) => fit(l, width));
         },
         invalidate() {},
