@@ -102,7 +102,9 @@ sync_pair() { # LOCAL BOX REMOTE OPTS
   case $rc in
     0) pstate "ok"; local c; c="$(grep -E 'Synchronization complete' <<< "$out" | tail -1)"; [[ -n "$c" ]] && log "$TAG$c" ;;
     1|2) why="unison exit $rc (some files not synced): $(grep -E 'failed|Error|skipped' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; pstate "partial" "$why"; log "$TAG$(tail -n 5 <<< "$out" | tr '\n' ' ' | cut -c1-600)" ;;
-    *) why="unison exit $rc: $(grep -v -E '^(Pseudo|Warning: Perm|mux_client|ControlSocket)' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; pstate "unreachable" "$why" ;;
+    *) if grep -q confirmbigdel <<< "$out"; then # (HubSyncCheck547) not a connection problem: Unison's safety stop
+         why="one side ($LOCAL or $BOX:~/$REMOTE) is now empty, so the deletion was NOT copied to the other side (Unison's safety stop): empty the other side too, or put a file back"; pstate "both-sides-differ" "$why"
+       else why="unison exit $rc: $(grep -v -E '^(Pseudo|Warning: Perm|mux_client|ControlSocket)' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; pstate "unreachable" "$why"; fi ;;
   esac
   [[ -z "$why" && $prc -ne 0 ]] && { why="pulling new images failed (exit $prc): $(tail -n 2 <<< "$pulled" | tr '\n' ' ' | cut -c1-300)"; pstate "pull-failed" "$why"; }
   # J497 v2: a box that stopped (or is stopping) during the run is a pause, not a failure

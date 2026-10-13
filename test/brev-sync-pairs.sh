@@ -73,6 +73,11 @@ ok "W3 recovery: exit 0, one 'working again' for the hub pair" "[[ $rc -eq 0 ]] 
 # a stopped box: a quiet pause for that pair only
 printf 'gpu STOPPED\nhub RUNNING\n' > "$T/boxes.txt"; : > "$T/unison-calls.log"; run; rc=$?
 ok "a stopped GPU box: exit 0, only the hub pair syncs" "[[ $rc -eq 0 ]] && ! grep -q '^gpu ' $T/unison-calls.log && grep -q '^hub ' $T/unison-calls.log"
+# emptying one side by hand: Unison's safety stop (confirmbigdel) is reported as that, not as a connection problem
+rm -f "$T/home/Brev/Hub/"*; run; rc=$?
+ok "emptying ~/Brev/Hub by hand: exit 1, logged as Unison's safety stop (not 'unreachable')" "[[ $rc -eq 1 ]] && grep -q 'safety stop' $T/state/brev-sync/sync.log && [[ \$(cat $T/state/brev-sync/pairs/hub/state) == both-sides-differ ]]"
+rm -f "$T/boxes/hub/workspace/shared/"*; run; rc=$?
+ok "… emptied on both sides: ok again" "[[ $rc -eq 0 && \$(cat $T/state/brev-sync/pairs/hub/state) == ok ]]"
 ok "status lists both pairs" "HOME=$T/home PATH=$T/bin:\$PATH XDG_CONFIG_HOME=$T/cfg XDG_STATE_HOME=$T/state $ROOT/brev/sync/brev-sync status | grep -c ' <-> .*: box ' | grep -qx 2"
 [[ $fails -eq 0 ]] && { echo "all passed"; rm -rf "$T"; } || echo "$fails FAILED (state $T)"
 exit $fails
