@@ -182,7 +182,7 @@ case "$cmd" in
       blk="<!-- hyprpi:shared-folder (J547; written by omnistation/remote.sh install, replaced on every setup) -->
 ## Shared folder with Angus's laptop
 
-\`~/$rf\` on this machine syncs both ways with \`$lf\` on Angus's laptop (brev-sync, about every 2 minutes while this machine runs). Put hand-offs for Angus or for laptop agents there (results, reports, images, files to review), and look there for files he or his agents leave for you.$([[ "$lf" == "~/Brev"* ]] && printf ' Angus can also open them on his phone (the phone app'"'"'s Files tab shows ~/Brev).') If both sides change the same file, the newer one wins and the other is kept next to it as \"name (conflict_on_DATE).ext\". Keep secrets and keys out of it.
+\`~/$rf\` on this machine syncs both ways with \`$lf\` on Angus's laptop (brev-sync, about every 2 minutes while this machine runs). Put hand-offs for Angus or for laptop agents there (results, reports, images, files to review), and look there for files he or his agents leave for you.$([[ "$lf" == "~/Brev"* ]] && printf ' Angus can also open them on his phone (the phone app'"'"'s Files tab shows ~/Brev).' || true) If both sides change the same file, the newer one wins and the other is kept next to it as \"name (conflict_on_DATE).ext\". Keep secrets and keys out of it.
 <!-- /hyprpi:shared-folder -->"
     fi
     if [[ -f "$ag" ]]; then sed -i '/^<!-- hyprpi:shared-folder /,/^<!-- \/hyprpi:shared-folder -->$/d' "$ag"; t="$(cat "$ag")"; if [[ -n "$t" ]]; then printf '%s\n' "$t" > "$ag"; else : > "$ag"; fi; fi # (and no blank lines left behind)
