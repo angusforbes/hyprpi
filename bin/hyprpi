@@ -249,11 +249,11 @@ async function cmdNew() {
   // given (an agent's or Thoughts' spawn always gives its routed or explicit one), it is a twin (it keeps its parent's), or it resumes
   // a session (pi resumes on the session's model). A model off the scoped list (J397) is skipped with a warning, never fatal.
   const newModel = await (async () => {
-    const pre = (a) => a.slice(0, a.indexOf("--") < 0 ? a.length : a.indexOf("--"));
-    const given = [...pre(cfg.piArgs || []), ...pre(piArgs)];
-    // only Angus's own open: not a spawn by Thoughts or an agent (HYPRPI_SPAWNED_BY, set by the daemon), not an agent's own `hyprpi new`
-    // (HYPRPI_AGENT_ID in its environment: its choice, as before)
-    if (process.env.HYPRPI_SPAWNED_BY || process.env.HYPRPI_AGENT_ID) return [];
+    // pi reads options up to its first "--" in the WHOLE argv (as the J397 check below): config piArgs and the caller's args together
+    const all = [...(cfg.piArgs || []), ...piArgs], given = all.slice(0, all.indexOf("--") < 0 ? all.length : all.indexOf("--"));
+    // only Angus's own open: not anything the daemon launches (spawns by Thoughts or agents, tinker, spin-outs, restarts: the daemon sets
+    // HYPRPI_FROM_DAEMON=1 for all it starts, and childEnv keeps it from the agents), not an agent's own `hyprpi new` (HYPRPI_AGENT_ID)
+    if (process.env.HYPRPI_FROM_DAEMON === "1" || process.env.HYPRPI_AGENT_ID) return [];
     if (given.some((x) => x === "--model" || x.startsWith("--model=") || x === "--session" || x.startsWith("--session=") || x === "--resume" || x === "-r" || x === "--continue" || x === "-c" || x === "--fork" || x.startsWith("--fork=")) || twinOf) return [];
     let m = ""; try { const { loadPolicy } = await import("../lib/policy.mjs"); m = String(loadPolicy().routing?.newAgentModel || "").trim(); } catch { /* no policy: pi's default */ }
     if (!m) return [];

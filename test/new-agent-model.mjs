@@ -16,12 +16,14 @@ fs.writeFileSync(path.join(T, "fakepi"), `#!/bin/sh\necho "$@" > ${argvFile}\n`,
 fs.writeFileSync(path.join(cfg, "config.json"), JSON.stringify({ pi: path.join(T, "fakepi"), piArgs: [] }));
 const run = (args, env = {}) => {
   try { fs.unlinkSync(argvFile); } catch { /* */ }
-  const e = { ...process.env, XDG_CONFIG_HOME: path.join(T, "cfg"), HYPRPI_SOCKET: path.join(T, "s.sock"), HYPRPI_STATE: path.join(T, "st"), HYPRPI_NO_ENSURE: "1", ...env };
-  for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_SPAWNED_BY", "HYPRPI_TWIN_OF", "HYPRPI_ROUTER"]) if (!(k in env)) delete e[k];
-  const r = spawnSync("script", ["-qc", ["node", path.join(ROOT, "bin/hyprpi"), "new", ...args].map((x) => `'${x}'`).join(" "), "/dev/null"], { env: e, encoding: "utf8", timeout: 30000 });
-  let argv = ""; try { argv = fs.readFileSync(argvFile, "utf8").trim(); } catch { /* pi never ran */ }
+  // (J534Check) every path isolated: config, socket, state, runtime and state homes; any daemon `hyprpi new` starts is reaped below
+  const e = { ...process.env, XDG_CONFIG_HOME: path.join(T, "cfg"), XDG_RUNTIME_DIR: path.join(T, "run"), XDG_STATE_HOME: path.join(T, "xstate"), HYPRPI_SOCKET: path.join(T, "s.sock"), HYPRPI_STATE: path.join(T, "st"), HYPRLAND_INSTANCE_SIGNATURE: "j534-none", ...env };
+  for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_FROM_DAEMON", "HYPRPI_TWIN_OF", "HYPRPI_ROUTER"]) if (!(k in env)) delete e[k];
+  fs.mkdirSync(e.XDG_RUNTIME_DIR, { recursive: true, mode: 0o700 });
+  const r = spawnSync("script", ["-qec", ["node", path.join(ROOT, "bin/hyprpi"), "new", ...args].map((x) => `'${x}'`).join(" "), "/dev/null"], { env: e, encoding: "utf8", timeout: 30000 });
+  let argv = "", ran = false; try { argv = fs.readFileSync(argvFile, "utf8").trim(); ran = true; } catch { /* pi never ran */ }
   const models = [...argv.matchAll(/--model (\S+)/g)].map((m) => m[1]);
-  return { models, last: models.at(-1) || "", out: (r.stdout || "") + (r.stderr || "") };
+  return { ran, models, last: models.at(-1) || "", out: (r.stdout || "") + (r.stderr || "") };
 };
 const setKey = (v) => { const f = path.join(cfg, "hyprpi.jsonc"); fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace(/"newAgentModel": "[^"]*"/, `"newAgentModel": ${JSON.stringify(v)}`)); };
 
@@ -32,18 +34,23 @@ setKey("anthropic/claude-sonnet-5-5"); r = run([]);
 ok("changing the key changes it", r.last === "anthropic/claude-sonnet-5-5", JSON.stringify(r.models));
 r = run(["--", "--model", "anthropic/claude-haiku-4-5"]);
 ok("an explicit --model wins (only it is passed)", r.models.length === 1 && r.last === "anthropic/claude-haiku-4-5", JSON.stringify(r.models));
-r = run(["--", "--model", "anthropic/claude-haiku-4-5"], { HYPRPI_SPAWNED_BY: "hyprpi" });
+r = run(["--", "--model", "anthropic/claude-haiku-4-5"], { HYPRPI_FROM_DAEMON: "1" });
 ok("a spawn by Thoughts or an agent keeps its routed / explicit model", r.models.length === 1 && r.last === "anthropic/claude-haiku-4-5", JSON.stringify(r.models));
-r = run([], { HYPRPI_SPAWNED_BY: "hyprpi" });
-ok("a spawn without a model (e.g. a fork keeping its parent's) doesn't get the key's model", r.models.length === 0, JSON.stringify(r.models));
+r = run([], { HYPRPI_FROM_DAEMON: "1" });
+ok("a spawn without a model (e.g. a fork keeping its parent's) doesn't get the key's model", r.ran && r.models.length === 0, JSON.stringify(r));
 r = run([], { HYPRPI_AGENT_ID: "hp-caller" });
-ok("an agent's own `hyprpi new` without --model: its choice, unchanged (no key model)", r.models.length === 0, JSON.stringify(r.models));
+ok("an agent's own `hyprpi new` without --model: its choice, unchanged (no key model)", r.ran && r.models.length === 0, JSON.stringify(r));
 r = run(["--", "--fork", "/nonexistent.jsonl"]);
-ok("a fork keeps its parent's model", r.models.length === 0, JSON.stringify(r.models));
+ok("a fork keeps its parent's model", r.ran && r.models.length === 0, JSON.stringify(r));
 setKey(""); r = run([]);
-ok("an empty key: pi's own default", r.models.length === 0, JSON.stringify(r.models));
+ok("an empty key: pi's own default", r.ran && r.models.length === 0, JSON.stringify(r));
 setKey("someprovider/not-on-the-list"); r = run([]);
 ok("a model off the scoped list (J397) is skipped with a warning, not fatal", r.models.length === 0 && /isn't on the scoped model list/.test(r.out), r.out.slice(-200));
+// (J534Check) the config's "--" splits pi's options: a --model after it is prompt text, so the key's model still goes in
+fs.writeFileSync(path.join(cfg, "config.json"), JSON.stringify({ pi: path.join(T, "fakepi"), piArgs: ["--"] })); setKey("anthropic/claude-opus-5-5");
+r = run(["--model", "x"]); ok("options are read from the whole argv up to its first --", r.ran && r.models[0] === "anthropic/claude-opus-5-5", JSON.stringify(r));
+// reap any daemon a `hyprpi new` started in this test (found by our temp paths in its environment)
+for (const pid of fs.readdirSync("/proc").filter((x) => /^\d+$/.test(x))) { try { if (fs.readFileSync(`/proc/${pid}/environ`, "utf8").includes(T)) process.kill(Number(pid), "SIGTERM"); } catch { /* gone or not ours */ } }
 fs.rmSync(T, { recursive: true, force: true });
 console.log(fails ? `new-agent-model: ${fails} FAILED` : "new-agent-model: all pass");
 process.exit(fails ? 1 : 0);
