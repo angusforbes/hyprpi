@@ -268,6 +268,8 @@ PYK
     secrets_ok || exit 3
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: world ${W^^}'s daemon isn't running here (start an agent: world ${W^^} new)" >&2; exit 4; }
     export HYPRPI_REMOTE_PANEL=1 TERM="${TERM:-xterm-256color}"
+    # J543: the laptop's pty relay (omnistation/pty-relay.py) does what the panel asks of the desktop; its nonce for this run
+    [[ "${HYPRPI_LAPTOP_RELAY:-}" =~ ^[A-Za-z0-9]{16,64}$ ]] || unset HYPRPI_LAPTOP_RELAY
     exec node "$DIR/mockups/$kind-tui.mjs" "${W^^}" ;;
   attach)
     tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null
