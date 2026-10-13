@@ -96,7 +96,7 @@ topic() {
 server() { hp_ntfy; if [[ -n "$HP_TOPIC" && -n "$HP_SERVER" ]]; then echo "$HP_SERVER"; else echo "$NTFY_SERVER"; fi; }
 topic_source() { hp_ntfy; [[ -n "$HP_TOPIC" ]] && echo "hyprpi's phone.ntfy setting" || { [[ -n "$(topic)" ]] && echo "$NTFY_FILE" || echo none; }; }
 phone_post() { # $1 title, $2 text, $3 priority
-  phone_on || return 1; local t; t="$(topic)" || return 1
+  phone_on || return 1; hp_ntfy; local t; t="$(topic)" || return 1 # (hp_ntfy here, in this shell: one read, topic and server from the same answer)
   "$CURL" -fsS -m 10 -o /dev/null -H "Title: $1" -H "Priority: $3" -H "Tags: $([[ "$3" == high ]] && echo warning || echo stop_sign)" --data-binary "$2" "$(server)/$t" >/dev/null 2>&1
 }
 set_phone() { # on|off in the config (one notify_phone line)
@@ -129,6 +129,7 @@ case "${1:-run}" in
   phone)
     # phone on | off | test | status | topic | set-topic (stdin). With BREV_AUTOSTOP_PRIMARY (the laptop's backup copy), on / off /
     # set-topic are done on the primary too, which gets the same topic file over ssh.
+    hp_ntfy # (once, in this shell, so every $(topic) / $(server) below uses the same answer)
     sub="${2:-status}"; prim="${BREV_AUTOSTOP_PRIMARY:-}"; [[ -z "$prim" || "$prim" =~ $NAME_RE ]] || prim=""
     onprim() { [[ -n "$prim" ]] || return 0; timeout -k 5 45 "$SSH" -o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=no -o ControlPath=none "$prim" "\$HOME/.local/bin/brev-autostop phone $1" 2>/dev/null | sed "s/^/$prim: /" || echo "brev-autostop: couldn't reach $prim (do it there too: ssh $prim brev-autostop phone $1)" >&2; }
     case "$sub" in

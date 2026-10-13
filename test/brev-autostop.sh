@@ -427,6 +427,13 @@ ok "hyprpi prints garbage (or an old hyprpi without 'ntfy') → the file" 'grep 
 echo '{"topic":"angus-brev","server":"https://push.example"}' > "$F/hpntfy"; fresh; rm -f "$F/ntfy"; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" run
 ok "a real stop with hyprpi's setting → one post there; Thoughts line still sent" '[[ $(posts) == 1 && $(thoughts) == 1 ]] && grep -qF "https://push.example/angus-brev" "$F/ntfy"'
 
+# 53. (NtfySrcCheck) hyprpi's setting is read once per command: topic and server never mix two answers
+printf '#!/usr/bin/env bash\nif [[ "$1 $2" == "ntfy config" ]]; then n=$(( $(cat "%s/hpn" 2>/dev/null || echo 0) + 1 )); echo $n > "%s/hpn"; [[ $n == 1 ]] && echo "{\\"topic\\":\\"first-topic\\",\\"server\\":\\"https://first.example\\"}" || echo "{\\"topic\\":\\"second-topic\\",\\"server\\":\\"https://second.example\\"}"; exit 0; fi\n' "$F" "$F" > "$F/bin/hyprpi-2"; chmod +x "$F/bin/hyprpi-2"
+rm -f "$F/hpn" "$F/ntfy"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-2" BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test >/dev/null
+ok "phone test → hyprpi read once, posted to first.example/first-topic" '[[ "$(cat "$F/hpn")" == 1 ]] && grep -qF "https://first.example/first-topic" "$F/ntfy"'
+rm -f "$F/hpn" "$F/ntfy"; fresh; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-2" BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; rm -f "$F/hpn"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-2" BREV_AUTOSTOP_CONFIG="$PC" run
+ok "a stop's alert → hyprpi read once, same answer for topic and server" '[[ "$(cat "$F/hpn")" == 1 ]] && grep -qF "https://first.example/first-topic" "$F/ntfy"'
+
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
 ok "brev ls's header lines are not instances" '[[ ! -d "$F/state/boxes/You" && ! -d "$F/state/boxes/NAME" ]]'
