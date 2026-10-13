@@ -37,6 +37,16 @@ ok("0 remoteHome: from the state path, the env, and off elsewhere",
   const P = { routing: { default: "ordinary", ladder: ["anthropic/claude-sonnet-5-5:medium"], kinds: { ordinary: 0 } } };
   const was = process.env.HYPRPI_REMOTE_HOME; process.env.HYPRPI_REMOTE_HOME = "-";
   ok("0 routeModel off a remote machine: as configured", routeModel({ complexity: "ordinary" }, P).model === "anthropic/claude-sonnet-5-5");
+  // the hub has no enabledModels: its providers' models (~/.pi/agent/models.json) are the list; every kind gets one of them
+  const PD = fs.mkdtempSync(path.join(os.tmpdir(), "j543pi-")), wasDir = process.env.PI_CODING_AGENT_DIR;
+  fs.writeFileSync(path.join(PD, "settings.json"), JSON.stringify({ defaultProvider: "nv-inference" }));
+  fs.writeFileSync(path.join(PD, "models.json"), JSON.stringify({ providers: { "nv-inference": { models: L.map((x) => ({ id: x.replace(/^nv-inference\//, "") })) } } }));
+  process.env.PI_CODING_AGENT_DIR = PD; process.env.HYPRPI_REMOTE_HOME = "I";
+  const P2 = { routing: { default: "ordinary", ladder: ["anthropic/claude-haiku-4-5:low", "anthropic/claude-sonnet-5-5:medium", "anthropic/claude-opus-5-5:high"], kinds: { simple: 0, ordinary: 1, hard: 2, review: "openai-codex/gpt-6.1-sol:high" } } };
+  const got = ["simple", "ordinary", "hard", "review"].map((k) => routeModel({ complexity: k }, P2).model);
+  ok("0 on a remote machine every kind routes to a model it has (simple haiku, ordinary sonnet, hard opus, review gpt-6.1-sol)", JSON.stringify(got) === JSON.stringify([L[2], L[1], L[0], L[3]]), JSON.stringify(got));
+  if (wasDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = wasDir;
+  fs.rmSync(PD, { recursive: true, force: true });
   if (was === undefined) delete process.env.HYPRPI_REMOTE_HOME; else process.env.HYPRPI_REMOTE_HOME = was;
 }
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j543-")), ROOTH = path.join(T, ".hyprpi-h"), S = path.join(ROOTH, "state"), cfg = path.join(T, "cfg"), sock = path.join(T, "d.sock");
