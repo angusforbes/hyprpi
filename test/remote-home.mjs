@@ -173,7 +173,14 @@ try {
     const sr = await api.call("agent.startRemote", { cwd: nd });
     for (let i = 0; i < 20 && !new RegExp(`ARGS start ${sr.agent}\\n`).test(log()); i++) await sleep(200);
     ok("10 /new DIR in a remote panel: an omni-xyz agent starts in DIR", /^omni-[a-z]{3}$/.test(sr.agent) && log().split("ARGS ").some((b) => b.startsWith(`start ${sr.agent}\n`) && b.includes(`HYPRPI_START_CWD=${nd}`)), JSON.stringify(sr));
-    ok("10 /new with a folder that isn't there is refused", /no folder/.test(await err(() => api.call("agent.startRemote", { cwd: "/nope/x" })))); }
+    ok("10 /new with a folder that isn't there, or a file, is refused", /no folder/.test(await err(() => api.call("agent.startRemote", { cwd: "/nope/x" }))) && /no folder/.test(await err(() => api.call("agent.startRemote", { cwd: path.join(T, "pi") }))));
+    // (FollowCheck) ^K never signals pid 0 / a process group, nor a pid that isn't that agent's pi
+    const z = await connect({ path: sock, onEvent: () => {} }); await z.call("agent.hello", { agent_id: "h-zero", pid: 0, name: "zero", want_workspace: 76, cwd: T });
+    const s1 = await connect({ path: sock, onEvent: () => {} }); await s1.call("agent.hello", { agent_id: "h-notpi", pid: process.pid, name: "notpi", want_workspace: 77, cwd: T });
+    ok("10 ^K with pid 0 is refused (the daemon lives on)", /no process to kill/.test(await err(() => api.call("agent.endRemote", { agent: "h-zero", kill: true }))) && !!(await api.call("list", {})).agents);
+    const sl = spawn("sleep", ["30"]); await z.call("agent.update", { status: "idle" }).catch(() => {});
+    ok("10 ^K on a pid that isn't a pi (this test's sleep) is refused", /isn't .*pi/.test(await err(async () => { await s1.call("agent.hello", { agent_id: "h-notpi", pid: sl.pid, name: "notpi", want_workspace: 77, cwd: T }).catch(() => {}); return api.call("agent.endRemote", { agent: "h-notpi", kill: true }); })) && sl.exitCode === null);
+    sl.kill(); z.close?.(); s1.close?.(); }
   { const pl = fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : "";
     ok("7 started with an agent's env, the daemon's own pi calls (a topic label's pi -p too) carry no agent identity", /pi -p/.test(pl) && !/RPC=1|NAME=omni|ID=h-/.test(pl), pl.slice(0, 300)); }
   api.close?.(); agent.close?.();
