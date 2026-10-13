@@ -82,7 +82,7 @@ jot_setup() {
   [[ -d "$pj/.git" && -f "$pj/src/extension.ts" ]] || { echo "world: no pi-jot at $pj: /jot-* in this world's windows stays off"; return 0; }
   git -C "$pj" archive --format=tar HEAD | "${SSH[@]}" "set -e; d=\$HOME/.hyprpi-$wl/pi-jot; rm -rf \"\$d.new\"; mkdir -p \"\$d.new\"; tar -x -C \"\$d.new\"; test -f \"\$d.new/src/extension.ts\"; rm -rf \"\$d.old\"; [ ! -e \"\$d\" ] || mv \"\$d\" \"\$d.old\"; mv \"\$d.new\" \"\$d\"; rm -rf \"\$d.old\""
   [[ -f "$jc" ]] && "${SSH[@]}" "mkdir -p \$HOME/.pi/agent && cat > \$HOME/.pi/agent/jot.json.new && mv \$HOME/.pi/agent/jot.json.new \$HOME/.pi/agent/jot.json" < "$jc"
-  "${SSH[@]}" "node -e 'const fs=require(\"fs\"),p=process.env.HOME+\"/.pi/agent/settings.json\",pkg=process.env.HOME+\"/.hyprpi-$wl/pi-jot\";let j={};try{j=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch{};const a=Array.isArray(j.packages)?j.packages:[];if(!a.includes(pkg)){j.packages=[...a,pkg];fs.writeFileSync(p,JSON.stringify(j,null,2)+\"\\n\")}'"
+  "${SSH[@]}" "export PATH=\$HOME/.local/bin:\$PATH; node -e 'const fs=require(\"fs\"),p=process.env.HOME+\"/.pi/agent/settings.json\",pkg=process.env.HOME+\"/.hyprpi-$wl/pi-jot\";let j={};try{j=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch{};const a=Array.isArray(j.packages)?j.packages:[];if(!a.includes(pkg)){j.packages=[...a,pkg];fs.writeFileSync(p,JSON.stringify(j,null,2)+\"\\n\")}'"
   echo "world: pi-jot $(git -C "$pj" rev-parse --short HEAD) installed for world $WL's agents: their /jot-* notes go to this laptop's $(jq -r '.root // "~/Obsidian"' "$jc" 2>/dev/null || echo ~/Obsidian) (agents started before this pick it up on their next start)"
 }
 case "$cmd" in
