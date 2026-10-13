@@ -17,10 +17,10 @@ cat > "$T/bin/unison" <<EOF
 a=(); skip=0; box=""
 for x in "\$@"; do
   if (( skip )); then skip=0; continue; fi
-  case "\$x" in -servercmd|-sshargs) skip=1; continue;; ssh://*) r="\${x#ssh://}"; box="\${r%%/*}"; x="$T/boxes/\$box/\${r#*/}";; esac
+  case "\$x" in -servercmd|-sshargs) skip=1; continue;; ssh://*) r="\${x#ssh://}"; box="\${r%%/*}"; rp="\${r#*/}"; x="$T/boxes/\$box/\$rp";; esac
   a+=("\$x")
 done
-grep -qx "\$box" "$T/broken" 2>/dev/null && { echo "Fatal error: Lost connection with the server" >&2; exit 3; }
+grep -qx -e "\$box" -e "\$box:\$rp" "$T/broken" 2>/dev/null && { echo "Fatal error: Lost connection with the server" >&2; exit 3; }
 echo "\$box \$*" >> "$T/unison-calls.log"
 exec "$REAL_UNISON" "\${a[@]}"
 EOF
@@ -78,6 +78,15 @@ rm -f "$T/home/Brev/Hub/"*; run; rc=$?
 ok "emptying ~/Brev/Hub by hand: exit 1, logged as Unison's safety stop (not 'unreachable')" "[[ $rc -eq 1 ]] && grep -q 'safety stop' $T/state/brev-sync/sync.log && [[ \$(cat $T/state/brev-sync/pairs/hub/state) == both-sides-differ ]]"
 rm -f "$T/boxes/hub/workspace/shared/"*; run; rc=$?
 ok "… emptied on both sides: ok again" "[[ $rc -eq 0 && \$(cat $T/state/brev-sync/pairs/hub/state) == ok ]]"
+# two pairs on one box keep separate failure counts (HubSyncCheck547); a box folder in two pairs is refused
+mkdir -p "$T/boxes/hub/workspace/other" "$T/home/Hub2" "$T/home/Hub3"
+printf '%s\n' '~/Hub2 hub workspace/other' '~/Hub3 hub workspace/shared' >> "$T/cfg/hyprpi/brev-sync.conf"
+echo "hub:workspace/other" > "$T/broken"; : > "$T/alerts.log"
+run; run; run
+ok "two pairs on the hub: the failing one (workspace/other) counts 3 and alerts once, naming it" "[[ \$(cat $T/state/brev-sync/pairs/+\$(printf '%s\\0%s' hub workspace/other | sha256sum | cut -c1-16)/fails) == 3 ]] && [[ \$(grep -c '^hyprpi thoughts alert' $T/alerts.log) -eq 1 ]] && grep -q 'Hub2 <-> hub:~/workspace/other' $T/alerts.log"
+ok "… while the healthy hub pair stays ok, 0 failures" "[[ \$(cat $T/state/brev-sync/pairs/hub/state) == ok && \$(cat $T/state/brev-sync/pairs/hub/fails) == 0 ]]"
+ok "a second laptop folder for hub:~/workspace/shared is refused (logged, skipped)" "grep -q 'hub:~/workspace/shared is already in another pair' $T/state/brev-sync/sync.log && [[ ! -e $T/boxes/hub/workspace/shared/.never ]]"
+: > "$T/broken"; sed -i '/Hub2\|Hub3/d' "$T/cfg/hyprpi/brev-sync.conf"
 ok "status lists both pairs" "HOME=$T/home PATH=$T/bin:\$PATH XDG_CONFIG_HOME=$T/cfg XDG_STATE_HOME=$T/state $ROOT/brev/sync/brev-sync status | grep -c ' <-> .*: box ' | grep -qx 2"
 [[ $fails -eq 0 ]] && { echo "all passed"; rm -rf "$T"; } || echo "$fails FAILED (state $T)"
 exit $fails
