@@ -402,7 +402,7 @@ export default function hyprpi(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_e: any, ctx: any) => { ctxRef = ctx; stopped = false; watchTyping(ctx); await ensure(); });
   // J537 (Angus: "make that appear in eevry hyprpi agent window when it starts up, they way the pi logo appears for
-  // pi"): the hypi mark (lib/hypi-mark.mjs, from make8.py's grid) in pi's logo spot, with pi's version and short key
+  // pi"): the hypi mark (lib/hypi-mark.mjs, from make-final.py's grid, the same as π's icon) in pi's logo spot, with pi's version and short key
   // hints beside it as pi lays them out. Only in a hyprpi agent window's TUI; any problem leaves pi's own header.
   pi.on("session_start", async (_e: any, ctx: any) => {
     if (ctx?.mode !== "tui" || !process.env.HYPRPI_AGENT_ID || typeof ctx.ui?.setHeader !== "function") return;
