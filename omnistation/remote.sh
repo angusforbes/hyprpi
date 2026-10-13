@@ -115,6 +115,8 @@ case "$cmd" in
     # J543 (parity): `bonk` / `ding` (the skill every agent knows) for the agents here: they mark the agent blocked through hyprpi,
     # quietly, with the message; the daemon keeps it as a notice and the laptop plays the sound and shows the toast (world-status.mjs)
     mkdir -p "$ROOT/bin"
+    # J553: the binding's name prefix ("omni-"), for agents the remote agents panel starts (/new DIR)
+    [[ "${HYPRPI_REMOTE_PREFIX:-}" =~ ^[a-z][a-z0-9-]{0,11}$ ]] && echo "$HYPRPI_REMOTE_PREFIX" > "$ROOT/prefix"
     printf '#!/usr/bin/env bash\n# bonk on this machine (omnistation/remote.sh, J543): the laptop plays it (sound + toast; a click opens the agent)\nd=; [[ ${1:-} == --ding || ${1:-} == --decide ]] && { d=1; shift; }\n[[ -n ${HYPRPI_AGENT_ID:-} ]] || { echo "bonk: only a hyprpi agent can bonk from here" >&2; exit 0; }\nif [[ -n $d && -n ${*:-} ]]; then exec timeout 5 node %q status blocked --quiet --decision "$*"; elif [[ -n ${*:-} ]]; then exec timeout 5 node %q status blocked --quiet --note "$*"; else exec timeout 5 node %q status blocked --quiet; fi\n' "$DIR/bin/hyprpi" "$DIR/bin/hyprpi" "$DIR/bin/hyprpi" > "$ROOT/bin/bonk"
     printf '#!/usr/bin/env bash\nexec "$(dirname "$0")/bonk" --ding "$@"\n' > "$ROOT/bin/ding"; chmod 755 "$ROOT/bin/bonk" "$ROOT/bin/ding"
     # J480: the world's Thoughts model (the binding's "thoughtsModel", e.g. a model served on this machine) and the human's

@@ -152,6 +152,28 @@ try {
     ok("9 a closed helper is a 'closed' notice for the laptop", !!got, JSON.stringify(got));
     const { pickNotices } = await import(path.join(ROOT, "omnistation/auto-open.mjs")); const st = {}; pickNotices([], st, Date.now());
     ok("9 … which the laptop's world-status takes (kind closed)", pickNotices([got || {}], st, Date.now())[0]?.kind === "closed"); }
+  { // 10 J553 (J543 follow-up 6): a remote agents panel's ^W / ^K, ⏎ on a closed agent, and restore, on a remote machine
+    const sess = path.join(ROOTH, "sessions", "oldie", "s.jsonl"); fs.mkdirSync(path.dirname(sess), { recursive: true }); fs.writeFileSync(sess, "{}\n");
+    const o = await connect({ path: sock, onEvent: () => {} }); await o.call("agent.hello", { agent_id: "h-oldie", pid: 999998, name: "oldie", want_workspace: 74, cwd: T });
+    await o.call("agent.update", { session: sess, status: "idle" }).catch(() => {});
+    const e = await connect({ path: sock, onEvent: () => {} }); await e.call("agent.hello", { agent_id: "h-endme", pid: 999997, name: "endme", want_workspace: 75, cwd: T });
+    const r1 = await api.call("agent.endRemote", { agent: "h-endme" }).catch((x) => ({ err: x.message }));
+    o.close?.(); e.close?.();
+    await sleep(7500); // both gone (6 s): oldie closed on its own, endme on purpose
+    const log = () => fs.existsSync(path.join(T, "starts.log")) ? fs.readFileSync(path.join(T, "starts.log"), "utf8") : "";
+    ok("10 ^W on a remote agent: remote.sh stop SLUG", r1.ended && /ARGS stop endme\n/.test(log()), JSON.stringify(r1));
+    const ns = (await api.call("list", {})).notices || [];
+    ok("10 … and it is a 'closed' notice (the laptop closes its window); one that ended on its own isn't", ns.some((n) => n.kind === "closed" && n.id === "h-endme") && !ns.some((n) => n.kind === "closed" && n.id === "h-oldie"), JSON.stringify(ns.map((n) => n.kind + ":" + n.id)));
+    const rs = await api.call("agent.resume", { agent: "h-oldie" }).catch((x) => ({ err: x.message }));
+    for (let i = 0; i < 20 && !/ARGS start oldie/.test(log()); i++) await sleep(200);
+    const blk = log().split("ARGS ").find((b) => b.startsWith("start oldie")) || "";
+    ok("10 ⏎ on the closed agent: remote.sh start on its own session, its window to open on the laptop", rs.resuming && /HYPRPI_START_RESTART=1/.test(blk) && blk.includes(`HYPRPI_START_SESSION=${sess}`) && ((await api.call("list", {})).agents || []).every((a) => a.id !== "h-oldie"), JSON.stringify(rs) + blk.slice(0, 300));
+    ok("10 a restore on a remote machine says to use world H recover", /world H recover/.test(await err(() => api.call("restore.run", {}))));
+    fs.writeFileSync(path.join(ROOTH, "prefix"), "omni-\n"); const nd = path.join(T, "proj"); fs.mkdirSync(nd);
+    const sr = await api.call("agent.startRemote", { cwd: nd });
+    for (let i = 0; i < 20 && !new RegExp(`ARGS start ${sr.agent}\\n`).test(log()); i++) await sleep(200);
+    ok("10 /new DIR in a remote panel: an omni-xyz agent starts in DIR", /^omni-[a-z]{3}$/.test(sr.agent) && log().split("ARGS ").some((b) => b.startsWith(`start ${sr.agent}\n`) && b.includes(`HYPRPI_START_CWD=${nd}`)), JSON.stringify(sr));
+    ok("10 /new with a folder that isn't there is refused", /no folder/.test(await err(() => api.call("agent.startRemote", { cwd: "/nope/x" })))); }
   { const pl = fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : "";
     ok("7 started with an agent's env, the daemon's own pi calls (a topic label's pi -p too) carry no agent identity", /pi -p/.test(pl) && !/RPC=1|NAME=omni|ID=h-/.test(pl), pl.slice(0, 300)); }
   api.close?.(); agent.close?.();

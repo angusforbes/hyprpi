@@ -62,7 +62,7 @@ const cmds = createCommands({
   commands: [],
   ctx: {
     panel: "agents", world: () => room, worlds: () => rooms.map((r) => r.id), cycle: (d) => cycleRoom(d), agents: () => agents,
-    newAgent: () => newAgent(),
+    newAgent: (dir) => newAgent(dir), // J553: /new DIR
     api: () => api, via: "agents-tui", render: () => render(),
     note: (t) => { note = t; render(); },
     showHelp: () => { showHelp = true; note = ""; render(); },
@@ -502,6 +502,10 @@ function act(kind) { // ^W close / ^K kill; on a closed agent both mean "forget"
   }
   closing.set(a.id, kind);
   setTimeout(() => { if (closing.delete(a.id)) render(); }, 10000);
+  if (remotePanel()) { // J553 (J543 follow-up 6): the agent runs on this machine and its window is on the laptop: the daemon ends it here
+    api?.call("agent.endRemote", { agent: a.id, kill: kind === "kill" }).then(() => { note = `${kind === "close" ? "closed" : "killed"} ${a.display}`; render(); }, (e) => { closing.delete(a.id); note = "✗ " + e.message; render(); });
+    return render();
+  }
   if (kind === "close") {
     if (!a.address) { note = "✗ no window for " + a.display; return render(); }
     hypr.closeWindow(a.address).then(() => { note = "closed " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
@@ -513,9 +517,14 @@ function act(kind) { // ^W close / ^K kill; on a closed agent both mean "forget"
 }
 
 let lastNew = 0;
-function newAgent() {
+function newAgent(dir) {
   if (Date.now() - lastNew < 2000) return;
   lastNew = Date.now();
+  if (remotePanel() && dir) { // J553: /new DIR here: started on this machine in DIR (the daemon), its window opens on the laptop
+    api?.call("agent.startRemote", { cwd: dir }).then((r) => { note = `starting ${r.agent} in ${dir} (its window opens on the laptop) …`; render(); }, (e) => { note = "✗ " + e.message; render(); });
+    return render();
+  }
+  if (dir) { const cwd = dir.replace(/^~(?=$|\/)/, process.env.HOME); if (!fs.existsSync(cwd)) { note = "✗ no such folder: " + cwd; return render(); } const env = { ...process.env, HYPRPI_ROUTER: "1" }; delete env.HYPRPI_AGENT_ID; spawn(new URL("../bin/hyprpi", import.meta.url).pathname, ["new", "--cwd", cwd], { detached: true, stdio: "ignore", env }).unref(); pendingNew.push({ cwd, t: Date.now(), known: new Set(agents.map((a) => a.id)) }); setTimeout(render, 30500); note = ""; return render(); } // (J553: /new DIR in the agents panel took no DIR before)
   if (remotePanel()) { // J543: the laptop opens it (world X new); it is jumped to once it's listed, as below
     if (!laptopNew()) { note = "✗ " + NO_RELAY; return render(); }
     pendingNew.push({ cwd: `world ${room}`, t: Date.now(), known: new Set(agents.map((a) => a.id)) }); setTimeout(render, 30500); note = ""; return render();

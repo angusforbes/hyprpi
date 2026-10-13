@@ -42,6 +42,8 @@ for (const n of ["omni-alpha", "omni-beta", "omni-new"]) fs.mkdirSync(path.join(
 fs.writeFileSync(path.join(RW, "state/thoughts/H.thread.jsonl"), JSON.stringify({ ts: now, role: "thoughts", text: "Read https://example.com/thoughts-link and ~/work/notes.txt then ping @omni-alpha about J7 today." }) + "\n");
 for (const t of ["hyprctl", "gio", "xdg-open", "wl-paste", "wl-copy", "notify-send", "kitty"]) exe(path.join(RB, t), `#!/bin/sh\ncase "$1 $2" in "-j "*) case "$2" in clients|workspaces|monitors) echo '[]';; *) echo '{}';; esac; exit 0;; esac\necho "${t} $*" >> ${F("remote-desktop.log")}\n`);
 
+// J553: tmux on the remote machine: records, has no sessions (a start makes one in the log only)
+exe(path.join(RB, "tmux"), `#!/bin/sh\necho "$*" >> ${F("remote-tmux.log")}\ncase "$1" in has-session) exit 1;; esac\nexit 0\n`);
 // ---- the laptop: stubs for hyprctl (its windows: clients.json), gio / xdg-open / notify-send, wl-paste, world, mockups/panels
 const dummy = (name) => spawn("python3", ["-c", "import time; time.sleep(600)", "/x/omnistation/remote-client.mjs", "H", name], { stdio: "ignore" });
 const procs = [dummy("omni-alpha"), dummy("omni-beta")];
@@ -282,6 +284,13 @@ try {
   const pn = clientPids().at(-1);
   await hello("h-omni-new", "omni-new", pn); // the new agent starts on the machine
   ok("… and the jump to it once it's listed (allowed once, no click needed)", await waitFor(() => hyprLog().some((l) => /hl\.dsp\.focus.*address:0xn2/.test(l)), 6000), hyprLog().join(" | ") + " / " + read("relay.log"));
+  // J553 (J543 follow-up 6): ^W ^W on a remote agent ends it ON THE MACHINE (its tmux session, on purpose: the laptop closes its window)
+  at = scr.find("omni-new");
+  if (at) { await click(at, { ms: 400 }); await key("\x17", 300); await key("\x17", 2500); }
+  ok("agents: ^W ^W on omni-new → its tmux session ends on the machine (remote.sh stop)", await waitFor(() => lines("remote-tmux.log").some((l) => /kill-session -t hyprpi-h-omni-new/.test(l)), 5000), lines("remote-tmux.log").join(" | ") + " / " + plain().slice(-300));
+  // /new DIR → started on the machine in DIR (agent.startRemote → remote.sh start, cwd DIR)
+  await key("/new ~/work", 300); await key("\r", 4000);
+  ok("agents: /new ~/work → a new agent starts on the machine in ~/work", await waitFor(() => lines("remote-tmux.log").some((l) => /new-session -d -s hyprpi-h-r-[a-z]{3} -c .*\/rh\/work /.test(l)), 6000), lines("remote-tmux.log").join(" | ") + " / " + plain().slice(-300));
   await closePanel();
 
   ok("nothing was done on the remote machine's desktop (no hyprctl action, gio, xdg-open, wl-paste there)", !remoteActs.length && !lines("remote-desktop.log").length, read("remote-desktop.log"));

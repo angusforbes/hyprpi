@@ -653,6 +653,10 @@ let lastNew = 0;
 function newAgent(dir) {
   if (Date.now() - lastNew < 2000) return; // held / repeated Ctrl+N: one agent
   lastNew = Date.now();
+  if (remotePanel() && dir) { // J553: /new DIR here: started on this machine in DIR (the daemon), its window opens on the laptop
+    api?.call("agent.startRemote", { cwd: dir }).then((r) => { note = `starting ${r.agent} in ${dir} (its window opens on the laptop) …`; render(); }, (e) => { note = "✗ " + e.message; render(); });
+    return render();
+  }
   if (remotePanel()) { // J543: the laptop opens it (world X new; the remote machine's own folder); jumped to once listed
     if (!laptopNew()) { note = "✗ " + NO_RELAY; return render(); }
     pendingNew.push({ cwd: `world ${room}`, t: Date.now(), known: new Set(agents.map((a) => a.id)) }); setTimeout(render, 30500); note = ""; return render();
