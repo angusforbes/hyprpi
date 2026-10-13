@@ -27,6 +27,11 @@ const live = [["the bar (live)", path.join(os.homedir(), ".config/omarchy/plugin
 for (const [n, f] of qmls) ok(`${n} paletteKeys == term.mjs PALETTE`, JSON.stringify(qmlKeys(path.join(ROOT, f))) === want, JSON.stringify(qmlKeys(path.join(ROOT, f))));
 for (const [n, f] of live) if (fs.existsSync(f)) ok(`${n} paletteKeys == term.mjs PALETTE`, JSON.stringify(qmlKeys(f)) === want);
 for (const f of [...qmls.map((x) => path.join(ROOT, x[1])), path.join(ROOT, "ui/shell.qml")]) ok(`${path.basename(f)} reads world-colors.toml`, fs.readFileSync(f, "utf8").includes("/Harness/hyprpi/lib/tui/world-colors.toml"));
+// the world-coloured window border (hyprwrlds/hypr/hyprwrlds.lua; live copy ~/.config/hypr/hyprwrlds.lua)
+const luaKeys = (file) => { const m = /local PALETTE_KEYS = \{([\s\S]*?)\n\}/.exec(fs.readFileSync(file, "utf8")); return m ? JSON.parse(`[${m[1].replace(/\{/g, "[").replace(/\}/g, "]").replace(/,\s*$/, "")}]`) : null; };
+ok("hyprwrlds.lua PALETTE_KEYS (window border) == term.mjs PALETTE", JSON.stringify(luaKeys(path.join(ROOT, "hyprwrlds/hypr/hyprwrlds.lua"))) === want, JSON.stringify(luaKeys(path.join(ROOT, "hyprwrlds/hypr/hyprwrlds.lua"))));
+ok("hyprwrlds.lua reads world-colors.toml", fs.readFileSync(path.join(ROOT, "hyprwrlds/hypr/hyprwrlds.lua"), "utf8").includes("/Harness/hyprpi/lib/tui/world-colors.toml"));
+{ const f = path.join(os.homedir(), ".config/hypr/hyprwrlds.lua"); if (fs.existsSync(f)) ok("live ~/.config/hypr/hyprwrlds.lua PALETTE_KEYS == term.mjs PALETTE", JSON.stringify(luaKeys(f)) === want); }
 const sk = /worldKeys:\s*(\[[^\]]*\])/.exec(fs.readFileSync(path.join(ROOT, "ui/shell.qml"), "utf8"));
 ok("ui/shell.qml worldKeys = the palette's first keys", sk && JSON.stringify(JSON.parse(sk[1])) === JSON.stringify(PALETTE.map((k) => k[0])), sk?.[1]);
 ok("search-tui uses term.mjs's palette (no copy of its own)", !/const PALETTE\s*=/.test(fs.readFileSync(path.join(ROOT, "mockups/search-tui.mjs"), "utf8")));

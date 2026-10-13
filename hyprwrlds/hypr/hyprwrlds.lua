@@ -452,24 +452,31 @@ o.bind("SUPER + mouse_up", "Scroll workspaces backward in world", function() M.c
 -- ---------------------------------------------------------------------------
 -- World-coloured active border. Hues come from the current Omarchy theme's
 -- colors.toml in the bar widget's order: A blue, B red, C cyan, D yellow,
--- E magenta, F green, G orange, H brown, I foreground.
+-- E magenta, F green, G orange, H brown; I lime and J pink come from hyprpi's
+-- own world-colors.toml (J535: the theme has only 8 colours), else the foreground.
+-- Same list as hyprpi's lib/tui/term.mjs (its test/world-colors.mjs checks).
 local PALETTE_KEYS = {
   { "blue", "color4" }, { "red", "color1" }, { "cyan", "color6" },
   { "yellow", "color3" }, { "magenta", "color5" }, { "green", "color2" },
-  { "orange", "color11" }, { "brown", "color9" }, { "foreground", "color7" },
+  { "orange", "color11" }, { "brown", "color9" }, { "world_i", "foreground", "color7" },
+  { "world_j", "foreground", "color7" },
 }
 
-function M.theme_colors()
-  local path = (os.getenv("HOME") or "") .. "/.local/state/omarchy/current/theme/colors.toml"
+local function read_colors(path, out, only_world)
   local ok, f = pcall(io.open, path, "r")
-  if not ok or not f then return {} end
-  local out = {}
+  if not ok or not f then return out end
   for line in f:lines() do
     local k, v = line:match('^%s*([%w_%-]+)%s*=%s*["\']?(#%x%x%x%x%x%x)')
-    if k then out[k] = v end
+    if k and (not only_world or k:match("^world_")) then out[k] = v end
   end
   f:close()
   return out
+end
+
+function M.theme_colors()
+  local home = os.getenv("HOME") or ""
+  local out = read_colors(os.getenv("HYPRPI_WORLD_COLORS") or (home .. "/Harness/hyprpi/lib/tui/world-colors.toml"), {}, true)
+  return read_colors(home .. "/.local/state/omarchy/current/theme/colors.toml", out, false)
 end
 
 function M.world_color(w)
