@@ -14,6 +14,8 @@ import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
 import { ROOT } from "../lib/paths.mjs";
 import { SBX_MARK, REMOTE_MARK } from "../lib/sandbox-icon.mjs";
+import * as PiAgent from "@earendil-works/pi-coding-agent";
+import { markLines } from "../lib/hypi-mark.mjs";
 import * as hypr from "../lib/hypr.mjs";
 import { laterModes } from "./later.ts";
 import { upkeepAgent } from "./upkeep.ts";
@@ -399,6 +401,32 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_e: any, ctx: any) => { ctxRef = ctx; stopped = false; watchTyping(ctx); await ensure(); });
+  // J537 (Angus: "make that appear in eevry hyprpi agent window when it starts up, they way the pi logo appears for
+  // pi"): the hypi mark (lib/hypi-mark.mjs, from make8.py's grid) in pi's logo spot, with pi's version and short key
+  // hints beside it as pi lays them out. Only in a hyprpi agent window's TUI; any problem leaves pi's own header.
+  pi.on("session_start", async (_e: any, ctx: any) => {
+    if (ctx?.mode !== "tui" || !process.env.HYPRPI_AGENT_ID || typeof ctx.ui?.setHeader !== "function") return;
+    try {
+      const P: any = PiAgent;
+      ctx.ui.setHeader((_tui: any, theme: any) => ({
+        render(_width: number): string[] {
+          const mode = theme.getColorMode?.() === "256color" ? "256color" : "truecolor";
+          const [a, b, c] = markLines(mode);
+          const hint = (k: string, d: string) => (typeof P.keyHint === "function" ? P.keyHint(k, d) : theme.fg("dim", d));
+          const raw = (k: string, d: string) => (typeof P.rawKeyHint === "function" ? P.rawKeyHint(k, d) : `${k} ${theme.fg("dim", d)}`);
+          const key = (k: string, f: string) => (typeof P.keyText === "function" ? P.keyText(k) : f);
+          const hints = [hint("app.interrupt", "interrupt"), raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].join(theme.fg("muted", " · "));
+          return [
+            `${a} ${theme.fg("dim", `v${P.VERSION || ""}`)}`,
+            `${b} ${hints}`,
+            `${c} ${theme.fg("dim", "hyprpi agent · /hotkeys lists every key")}`,
+            theme.fg("dim", "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi."),
+          ];
+        },
+        invalidate() {},
+      }));
+    } catch { /* pi's own header stays */ }
+  });
   pi.on("session_shutdown", async () => {
     stopped = true;
     try { stopInput?.(); } catch { /* gone */ } stopInput = null;

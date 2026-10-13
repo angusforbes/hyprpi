@@ -56,3 +56,12 @@ for i, (name, label, cs) in enumerate(OPTS):
         line += " " + w
     d.text((cx, ys), line.strip(), fill=(80, 80, 80), font=small)
 sheet.save(os.path.join(HERE, "contact-t.png"))
+
+# J537: Angus's pick, f2, as data: the single source of the hypi mark for anything that draws it (hyprpi's agent windows
+# draw it in the terminal, lib/hypi-mark.mjs). Rows top to bottom (row 0 is the P's top row), "." = empty, letters = COL.
+import json
+PICK = "f2"
+json.dump({"name": PICK, "from": "remote-control/icon-options/pixel/make8.py (J61 round 8; J537)",
+           "colors": {k: list(v) for k, v in COL.items() if k in "CBY"}, "grid": mark(next(c for n, _, c in OPTS if n == PICK))},
+          open(os.path.join(HERE, "..", "..", "..", "assets", "hypi-mark.json"), "w"), indent=1)
+
