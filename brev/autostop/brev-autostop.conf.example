@@ -9,6 +9,9 @@
 #   unhealthy NAME N     this instance's own UNHEALTHY limit
 #   exclude NAME         never stop this instance and never probe it
 #   box NAME             registered by `world X setup` (brev-autostop install NAME); uses the default
+#   notify_phone on|off  alerts also as phone push notifications through ntfy.sh (J527); set it with `brev-autostop phone on`
+#                        / `phone off` (on also makes the topic file ~/.config/hyprpi/brev-autostop.ntfy, 600; never put
+#                        the topic here)
 #
 # To protect a long job, pause instead of editing: brev-autostop pause NAME 24h (or `pause NAME` until `resume NAME`).
 

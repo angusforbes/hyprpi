@@ -44,6 +44,8 @@ printf '#!/usr/bin/env bash\necho "notify $*" >> "%s/calls"\n' "$F" > "$F/bin/no
 printf '#!/usr/bin/env bash\necho "hyprpi $*" >> "%s/calls"\n' "$F" > "$F/bin/hyprpi"
 chmod +x "$F/bin/"*
 printf 'exclude keep-me-box\n' > "$F/base.conf"
+printf '#!/usr/bin/env bash\necho "ntfy $*" >> "%s/ntfy"; [[ -f "%s/ntfyfail" ]] && exit 7; exit 0\n' "$F" "$F" > "$F/bin/ntfycurl"; chmod +x "$F/bin/ntfycurl"
+export BREV_AUTOSTOP_CURL="$F/bin/ntfycurl" BREV_AUTOSTOP_NTFY_FILE="$F/ntfy-topic" BREV_AUTOSTOP_NTFY_SERVER="https://ntfy.example"
 export BREV_AUTOSTOP_ENV="$F/no-env" BREV_AUTOSTOP_CONFIG="$F/base.conf" BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
 H="$F/home"
 fixture() { # every activity file N minutes old
@@ -348,6 +350,48 @@ ok "no PRIMARY → no heartbeat question, acts as before; writes its own heartbe
 # 41. a bad PRIMARY value is refused, nothing done
 fresh; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_PRIMARY='x;rm -rf /' run; started_ago 120; BREV_AUTOSTOP_PRIMARY='x;rm -rf /' run
 ok "bad PRIMARY → nothing done" '[[ $(stops) == 0 && ! -f "$F/hubcalls" ]]'
+
+# --- J527: phone notifications through ntfy ------------------------------------------------------------------------------------
+posts() { [[ -f "$F/ntfy" ]] && grep -c . "$F/ntfy" || echo 0; }
+PC="$F/phone.conf"; printf 'exclude keep-me-box\n' > "$PC"
+# 42. off by default: no post, even on a stop
+fresh; rm -f "$F/ntfy" "$F/ntfy-topic"; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; BREV_AUTOSTOP_CONFIG="$PC" run
+ok "phone off (default) → a stop posts nothing" '[[ $(stops) == 1 && $(posts) == 0 ]]'
+# 43. phone on: makes a 600 topic file, sets the config; a routine stop posts once, priority default
+o="$(BREV_AUTOSTOP_CONFIG="$PC" "$S" phone on)"; tp="$(cat "$F/ntfy-topic")"
+ok "phone on → topic file 600 (≥ 20 chars), config 'notify_phone on'" '[[ $(stat -c %a "$F/ntfy-topic") == 600 && ${#tp} -ge 20 ]] && grep -qx "notify_phone on" "$PC"'
+fresh; rm -f "$F/ntfy"; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; BREV_AUTOSTOP_CONFIG="$PC" run; BREV_AUTOSTOP_CONFIG="$PC" run
+ok "routine stop → one post, priority default, to server/topic, titled with the box" '[[ $(posts) == 1 ]] && grep -q "Priority: default" "$F/ntfy" && grep -qF "https://ntfy.example/$tp" "$F/ntfy" && grep -q "Title: Brev box hyprpi-l40s" "$F/ntfy"'
+ok "…the topic is in no log line" '! grep -qF "$tp" "$F/state/log"'
+# 44. a failed stop → one post, priority high; hourly retries post nothing
+fresh; rm -f "$F/ntfy"; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; touch "$F/stopfail"; for i in 1 2 3; do BREV_AUTOSTOP_CONFIG="$PC" run; done
+ok "failed stop → one post, priority high" '[[ $(posts) == 1 ]] && grep -q "Priority: high" "$F/ntfy"'
+# 45. UNHEALTHY → stop: one post with the status; a paused UNHEALTHY box: one high post
+fresh; rm -f "$F/ntfy"; echo UNHEALTHY > "$F/status"; BREV_AUTOSTOP_CONFIG="$PC" run; unh_ago 50; BREV_AUTOSTOP_CONFIG="$PC" run; BREV_AUTOSTOP_CONFIG="$PC" run
+ok "UNHEALTHY → stopped → one post saying the status" '[[ $(posts) == 1 ]] && grep -q "Status now: STOPPED" "$F/ntfy"'
+fresh; rm -f "$F/ntfy"; echo UNHEALTHY > "$F/status"; BREV_AUTOSTOP_CONFIG="$PC" run; unh_ago 50; BREV_AUTOSTOP_CONFIG="$PC" "$S" pause hyprpi-l40s 2h >/dev/null; BREV_AUTOSTOP_CONFIG="$PC" run; BREV_AUTOSTOP_CONFIG="$PC" run
+ok "UNHEALTHY + paused → one high post" '[[ $(posts) == 1 ]] && grep -q "Priority: high" "$F/ntfy"'
+# 46. backup taking over → one high post; hub back → one default post
+fresh; rm -f "$F/ntfy"; fixture 120; echo RUNNING > "$F/status"; hub_ran 30; BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub run; BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub run
+ok "backup takes over → one high post" '[[ $(posts) == 1 ]] && grep -q "Priority: high" "$F/ntfy"'
+hub_ran 1; BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub run; BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub run
+ok "…hub back → one more post, priority default" '[[ $(posts) == 2 ]] && tail -1 "$F/ntfy" | grep -q "Priority: default"'
+# 47. ntfy unreachable: the run still stops, the other channels still get it
+fresh; rm -f "$F/ntfy"; touch "$F/ntfyfail"; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; BREV_AUTOSTOP_CONFIG="$PC" run; rc=$?
+ok "ntfy failing → the run still stops (exit 0), desktop + Thoughts still notified, log says no phone" '[[ $rc == 0 && $(stops) == 1 && $(notices) == 1 && $(thoughts) == 1 ]] && ! grep -q "phone" <(grep notice "$F/state/log")'
+rm -f "$F/ntfyfail"
+# 48. phone off → no post; test command; a bad topic file → nothing posted
+BREV_AUTOSTOP_CONFIG="$PC" "$S" phone off >/dev/null
+fresh; rm -f "$F/ntfy"; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; BREV_AUTOSTOP_CONFIG="$PC" run
+ok "phone off → stop posts nothing; one notify_phone line" '[[ $(stops) == 1 && $(posts) == 0 && $(grep -c "^notify_phone" "$PC") == 1 ]]'
+BREV_AUTOSTOP_CONFIG="$PC" "$S" phone on >/dev/null; rm -f "$F/ntfy"; to="$(BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test)"
+ok "phone test → one post, 'test sent'; the same topic kept" '[[ $(posts) == 1 && "$to" == "test sent" && "$(cat "$F/ntfy-topic")" == "$tp" ]]'
+echo "short" > "$F/ntfy-topic"; rm -f "$F/ntfy"; BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test 2>/dev/null
+ok "an invalid topic file → nothing posted" '[[ $(posts) == 0 ]]'
+# 49. phone on with a primary: the same topic is stored there and turned on there
+mkdir -p "$F/home-hub/.local/bin"; printf '#!/usr/bin/env bash\nif [[ "$*" == "phone set-topic" ]]; then cat > "%s/hubtopic"; echo "topic stored (600)"; else echo "$*" >> "%s/hubphone"; echo ok; fi\n' "$F" "$F" > "$F/home-hub/.local/bin/brev-autostop"; chmod +x "$F/home-hub/.local/bin/brev-autostop"
+echo "$tp" > "$F/ntfy-topic"; rm -f "$F/hubtopic" "$F/hubphone"; BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub "$S" phone on >/dev/null
+ok "phone on (backup) → the hub gets the same topic and 'phone on'" '[[ "$(tr -d "\n" < "$F/hubtopic")" == "$tp" ]] && grep -qx "phone on" "$F/hubphone"'
 
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
