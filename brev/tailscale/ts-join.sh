@@ -16,14 +16,14 @@ sudo systemctl enable --now tailscaled >/dev/null 2>&1 || true
 if running; then
   cat >/dev/null  # already joined: the key (if any was sent) is ignored
   # (review) Tailscale SSH follows the binding both ways, and a failure says so
-  if [[ "$WANT_SSH" == ssh ]]; then sudo tailscale set --ssh >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning on Tailscale SSH failed"; exit 7; }
-  else sudo tailscale set --ssh=false >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning off Tailscale SSH failed"; exit 7; }; fi
+  if [[ "$WANT_SSH" == ssh ]]; then sudo tailscale set --ssh --accept-risk=lose-ssh >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning on Tailscale SSH failed"; exit 7; }
+  else sudo tailscale set --ssh=false --accept-risk=lose-ssh >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning off Tailscale SSH failed"; exit 7; }; fi
   echo "tailnet $(name)"; exit 0
 fi
 umask 077; kf="$(mktemp)"; trap 'rm -f "$kf"' EXIT
 tr -d '\r\n' > "$kf"
 [[ -s "$kf" ]] || { echo "tailscale: no auth key was sent"; exit 4; }
-args=(up --auth-key="file:$kf" --hostname="$HN"); [[ "$WANT_SSH" == ssh ]] && args+=(--ssh)
+args=(up --auth-key="file:$kf" --hostname="$HN"); [[ "$WANT_SSH" == ssh ]] && args+=(--ssh --accept-risk=lose-ssh)  # (J525 live) setup's own ssh comes through Brev, not the tailnet, but tailscale asks anyway
 if ! out="$(sudo tailscale "${args[@]}" 2>&1)"; then echo "tailscale: up failed: $(tr '\n' ' ' <<<"$out" | sed 's/tskey-[A-Za-z0-9-]*/tskey-…/g' | cut -c1-200)"; exit 5; fi
 rm -f "$kf"
 running && echo "tailnet $(name)" || { echo "tailscale: joined but not running"; exit 6; }
