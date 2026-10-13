@@ -264,7 +264,7 @@ async function loadBoard() {
   try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; await bv.refresh(api, r, b); render(); } } catch { /* older daemon */ }
 }
 function applyList(r) {
-  if (!process.env.HYPRPI_REMOTE_PANEL && !process.env.HYPRPI_SANDBOX_WORLD && (r.rooms || []).some((x) => x.id === room && x.remote)) return quit(); /* J530 (review): this world is remote now: its laptop panel closes (its own panels run on its machine) */ 
+  if (!process.env.HYPRPI_REMOTE_PANEL && !process.env.HYPRPI_SANDBOX_WORLD && (r.rooms || []).some((x) => x.id === room && x.remote)) return quit(); /* J530 (review): this world is remote now: its laptop panel closes (its own panels run on its machine) */
   agents = r.agents || []; rooms = (r.rooms || []).filter((x) => !x.remote); // J530: remote worlds have their own panels
   if (!room) room = r.active_room || rooms[0]?.id || "A";
   if (!rooms.find((x) => x.id === room)) rooms = [...rooms, { id: room }].sort((a, b) => a.id.localeCompare(b.id));

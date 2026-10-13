@@ -424,7 +424,7 @@ function draw() {
 // ---- daemon ----------------------------------------------------------------
 let lastFocusedId = "";
 function applyList(r) {
-  if (!process.env.HYPRPI_REMOTE_PANEL && !process.env.HYPRPI_SANDBOX_WORLD && (r.rooms || []).some((x) => x.id === room && x.remote)) return quit(); /* J530 (review): this world is remote now: its laptop panel closes (its own panels run on its machine) */ 
+  if (!process.env.HYPRPI_REMOTE_PANEL && !process.env.HYPRPI_SANDBOX_WORLD && (r.rooms || []).some((x) => x.id === room && x.remote)) return quit(); /* J530 (review): this world is remote now: its laptop panel closes (its own panels run on its machine) */
   agents = r.agents || []; dormant = r.dormant || []; rooms = (r.rooms || []).filter((x) => !x.remote); // J530: remote worlds have their own panels
   for (const id of closing.keys()) if (!agents.find((a) => a.id === id)) closing.delete(id);
   for (const a of agents) {
