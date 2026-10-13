@@ -4,7 +4,8 @@ icons into remote-control/: icon-180/192/512.png, icon-maskable-512.png (content
 import os
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "make8.py")).read()
 exec(src[:src.index("\nFONT = next")])
-grid = mark(dict(OPTS)["f2"] if False else [o for o in OPTS if o[0] == "f2"][0][2])
+# Angus's final pick (after f2): the mirrored y (make-mirror.py): its blue = pi's blue piece flipped, one row lower
+grid = ["C.....CCC.", "CCC...B.C.", "C.C.B.BB.Y", "C.CBB.B..Y", "....B.....", "..YY......"]
 OUT = os.path.abspath(os.path.join(HERE, "..", ".."))
 # J61 fuzz fix (Angus: "the icon seems a bit fuzzy on my iphone"): iOS may take a manifest icon and scale it to 180 px;
 # a 512 px icon has 38 px blocks, which land between pixels at 180. So every icon is the 180 px drawing (13 px blocks,
