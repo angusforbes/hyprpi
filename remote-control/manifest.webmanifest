@@ -11,6 +11,12 @@
   "theme_color": "#fafaf8",
   "icons": [
     {
+      "src": "/icon-204.png",
+      "sizes": "204x204",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/icon-1024.png",
       "sizes": "1024x1024",
       "type": "image/png",
