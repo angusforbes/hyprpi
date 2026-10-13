@@ -14,7 +14,8 @@
 // Enter on an empty editor while disconnected retries the link now, Ctrl+C clears the editor (twice on an empty one quits) where your keybindings keep it, Ctrl+D on an empty editor or /quit closes
 // the window (the agent keeps running), Ctrl+L picks the model, Ctrl+O expands tool
 // output. Commands handled here: /model [filter], /quit; anything else starting with / goes to the agent as a prompt (its
-// extension commands, skills and templates run there).
+// extension commands, skills and templates run there). /jot-* runs there too, but its notes are written HERE, in the laptop's
+// ~/Obsidian: the remote pi-jot (relay mode) sends every file access to this window (J559, lib/jot-relay-host.mjs).
 // keys typed while the modules load must not echo raw onto the screen: raw mode at once (the TUI takes over below)
 if (process.stdin.isTTY) { try { process.stdin.setRawMode(true); } catch {} }
 import fs from "node:fs";
@@ -22,6 +23,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { JOT_RELAY_TITLE, jotRelayAnswer } from "../lib/jot-relay-host.mjs";
 
 const WL = String(process.argv[2] || "").toUpperCase(), wl = WL.toLowerCase();
 if (!/^[A-I]$/.test(WL)) { console.error("remote-client: usage: remote-client.mjs LETTER NAME"); process.exit(2); }
@@ -288,6 +290,9 @@ let dialog = null; const dialogQueue = []; // (review) one dialog at a time; lat
 function closeDialogSilently() { pickerBox.clear(); dialog = null; ui.setFocus(editor); ui.requestRender(); }
 function closeDialog() { pickerBox.clear(); dialog = null; ui.setFocus(editor); ui.requestRender(); const next = dialogQueue.shift(); if (next) onUiRequest(next); }
 function onUiRequest(r) {
+  // J559 (Angus "15b"): the remote agent's pi-jot saves a /jot-* through this window into the LAPTOP's notes (lib/jot-relay-host.mjs);
+  // answered at once, never shown, never queued behind a dialog
+  if (r.method === "input" && r.title === JOT_RELAY_TITLE) { let v; try { v = jotRelayAnswer(r.placeholder); } catch (e) { v = JSON.stringify({ ok: false, error: e.message }); } sendRaw({ type: "extension_ui_response", id: r.id, value: v }); dlog(`jot relay ${String(r.placeholder || "").slice(0, 80)} -> ${v.slice(0, 80)}`); return; }
   if (["select", "confirm", "input", "editor"].includes(r.method) && dialog) { if (dialog.id !== r.id && !dialogQueue.some((q) => q.id === r.id)) dialogQueue.push(r); return; }
   if (r.method === "setStatus") { st.extStatus.set(r.statusKey, r.statusText || ""); paintChrome(); return; }
   if (r.method === "notify") { chat.addChild(new Spacer(1)); chat.addChild(new Text(T.fg(r.notifyType === "error" ? "error" : r.notifyType === "warning" ? "warning" : "dim", r.message || ""), 1, 0)); ui.requestRender(); return; }

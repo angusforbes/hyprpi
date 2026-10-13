@@ -30,7 +30,7 @@
 set -euo pipefail
 H="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 WL="${1:-}"; WL="${WL^^}"; shift || true
-[[ "$WL" =~ ^[A-I]$ ]] || { echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding [NAME]" >&2; exit 2; }
+[[ "$WL" =~ ^[A-I]$ ]] || { echo "usage: world LETTER setup|jot|new|start|open|status|stop|start-mirror|open-mirror|binding [NAME]" >&2; exit 2; }
 wl="${WL,,}"
 CDIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/remote"
 CONF="${HYPRPI_REMOTE_CONF:-$CDIR/$wl.json}"
@@ -73,6 +73,17 @@ push_theme() {
   if [[ "${1:-}" == sync || "${1:-}" == force ]]; then "${SSH[@]}" "$send" < "$src" >/dev/null 2>&1 && echo "$sum" > "$mark"; return 0; fi # (a panel: before it starts there)
   ( "${SSH[@]}" "$send" < "$src" >/dev/null 2>&1 && echo "$sum" > "$mark" ) </dev/null >/dev/null 2>&1 &
   disown || true
+}
+# J559 (Angus "15b"): /jot-* in this world's agent windows writes to the LAPTOP's notes. The machine gets pi-jot (this laptop's
+# committed copy, ~/Harness/pi-jot or HYPRPI_PIJOT_DIR) as a pi package and the laptop's jot.json (same kinds and folders); its agents
+# run it in relay mode (remote.sh's pi-entry sets PI_JOT_RELAY=1), so every jot file access goes back through the laptop window.
+jot_setup() {
+  local pj="${HYPRPI_PIJOT_DIR:-$HOME/Harness/pi-jot}" jc="${PI_JOT_CONFIG:-$HOME/.pi/agent/jot.json}"
+  [[ -d "$pj/.git" && -f "$pj/src/extension.ts" ]] || { echo "world: no pi-jot at $pj: /jot-* in this world's windows stays off"; return 0; }
+  git -C "$pj" archive --format=tar HEAD | "${SSH[@]}" "set -e; d=\$HOME/.hyprpi-$wl/pi-jot; rm -rf \"\$d.new\"; mkdir -p \"\$d.new\"; tar -x -C \"\$d.new\"; test -f \"\$d.new/src/extension.ts\"; rm -rf \"\$d.old\"; [ ! -e \"\$d\" ] || mv \"\$d\" \"\$d.old\"; mv \"\$d.new\" \"\$d\"; rm -rf \"\$d.old\""
+  [[ -f "$jc" ]] && "${SSH[@]}" "mkdir -p \$HOME/.pi/agent && cat > \$HOME/.pi/agent/jot.json.new && mv \$HOME/.pi/agent/jot.json.new \$HOME/.pi/agent/jot.json" < "$jc"
+  "${SSH[@]}" "node -e 'const fs=require(\"fs\"),p=process.env.HOME+\"/.pi/agent/settings.json\",pkg=process.env.HOME+\"/.hyprpi-$wl/pi-jot\";let j={};try{j=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch{};const a=Array.isArray(j.packages)?j.packages:[];if(!a.includes(pkg)){j.packages=[...a,pkg];fs.writeFileSync(p,JSON.stringify(j,null,2)+\"\\n\")}'"
+  echo "world: pi-jot $(git -C "$pj" rev-parse --short HEAD) installed for world $WL's agents: their /jot-* notes go to this laptop's $(jq -r '.root // "~/Obsidian"' "$jc" 2>/dev/null || echo ~/Obsidian) (agents started before this pick it up on their next start)"
 }
 case "$cmd" in
   binding) jq -n --arg w "$WL" --argjson ws "$WS" --arg label "$LABEL" --arg dir "~/.hyprpi-$wl" --arg conf "$CONF" --args '{world:$w, ssh:$ARGS.positional, workspace:$ws, label:$label, remoteDir:$dir, conf:$conf}' "${SSH[@]}" ;;
@@ -134,7 +145,9 @@ case "$cmd" in
     if nvm=$(node "$H/lib/models-resolve.mjs" --config "$H/$mcfg"); then
       printf '%s\n' "$nvm" | "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.json"
       "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.mjs && export PATH=\$HOME/.local/bin:\$HOME/.npm-global/bin:\$PATH; [ -n \"\${NODE_EXTRA_CA_CERTS:-}\" ] || [ ! -r /etc/ssl/certs/ca-certificates.crt ] || export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt; HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") node ~/.hyprpi-$wl/nv-models.mjs --check --key-file $(printf %q "$mkey") --models ~/.hyprpi-$wl/nv-models.json" < "$H/lib/nv-models.mjs"
-    else echo "world: $mcfg didn't resolve (above); the machine's nv-inference models are unchanged" >&2; fi ;;
+    else echo "world: $mcfg didn't resolve (above); the machine's nv-inference models are unchanged" >&2; fi
+    jot_setup ;;
+  jot) jot_setup ;; # (J559: just pi-jot + jot.json, also part of setup)
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;
   rename) NEW="${3:-}"; [[ "$NEW" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || { echo "world: rename NAME NEW" >&2; exit 2; }
     "${SSH[@]}" "$R rename $NAME $NEW" && echo "renamed $NAME to $NEW (same session); reopen its window: world $WL open $NEW" ;;
