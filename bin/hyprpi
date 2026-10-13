@@ -23,7 +23,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi post [--room R] TEXT post to a room as you (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
   hyprpi thoughts new W [--handoff FILE]   a fresh session for world W's Thoughts (the old one archived, never deleted)
-  hyprpi ntfy [config [--json] | test]   phone pushes (J528): the ntfy settings in hyprpi.jsonc "phone.ntfy", or a test push
+  hyprpi ntfy [config [--json] | test [--world X] [--host NAME]]   phone pushes (J528): the ntfy settings in hyprpi.jsonc "phone.ntfy", or a test push
   hyprpi thoughts alert W TEXT   a ⚠ line in world W's Thoughts thread (no turn; for background jobs, once per problem)
   hyprpi thoughts [--room R] [--via voice] TEXT   a message to a world's Thoughts (default: the world you're on); --via voice marks it 🎤 (dictation)
   hyprpi dictate [--to hp:ID|proj:NAME] TEXT   a dictation: the focused world's Thoughts (🎤), or the agent /
@@ -700,12 +700,20 @@ const commands = {
     }
     if (args[0] === "test") {
       if (!n.topic) die("no phone.ntfy.topic in hyprpi.jsonc");
-      const title = "✅ hyprpi test push (nothing needs you)", message = `Test: phone pushes from hyprpi on ${os.hostname()} reach you. Real ones look like "❗ <agent> needs you (world X)" or "🔔 Decision (world X): …", with the world, agent, project, the question and its options.${n.enabled ? "" : " (Note: phone.ntfy.enabled is false, so hyprpi itself sends none yet.)"}`;
+      // the world this is sent from (--world X; a remote world's agent: its own letter; an agent: its room; else the world on
+      // screen) and the machine (laptop, or a remote world's host name), shown like a real push
+      let world = String(opt("--world", "") || process.env.HYPRPI_REMOTE_WORLD || "").toUpperCase();
+      if (!world && process.env.HYPRPI_AGENT_ID) { try { world = String((await request("whoami", { agent_id: agentId() }))?.room || ""); } catch { /* no daemon */ } }
+      if (!world) { try { const ws = JSON.parse(spawnSync("hyprctl", ["-j", "activeworkspace"], { encoding: "utf8", timeout: 3000 }).stdout || "{}").id; const { worldOf, WORLD_LETTERS } = await import("../lib/paths.mjs"); const w = worldOf(ws, Number(loadConfig().worldSize) || 10); world = w ? WORLD_LETTERS[w - 1] || "" : ""; } catch { /* no Hyprland */ } }
+      const host = String(opt("--host", "") || (process.env.HYPRLAND_INSTANCE_SIGNATURE && !process.env.HYPRPI_REMOTE_WORLD ? "laptop" : os.hostname()));
+      const where = [world && `world ${world}`, host && `(${host})`].filter(Boolean).join(" ");
+      const title = `✅ hyprpi test push${where ? ` · ${where}` : ""} · nothing needs you`;
+      const message = [`${world ? `World ${world} · ` : ""}hyprpi on ${host}`, `Test: phone pushes from here reach you. Real ones look like "❗ <agent> needs you (world ${world || "X"})" or "🔔 Decision (world ${world || "X"}): …", with the world, agent, project, the question and its options.`, n.enabled ? "" : "(Note: phone.ntfy.enabled is false, so hyprpi itself sends none yet.)"].filter(Boolean).join("\n");
       const r = await fetch(n.server, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic: n.topic, title, message, tags: ["white_check_mark"] }), signal: AbortSignal.timeout(10000) });
       if (!r.ok) die(`${n.server} answered ${r.status}`);
       return console.log(`test push sent to ${n.server}/${n.topic}`);
     }
-    die("usage: hyprpi ntfy [config [--json] | test]");
+    die("usage: hyprpi ntfy [config [--json] | test [--world X] [--host NAME]]");
   },
   // Called by the Hyprland click hook with the clicked window's address.
   seen: async () => { if (!args[0]) die("usage: hyprpi seen WINDOW_ADDRESS"); console.log(JSON.stringify(await request("agent.seen", { address: args[0] }))); },
