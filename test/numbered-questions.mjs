@@ -16,6 +16,8 @@ for (const [label, home] of [["live skill", null], ["no skill (fallback)", fs.mk
   check(`${label}: a single question too`, /single question/i.test(p));
   check(`${label}: reminders write the options out again`, /remind/i.test(p) && /(options out again|write the options out|write its options out|options in full)/i.test(p));
   check(`${label}: an ambiguous reply → ask first`, /more than one open question/i.test(p) && /ask/i.test(p));
+  check(`${label}: the 'which?' line names both`, /naming both/i.test(p));
+  check(`${label}: no cap on open questions`, /(no limit on how many questions|any number of questions may be open)/i.test(p));
   check(`${label}: no old bare-letter / "2. Ship it" rule left`, !/lettered a, b, c/.test(p) && !/"2\. Ship it now/.test(p) && !/options 1, 2, 3"? style\)?\s*$/m.test(p.replace(/there is no separate "options 1, 2, 3" style/, "")));
 }
 console.log(fail ? `${fail} failed` : "all passed"); process.exit(fail ? 1 : 0);
