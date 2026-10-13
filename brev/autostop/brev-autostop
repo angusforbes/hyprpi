@@ -76,7 +76,7 @@ NTFY_FILE="${BREV_AUTOSTOP_NTFY_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/b
 NTFY_SERVER="${BREV_AUTOSTOP_NTFY_SERVER:-https://ntfy.sh}"
 CURL="${BREV_AUTOSTOP_CURL:-curl}"
 phone_on() { cfg | awk '$1=="notify_phone"{v=$2} END{exit !(v=="on")}'; }
-topic() { local t; t="$(head -c 200 "$NTFY_FILE" 2>/dev/null | tr -d ' \r\n')"; [[ "$t" =~ ^[A-Za-z0-9_-]{20,64}$ ]] && echo "$t"; }
+topic() { local t; t="$(head -c 200 "$NTFY_FILE" 2>/dev/null | tr -d ' \r\n')"; [[ "$t" =~ ^[A-Za-z0-9_-]{6,64}$ ]] && echo "$t"; }
 phone_post() { # $1 title, $2 text, $3 priority
   phone_on || return 1; local t; t="$(topic)" || return 1
   "$CURL" -fsS -m 10 -o /dev/null -H "Title: $1" -H "Priority: $3" -H "Tags: $([[ "$3" == high ]] && echo warning || echo stop_sign)" --data-binary "$2" "$NTFY_SERVER/$t" >/dev/null 2>&1
@@ -127,7 +127,7 @@ case "${1:-run}" in
         onprim on; exit 0;;
       off) set_phone off; log "phone notifications off"; echo "phone notifications off"; onprim off; exit 0;;
       set-topic) # (validated BEFORE it replaces anything: a bad value leaves a working topic as it was)
-        nt="$(head -c 200 | tr -d ' \r\n')"; [[ "$nt" =~ ^[A-Za-z0-9_-]{20,64}$ ]] || { echo "brev-autostop: that topic isn't valid; nothing changed" >&2; exit 1; }
+        nt="$(head -c 200 | tr -d ' \r\n')"; [[ "$nt" =~ ^[A-Za-z0-9_-]{6,64}$ ]] || { echo "brev-autostop: that topic isn't valid; nothing changed" >&2; exit 1; }
         (umask 077; mkdir -p "$(dirname "$NTFY_FILE")"; printf '%s\n' "$nt" > "$NTFY_FILE.new"); chmod 600 "$NTFY_FILE.new"; mv -f "$NTFY_FILE.new" "$NTFY_FILE"; echo "topic stored (600)"; exit 0;;
       topic) topic || { echo "no topic yet (brev-autostop phone on)" >&2; exit 1; }; exit 0;;
       test) BOX="(test)"; if phone_post "Brev auto-stop" "Test: phone notifications from brev-autostop on $(hostname) work. You'll get one when a box is stopped or stuck." default; then echo "test sent"; log "phone: test sent"; else echo "test NOT sent ($(phone_on && echo "is ntfy.sh reachable?" || echo "phone notifications are off"))" >&2; exit 1; fi; exit 0;;

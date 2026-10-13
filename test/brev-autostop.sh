@@ -394,13 +394,19 @@ echo "$tp" > "$F/ntfy-topic"; rm -f "$F/hubtopic" "$F/hubphone"; BREV_AUTOSTOP_C
 ok "phone on (backup) → the hub gets the same topic and 'phone on'" '[[ "$(tr -d "\n" < "$F/hubtopic")" == "$tp" ]] && grep -qx "phone on" "$F/hubphone"'
 
 # 50. (PhoneCheck) set-topic with a bad value keeps the good topic; phone on re-tightens a loose file; a failed transfer turns nothing on
-echo "$tp" > "$F/ntfy-topic"; echo "bad value" | BREV_AUTOSTOP_CONFIG="$PC" "$S" phone set-topic 2>/dev/null; rc=$?
+echo "$tp" > "$F/ntfy-topic"; echo "bad/value!" | BREV_AUTOSTOP_CONFIG="$PC" "$S" phone set-topic 2>/dev/null; rc=$?
 ok "set-topic with a bad value → exit 1, the old topic kept" '[[ $rc == 1 && "$(cat "$F/ntfy-topic")" == "$tp" ]]'
 chmod 644 "$F/ntfy-topic"; BREV_AUTOSTOP_CONFIG="$PC" "$S" phone on >/dev/null
 ok "phone on → the topic file is 600 again" '[[ $(stat -c %a "$F/ntfy-topic") == 600 ]]'
 BREV_AUTOSTOP_CONFIG="$PC" "$S" phone off >/dev/null; printf '#!/usr/bin/env bash\n[[ "$*" == "phone set-topic" ]] && exit 1; echo "$*" >> "%s/hubphone"\n' "$F" > "$F/home-hub/.local/bin/brev-autostop"; rm -f "$F/hubphone"
 BREV_AUTOSTOP_CONFIG="$PC" BREV_AUTOSTOP_PRIMARY=hub "$S" phone on >/dev/null 2>&1; rc=$?
 ok "phone on with a primary that won't take the topic → exit 1, on nowhere" '[[ $rc == 1 && ! -f "$F/hubphone" ]] && grep -qx "notify_phone off" "$PC"'
+
+# 51. (J527b) a short topic of Angus's choosing (6+ characters) is accepted; 5 is not
+echo "angus-brev" | BREV_AUTOSTOP_CONFIG="$PC" "$S" phone set-topic >/dev/null; rc=$?
+ok "set-topic angus-brev → accepted, stored" '[[ $rc == 0 && "$(cat "$F/ntfy-topic")" == angus-brev ]]'
+echo "abcde" | BREV_AUTOSTOP_CONFIG="$PC" "$S" phone set-topic 2>/dev/null; rc=$?
+ok "set-topic with 5 characters → refused, angus-brev kept" '[[ $rc == 1 && "$(cat "$F/ntfy-topic")" == angus-brev ]]'
 
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
