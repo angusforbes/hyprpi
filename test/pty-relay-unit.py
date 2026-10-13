@@ -105,13 +105,13 @@ ok("… and a real Enter after it does", r.decide(req({"act": "focus", "agent": 
 # (ParityCheck) the same splits with a SLOW second read (scheduler, backpressure): a cut-off CSI / paste mark still waits for its end
 good = True
 for parts in splits(pasted):
-    if len(parts) != 2 or parts[0] == b"\x1b": continue  # a lone ESC rightly times out (below)
+    if len(parts) != 2: continue  # (k = 1, a cut right after the ESC, too: ParityCheck)
     r = relay(); r.note_input(parts[0], t0); r.note_input(parts[1], t0 + R.TAIL_S + 5)
     if any(r.decide(req(o), t0 + R.TAIL_S + 5.1) is not None for o in ({"act": "open", "url": "https://x.y/"}, {"act": "paste"}, {"act": "new"}, {"act": "focus", "agent": "h-omni-a"})): good = False
 ok("a bracketed paste cut anywhere with a slow second read: nothing inside it counts", good)
 good = True
 for seq, act, extra in [(b"\x1b[2;2~", "paste", {}), (b"\x1b[<16;4;5M", "open", {"url": "https://x.y/"})]:
-    for k in range(2, len(seq)):
+    for k in range(1, len(seq)):
         r = relay(); r.note_input(seq[:k], t0); r.note_input(seq[k:], t0 + R.TAIL_S + 5)
         if r.decide(req({"act": act, **extra}), t0 + R.TAIL_S + 5.1) is None: good = False
 ok("a key or click cut with a slow second read still counts once", good)

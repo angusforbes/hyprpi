@@ -72,7 +72,8 @@ class Relay:
         now = time.monotonic() if now is None else now
         # (ParityCheck) only a LONE kept ESC times out; a cut-off CSI / SS3 / mouse / paste mark waits (bounded) for its end however
         # late the next read comes, else a paste start split by a slow read would let its Enter open the gate
-        if self.in_tail == b"\x1b" and now - self.in_tail_t > TAIL_S: self.classify(self.in_tail, now); self.in_tail = b""
+        # … and even then, bytes that continue it ("[" or "O": a CSI / SS3, e.g. a paste start cut right after its ESC) still join it
+        if self.in_tail == b"\x1b" and now - self.in_tail_t > TAIL_S and not data[:1] in (b"[", b"O"): self.classify(self.in_tail, now); self.in_tail = b""
         data = self.in_tail + data
         m = INCOMPLETE.search(data)
         if m and len(data) - m.start() <= 64: data, self.in_tail, self.in_tail_t = data[:m.start()], data[m.start():], now
