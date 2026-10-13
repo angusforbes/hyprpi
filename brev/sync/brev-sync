@@ -57,7 +57,7 @@ if [[ "${1:-}" == status ]]; then
   ls_out="$(timeout 60 brev ls 2>/dev/null)"
   while IFS=$'\t' read -r -u 4 LOCAL BOX REMOTE OPTS; do
     P="$ST"; [[ -z "${BREV_SYNC_BOX:-}" ]] && P="$ST/pairs/$(pairkey "$BOX" "$REMOTE")"
-    if [[ " $OPTS " == *" ssh=tsh "* ]]; then bs="via Teleport, login $(timeout 20 "${BREV_SYNC_TSH:-tsh}" status 2>/dev/null | sed -n 's/.*Valid until: *\(.*\)/valid until \1/p' | head -1)"; [[ "$bs" == *valid* ]] || bs="via Teleport, login EXPIRED (tsh login)"; else bs="box $(awk -v b="$BOX" '$1==b{print $2}' <<< "$ls_out")"; fi
+    if [[ " $OPTS " == *" ssh=tsh "* ]]; then ts="$(timeout 20 "${BREV_SYNC_TSH:-tsh}" status 2>/dev/null)" && [[ "$ts" != *EXPIRED* ]] && bs="via Teleport, login $(sed -n 's/.*Valid until: *\(.*\)/valid until \1/p' <<< "$ts" | head -1)" || bs="via Teleport, login EXPIRED (tsh login)"; [[ "$bs" == *"login valid"* || "$bs" == *EXPIRED* ]] || bs="via Teleport, login ok"; else bs="box $(awk -v b="$BOX" '$1==b{print $2}' <<< "$ls_out")"; fi
     echo "$LOCAL <-> $BOX:~/$REMOTE${OPTS:+ ($OPTS)}: $bs; last state: $(cat "$P/state" 2>/dev/null), failures in a row: $(cat "$P/fails" 2>/dev/null || echo 0)$([[ -f "$P/alerted" ]] && echo ", alerted")"
   done 4< <(pairs)
   echo "--- log (last 12)"; tail -n 12 "$LOG" 2>/dev/null; exit 0
