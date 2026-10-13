@@ -93,6 +93,19 @@ case "$cmd" in
     # Brev box's ~/workspace/.secrets/nv_inference_key (none there = it says so and changes nothing)
     mcfg=$(jq -r '.models // "brev/models.jsonc"' "$CONF"); [[ "$mcfg" =~ ^[A-Za-z0-9._/-]+\.jsonc?$ && "$mcfg" != *..* ]] || { echo "world: bad \"models\" in $CONF" >&2; exit 2; }
     mkey=$(jq -r '.modelsKeyFile // "~/workspace/.secrets/nv_inference_key"' "$CONF"); [[ "$mkey" =~ ^~?/?[A-Za-z0-9._/-]+$ ]] || { echo "world: bad \"modelsKeyFile\" in $CONF" >&2; exit 2; }
+    # J525 (Angus: "get nv-inf keys etc"): the binding's optional "modelsKeySource" is a laptop file holding the machine's own,
+    # dedicated Inference Hub key (Angus puts it there; 600 in a 700 folder). When the machine has no key yet, it's sent once, on
+    # stdin, into "modelsKeyFile" there (600 in a 700 folder), never printed; a machine that has a key keeps it.
+    msrc=$(jq -r '.modelsKeySource // empty' "$CONF"); msrc="${msrc/#\~/$HOME}"
+    if [[ -n "$msrc" ]]; then
+      if [[ ! -f "$msrc" ]]; then echo "world: no key at $msrc yet: the machine's hosted models wait for it" >&2
+      elif (( (8#$(stat -c %a "$msrc") & 077) || (8#$(stat -c %a "$(dirname "$msrc")") & 077) )); then echo "world: $msrc must be 600 in a 700 folder; not sent" >&2
+      elif ! "$H/brev/tailscale/ts-setup" --check "$CONF"; then echo "world: not sending the key (binding not safe)" >&2
+      else
+        kq=$(printf %q "$mkey"); kq="${kq/#\\~/\$HOME}"
+        "${SSH[@]}" "f=$kq; [ -s \"\$f\" ] && { cat >/dev/null; echo 'world: the machine already has its inference key (kept)'; exit 0; }; umask 077; mkdir -p \"\$(dirname \"\$f\")\" && chmod 700 \"\$(dirname \"\$f\")\" && tr -d '\r' > \"\$f.new\" && [ -s \"\$f.new\" ] && chmod 600 \"\$f.new\" && mv \"\$f.new\" \"\$f\" && echo 'world: inference key placed on the machine' || { rm -f \"\$f.new\"; echo 'world: placing the inference key failed'; }" < "$msrc"
+      fi
+    fi
     if nvm=$(node "$H/lib/models-resolve.mjs" --config "$H/$mcfg"); then
       printf '%s\n' "$nvm" | "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.json"
       "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.mjs && export PATH=\$HOME/.local/bin:\$HOME/.npm-global/bin:\$PATH; [ -n \"\${NODE_EXTRA_CA_CERTS:-}\" ] || [ ! -r /etc/ssl/certs/ca-certificates.crt ] || export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt; HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") node ~/.hyprpi-$wl/nv-models.mjs --check --key-file $(printf %q "$mkey") --models ~/.hyprpi-$wl/nv-models.json" < "$H/lib/nv-models.mjs"
