@@ -13,6 +13,8 @@ so these apply to agent windows and override yours only there. `"terminalHelpers
 | `agentclick.py` | Agent windows (mapped in `pi.conf`): Ctrl+click opens a link as before; otherwise an agent's name under the pointer (`pi·ab12`, `@Atlas`, `Atlas[e]`, any world) jumps to that agent's window, like the panels (`mockups/agent-at`, `lib/tui/agent-click.mjs`). Kitty runs kittens without `__file__`, so `agentclick-map.py` (pulled in by `pi.conf` with `geninclude`) maps Ctrl+click with this checkout's absolute path and passes its root to the kitten; fallbacks `$HYPRPI_ROOT`, then `~/Work/hyprpi`. |
 | `agentclick-map.py` | Prints that Ctrl+click mapping (no machine-specific path in `pi.conf`). Comment out its `geninclude` line in `pi.conf` to turn agent-name clicks off. |
 
+A remote world's agent windows (omnistation/remote-client.mjs, class `hyprpi.<x>-agent`) get one more setting on their own command line: `open_url_with` = `omnistation/laptop-act.mjs X url`, because a link a remote agent prints names a file on the remote machine; it copies the file over and opens the copy (J553, see omnistation/README.md). Only that window's kitty has it.
+
 To have Ctrl+click in **every** kitty window too, add this to `~/.config/kitty/kitty.conf`:
 
 `include ~/Work/hyprpi/terminal-helpers/kitty/links.conf`

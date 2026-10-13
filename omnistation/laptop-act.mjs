@@ -10,6 +10,9 @@
 //                 that could run something (.desktop, .sh, …) is copied but only its folder is opened
 //   panel KIND    one of this world's panels (agents room search board): jump to it, or bring / open it here (mockups/panels)
 //   new           a new agent in this world (world X new); prints {"allow": NAME} so the relay lets the panel jump to it
+//   url URL       J553: a link Ctrl+clicked in one of this world's AGENT windows on the laptop (kitty's open_url_with there, set by
+//                 `world X open`): everything in that window comes from the remote machine, so an http(s) link opens as `open`,
+//                 a file:// link (no host, or localhost) names a file THERE and goes to `file`; any other link is refused
 //   paste         the laptop's clipboard: an image is uploaded to ~/.hyprpi-<x>/clipboard/pi-clipboard-<id>.<ext> there (600, at
 //                 most 10 MB, the Thoughts limit) and {"inject": "~/.hyprpi-<x>/clipboard/… "} printed; text: {"inject": TEXT}
 // Output: JSON lines for the relay ({"inject"}, {"allow"}, {"error"}). A failure also shows as a notification, since the panel's
@@ -111,6 +114,24 @@ async function file(p) {
   openWith(dest);
 }
 
+// J553 (2): a link from a remote agent's laptop window. kitty hands it over as is (a hyperlink's own target, or a URL kitty found
+// in the text), so it is checked here like any request: only http(s) and a local-looking file:// path, never another scheme
+function linkTarget(u) {
+  const s = String(u || "");
+  if (/^https?:\/\//i.test(s)) return /^https?:\/\/[^\s\x00-\x1f\x7f]{1,2000}$/i.test(s) ? { act: "open", arg: s } : { error: "not a link" };
+  const m = /^file:\/\/([^/]*)(\/[^?#]*)(?:[?#].*)?$/is.exec(s);
+  if (!m) return { error: `only http(s) and file links open from world ${WL}'s windows` };
+  if (m[1] && m[1].toLowerCase() !== "localhost") return { error: `a link to another machine (${m[1].slice(0, 60)}): not opened` };
+  let p; try { p = decodeURIComponent(m[2]); } catch { return { error: "not a file link" }; }
+  if (p.length > 1024 || /[\x00-\x1f\x7f]/.test(p)) return { error: "not a file path" };
+  return { act: "file", arg: p };
+}
+function url(u) {
+  const t = linkTarget(u);
+  if (t.error) return fail(t.error);
+  return t.act === "open" ? open(t.arg) : file(t.arg);
+}
+
 async function panel(kind) {
   const k = KINDS[kind]; if (!k) return fail(`not a panel: ${kind}`);
   // open on a normal workspace: jump there (as panel-here); parked or not open: mockups/panels brings or opens it here and focuses it
@@ -147,7 +168,7 @@ async function paste() {
   say({ inject: `~/${rel}/${f} ` }); // a space after it, as the box's own pasted path (you paste, then type on)
 }
 
-if (!/^[A-I]$/.test(WL)) { console.error("usage: laptop-act.mjs LETTER focus NAME | open URL | file PATH | panel KIND | new | paste"); process.exit(2); }
-const ACTS = { focus: () => focus(ARG), open: () => open(ARG), file: () => file(ARG), panel: () => panel(ARG), new: newAgent, paste };
+if (!/^[A-I]$/.test(WL)) { console.error("usage: laptop-act.mjs LETTER focus NAME | open URL | file PATH | url URL | panel KIND | new | paste"); process.exit(2); }
+const ACTS = { focus: () => focus(ARG), open: () => open(ARG), file: () => file(ARG), url: () => url(ARG), panel: () => panel(ARG), new: newAgent, paste };
 if (!ACTS[ACT]) { console.error(`laptop-act: unknown action ${ACT}`); process.exit(2); }
 try { await ACTS[ACT](); } catch (e) { fail(e.message); }
