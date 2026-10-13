@@ -8,7 +8,7 @@
 //
 // --columns: the old side-by-side floating columns instead. --tile: the old dwindle columns.
 //
-//   ~/Work/hyprpi/mockups/panels [ROOM] [--workspace N] [--only 1,2]
+//   ~/Harness/hyprpi/mockups/panels [ROOM] [--workspace N] [--only 1,2] [--if-absent]
 //
 // With a single panel (--only 2) it just brings that one here and focuses it (the
 // SUPER+ALT+A / R / slash keys), leaving the layout alone.
@@ -33,6 +33,10 @@ const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
 let wantWs = Number(opt("--workspace")) || null;
 const dryRun = args.includes("--dry") && (args.splice(args.indexOf("--dry"), 1), true); // J530: a remote world's keys, without acting
+// J538 (Angus: the bar's click on the current world should "move the current Thoughts to the workspace and focus on it, if it's not
+// already in there. If it is, do nothing"): --if-absent, with one panel (--only N): a copy of it already on this workspace means
+// nothing is done (no move, no focus); otherwise it's brought here (or opened) and focused as usual.
+const ifAbsent = args.includes("--if-absent") && (args.splice(args.indexOf("--if-absent"), 1), true);
 // Exact columns by default: the panels float and are placed by pixel, so the widths are
 // identical every time. --tile uses dwindle instead (tiled, but only as even as the tree).
 const tiled = args.includes("--tile") && (args.splice(args.indexOf("--tile"), 1), true);
@@ -56,6 +60,7 @@ const clients = () => hypr.clients().catch(() => []);
     const KIND = { "1": "router", "2": "room", "4": "board", "3": "search" };
     const envOf = (pid) => { try { return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); } catch { return []; } };
     const mine = (await clients()).filter((c) => /^hyprpi\.g-/.test(c.class || "") && envOf(c.pid).includes(`G_WORLD=${w.name}`));
+    if (ifAbsent && only.length === 1 && mine.some((x) => new RegExp(`^G: hyprpi-${KIND[only[0]]} `).test(x.title || "") && x.workspace?.id === aw)) process.exit(0); // J538
     let missing = false, last = null;
     for (const n of only) {
       const c = mine.find((x) => new RegExp(`^G: hyprpi-${KIND[n]} `).test(x.title || ""));
@@ -86,6 +91,7 @@ const clients = () => hypr.clients().catch(() => []);
     const mine = (await clients()).filter((c) => c.class === `hyprpi.${L.toLowerCase()}-panel`);
     // J530: --dry says what a panel key would do on this workspace (which window, or which remote panel it opens), and does nothing
     if (dryRun) { for (const n of only) { const kind = KIND[n]; if (!kind) continue; const c = mine.find((x) => (x.title || "") === `hyprpi-${TITLE[kind]} ${L}`); console.log(c ? `${n}: world ${L}'s remote ${kind} panel ${c.address} (class ${c.class}, ws ${c.workspace?.id}) → here (ws ${aw})` : `${n}: open world ${L}'s remote ${kind} panel on ws ${aw} (omnistation/world ${L} panel ${kind})`); } process.exit(0); }
+    if (ifAbsent && only.length === 1 && KIND[only[0]] && mine.some((x) => (x.title || "") === `hyprpi-${TITLE[KIND[only[0]]]} ${L}` && x.workspace?.id === aw)) process.exit(0); // J538
     let last = null;
     for (const n of only) {
       const kind = KIND[n]; if (!kind) continue;
@@ -282,6 +288,7 @@ const main = async () => {
   if (!list.length) { spawn("notify-send", ["hyprpi", "The projects panel (SUPER+ALT+P) isn't there: mockups/board-tui.mjs is missing"], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); return; }
   // One panel (the single-panel keys: --only 1 / 2 / 3): bring it here and focus it, no layout.
   if (list.length === 1) {
+    if (ifAbsent) { try { if ((await strictClients()).some((c) => list[0].title.test(c.title || "") && c.workspace?.id === ws)) return; } catch { return; } } // J538: already here: nothing
     const addr = await bring(list[0], ws, room);
     if (!addr) { console.error(`panels: panel ${list[0].n} did not open`); process.exit(1); }
     await hypr.clearFullscreen(ws, [addr]); // you called it to see it: nothing fullscreen over it
