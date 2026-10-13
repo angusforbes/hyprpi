@@ -40,10 +40,12 @@ ok("A bonk title names the agent", phoneMessage("bonk", { world: "B", agent: "Bo
     "jsonc, a phone entry with comments, braces in strings, extra keys": ['// c\n{\n  "user": { "name": "A" }, // x\n  "phone": { // p\n    "ntfy": { "topic": "old}", "x": { "a": 1 } /* } */ }\n  },\n  "z": "\\"phone\\""\n}\n'],
     "jsonc without a phone entry, ending in a // comment": ['// c\n{\n  "user": { "name": "A" } // x\n}\n'],
     "a nested \"phone\" only": ['{\n  "x": { "phone": 1 } // y\n}\n'],
+    "a top-level string VALUE \"phone\" (not a key)": ['{\n// c\n"label": "phone", "nested": {"ok": true}\n}\n'],
+    "a scalar phone entry before another entry": ['{\n// c\n"phone": null, "nested": {"ok": true}\n}\n'],
   };
   for (const [n, [t]] of Object.entries(cases)) {
     const out = edit(n.replace(/\W+/g, "-"), t); let j = null; try { j = parseJsonc(out); } catch { /* bad */ }
-    ok(`R remote.sh hyprpi.jsonc edit, ${n}: parses, one phone entry with the new topic, the rest kept`, j?.phone?.ntfy?.topic === "angus-brev" && j.phone.ntfy.enabled === true && (out.match(/"phone"\s*:/g) || []).length === 1 + (n.includes("nested") ? 1 : 0) && (!t || !/"user"/.test(t) || j.user?.name === "A") && (!/"z"/.test(t || "") || j.z === '"phone"'), out);
+    ok(`R remote.sh hyprpi.jsonc edit, ${n}: parses, one phone entry with the new topic, the rest kept`, j?.phone?.ntfy?.topic === "angus-brev" && j.phone.ntfy.enabled === true && (out.match(/"phone"\s*:/g) || []).length === 1 + (n.includes("nested") ? 1 : 0) && (!t || !/"user"/.test(t) || j.user?.name === "A") && (!/"z"/.test(t || "") || j.z === '"phone"') && (!/"label"/.test(t || "") || j.label === "phone") && (!/"nested"/.test(t || "") || j.nested?.ok === true), out);
   }
   fs.rmSync(R, { recursive: true, force: true });
 }
@@ -60,6 +62,7 @@ const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_H
 // two held sandbox messages: one for world A's room panel, one reviewed in a Doorman window (reviewIn, filed under room G)
 const PEND = path.join(S, "xdg", "hyprpi", "sbx-relay", "pending"); fs.mkdirSync(PEND, { recursive: true });
 fs.writeFileSync(path.join(PEND, "sb1--aaaaaa.json"), JSON.stringify({ id: "sb1--aaaaaa", at: "2026-10-13T10:00:00Z", sandbox: "sb1", rooms: ["A"], shown: ["Atlas (room A)"], text: "may I read your notes?" }));
+fs.writeFileSync(path.join(PEND, "sb3--cccccc.json"), JSON.stringify({ id: "sb3--cccccc", at: "2026-10-13T10:02:00Z", sandbox: "sb3", rooms: ["A"], gpu: { hours: 1 }, mode: "talk", shown: ["Atlas (room A)"], text: "a GPU for training" }));
 fs.writeFileSync(path.join(PEND, "sb2--bbbbbb.json"), JSON.stringify({ id: "sb2--bbbbbb", at: "2026-10-13T10:01:00Z", sandbox: "sb2", rooms: ["G"], reviewIn: "doorman-g", shown: ["Bolt (room G)"], text: "a GPU lease for 1 h" }));
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
 const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(S, "d.log"), "w"), fs.openSync(path.join(S, "d.err"), "w")] });
@@ -75,11 +78,12 @@ try {
   // H) held sandbox messages: one decision push each, the Doorman one says where to answer; never again on later scans
   await sleep(1500);
   const H = pushes().filter((x) => x.key.startsWith("decision:held:"));
-  ok("H two held messages → two decision pushes", H.length === 2, JSON.stringify(H));
+  ok("H three held messages → three decision pushes", H.length === 3, JSON.stringify(H));
+  ok("H a GPU lease offers only 1 / 2 (no 1+, as the room panel)", /\n1\. approve[^\n]*\n2\. deny/.test(H.find((x) => x.key.includes("sb3"))?.message || "") && !/1\+\./.test(H.find((x) => x.key.includes("sb3"))?.message || ""), JSON.stringify(H.find((x) => x.key.includes("sb3"))?.message));
   ok("H the room-panel one: world A, its text, 1/1+/2", /World A · sandbox sb1\nHeld message to Atlas: may I read your notes\?\n1\. approve/.test(H.find((x) => x.key.includes("sb1"))?.message || "") && /Answer it in world A's room panel/.test(H.find((x) => x.key.includes("sb1"))?.message || ""), JSON.stringify(H[0]?.message));
   ok("H the Doorman-reviewed one is pushed too, pointing at its window", /Doorman window \(doorman-g\)/.test(H.find((x) => x.key.includes("sb2"))?.message || ""), JSON.stringify(H[1]?.message));
   await sleep(1200);
-  ok("H no repeat on later scans", pushes().filter((x) => x.key.startsWith("decision:held:")).length === 2);
+  ok("H no repeat on later scans", pushes().filter((x) => x.key.startsWith("decision:held:")).length === 3);
   fs.writeFileSync(PUSH, ""); // the rest counts from zero
   // B) bonk
   await upd({ status: "working" }); await upd({ status: "blocked", quiet: true, note: "the build needs your password" }); await sleep(200);
@@ -128,11 +132,11 @@ try {
   ok("E job report / next / done / heard / room post / Angus's own Decide item → no push", pushes().length === 4, JSON.stringify(pushes().slice(4)));
 
   // F) maxPerHour, enabled false
-  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 8 }); await sleep(50); // 7 sent this hour (2 held + 3 bonks + 2 decisions)
+  setPolicy({ enabled: true, topic: "j528-test", maxPerHour: 9 }); await sleep(50); // 8 sent this hour (3 held + 3 bonks + 2 decisions)
   for (let i = 0; i < 3; i++) await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: `burst question ${i}`, options: ["a", "b"] });
   await sleep(300);
-  ok("F maxPerHour 8: a burst of 3 more sends only 1 (8 in the last hour)", pushes().length === 5, String(pushes().length));
-  ok("F what went over is logged, not queued", /phone push: over 8\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
+  ok("F maxPerHour 9: a burst of 3 more sends only 1 (9 in the last hour)", pushes().length === 5, String(pushes().length));
+  ok("F what went over is logged, not queued", /phone push: over 9\/hour, dropped/.test(fs.readFileSync(path.join(S, "d.err"), "utf8") + fs.readFileSync(path.join(S, "d.log"), "utf8")));
   setPolicy({ enabled: false, topic: "j528-test", maxPerHour: 100 }); await sleep(50);
   await agent.call("board.item", { action: "add", project: "boards", section: "decide", text: "while off", options: ["a"] });
   await upd({ status: "working" }); await upd({ status: "blocked", quiet: true, note: "while off" }); await sleep(300);

@@ -131,12 +131,29 @@ case "$cmd" in
         let i = 0, depth = 0, first = -1, keyAt = -1, end = -1;
         const skipStr = (j) => { j++; while (j < s.length && s[j] !== "\"") j += s[j] === "\\" ? 2 : 1; return j + 1; };
         const skipCom = (j) => s[j + 1] === "/" ? (s.indexOf("\n", j) < 0 ? s.length : s.indexOf("\n", j)) : (s.indexOf("*/", j + 2) < 0 ? s.length : s.indexOf("*/", j + 2) + 2);
+        const skipWs = (j) => { for (;;) { while (j < s.length && /\s/.test(s[j])) j++; if (s[j] === "/" && (s[j + 1] === "/" || s[j + 1] === "*")) { j = skipCom(j); continue; } return j; } };
+        // the end of the value that starts at v (an object/array to its match, a string, or a scalar up to , or })
+        const valueEnd = (v) => {
+          if (s[v] === "\"") return skipStr(v);
+          if (s[v] !== "{" && s[v] !== "[") { let j = v; while (j < s.length && !/[,}\]\s]/.test(s[j]) && !(s[j] === "/" && (s[j + 1] === "/" || s[j + 1] === "*"))) j++; return j; }
+          let d = 0, j = v;
+          while (j < s.length) { const c = s[j]; if (c === "/" && (s[j + 1] === "/" || s[j + 1] === "*")) { j = skipCom(j); continue; } if (c === "\"") { j = skipStr(j); continue; } if (c === "{" || c === "[") d++; else if (c === "}" || c === "]") { d--; if (!d) return j + 1; } j++; }
+          return -1;
+        };
         while (i < s.length) {
           const c = s[i];
           if (c === "/" && (s[i + 1] === "/" || s[i + 1] === "*")) { i = skipCom(i); continue; }
-          if (c === "\"") { const j = skipStr(i); if (depth === 1 && keyAt < 0 && s.slice(i, j) === "\"phone\"") keyAt = i; i = j; continue; }
+          if (c === "\"") {
+            const j = skipStr(i), k = skipWs(j);
+            if (depth === 1 && s[k] === ":") { // a key at the top level (a string VALUE is never followed by ":")
+              const v = skipWs(k + 1);
+              if (s.slice(i, j) === "\"phone\"" && keyAt < 0) { keyAt = i; end = valueEnd(v); break; }
+              i = v; const e = valueEnd(v); if (e < 0) break; i = e; continue; // skip the whole value
+            }
+            i = j; continue;
+          }
           if (c === "{" || c === "[") { if (depth === 0 && first < 0) first = i; depth++; }
-          else if (c === "}" || c === "]") { depth--; if (keyAt >= 0 && end < 0 && depth === 1) { end = i + 1; break; } }
+          else if (c === "}" || c === "]") depth--;
           i++;
         }
         let t;
