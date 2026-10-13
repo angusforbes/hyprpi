@@ -1096,6 +1096,7 @@ async function noteReconnect() {
 async function start() {
   try {
     api = await connect({
+      scrub: true, // J553 (9): no terminal command in the daemon's strings (an agent's OSC 52, title, …) reaches this screen (lib/client.mjs)
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel

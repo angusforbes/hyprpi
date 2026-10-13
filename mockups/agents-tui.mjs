@@ -451,6 +451,7 @@ async function start() {
   if (restarting) return;
   try {
     api = await connect({
+      scrub: true, // J553 (9): no terminal command in the daemon's strings (an agent's OSC 52, title, …) reaches this screen (lib/client.mjs)
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "board" && data?.room === room) loadBoard();
