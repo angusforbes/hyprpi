@@ -254,7 +254,12 @@ while read -r name status _; do
   seen[$name]=1
   if excluded "$name"; then continue; fi                               # never touched, never even probed
   if bad_state "$status"; then unhealthy_box "$name" "$status"; continue; fi
-  use "$name"; rm -f "${UNH_FILES[@]/#/$D/}" # (any other status ends an unhealthy spell)
+  use "$name"
+  if [[ -n "$(get unh_tried)" ]]; then # a stop this script tried for an unhealthy spell is still being followed:
+    if [[ "${status^^}" == STOPPING ]]; then state "unhealthy-stopping" "box $name is STOPPING after the stop it tried: following it"; continue; fi
+    if [[ "${status^^}" == STOPPED && -n "$(get unh_failed_alerted)" ]]; then alert "Brev auto-stop: $name is STOPPED now (after the failed stop it alerted about)." normal; fi
+  fi
+  rm -f "${UNH_FILES[@]/#/$D/}" # (any other status ends an unhealthy spell)
   if [[ "$status" == RUNNING ]]; then check_box "$name" || fail=1; continue; fi
   rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed"
   state "not-running" "box $name is $status: nothing to do"

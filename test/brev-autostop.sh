@@ -273,6 +273,17 @@ fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; echo STOPPING > "$F/stopre
 ok "stop → STOPPING: one normal notice with that status" '[[ $(stops) == 1 && $(notices) == 1 && $(crit) == 0 ]] && grep -q "Status now: STOPPING" "$F/calls"'
 echo STOPPING_FAILED > "$F/status"; run; run
 ok "…later STOPPING_FAILED: one more (critical) alert, then none" '[[ $(notices) == 2 && $(crit) == 1 ]] && grep -q "now .STOPPING_FAILED. after the stop" "$F/calls"'
+# 32b. (UnhealthyCheck) a STOPPING poll in between keeps the spell: STOPPING → STOPPING_FAILED still alerts, retry stays hourly
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; echo STOPPING > "$F/stopresult"; run; run
+ok "stop → STOPPING, polled again while STOPPING → spell kept (no new stop, no alert)" '[[ $(stops) == 1 && $(notices) == 1 && -f "$F/state/boxes/hyprpi-l40s/unh_tried" ]]'
+echo STOPPING_FAILED > "$F/status"; run; run
+ok "…then STOPPING_FAILED → one critical alert, no stop within the hour" '[[ $(stops) == 1 && $(crit) == 1 && $(notices) == 2 ]]'
+# 32c. a failed first stop, a retry that goes STOPPING, then STOPPED → one 'STOPPED now'
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; touch "$F/stopfail"; run; rm -f "$F/stopfail"; tried_ago 61; echo STOPPING > "$F/stopresult"; run; run
+ok "failed stop, retry → STOPPING: followed, no new alert" '[[ $(stops) == 2 && $(notices) == 1 ]]'
+echo STOPPED > "$F/status"; run; run
+ok "…then STOPPED → exactly one 'STOPPED now' notice" '[[ $(notices) == 2 && $(cnt "^notify.*is STOPPED now") == 1 ]]'
+
 # 33. a paused box: alerted once, never stopped
 fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; "$S" pause hyprpi-l40s 24h >/dev/null; run; run; run
 ok "paused + UNHEALTHY 50 min → one alert, no stop" '[[ $(stops) == 0 && $(notices) == 1 && $(crit) == 1 ]] && grep -q "paused, so it was NOT stopped" "$F/calls"'
