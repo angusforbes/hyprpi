@@ -28,7 +28,7 @@ import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
-import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY, linkPanel, uploadImages } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 import { userName } from "../lib/policy.mjs"; // J261
 import { worldHex as termWorldHex } from "../lib/tui/term.mjs"; // J535
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
@@ -215,7 +215,12 @@ function sendThought(text, images = []) {
   box.remember(""); // the thread keeps the message itself
   const t = String(text || "").trim();
   if ((!t && !images.length) || !api) return;
-  api.call("thoughts.send", { room, text: t, images }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  const a = api;
+  // J555: a laptop panel of a remote world: its pasted images go to that machine first (over the link), the text names them there
+  (linkPanel() && images.length ? uploadImages(a, t, images) : Promise.resolve({ text: t, images })).then((u) => {
+    if (u.why) { note = u.why; render(); }
+    return a.call("thoughts.send", { room, text: u.text, images: u.images });
+  }).then(() => { TH.busy = true; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
   follow(); TH.busy = true; render();
 }
 
