@@ -7,6 +7,8 @@
 //   2. serve NAME -- -p …  runs pi as plain pi (its output on stdout) and leaves the socket alone
 //   3. a second serve NAME while the first is live refuses (exit 6); the first still answers
 //   4. the socket file removed by something else: the live broker serves it again within ~5 s
+//   5. two brokers started at the same moment for one name: one runs, the other exits 6 (10 trials)
+//   6. a stale lock (pid gone, or a live pid that isn't that broker) is taken over
 import fs from "node:fs";
 import os from "node:os";
 import net from "node:net";
@@ -46,6 +48,27 @@ try {
   try { fs.unlinkSync(SOCK); } catch {}
   let back = false; for (let i = 0; i < 80 && !back; i++) { await sleep(100); back = fs.existsSync(SOCK); }
   ok("4 a removed socket is served again", back && (await ask()) === "answered");
+  // 5. brokers started at the same moment for one name (ParityCheck's race): exactly one runs, the other exits 6
+  let races = 0, bad = [];
+  for (let i = 0; i < 10; i++) {
+    const name = `r${i}`, cs = [0, 1].map(() => spawn(process.execPath, [HB, "serve", name, "--"], { env, stdio: "ignore" }));
+    const codes = cs.map((c) => new Promise((r) => c.on("exit", (code) => r(code))));
+    await sleep(700);
+    const alive = cs.filter((c) => c.exitCode === null && c.signalCode === null).length;
+    const exited = await Promise.race([Promise.any(codes), sleep(50).then(() => null)]);
+    if (alive === 1 && exited === 6) races++; else bad.push(`${name}: ${alive} alive, exit ${exited}`);
+    for (const c of cs) c.kill("SIGTERM"); await Promise.all(codes);
+  }
+  ok("5 two brokers started at once: one runs, one exits 6 (10 trials)", races === 10, bad.join("; "));
+  ok("5 their locks are gone after they end", !fs.readdirSync(D).some((f) => /^r\d\.broker\.lock/.test(f)), fs.readdirSync(D).join(" "));
+  // 6. a stale lock (its pid gone; a live pid that isn't a broker) is taken over
+  for (const [what, pid] of [["a dead pid", spawnSync("true").pid], ["a live non-broker pid", process.pid]]) {
+    fs.writeFileSync(path.join(D, "s1.broker.lock"), String(pid));
+    const c = spawn(process.execPath, [HB, "serve", "s1", "--"], { env, stdio: "ignore" }); await sleep(700);
+    ok(`6 a stale lock (${what}) is taken over`, c.exitCode === null && fs.readFileSync(path.join(D, "s1.broker.lock"), "utf8") === String(c.pid));
+    c.kill("SIGTERM"); await new Promise((r) => c.on("exit", r));
+  }
+  ok("6 a broker's lock goes with it", !fs.existsSync(path.join(D, "s1.broker.lock")));
 } finally {
   first.kill("SIGTERM"); await sleep(500);
   ok("the broker removes its own socket when it ends", !fs.existsSync(SOCK));
