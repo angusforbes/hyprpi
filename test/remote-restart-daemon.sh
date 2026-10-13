@@ -5,7 +5,7 @@ set -uo pipefail
 R="$(cd "$(dirname "$0")/.." && pwd)"; mkdir -p "$HOME/.cache"; T="$(mktemp -d -p "$HOME/.cache" j530rd.XXXX)"; pass=0; fail=0 # (not under /tmp: remote.sh refuses a world folder below a folder others can write)
 ok() { if eval "$2"; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
 PIDS=() # every fixture process, killed by pid at the end (never pkill -f)
-fakes() { for p in /proc/[0-9]*; do [[ "$(tr '\0' ' ' < $p/cmdline 2>/dev/null)" == "node $T/hyprpi/bin/hyprpi daemon " ]] && echo "${p#/proc/}"; done; }
+fakes() { for p in /proc/[0-9]*; do [[ "$(tr '\0' ' ' 2>/dev/null < $p/cmdline)" == "node $T/hyprpi/bin/hyprpi daemon " ]] && echo "${p#/proc/}"; done; }
 stop_fakes() { for p in $(fakes); do kill "$p" 2>/dev/null; done; sleep 0.3; for p in $(fakes); do kill -9 "$p" 2>/dev/null; done; }
 cleanup() { stop_fakes; for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; rm -rf "$T"; }; trap cleanup EXIT
 mkdir -p "$T/.hyprpi-i/run" "$T/hyprpi/bin" "$T/hyprpi/lib" "$T/bin"; chmod 700 "$T/.hyprpi-i" "$T/.hyprpi-i/run"
