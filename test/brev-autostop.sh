@@ -408,6 +408,25 @@ ok "set-topic angus-brev → accepted, stored" '[[ $rc == 0 && "$(cat "$F/ntfy-t
 echo "abcde" | BREV_AUTOSTOP_CONFIG="$PC" "$S" phone set-topic 2>/dev/null; rc=$?
 ok "set-topic with 5 characters → refused, angus-brev kept" '[[ $rc == 1 && "$(cat "$F/ntfy-topic")" == angus-brev ]]'
 
+# 52. (J528) hyprpi's one ntfy setting wins (topic + server) when its topic is set; else the topic file
+printf '#!/usr/bin/env bash\nif [[ "$1 $2" == "ntfy config" ]]; then cat "%s/hpntfy" 2>/dev/null; exit 0; fi\necho "hyprpi $*" >> "%s/calls"\n' "$F" "$F" > "$F/bin/hyprpi-ntfy"; chmod +x "$F/bin/hyprpi-ntfy"
+echo "file-topic-xyz" > "$F/ntfy-topic"; printf 'exclude keep-me-box\nnotify_phone on\n' > "$PC"
+echo '{"enabled":false,"server":"https://push.example/","topic":"angus-brev","kinds":["bonk"]}' > "$F/hpntfy"
+rm -f "$F/ntfy"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test >/dev/null
+ok "hyprpi setting has a topic → posts to its server/topic (its 'enabled:false' doesn't switch autostop off)" 'grep -qF "https://push.example/angus-brev" "$F/ntfy"'
+st="$(BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" "$S" phone status)"
+ok "…phone status names hyprpi's setting as the source" 'grep -q "topic from: hyprpi" <<<"$st"'
+echo '{"enabled":true,"server":"https://push.example","topic":""}' > "$F/hpntfy"; rm -f "$F/ntfy"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test >/dev/null
+ok "hyprpi topic empty → the topic file + BREV_AUTOSTOP_NTFY_SERVER" 'grep -qF "https://ntfy.example/file-topic-xyz" "$F/ntfy"'
+echo '{"topic":"bad topic;rm","server":"https://x"}' > "$F/hpntfy"; rm -f "$F/ntfy"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test >/dev/null
+ok "an invalid hyprpi topic → ignored, the file is used" 'grep -qF "https://ntfy.example/file-topic-xyz" "$F/ntfy"'
+echo '{"topic":"angus-brev","server":"javascript:x"}' > "$F/hpntfy"; rm -f "$F/ntfy"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test >/dev/null
+ok "a bad hyprpi server → its topic, the default server" 'grep -qF "https://ntfy.example/angus-brev" "$F/ntfy"'
+printf 'not json' > "$F/hpntfy"; rm -f "$F/ntfy"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" "$S" phone test >/dev/null
+ok "hyprpi prints garbage (or an old hyprpi without 'ntfy') → the file" 'grep -qF "https://ntfy.example/file-topic-xyz" "$F/ntfy"'
+echo '{"topic":"angus-brev","server":"https://push.example"}' > "$F/hpntfy"; fresh; rm -f "$F/ntfy"; fixture 120; echo RUNNING > "$F/status"; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" run; started_ago 120; BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi-ntfy" BREV_AUTOSTOP_CONFIG="$PC" run
+ok "a real stop with hyprpi's setting → one post there; Thoughts line still sent" '[[ $(posts) == 1 && $(thoughts) == 1 ]] && grep -qF "https://push.example/angus-brev" "$F/ntfy"'
+
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
 ok "brev ls's header lines are not instances" '[[ ! -d "$F/state/boxes/You" && ! -d "$F/state/boxes/NAME" ]]'
