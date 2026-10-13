@@ -54,7 +54,7 @@ hyprpi's behaviour is set in one file, `~/.config/hyprpi/hyprpi.jsonc`, written 
 
 ![The agents panel: each agent with its state, task and model, and helpers it spawned listed under it](docs/img/panels.png)
 
-**SUPER+A** opens a new agent: a terminal window running pi on the workspace you are on. It joins that world's room, gets a name and a colour, and from then on it is part of the world: the other agents can talk to it, Thoughts can hand it work, and it shows up in the panels.
+**SUPER+A** opens a new agent: a terminal window running pi on the workspace you are on, on the model in `hyprpi.jsonc` `routing.newAgentModel` (default `anthropic/claude-opus-5-5`; `""` = pi's own default; it must be on the scoped model list). Agents that Thoughts or other agents start pick their own model per task (routing, or the model they are given), not this one. It joins that world's room, gets a name and a colour, and from then on it is part of the world: the other agents can talk to it, Thoughts can hand it work, and it shows up in the panels.
 
 The panels are small terminal apps (TUIs), one of each per world:
 
