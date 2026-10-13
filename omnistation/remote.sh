@@ -292,7 +292,24 @@ PYK
     secrets_ok || exit 3
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: world ${W^^}'s daemon isn't running here (start an agent: world ${W^^} new)" >&2; exit 4; }
     export HYPRPI_REMOTE_PANEL=1 TERM="${TERM:-xterm-256color}"
-    # J543: the laptop's pty relay (omnistation/pty-relay.py) does what the panel asks of the desktop; its nonce for this run
+    # J543: the laptop's pty relay (omnistation/pty-relay.py) does what the panel asks of the desktop; its nonce for this run.
+    # J553 (10): never on a command line (other users here see those in ps): HYPRPI_LAPTOP_RELAY=ask means the relay types it in.
+    # With the terminal's echo off, a private request goes to the relay, which answers once, before the panel draws, with one line
+    # "hyprpi-nonce:<nonce>"; it ends up only in the panel's environment (readable by this user alone). (A laptop from before J553
+    # still passes the nonce itself, which works as before.)
+    if [[ "${HYPRPI_LAPTOP_RELAY:-}" == ask ]]; then
+      unset HYPRPI_LAPTOP_RELAY
+      if [[ -t 0 && -t 1 ]]; then
+        sv=$(stty -g 2>/dev/null || true); stty -echo 2>/dev/null || true
+        printf '\033]5379;hyprpi-nonce\007'
+        end=$(( SECONDS + 15 ))
+        while (( SECONDS < end )); do
+          IFS= read -r -t $(( end - SECONDS )) l || break
+          if [[ "${l%$'\r'}" =~ hyprpi-nonce:([A-Za-z0-9]{16,64})$ ]]; then export HYPRPI_LAPTOP_RELAY="${BASH_REMATCH[1]}"; break; fi
+        done
+        [[ -z "$sv" ]] || stty "$sv" 2>/dev/null || true
+      fi
+    fi
     [[ "${HYPRPI_LAPTOP_RELAY:-}" =~ ^[A-Za-z0-9]{16,64}$ ]] || unset HYPRPI_LAPTOP_RELAY
     exec node "$DIR/mockups/$kind-tui.mjs" "${W^^}" ;;
   attach)

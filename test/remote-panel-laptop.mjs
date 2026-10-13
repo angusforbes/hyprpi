@@ -172,8 +172,13 @@ try {
 
   // ================= Stream (room) =================
   await openPanel("room", 250); // wide: an agent's long line isn't wrapped (wrapping breaks a printed escape apart)
-  const nonce = /HYPRPI_LAPTOP_RELAY=([0-9a-f]+)/.exec(read("ssh.log"))?.[1] || "";
-  ok("panel-loop runs the panel through the relay, with a nonce for this run", nonce.length >= 16 && /remote\.sh panel room/.test(read("ssh.log")), read("ssh.log"));
+  // J553 (10): the nonce is typed in by the relay when remote.sh asks, so it is in the panel's environment, never on a command line
+  const panelEnv = () => { for (const p of fs.readdirSync("/proc").filter((x) => /^\d+$/.test(x))) { try { const c = fs.readFileSync(`/proc/${p}/cmdline`, "utf8"); if (!c.includes("mockups/room-tui.mjs")) continue; const e = fs.readFileSync(`/proc/${p}/environ`, "utf8").split("\0"); if (e.includes(`HOME=${RH}`)) return { env: e, cmd: c }; } catch { /* gone */ } } return null; };
+  const pe = panelEnv();
+  const nonce = (pe?.env.find((x) => x.startsWith("HYPRPI_LAPTOP_RELAY=")) || "").slice("HYPRPI_LAPTOP_RELAY=".length);
+  ok("panel-loop runs the panel through the relay, with a nonce for this run (in the panel's environment)", /^[0-9a-f]{32}$/.test(nonce) && /remote\.sh panel room/.test(read("ssh.log")), JSON.stringify(pe?.env.filter((x) => /HYPRPI/.test(x))) + read("ssh.log"));
+  const cmdlines = () => fs.readdirSync("/proc").filter((x) => /^\d+$/.test(x)).map((p) => { try { return fs.readFileSync(`/proc/${p}/cmdline`, "utf8"); } catch { return ""; } });
+  ok("… never on a command line (the remote command asks for it; no process here shows it in ps)", nonce && !read("ssh.log").includes(nonce) && /HYPRPI_LAPTOP_RELAY=ask /.test(read("ssh.log")) && !cmdlines().some((c) => c.includes(nonce)), read("ssh.log"));
   ok("the Stream shows the message", !!scr.find("room-link"), plain());
   let at = scr.find("https://example.com/room-link");
   if (at) await click(at, { ctrl: true });

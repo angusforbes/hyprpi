@@ -13,7 +13,12 @@ link, copy a remote file over and open it, bring up one of the world's panels, s
 image is uploaded and its remote path typed into the panel as a bracketed paste; text is pasted as text).
 
 The remote machine, or text a remote agent prints, must not be able to drive the laptop, so a request is honoured only when ALL hold:
-  - it carries this run's nonce (HYPRPI_RELAY_NONCE here; the remote panel gets it as HYPRPI_LAPTOP_RELAY in its command line);
+  - it carries this run's nonce (HYPRPI_RELAY_NONCE here). J553 (10): the nonce is never on a command line (other users of the
+    remote machine see those in ps): the remote command says HYPRPI_LAPTOP_RELAY=ask, and remote.sh, before the panel starts, turns
+    its terminal's echo off and prints ESC ] 5379 ; hyprpi-nonce BEL; the relay takes that off the screen and types
+    "hyprpi-nonce:<nonce>" + newline into the pty, which remote.sh reads into the panel's environment (private to its user). It is
+    answered once per run, and only before the panel has started drawing (its alternate screen or mouse mode), so nothing an agent
+    prints later can ask for it;
   - it follows, within GATE_S seconds, a matching local input this relay itself passed through, used once: a mouse press or Enter
     for focus / open / file / panel, Ctrl+N or Enter for new, Ctrl+V or Shift+Insert for paste (the clipboard is never read
     otherwise); a jump to an agent the laptop just started (new) is allowed once, for ALLOW_S seconds;
@@ -24,6 +29,9 @@ Everything else is dropped silently (and never reaches the screen).
 import base64, collections, errno, fcntl, hmac, json, os, pty, re, select, signal, struct, subprocess, sys, termios, time, tty
 
 PREFIX = b"\x1b]5379;hyprpi;"
+ASK = b"\x1b]5379;hyprpi-nonce\x07"   # J553 (10): remote.sh asks for this run's nonce (before the panel starts)
+STARTED = (b"\x1b[?1049h", b"\x1b[?1000h", b"\x1b[?1002h", b"\x1b[?1003h", b"\x1b[?1006h")  # the panel is drawing: no more asks
+STARTED_BYTES = 1 << 16  # (or this much output shown)
 B64 = re.compile(rb"[A-Za-z0-9+/=]*")
 MAX_BODY = 8192
 GATE_S = 2.5
@@ -62,6 +70,10 @@ class Relay:
         self.acts = collections.deque()
         self.out_buf = b""
         self.helpers = []        # (Popen, act)
+        self.asked = False       # J553 (10): the nonce was asked for (and answered, or refused) once this run
+        self.answer = b""        # what to type into the pty for it (taken by the main loop)
+        self.started = False     # the panel started drawing: an ask now is refused
+        self.shown, self.shown_tail = 0, b""
 
     # ---- input: what the user did (only what this relay forwarded counts) ----
     def note_input(self, data, now=None):
@@ -96,17 +108,20 @@ class Relay:
     # ---- output: take the requests out, pass everything else on ----
     def filter_output(self, data):
         """-> (bytes for the screen, [request bodies]). A request's body is base64 up to BEL or ESC \\; a PREFIX followed by
-        anything else (or by more than MAX_BODY bytes) is not a request: the PREFIX is dropped and the rest shown."""
+        anything else (or by more than MAX_BODY bytes) is not a request: the PREFIX is dropped and the rest shown. An ASK (J553) is
+        taken off the screen too, and answered (self.answer) if it is the first this run and the panel hasn't started drawing."""
         buf, show, reqs = self.out_buf + data, [], []
         while True:
-            i = buf.find(PREFIX)
+            i, j_ask = buf.find(PREFIX), buf.find(ASK)
+            if j_ask >= 0 and (i < 0 or j_ask < i):
+                show.append(buf[:j_ask]); self.note_shown(buf[:j_ask]); self.on_ask(); buf = buf[j_ask + len(ASK):]; continue
             if i < 0:
-                keep = 0  # a partial PREFIX at the end waits for the next chunk
-                for k in range(min(len(PREFIX) - 1, len(buf)), 0, -1):
-                    if PREFIX.startswith(buf[-k:]): keep = k; break
-                show.append(buf[:len(buf) - keep]); buf = buf[len(buf) - keep:]
+                keep = 0  # a partial PREFIX / ASK at the end waits for the next chunk
+                for k in range(min(len(ASK) - 1, len(buf)), 0, -1):
+                    if PREFIX.startswith(buf[-k:]) or ASK.startswith(buf[-k:]): keep = k; break
+                show.append(buf[:len(buf) - keep]); self.note_shown(buf[:len(buf) - keep]); buf = buf[len(buf) - keep:]
                 break
-            show.append(buf[:i])
+            show.append(buf[:i]); self.note_shown(buf[:i])
             rest = buf[i + len(PREFIX):]
             m = B64.match(rest)
             j = m.end()
@@ -118,14 +133,37 @@ class Relay:
         self.out_buf = buf
         return b"".join(show), reqs
 
+    def note_shown(self, b):
+        """has the panel started drawing? (its alternate screen or a mouse mode, even split across reads; or a lot of output)"""
+        if self.started or not b: return
+        self.shown += len(b)
+        t = self.shown_tail + b
+        if self.shown > STARTED_BYTES or any(x in t for x in STARTED): self.started = True
+        self.shown_tail = t[-16:]
+
+    def on_ask(self):
+        """J553 (10): remote.sh asks for the nonce: the first ask of the run, before the panel draws, gets it (typed as one line)"""
+        if self.asked or self.started or not self.nonce:
+            return log(drop="ask", why="again" if self.asked else "started" if self.started else "no nonce")
+        self.asked = True
+        self.answer = b"hyprpi-nonce:" + self.nonce.encode() + b"\n"
+        log(ask="answered")
+
+    def take_answer(self):
+        a, self.answer = self.answer, b""
+        return a
+
     def held_partial(self):
         """a few bytes held back that may start a PREFIX (e.g. a lone ESC at the end of a chunk)"""
-        return bool(self.out_buf) and not self.out_buf.startswith(PREFIX)
+        b = self.out_buf  # (a started ASK waits for its end too: remote.sh's printf may arrive in two reads)
+        return bool(b) and not b.startswith(PREFIX) and not (len(b) >= len(ASK) - 7 and ASK.startswith(b))
 
     def flush_output(self):
         """what is held back, for the screen: a partial PREFIX is shown after all; an unfinished request never is"""
         b, self.out_buf = self.out_buf, b""
-        return b"" if b.startswith(PREFIX) else b
+        b = b"" if b.startswith(PREFIX) else b
+        self.note_shown(b)
+        return b
 
     # ---- a request: checked, then done by laptop-act ----
     def decide(self, body, now=None):
@@ -262,6 +300,8 @@ def main(argv):
                 if not data: break
                 show, reqs = relay.filter_output(data)
                 if show: write_all(stdout, show)
+                ans = relay.take_answer()
+                if ans: write_all(master, ans)  # J553 (10): the nonce, typed for remote.sh (its echo is off)
                 for body in reqs:
                     a = relay.decide(body)
                     if a: relay.start(a)

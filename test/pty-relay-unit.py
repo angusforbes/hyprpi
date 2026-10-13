@@ -2,7 +2,8 @@
 """J543: omnistation/pty-relay.py's checks, without a terminal: the output filter (requests out, everything else through, split
 chunks, both terminators, junk after the prefix, an overlong body), the gates (a matching local input just before, used once; wheel,
 motion and pasted Enters don't count), the nonce, validation, the rate limit, what a helper may hand back (inject only from paste,
-allow only from new), and the bracketed paste it types (no escape or C1 gets through). Plus one real run through a pty with a fake
+allow only from new), and the bracketed paste it types (no escape or C1 gets through). J553 (10): the nonce handshake (remote.sh asks,
+the relay types the nonce once, never after the panel draws), unit and through a real pty with remote.sh's own lines. Plus one real run through a pty with a fake
 "ssh" that prints a request: shown screen bytes pass, the request is acted on only after a click.
    python3 test/pty-relay-unit.py   (exit 0 = pass)"""
 import base64, importlib.util, json, os, subprocess, sys, tempfile, time
@@ -133,6 +134,28 @@ ok("… and not after ALLOW_S", r.decide(req({"act": "focus", "agent": "h-omni-l
 b = R.bracketed("a\x1b[201~\x1b]52;c;x\x07b\r\nc\x9bd\x00")
 ok("a pasted text can't end the paste early or carry escapes", b == b"\x1b[200~a[201~]52;c;xb\ncd\x1b[201~", repr(b))
 
+# ---- J553 (10): the nonce is typed in when remote.sh asks, never on a command line
+r = relay(); s_, q = r.filter_output(b"ssh noise" + R.ASK + b"more")
+ok("ask: taken off the screen", s_ == b"ssh noisemore" and q == [], repr(s_))
+ok("ask: answered with the nonce, as one line to type", r.take_answer() == b"hyprpi-nonce:" + N.encode() + b"\n" and r.take_answer() == b"")
+r.filter_output(R.ASK)
+ok("ask: only once a run", r.take_answer() == b"")
+r = relay(); r.filter_output(b"\x1b[?1049h\x1b[H frame"); r.filter_output(R.ASK)
+ok("ask: refused once the panel draws (alternate screen): an agent's text can't get it", r.take_answer() == b"" and r.started)
+r = relay(); r.filter_output(b"x\x1b[?10"); r.filter_output(b"06h y"); r.filter_output(b"z" + R.ASK)
+ok("ask: refused after a mouse mode, even one split across reads", r.take_answer() == b"" and r.started)
+r = relay(); r.filter_output(b"a" * (R.STARTED_BYTES + 1)); r.filter_output(R.ASK)
+ok("ask: refused after a lot of output", r.take_answer() == b"")
+r = R.Relay("H", ""); s_, _ = r.filter_output(R.ASK)
+ok("ask: a relay without a nonce answers nothing (and still hides the ask)", r.take_answer() == b"" and s_ == b"")
+r = relay(); got = b""
+for i in range(len(R.ASK)): got += r.filter_output(R.ASK[i:i + 1])[0]
+ok("ask: split byte by byte, still taken off and answered", got == b"" and r.take_answer().startswith(b"hyprpi-nonce:"), repr(got))
+r = relay(); r.filter_output(R.ASK[:15])
+ok("ask: a half-arrived ask isn't flushed to the screen by the 30 ms timer", not r.held_partial())
+r = relay(); s_, q = r.filter_output(R.ASK + osc({"act": "open", "url": "https://x.y/", "n": N}))
+ok("ask then a request in one chunk: both handled", s_ == b"" and len(q) == 1 and r.take_answer())
+
 # ---- one real run: a pty, a fake ssh that prints a request, a stand-in for laptop-act
 with tempfile.TemporaryDirectory() as T:
     act_log = os.path.join(T, "acts")
@@ -153,6 +176,33 @@ with tempfile.TemporaryDirectory() as T:
     ok("real run: the screen bytes pass, the requests don't", b"screen-a" in out and b"screen-b" in out and b"screen-c" in out and b"5379" not in out, repr(out))
     ok("real run: only the request after the click is done", [a for a in acts if a] == ["H open https://ok.example/"], repr(acts))
     ok("real run: the command's exit code comes back", p.returncode == 7, str(p.returncode))
+
+# ---- J553 (10): a real handshake through a pty, with remote.sh's own lines (cut out of it): the nonce reaches the "panel"'s
+# environment, never its command line or the screen
+src = open(os.path.join(ROOT, "omnistation/remote.sh")).read()
+a = src.index('    if [[ "${HYPRPI_LAPTOP_RELAY:-}" == ask ]]; then'); b = src.index("    exec node \"$DIR/mockups/$kind-tui.mjs\"")
+snippet = src[a:b]
+with tempfile.TemporaryDirectory() as T:
+    out_f = os.path.join(T, "env")
+    fake = os.path.join(T, "fake.sh")
+    open(fake, "w").write("#!/bin/bash\nset -euo pipefail\n" + snippet + f"echo \"got=${{HYPRPI_LAPTOP_RELAY:-none}}\" > {out_f}\nprintf '\\033[?1049hpanel-drawn'\nstty -a | grep -qw -- '-echo' && echo ' echo-off' || echo ' echo-on'\nsleep 0.3\n")
+    os.chmod(fake, 0o755)
+    env = {**os.environ, "HYPRPI_TEST": "1", "HYPRPI_RELAY_NONCE": N, "HYPRPI_LAPTOP_RELAY": "ask"}
+    t1 = time.monotonic()
+    p = subprocess.Popen(["python3", os.path.join(ROOT, "omnistation/pty-relay.py"), "H", "--", fake], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    try: out, _ = p.communicate(timeout=30)
+    except subprocess.TimeoutExpired: p.kill(); out, _ = p.communicate()
+    got = open(out_f).read().strip() if os.path.exists(out_f) else ""
+    ok("handshake: remote.sh's lines get the nonce from the relay (quickly)", got == "got=" + N and time.monotonic() - t1 < 10, got + " " + repr(out))
+    ok("handshake: neither the ask nor the nonce reaches the screen; the panel's output does", N.encode() not in out and b"5379" not in out and b"panel-drawn" in out, repr(out))
+    ok("handshake: the terminal's echo is back on for the panel", b"echo-on" in out, repr(out))
+    env["HYPRPI_RELAY_NONCE"] = ""
+    t1 = time.monotonic()
+    p = subprocess.Popen(["python3", os.path.join(ROOT, "omnistation/pty-relay.py"), "H", "--", fake], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    try: out, _ = p.communicate(timeout=40)
+    except subprocess.TimeoutExpired: p.kill(); out, _ = p.communicate()
+    got = open(out_f).read().strip() if os.path.exists(out_f) else ""
+    ok("handshake: no nonce at the relay: the panel starts without one (after remote.sh's wait)", got == "got=none" and b"panel-drawn" in out, got + " " + repr(out))
 
 print("pty-relay-unit: " + (f"{fails} FAILED" if fails else "all pass"))
 sys.exit(1 if fails else 0)

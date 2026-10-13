@@ -5,7 +5,7 @@
 # be reopened by hand. ^Q in the panel (exit 0) closes the window.
 # J543: the ssh runs through pty-relay.py, so what the panel does "on the desktop" (jump to an agent's window, open a link, bring up
 # a panel, start an agent, paste the clipboard) happens HERE on the laptop, as in a local world; each run gets a fresh nonce the
-# panel must send with its requests (HYPRPI_LAPTOP_RELAY there). Without python3 the panel runs as before (those actions then say so).
+# panel must send with its requests (HYPRPI_LAPTOP_RELAY there; J553: typed in by the relay, never on a command line). Without python3 the panel runs as before (those actions then say so).
 WL="$1"; KIND="$2"; shift 2
 wl="${WL,,}"; WS="${HYPRPI_REMOTE_WS:?}"
 RELAY="$(dirname "$(readlink -f "$0")")/pty-relay.py"
@@ -14,7 +14,9 @@ while :; do
   start=$(date +%s)
   if command -v python3 >/dev/null && [[ -f "$RELAY" ]]; then
     nonce=$(od -An -N16 -tx1 /dev/urandom | tr -dc 0-9a-f)
-    HYPRPI_RELAY_NONCE=$nonce python3 "$RELAY" "$WL" -- "$@" "HYPRPI_REMOTE_WS=$WS HYPRPI_LAPTOP_RELAY=$nonce bash ~/.hyprpi-$wl/remote.sh panel $KIND"
+    # J553 (10): the nonce is never on a command line (ps shows those to every user, here and there): the relay has it in its
+    # environment and types it into the panel's terminal when remote.sh asks (HYPRPI_LAPTOP_RELAY=ask)
+    HYPRPI_RELAY_NONCE=$nonce python3 "$RELAY" "$WL" -- "$@" "HYPRPI_REMOTE_WS=$WS HYPRPI_LAPTOP_RELAY=ask bash ~/.hyprpi-$wl/remote.sh panel $KIND"
   else
     "$@" "HYPRPI_REMOTE_WS=$WS bash ~/.hyprpi-$wl/remote.sh panel $KIND"
   fi
