@@ -30,6 +30,15 @@ ok("0 remoteHome: from the state path, the env, and off elsewhere",
   const got = pickAutoOpens(raw, ag, { "h-done": now - 1000 }, now, 71, 80);
   ok("0 auto-open: only daemon-opened, recent, windowless, not yet opened; its workspace (or the world's first)", JSON.stringify(got) === JSON.stringify([{ id: "h-farside", launch: "farside", ws: 74 }, { id: "h-far", launch: "far", ws: 71 }]), JSON.stringify(got));
 }
+{ // J543: on a remote machine a routed model is that machine's own name for it (its enabledModels); the laptop: unchanged
+  const { localModel, routeModel } = await import(path.join(ROOT, "lib/routing.mjs"));
+  const L = ["nv-inference/azure/anthropic/claude-opus-5-5", "nv-inference/azure/anthropic/claude-sonnet-5-5", "nv-inference/azure/anthropic/claude-haiku-5-5", "nv-inference/openai/openai/gpt-6.1-sol"];
+  ok("0 localModel: same id, else same family; unknown and listed ones unchanged", localModel("anthropic/claude-sonnet-5-5", L) === L[1] && localModel("anthropic/claude-haiku-4-5", L) === L[2] && localModel("openai-codex/gpt-6.1-sol", L) === L[3] && localModel("acme/x-1", L) === "acme/x-1" && localModel(L[0], L) === L[0]);
+  const P = { routing: { default: "ordinary", ladder: ["anthropic/claude-sonnet-5-5:medium"], kinds: { ordinary: 0 } } };
+  const was = process.env.HYPRPI_REMOTE_HOME; process.env.HYPRPI_REMOTE_HOME = "-";
+  ok("0 routeModel off a remote machine: as configured", routeModel({ complexity: "ordinary" }, P).model === "anthropic/claude-sonnet-5-5");
+  if (was === undefined) delete process.env.HYPRPI_REMOTE_HOME; else process.env.HYPRPI_REMOTE_HOME = was;
+}
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j543-")), ROOTH = path.join(T, ".hyprpi-h"), S = path.join(ROOTH, "state"), cfg = path.join(T, "cfg"), sock = path.join(T, "d.sock");
 fs.mkdirSync(path.join(S, "rooms"), { recursive: true }); fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
 fs.writeFileSync(path.join(ROOTH, "ws"), "71\n");
