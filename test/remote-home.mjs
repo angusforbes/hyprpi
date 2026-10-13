@@ -1,0 +1,71 @@
+#!/usr/bin/env node
+// J543 (Angus: the remote daemon "turns Thoughts-A (any letter other than H) into a local fake world; it should route those to the
+// laptop or refuse them, and refuse open_agent outside H"). An isolated daemon whose state is <tmp>/.hyprpi-h/state, i.e. what
+// omnistation/remote.sh runs on world H's machine (no Hyprland, pi = /bin/cat). It serves world H only:
+//   1. its rooms are H only (a stray rooms/A.jsonl doesn't make a world-A tab) and its current world is H, not A
+//   2. talk / demand to Thoughts-A is refused with why (skipped), no Thoughts-A thread or room-A file is made; an unknown agent's
+//      reason says agents of other worlds are on the laptop
+//   3. thoughts.ask to Thoughts-A, thoughts.send / room.post / board.get for A, relayAsk for A: refused with why
+//   4. open_agent (thoughts.open) and spawn_agent (orch.spawn) for world A are refused; `hyprpi new` on A's workspace is refused
+//   5. world H itself still works: talk to Thoughts-H is delivered
+//   node test/remote-home.mjs   (exit 0 = pass)
+import fs from "node:fs"; import os from "node:os"; import path from "node:path"; import { spawn, spawnSync } from "node:child_process";
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+let fails = 0; const ok = (n, c, x = "") => { if (!c) fails++; console.log(`${c ? "ok  " : "FAIL"} ${n}${x ? ": " + x : ""}`); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const { connect } = await import(path.join(ROOT, "lib/client.mjs"));
+const { remoteHome } = await import(path.join(ROOT, "lib/remote-world.mjs"));
+ok("0 remoteHome: from the state path, the env, and off elsewhere",
+  remoteHome({ HYPRPI_STATE: "/home/u/.hyprpi-h/state" }) === "H" && remoteHome({ HYPRPI_STATE: "/home/u/.hyprpi-i/state/" }) === "I"
+  && remoteHome({ HYPRPI_STATE: "/home/u/.local/state/hyprpi" }) === "" && remoteHome({}) === "" && remoteHome({ HYPRPI_REMOTE_HOME: "c" }) === "C"
+  && remoteHome({ HYPRPI_STATE: "/x/.hyprpi-h/state", HYPRPI_REMOTE_HOME: "-" }) === "" && remoteHome({ HYPRPI_STATE: "/x/.hyprpi-h/state", HYPRPI_SANDBOX_WORLD: "G" }) === "");
+const T = fs.mkdtempSync(path.join(os.tmpdir(), "j543-")), ROOTH = path.join(T, ".hyprpi-h"), S = path.join(ROOTH, "state"), cfg = path.join(T, "cfg"), sock = path.join(T, "d.sock");
+fs.mkdirSync(path.join(S, "rooms"), { recursive: true }); fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
+fs.writeFileSync(path.join(ROOTH, "ws"), "71\n");
+fs.writeFileSync(path.join(S, "rooms", "A.jsonl"), ""); // a stray file from the old fake world A
+fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10 }));
+fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } } }));
+const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_NOTIFY_TEST: "1" };
+for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_WORKSPACE", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "HYPRPI_REMOTE_HOME", "HYPRPI_SANDBOX_WORLD"]) delete env[k];
+const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(T, "d.log"), "w"), fs.openSync(path.join(T, "d.err"), "w")] });
+for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await sleep(200);
+try {
+  const api = await connect({ path: sock, onEvent: () => {} });
+  const err = async (f) => { try { await f(); return ""; } catch (e) { return e.message; } };
+  const away = /world A isn't on this machine/;
+  // 1
+  const lst = await api.call("list", {});
+  ok("1 rooms: world H only (the stray A file is ignored)", JSON.stringify((lst.rooms || []).map((r) => r.id)) === '["H"]', JSON.stringify((lst.rooms || []).map((r) => r.id)));
+  const cur = await api.call("room.current", {});
+  ok("1 the current world is H (workspace 71), not A", cur.room === "H" && cur.workspace === 71, JSON.stringify(cur));
+  // 2
+  const agent = await connect({ path: sock, onEvent: () => {} });
+  await agent.call("agent.hello", { agent_id: "h-omni-alpha", pid: process.pid, name: "omni-alpha", want_workspace: 71, cwd: T });
+  const t = await agent.call("talk", { to: ["Thoughts-A"], text: "please open Farside", mode: "demand" });
+  ok("2 talk to Thoughts-A: nothing delivered, skipped with why", !(t.delivered || []).length && (t.skipped || []).some((s) => s.name === "Thoughts-A" && away.test(s.reason) && /laptop/.test(s.reason)), JSON.stringify(t));
+  const t2 = await agent.call("talk", { to: ["Linkpath"], text: "hi", mode: "talk" });
+  ok("2 an agent that isn't here: its reason says other worlds' agents are on the laptop", (t2.skipped || []).some((s) => /laptop/.test(s.reason)), JSON.stringify(t2));
+  ok("2 no fake world A was made (no thoughts/A thread, no Thoughts-A)", !fs.existsSync(path.join(S, "thoughts", "A.thread.jsonl")) && !(((await api.call("list", {})).thoughts) || []).some((x) => x.room === "A"));
+  // 3
+  ok("3 thoughts.ask from Thoughts-H to Thoughts-A is refused", away.test(await err(() => api.call("thoughts.ask", { room: "H", agent: "Thoughts-A", question: "x" }))));
+  ok("3 thoughts.send to A is refused", away.test(await err(() => api.call("thoughts.send", { room: "A", text: "hi" }))));
+  ok("3 a human room post to A is refused", away.test(await err(() => api.call("room.post", { room: "A", text: "hi" }))));
+  ok("3 board.get for A is refused", away.test(await err(() => api.call("board.get", { room: "A" }))));
+  { const e = await err(() => api.call("thoughts.relayAsk", { room: "A", from: "x", text: "hi" })); ok("3 relayAsk for A is refused", /isn't on this machine/.test(e), e); }
+  // 4
+  { const e = await err(() => api.call("thoughts.open", { room: "A", task: "fix it", name: "Farside" })); ok("4 open_agent for world A is refused", away.test(e), e); }
+  { const e = await err(() => api.call("orch.spawn", { thoughts: "A", prompt: "help" })); ok("4 spawn_agent for world A (as Thoughts-A) is refused", away.test(e), e); }
+  ok("4 nothing pending to open", !fs.existsSync(path.join(S, "pending-opens.json")) || !/Farside/.test(fs.readFileSync(path.join(S, "pending-opens.json"), "utf8")));
+  { const n = spawnSync(process.execPath, [path.join(ROOT, "bin/hyprpi"), "new", "--workspace", "2"], { env: { ...env, PATH: process.env.PATH }, encoding: "utf8", timeout: 15000 });
+    ok("4 hyprpi new on world A's workspace is refused", n.status !== 0 && /isn't on this machine/.test(n.stderr + n.stdout), (n.stderr + n.stdout).slice(-200)); }
+  { const e = await err(() => api.call("agent.move", { agent: "h-omni-alpha", to: "A" })); ok("4 moving an agent to world A is refused", away.test(e), e); }
+  // 5
+  const t3 = await agent.call("talk", { to: ["Thoughts-H"], text: "status?", mode: "talk" });
+  ok("5 talk to Thoughts-H (this machine's own) is delivered", (t3.delivered || []).includes("Thoughts-H"), JSON.stringify(t3));
+  api.close?.(); agent.close?.();
+} finally {
+  d.kill(); await sleep(300);
+  if (fails) { try { console.log(fs.readFileSync(path.join(T, "d.err"), "utf8").slice(-1500)); } catch { /* none */ } }
+  fs.rmSync(T, { recursive: true, force: true });
+}
+console.log(fails ? `FAIL (${fails})` : "PASS"); process.exit(fails ? 1 : 0);

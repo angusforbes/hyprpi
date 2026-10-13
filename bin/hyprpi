@@ -220,6 +220,8 @@ async function cmdNew() {
   { // J471 v2 (Angus: "SUPER+A didn't open a new agent in H"): a remote world's workspace (bound in ~/.config/hyprpi/remote/<letter>.json)
     // gets a new agent on its remote machine, with its local window (omnistation/world X new); a resume / twin / --beside stays here
     const wl = workspace ? "abcdefghi"[Math.floor((workspace - 1) / (Number(cfg.worldSize) || 10))] : "";
+    { const home = (await import("../lib/remote-world.mjs")).remoteHome(); // J543: on a remote world's machine only that world's workspaces
+      if (home && workspace && wl.toUpperCase() !== home) die(`workspace ${workspace} is world ${wl.toUpperCase()}'s, which isn't on this machine (it runs only world ${home}); nothing opened`); }
     const bound = wl && (await import("../lib/remote-world.mjs")).remoteBindingFile(wl); // J536 (review): either binding name
     // J536 (Angus: "remove all non-omnistation TUIs and agents from world H"): a laptop agent's resume / twin / --beside isn't placed there
     if (wl && (await import("../lib/remote-world.mjs")).isRemoteWorld(wl) && (wantId || twinOf || beside) && !process.env.HYPRPI_GATE_DRYRUN) die(`world ${wl.toUpperCase()} is a remote world: no laptop agent opens on its workspaces (resume or twin it on another world's workspace)`);
