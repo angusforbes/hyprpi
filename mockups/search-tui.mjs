@@ -37,7 +37,7 @@ const ESC = "\x1b[";
 const out = (s) => process.stdout.write(s);
 
 // ---- theme: world colours exactly like the bar / room TUI -------------------
-const COLORS = `${process.env.HOME}/.local/state/omarchy/current/theme/colors.toml`;
+const COLORS = process.env.HYPRPI_THEME_COLORS || `${process.env.HOME}/.local/state/omarchy/current/theme/colors.toml`; // J532: a remote world uses a copy of the laptop's
 const PALETTE = [["blue", "color4"], ["red", "color1"], ["cyan", "color6"], ["yellow", "color3"], ["magenta", "color5"], ["green", "color2"], ["orange", "color11"], ["brown", "color9"], ["foreground", "color7"]];
 let theme = {};
 function loadTheme() {

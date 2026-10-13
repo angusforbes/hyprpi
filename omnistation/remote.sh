@@ -31,6 +31,12 @@ W="${ROOT##*/.hyprpi-}"
 WORK="${HYPRPI_REMOTE_WORK:-$HOME/work}"
 export HYPRPI_STATE="$ROOT/state" HYPRPI_SOCKET="$ROOT/run/daemon.sock" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$ROOT/run}" HYPRPI_NO_ADOPT=1
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+# J532 (Angus: "the hyprpi's should be kept on the same versions when possible"): the machine's own tooling may update a global pi
+# under running agents (Omnistation's platform installs the latest pi into ~/.npm-global), so hyprpi runs ITS OWN pi, the version
+# hyprpi pins (docker/PI_VERSION), from ~/.hyprpi-<x>/pi (install puts it there); it comes first on the PATH of everything here
+[[ -x "$ROOT/pi/bin/pi" ]] && export PATH="$ROOT/pi/bin:$PATH"
+# J532: the laptop's theme colours (world X's panels draw in world X's colour, as on the laptop); world X copies them here
+[[ -f "$ROOT/theme/colors.toml" ]] && export HYPRPI_THEME_COLORS="$ROOT/theme/colors.toml"
 unset HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY DISPLAY  # headless: never a desktop, even if one is around
 # the laptop's terminal type may be unknown here (kitty's xterm-kitty): tmux needs one it knows
 infocmp "${TERM:-dumb}" >/dev/null 2>&1 || export TERM=xterm-256color
@@ -91,7 +97,9 @@ case "$cmd" in
     elif [[ -f "$DIR/bin/hyprpi" ]]; then :  # copied from the laptop (world-h setup), e.g. where the git host isn't reachable
     else git clone -q "$REPO_URL" "$DIR"; fi
     want=$(cat "$DIR/docker/PI_VERSION" 2>/dev/null || echo latest)
-    if ! command -v pi >/dev/null; then need npm "to install pi"; npm install -g --prefix "$HOME/.local" "@earendil-works/pi-coding-agent@$want" >/dev/null; fi
+    # J532: hyprpi's own pinned pi in ~/.hyprpi-<x>/pi (never the machine's global one, which its own tooling may update)
+    have=$(node -p 'try { require(process.argv[1]).version } catch { "" }' "$ROOT/pi/lib/node_modules/@earendil-works/pi-coding-agent/package.json" 2>/dev/null || true)
+    if [[ "$have" != "$want" ]]; then need npm "to install pi"; npm install -g --prefix "$ROOT/pi" "@earendil-works/pi-coding-agent@$want" >/dev/null; export PATH="$ROOT/pi/bin:$PATH"; fi
     # headless: agents run in tmux, never in a desktop terminal; hyprpi only needs a terminalCommand set to accept that
     c="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/config.json"; mkdir -p "$(dirname "$c")"
     [[ -f "$c" ]] || printf '{\n  "//terminalCommand": "headless (omnistation/remote.sh): agents run in tmux; no desktop terminal is ever opened",\n  "terminalCommand": ["tmux"]\n}\n' > "$c"

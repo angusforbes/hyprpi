@@ -227,7 +227,9 @@ async function cmdNew() {
       // meaning yet, so they are refused rather than silently dropped
       if (piArgs.length || process.argv.includes("--cwd") || wantIcon) die(`world ${wl.toUpperCase()} is a remote world: its new agents take a name only (omnistation/world ${wl.toUpperCase()} new NAME)`);
       const nm = /^[a-z][a-z0-9-]{0,30}$/.test(String(wantName).toLowerCase()) ? String(wantName).toLowerCase() : "";
-      const r = spawnSync(path.join(ROOT, "omnistation", "world"), [wl.toUpperCase(), "new", ...(nm ? [nm] : [])], { stdio: "inherit" });
+      // J532 (Angus: "SUPER+A doesn't seem to work in world H, I tried on workspace 2 and 3"): the window opens on the workspace it was
+      // pressed on (it always went to the world's first one)
+      const r = spawnSync(path.join(ROOT, "omnistation", "world"), [wl.toUpperCase(), "new", ...(nm ? [nm] : [])], { stdio: "inherit", env: { ...process.env, HYPRPI_OPEN_WS: String(workspace) } });
       process.exit(r.status ?? 1);
     }
   }
