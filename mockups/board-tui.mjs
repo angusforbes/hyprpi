@@ -29,6 +29,7 @@ import { connect } from "../lib/client.mjs";
 import { completeAt } from "../lib/at-names.mjs";
 import { urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 let worldBar = null;
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
@@ -166,6 +167,7 @@ function jumpRef(t, y) {
     api.call("board.open", { job: t }).then((r) => {
       mode = "cards";
       if (r.room === room) { openCard(r.project, r.item); note = `→ ${t}: @${r.name}${r.item ? " " + r.item : ""}`; }
+      else if (remotePanel()) { const n = laptopPanel("board"); note = n.startsWith("✗") ? n : `→ ${t}: @${r.name}${r.item ? " " + r.item : ""} in projects ${r.room}`; } // J543
       else {
         const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
         if (!isolatedReason(process.env)) try { spawn(new URL("./panel-here", import.meta.url).pathname, ["board", r.room], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); } catch { /* none */ }
@@ -183,12 +185,13 @@ function ctrlClick(x, y) { // a link opens; an agent's name ("Sankey[e]" too) �
   const ref = refAt(x, y); if (ref && jumpRef(ref, y)) return; // J419: @project / J417 / N14 first
   const w = wordAt(x, y); if (!w) return;
   const url = urlIn(w.word);
+  if (url && remotePanel()) { note = laptopOpen(url); return render(); } // J543: in the laptop's browser
   if (url && isolatedReason(process.env)) { note = "link not opened (isolated hyprpi)"; return render(); } // J333
   if (url) { try { spawn("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
   if (!api) return;
   const hit = agentIn(w.word, agents);
   if (!hit) { const n = bareName(w.word); if (n) { note = `no live agent @${n}`; render(); } return; }
-  api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  focusAgent(api, hit.id).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 
 // ---- drawing ---------------------------------------------------------------------------

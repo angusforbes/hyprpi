@@ -10,6 +10,7 @@
 #                            "omni-") starts its name; no NAME: one is picked. SUPER+A on the world's workspaces runs this
 #   world X rename NAME NEW  rename an agent, keeping its session
 #   world X open [NAME]      open agent NAME's window on the world's first workspace, silently (your view doesn't move)
+#   world X focus NAME       jump to agent NAME's window (open it first if it has none), as a local agent's focus does (J543)
 #   world X status           what runs remotely
 #   world X stop [NAME|all]  stop an agent remotely (its session stays: start / open resumes it)
 #   world X start-mirror NAME, open-mirror NAME   the J469 fallback: pi's own terminal UI in remote tmux, mirrored over ssh
@@ -209,6 +210,11 @@ case "$cmd" in
     # J530: a message (JSON on stdin) for this world's Thoughts, which lives on the remote machine; prints its answer (JSON).
     # Used by the laptop daemon for ask_agent / talk / demand to "Thoughts-X" from other worlds.
     exec "${SSH[@]}" "$R thoughts-relay" ;;
+  focus)
+    # J543: agent NAME's laptop window, as a local agent.focus: jump to it (a parked one comes to this workspace first); none: open it
+    # (world X open, only for an agent that has a session there) and jump to it once it maps. NAME is the launch name (omni-alpha,
+    # not the id h-omni-alpha). Used by the remote panels' relay (pty-relay.py) and the laptop daemon (toast clicks).
+    exec node "$H/omnistation/laptop-act.mjs" "$WL" focus "$NAME" ;;
   panel)
     # J480 (Angus: "I'm tsh'ing in, why can't I connect to them remotely?"): one of the world's panels (room = Stream,
     # board = Projects, search = Thoughts, agents) in a laptop window; the panel itself runs on the remote machine against the
@@ -220,8 +226,10 @@ case "$cmd" in
     lk="${XDG_RUNTIME_DIR:-/tmp}/hyprpi-panel-$wl-$NAME.lock"; exec 9>"$lk"; flock -w 15 9 || { echo "world: another open of this panel is still running" >&2; exit 3; }
     if pgrep -u "$(id -u)" -f "omnistation/panel-loop\.sh $WL $NAME " >/dev/null; then echo "world $WL's $NAME panel is already open"; exit 0; fi
     PWS="${HYPRPI_PANEL_WS:-$WS}"; [[ "$PWS" =~ ^[0-9]{1,3}$ ]] || { echo "world: bad HYPRPI_PANEL_WS" >&2; exit 2; }
-    # the same kitty keys as the host's panels (mockups/room-tui): Shift/Ctrl clicks reach the TUI, CSI-u for Shift+Space/Enter
-    ko=(-o copy_on_select=clipboard -o "mouse_map=shift+left click grabbed" -o "mouse_map=shift+left press grabbed" -o "mouse_map=shift+left doublepress grabbed" -o "mouse_map=shift+left triplepress grabbed" -o "mouse_map=ctrl+left press grabbed" -o "mouse_map=ctrl+left release grabbed" -o "mouse_map=ctrl+shift+left press grabbed mouse_selection normal" -o "mouse_map=ctrl+shift+left doublepress grabbed mouse_selection word" -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" -o 'map shift+space send_text all \x1b[32;2u' -o 'map shift+enter send_text all \x1b[13;2u' -o 'map ctrl+enter send_text all \x1b[13;5u' -o 'map ctrl+insert copy_or_noop' -o 'map ctrl+tab send_text all \x1b[9;5u' -o 'map ctrl+shift+tab send_text all \x1b[9;6u' -o 'map shift+insert paste_from_clipboard')
+    # the same kitty keys as the host's panels (mockups/room-tui): Shift/Ctrl clicks reach the TUI, CSI-u for Shift+Space/Enter;
+    # in the Thoughts panel, as on the host, SUPER+V (Shift+Insert) reaches the panel (J543), which pastes the laptop's clipboard
+    # through the relay, images included; the other panels let kitty paste text
+    ko=(-o copy_on_select=clipboard -o "mouse_map=shift+left click grabbed" -o "mouse_map=shift+left press grabbed" -o "mouse_map=shift+left doublepress grabbed" -o "mouse_map=shift+left triplepress grabbed" -o "mouse_map=ctrl+left press grabbed" -o "mouse_map=ctrl+left release grabbed" -o "mouse_map=ctrl+shift+left press grabbed mouse_selection normal" -o "mouse_map=ctrl+shift+left doublepress grabbed mouse_selection word" -o "mouse_map=ctrl+shift+left triplepress grabbed mouse_selection line" -o 'map shift+space send_text all \x1b[32;2u' -o 'map shift+enter send_text all \x1b[13;2u' -o 'map ctrl+enter send_text all \x1b[13;5u' -o 'map ctrl+insert copy_or_noop' -o 'map ctrl+tab send_text all \x1b[9;5u' -o 'map ctrl+shift+tab send_text all \x1b[9;6u' -o "map shift+insert $([[ $NAME == search ]] && echo no_op || echo paste_from_clipboard)")
     kt=$([[ $NAME == agents ]] && echo router || echo "$NAME")
     line="kitty --class=hyprpi.$wl-panel --title $(printf %q "hyprpi-$kt $WL") $(printf '%q ' "${ko[@]}")-- env HYPRPI_REMOTE_WS=$WS $(printf %q "$H/omnistation/panel-loop.sh") $WL $NAME $(printf '%q ' "${SSHT[@]}")"
     [[ "$line" != *"]]"* ]] || { echo "world: can't open: the command contains ]]" >&2; exit 2; }
@@ -229,5 +237,5 @@ case "$cmd" in
     hyprctl dispatch "hl.dsp.exec_cmd([[${line}]], { workspace = \"$PWS silent\" })" >/dev/null
     for _ in $(seq 40); do pgrep -u "$(id -u)" -f "omnistation/panel-loop\.sh $WL $NAME " >/dev/null && break; sleep 0.25; done  # hold the lock until it runs
     echo "opened world $WL's $NAME panel on workspace $PWS" ;;
-  *) echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding|recover|panel|images [NAME]" >&2; exit 2 ;;
+  *) echo "usage: world LETTER setup|new|start|open|focus|status|stop|start-mirror|open-mirror|binding|recover|panel|images [NAME]" >&2; exit 2 ;;
 esac

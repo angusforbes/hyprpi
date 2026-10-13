@@ -34,6 +34,7 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold
 import { createInputBox, createHistory, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 let worldBar = null;
 
 // ---- state -----------------------------------------------------------------
@@ -49,6 +50,7 @@ let showHelp = false;                        // /help: the commands and keys ins
 // The command line: the shared box (single line) and the shared commands.
 function copy(text) {
   if (!text) return;
+  if (remotePanel()) { out(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`); note = "copied"; return; } // J543: kitty puts it on the laptop's clipboard (OSC 52)
   try { const p = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] }); p.on("error", () => {}); p.stdin.on("error", () => {}); p.stdin.end(text); note = "copied"; } catch { /* no wl-copy */ }
 }
 // ↑↓ are the box's, as in every panel (Angus, N51): its start / end first, then your earlier
@@ -434,7 +436,7 @@ function applyList(r) {
       // The agent we just opened: jump to its window (it may be on another workspace —
       // `hyprpi new` avoids a workspace in panel mode).
       cursorId = a.id;
-      api?.call("agent.focus", { agent: a.id }).then(() => { note = "\u2192 " + a.display; render(); }).catch(() => {});
+      focusAgent(api, a.id).then(() => { note = "\u2192 " + a.display; render(); }).catch(() => {});
     }
   }
   const f = agents.find((a) => a.focused);
@@ -466,6 +468,7 @@ async function start() {
 function openProject(p) {
   if (!api) return;
   api.call("board.open", { room, project: p.id }).catch(() => {});
+  if (remotePanel()) { const n = laptopPanel("board"); note = n.startsWith("✗") ? n : `→ @${p.name} in the projects panel`; return render(); } // J543
   const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
   const c = spawn(new URL("./panel-here", import.meta.url).pathname, ["board", room], { detached: true, stdio: "ignore", env });
   c.on("error", () => {}); c.unref();
@@ -479,7 +482,7 @@ function enter() {
   const fail = (e) => { note = /window not found/.test(e.message) ? `✗ ${a.display} has no window to jump to` : "✗ " + e.message; render(); }; // J467 (e.g. a test agent with no window)
   if (a.parked) return api.call("agent.unpark", { agent: a.id }).then(() => { note = "→ " + a.display + " is back"; render(); }).catch(fail), render();
   if (a.dormant) return api.call("agent.resume", { agent: a.id }).then(() => { note = "resuming " + a.display + " …"; render(); }).catch(fail), render();
-  api.call("agent.focus", { agent: a.id }).then(() => { note = "→ " + a.display; render(); }).catch(fail);
+  focusAgent(api, a.id).then(() => { note = "→ " + a.display; render(); }).catch(fail);
 }
 
 function act(kind) { // ^W close / ^K kill; on a closed agent both mean "forget"
@@ -513,6 +516,10 @@ let lastNew = 0;
 function newAgent() {
   if (Date.now() - lastNew < 2000) return;
   lastNew = Date.now();
+  if (remotePanel()) { // J543: the laptop opens it (world X new); it is jumped to once it's listed, as below
+    if (!laptopNew()) { note = "✗ " + NO_RELAY; return render(); }
+    pendingNew.push({ cwd: `world ${room}`, t: Date.now(), known: new Set(agents.map((a) => a.id)) }); setTimeout(render, 30500); note = ""; return render();
+  }
   const cwd = loadConfig().cwd.replace(/^~(?=$|\/)/, process.env.HOME);
   const env = { ...process.env, HYPRPI_ROUTER: "1" }; delete env.HYPRPI_AGENT_ID;
   spawn(new URL("../bin/hyprpi", import.meta.url).pathname, ["new", "--cwd", cwd], { detached: true, stdio: "ignore", env }).unref();
@@ -621,7 +628,7 @@ function onKey(d) {
         const a = agents.find((q) => q.id === hit.id);
         if (!a) { note = `@${board.names?.[hit.id] || hit.id} isn't live`; return render(); }
         cursorId = a.id; confirm = null;
-        api?.call("agent.focus", { agent: a.id }).then(() => { note = "→ " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+        focusAgent(api, a.id).then(() => { note = "→ " + a.display; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
         return render();
       }
       if (b === 16) { cursorId = "p:" + pid; return openProject(pj); }

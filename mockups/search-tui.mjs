@@ -28,6 +28,7 @@ import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { mdRows, openTarget } from "../lib/tui/markdown.mjs";
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 import { userName } from "../lib/policy.mjs"; // J261
 import { worldHex as termWorldHex } from "../lib/tui/term.mjs"; // J535
 import { threadKind, answerLine, actionPrefix, splitLead } from "../lib/thoughts-lines.mjs"; // shared with the phone
@@ -162,6 +163,7 @@ function openLink(lt) {
   const job = lt.slice(4);
   if (!api) { note = "✗ not connected"; return render(); }
   api.call("board.open", { job }).then((r) => {
+    if (remotePanel()) { const n = laptopPanel("board"); note = n.startsWith("✗") ? n : `→ ${job}: @${r.name}${r.item ? " " + r.item : ""} in projects ${r.room}`; return render(); } // J543
     const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
     try { spawnChild(new URL("./panel-here", import.meta.url).pathname, ["board", r.room], { detached: true, stdio: "ignore", env }).on("error", () => {}).unref(); } catch { /* none */ }
     note = `→ ${job}: @${r.name}${r.item ? " " + r.item : ""} in projects ${r.room}`; render();
@@ -1056,6 +1058,7 @@ function ctrlClick(x, y) {
   if (lt) return openLink(lt);
   const word = wordAt(screen[y - 1] || "", x, gw);
   const url = urlIn(word);
+  if (url && remotePanel()) { note = laptopOpen(url); return render(); } // J543: in the laptop's browser
   if (url) { try { spawnChild("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); } catch { /* none */ } return; }
   if (!api) return;
   let hit = word ? agentIn(word, known.filter((ag) => ag.live)) : null;
@@ -1065,14 +1068,14 @@ function ctrlClick(x, y) {
     if (!hit) { note = `${items[rowMeta[y].item].who} is closed`; return render(); }
   }
   if (!hit) { const n = bareName(word); if (n) { note = `no live agent @${n}`; render(); } return; }
-  api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  focusAgent(api, hit.id).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function jump() {
   const r = S.current();
   if (!r || !api) return;
   if (r.kind !== "agent" || !r.live) { note = r.kind === "room" ? "that's the room log (open the room with Ctrl+Tab in the room panel)" : `${r.name} is closed`; return render(); }
   note = "";
-  api.call("agent.focus", { agent: r.source }).then(() => { note = "→ " + r.name; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  focusAgent(api, r.source).then(() => { note = "→ " + r.name; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 
 // J283 (Angus: "what happened, you went away"): a reconnect to the daemon is its own highlighted turn, saying

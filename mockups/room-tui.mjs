@@ -41,6 +41,7 @@ import { sentLine, SENT_STICKY_MS } from "../lib/tui/sent.mjs"; // J165
 import { userName, HUMAN_KEY } from "../lib/policy.mjs"; // J261: the human's display name
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { heldFor, decideHeld, heldKeyAction, openHeldReview, autoNotes, rulesCommand } from "../lib/held.mjs"; // J268: sandbox messages held for Angus, answered y / n here
 let worldBar = null;
@@ -579,7 +580,7 @@ function applyList(r) {
       pendingNew.splice(i, 1); for (const p of pendingNew) p.known.add(a.id);
       // The agent we just opened: jump to its window (it may be on another workspace —
       // `hyprpi new` avoids a workspace in panel mode).
-      api?.call("agent.focus", { agent: a.id }).then(() => { note = "\u2192 " + a.display; render(); }).catch(() => {});
+      focusAgent(api, a.id).then(() => { note = "\u2192 " + a.display; render(); }).catch(() => {});
     }
   }
   // Focusing an agent's window moves the list cursor to it (and scrolls it into view).
@@ -652,6 +653,10 @@ let lastNew = 0;
 function newAgent(dir) {
   if (Date.now() - lastNew < 2000) return; // held / repeated Ctrl+N: one agent
   lastNew = Date.now();
+  if (remotePanel()) { // J543: the laptop opens it (world X new; the remote machine's own folder); jumped to once listed
+    if (!laptopNew()) { note = "✗ " + NO_RELAY; return render(); }
+    pendingNew.push({ cwd: `world ${room}`, t: Date.now(), known: new Set(agents.map((a) => a.id)) }); setTimeout(render, 30500); note = ""; return render();
+  }
   const cwd = (dir || loadConfig().cwd).replace(/^~(?=$|\/)/, process.env.HOME);
   if (!fs.existsSync(cwd)) { note = "✗ no such folder: " + cwd; return render(); }
   const env = { ...process.env }; delete env.HYPRPI_AGENT_ID;
@@ -920,6 +925,7 @@ function onKey(d) {
 function ctrlClick(x, y) {
   const word = wordAt(screen[y - 1] || "", x, gw);
   const url = urlIn(word);
+  if (url && remotePanel()) { note = laptopOpen(url); return render(); } // J543: in the laptop's browser
   if (url && isolatedReason(process.env)) { note = "link not opened (isolated hyprpi)"; return render(); } // J333
   if (url) { try { spawn("gio", ["open", url], { detached: true, stdio: "ignore" }).on("error", () => {}).unref(); note = "opening link"; } catch { /* none */ } return render(); }
   if (!api) return;
@@ -931,7 +937,7 @@ function ctrlClick(x, y) {
     if (!hit && id) { note = "that agent has closed"; return render(); }
   }
   if (!hit) { const n = bareName(word); if (n) { note = `no live agent @${n}`; render(); } return; }
-  api.call("agent.focus", { agent: hit.id }).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
+  focusAgent(api, hit.id).then(() => { note = `→ @${hit.display}`; render(); }).catch((e) => { note = "✗ " + e.message; render(); });
 }
 function quit() { out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?1049l${ESC}?25h`); process.exit(0); }
 process.on("SIGTERM", quit);
