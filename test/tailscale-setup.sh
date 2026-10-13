@@ -51,4 +51,12 @@ ok "already joined but Tailscale SSH can't be turned on: a clear failure" '[[ $r
 ok "whitespace-formatted status JSON still counts as Running (no key sent again)" '! grep -q " up" "$T/calls"'
 chmod 666 "$T/on.json"; o=$(run "$T/on.json"); rc=$?; chmod 644 "$T/on.json"
 ok "a binding writable by others: the key is not sent" '[[ $rc == 2 && "$o" == *"writable by others"* ]]'
+mkdir -m777 "$T/open"; cp "$T/on.json" "$T/safe.json"; chmod 644 "$T/safe.json"; ln -s "$T/safe.json" "$T/open/link.json"
+o=$(run "$T/open/link.json"); rc=$?
+ok "a binding reached through a link in a folder others can write: refused" '[[ $rc == 2 && "$o" == *"writable by others"* ]]'
+# the whole world command: an unsafe binding with "tailscale" must stop before its ssh runs at all
+printf '#!/usr/bin/env bash\ntouch "%s/evil-ran"\n' "$T" > "$T/bin/evilssh"; chmod +x "$T/bin/evilssh"
+printf '{"ssh":["%s/bin/evilssh","x"],"tailscale":true}' "$T" > "$T/evil.json"; chmod 666 "$T/evil.json"
+o=$(HYPRPI_REMOTE_CONF="$T/evil.json" "$R/omnistation/world" I setup 2>&1); rc=$?
+ok "world setup with an unsafe tailscale binding runs none of its commands" '[[ $rc == 2 && ! -e "$T/evil-ran" && "$o" == *"writable by others"* ]]'
 echo "$pass passed, $fail failed"; exit $(( fail > 0 ))

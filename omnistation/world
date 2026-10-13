@@ -35,6 +35,11 @@ CDIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/remote"
 CONF="${HYPRPI_REMOTE_CONF:-$CDIR/$wl.json}"
 [[ -f "$CONF" || -n "${HYPRPI_REMOTE_CONF:-}" || ! -f "$CDIR/world-$wl.json" ]] || CONF="$CDIR/world-$wl.json"
 [[ -f "$CONF" ]] || { echo "world: world $WL isn't bound to a remote machine; write $CDIR/$wl.json: { \"ssh\": [\"ssh\", \"user@host\"] }" >&2; exit 2; }
+# J525 (review): a binding with "tailscale" makes setup send a secret key to the machine its "ssh" names, so before ANYTHING the
+# binding names is run, it and its folders must be yours and not writable by others (brev/tailscale/ts-setup --check)
+if [[ "$(jq -c '.tailscale // false' "$CONF" 2>/dev/null)" != false && "$(jq -c '.tailscale // false' "$CONF" 2>/dev/null)" != null ]]; then
+  "$H/brev/tailscale/ts-setup" --check "$CONF" || exit 2
+fi
 mapfile -t SSH < <(jq -r '.ssh[]' "$CONF" | grep -vxE -- '-tt?')
 (( ${#SSH[@]} )) || { echo "world: \"ssh\" is empty in $CONF" >&2; exit 2; }
 SSHT=("${SSH[@]:0:${#SSH[@]}-1}" -t "${SSH[-1]}") # with a terminal (for the mirror window): -t before the host

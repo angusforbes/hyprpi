@@ -6,16 +6,27 @@
 # A machine already in the tailnet gets no key (idempotent). Tailscale SSH is on unless "ssh": false.
 # Exit 0 also when it's off, or when there's no key yet (it says so).
 set -uo pipefail
+# (review) the binding decides where the key goes: the file and every folder on its path, as written AND through any link, must be
+# yours (or root's) and not writable by others; a root-owned sticky folder such as /tmp is fine above a folder of yours.
+# `ts-setup --check BINDING` runs only this test: omnistation/world calls it before it runs anything the binding names.
+okdir() { local o m; o="$(stat -c %U "$1")"; m=$((8#$(stat -c %a "$1"))); [[ "$o" == "$(id -un)" || "$o" == root ]] || return 1
+  (( (m & 022) == 0 )) || [[ "$2" == above && -d "$1" && "$o" == root && $(( m & 01000 )) -ne 0 ]]; }
+safe() { local f="$1" p rest c depth=0
+  case "$f" in /*) ;; *) f="$PWD/$f";; esac
+  p=/; okdir / above || return 1; rest="${f#/}"
+  while [[ -n "$rest" ]]; do
+    c="${rest%%/*}"; [[ "$rest" == */* ]] && rest="${rest#*/}" || rest=""
+    [[ -z "$c" || "$c" == . ]] && continue; [[ "$c" == .. ]] && { p="$(dirname "$p")"; continue; }
+    p="${p%/}/$c"
+    if [[ -L "$p" ]]; then (( ++depth <= 20 )) || return 1; local t; t="$(readlink "$p")"; [[ "$t" == /* ]] || t="$(dirname "$p")/$t"; p="$(dirname "$p")"; rest="$t${rest:+/$rest}"; rest="${rest#/}"; [[ "$t" == /* ]] && p=/; continue; fi
+    [[ -e "$p" ]] || return 1
+    if [[ -n "$rest" ]]; then okdir "$p" above || return 1; else okdir "$p" last || return 1; fi
+  done; }
+if [[ "${1:-}" == --check ]]; then safe "${2:-}" || { echo "world: $2 (or a folder on its path) is writable by others or not yours: refusing to use it with Tailscale" >&2; exit 2; }; exit 0; fi
 CONF="$1"; wl="$2"; shift 2; SSH=("$@")
 H="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 tsc=$(jq -c '.tailscale // false' "$CONF" 2>/dev/null) || { echo "ts-setup: can't read $CONF" >&2; exit 2; }
 [[ "$tsc" == false || "$tsc" == null ]] && exit 0
-# (review) the binding decides where the key goes: it and its folders must be yours and not writable by others
-# (a root-owned sticky folder such as /tmp is fine above a folder of yours: others can't rename or replace what's yours in it)
-safe() { local p o m; p="$(readlink -f "$1")"; while :; do o="$(stat -c %U "$p")"; m=$((8#$(stat -c %a "$p")))
-  [[ "$o" == "$(id -un)" || "$o" == root ]] || return 1
-  (( (m & 022) == 0 )) || { [[ -d "$p" && "$o" == root && $(( m & 01000 )) -ne 0 && "$p" != "$(dirname "$(readlink -f "$1")")" ]] || return 1; }
-  [[ "$p" == / ]] && return 0; p="$(dirname "$p")"; done; }
 safe "$CONF" || { echo "ts-setup: $CONF (or a folder above it) is writable by others or not yours: not sending the Tailscale key" >&2; exit 2; }
 obj=$(jq -r '(.tailscale|type)=="object"' "$CONF")
 hn=""; [[ "$obj" == true ]] && hn=$(jq -r '.tailscale.hostname // ""' "$CONF")
