@@ -46,7 +46,7 @@ pairs() {
   local l a b c rest seen=" "
   while IFS= read -r l || [[ -n "$l" ]]; do
     l="${l%%#*}"; read -r a b c rest <<< "$l"; [[ -n "$a" && -n "$b" && -n "$c" ]] || continue
-    [[ "$b" =~ ^[A-Za-z0-9._-]+$ && "$c" =~ ^[A-Za-z0-9._/-]+$ && "$c" != *..* ]] || { log "config: bad line skipped: $l"; continue; }
+    [[ "$b" =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$ && "$c" =~ ^[A-Za-z0-9._/-]+$ && "$c" != *..* ]] || { log "config: bad line skipped: $l"; continue; }
     [[ "$seen" == *" $b:$c "* ]] && { log "config: $b:~/$c is already in another pair; line skipped: $l"; continue; } # one laptop folder per box folder
     seen+="$b:$c "
     printf '%s\t%s\t%s\t%s\n' "${a/#\~/$HOME}" "$b" "$c" "$rest"
@@ -57,7 +57,8 @@ if [[ "${1:-}" == status ]]; then
   ls_out="$(timeout 60 brev ls 2>/dev/null)"
   while IFS=$'\t' read -r -u 4 LOCAL BOX REMOTE OPTS; do
     P="$ST"; [[ -z "${BREV_SYNC_BOX:-}" ]] && P="$ST/pairs/$(pairkey "$BOX" "$REMOTE")"
-    echo "$LOCAL <-> $BOX:~/$REMOTE${OPTS:+ ($OPTS)}: box $(awk -v b="$BOX" '$1==b{print $2}' <<< "$ls_out"); last state: $(cat "$P/state" 2>/dev/null), failures in a row: $(cat "$P/fails" 2>/dev/null || echo 0)$([[ -f "$P/alerted" ]] && echo ", alerted")"
+    if [[ " $OPTS " == *" ssh=tsh "* ]]; then bs="via Teleport, login $(timeout 20 "${BREV_SYNC_TSH:-tsh}" status 2>/dev/null | sed -n 's/.*Valid until: *\(.*\)/valid until \1/p' | head -1)"; [[ "$bs" == *valid* ]] || bs="via Teleport, login EXPIRED (tsh login)"; else bs="box $(awk -v b="$BOX" '$1==b{print $2}' <<< "$ls_out")"; fi
+    echo "$LOCAL <-> $BOX:~/$REMOTE${OPTS:+ ($OPTS)}: $bs; last state: $(cat "$P/state" 2>/dev/null), failures in a row: $(cat "$P/fails" 2>/dev/null || echo 0)$([[ -f "$P/alerted" ]] && echo ", alerted")"
   done 4< <(pairs)
   echo "--- log (last 12)"; tail -n 12 "$LOG" 2>/dev/null; exit 0
 fi
@@ -89,8 +90,17 @@ sync_pair() { # LOCAL BOX REMOTE OPTS
   mkdir -p "$P" "$LOCAL"
   local NAME="${LOCAL/#$HOME/\~} <-> $BOX:~/$REMOTE"
   pstate() { local was; was="$(cat "$P/state" 2>/dev/null)"; [[ "$was" == "$1" ]] || { log "$TAG$1${2:+: $2}"; echo "$1" > "$P/state"; }; }
-  status="$(awk -v b="$BOX" '$1==b{print $2}' <<< "$LS")"
-  if [[ "$status" != RUNNING ]]; then pstate "paused" "box $BOX is ${status:-unknown (brev ls failed)}"; echo 0 > "$P/fails"; return 0; fi
+  # J550: ssh=tsh: a machine reached through Teleport (the Omnistation), not a Brev box: no `brev ls` check (it's always on);
+  # Unison's ssh goes through brev/sync/tsh-ssh. An expired Teleport login is a failure (alerts once, naming the pair): only
+  # Angus can renew it (`tsh login`, SSO).
+  local teleport="" sshcmd=() sshargs=(-sshargs "$SSHARGS")
+  [[ " $OPTS " == *" ssh=tsh "* ]] && { teleport=1; sshcmd=(-sshcmd "${BREV_SYNC_TSH_SSH:-$H/brev/sync/tsh-ssh}"); sshargs=(); }
+  if [[ -z "$teleport" ]]; then
+    status="$(awk -v b="$BOX" '$1==b{print $2}' <<< "$LS")"
+    if [[ "$status" != RUNNING ]]; then pstate "paused" "box $BOX is ${status:-unknown (brev ls failed)}"; echo 0 > "$P/fails"; return 0; fi
+  elif ! timeout 20 "${BREV_SYNC_TSH:-tsh}" status >/dev/null 2>&1; then
+    why="the Teleport login has expired (or tsh failed): Angus needs to run \`tsh login\` at the desk (SSO)"; pstate "teleport-login" "$why"
+  fi
   # 2. new generated images
   if [[ " $OPTS " == *" pullworld "* ]]; then
     pulled="$(HYPRPI_IMAGES_DIR="$LOCAL" timeout 300 "$H/omnistation/world" "${BREV_SYNC_WORLD:-I}" images 2>&1)"; prc=$?
@@ -101,11 +111,14 @@ sync_pair() { # LOCAL BOX REMOTE OPTS
   fi
   # 3. two-way (ignore=PATH: another pair's folder inside this one)
   local ign=(); for o in $OPTS; do [[ "$o" == ignore=* && "${o#ignore=}" =~ ^[A-Za-z0-9._/-]+$ ]] && ign+=(-ignore "Path ${o#ignore=}"); done
+  if [[ -n "$why" ]]; then rc=-1; out=""; else
   out="$(timeout 900 "$UNISON" "$LOCAL" "ssh://$BOX/$REMOTE" -batch -auto -times -prefer newer -copyonconflict \
     -backup 'Name *' -maxbackups 3 -confirmbigdel -ignore 'Name .*.unison.tmp' -ignore 'Name .unison.*' "${ign[@]}" \
-    -servercmd .local/bin/unison -sshargs "$SSHARGS" -logfile "$ST/unison.log" -ui text 2>&1)"; rc=$?
+    -servercmd .local/bin/unison "${sshargs[@]}" "${sshcmd[@]}" -logfile "$ST/unison.log" -ui text 2>&1)"; rc=$?
+  fi
   # Unison: 0 = done, 1 = some skipped, 2 = non-fatal failures, 3 = fatal (e.g. no connection). Conflicts aren't failures.
   case $rc in
+    -1) ;; # (not run: why is set above)
     0) pstate "ok"; local c; c="$(grep -E 'Synchronization complete' <<< "$out" | tail -1)"; [[ -n "$c" ]] && log "$TAG$c" ;;
     1|2) why="unison exit $rc (some files not synced): $(grep -E 'failed|Error|skipped' <<< "$out" | tail -n 3 | tr '\n' ' ' | cut -c1-300)"; pstate "partial" "$why"; log "$TAG$(tail -n 5 <<< "$out" | tr '\n' ' ' | cut -c1-600)" ;;
     *) if grep -q confirmbigdel <<< "$out"; then # (HubSyncCheck547) not a connection problem: Unison's safety stop
@@ -114,7 +127,7 @@ sync_pair() { # LOCAL BOX REMOTE OPTS
   esac
   [[ -z "$why" && $prc -ne 0 ]] && { why="pulling new images failed (exit $prc): $(tail -n 2 <<< "$pulled" | tr '\n' ' ' | cut -c1-300)"; pstate "pull-failed" "$why"; }
   # J497 v2: a box that stopped (or is stopping) during the run is a pause, not a failure
-  if [[ -n "$why" ]]; then
+  if [[ -n "$why" && -z "$teleport" ]]; then
     now="$(timeout 60 brev ls 2>/dev/null | awk -v b="$BOX" '$1==b{print $2}')"
     if [[ "$now" != RUNNING ]]; then pstate "paused" "box $BOX went ${now:-unknown (brev ls failed)} during the run"; echo 0 > "$P/fails"; return 0; fi
   fi

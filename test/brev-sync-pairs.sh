@@ -17,7 +17,7 @@ cat > "$T/bin/unison" <<EOF
 a=(); skip=0; box=""
 for x in "\$@"; do
   if (( skip )); then skip=0; continue; fi
-  case "\$x" in -servercmd|-sshargs) skip=1; continue;; ssh://*) r="\${x#ssh://}"; box="\${r%%/*}"; rp="\${r#*/}"; x="$T/boxes/\$box/\$rp";; esac
+  case "\$x" in -servercmd|-sshargs|-sshcmd) skip=1; continue;; ssh://*) r="\${x#ssh://}"; box="\${r%%/*}"; rp="\${r#*/}"; x="$T/boxes/\$box/\$rp";; esac
   a+=("\$x")
 done
 grep -qx -e "\$box" -e "\$box:\$rp" "$T/broken" 2>/dev/null && { echo "Fatal error: Lost connection with the server" >&2; exit 3; }
@@ -87,6 +87,25 @@ ok "two pairs on the hub: the failing one (workspace/other) counts 3 and alerts 
 ok "… while the healthy hub pair stays ok, 0 failures" "[[ \$(cat $T/state/brev-sync/pairs/hub/state) == ok && \$(cat $T/state/brev-sync/pairs/hub/fails) == 0 ]]"
 ok "a second laptop folder for hub:~/workspace/shared is refused (logged, skipped)" "grep -q 'hub:~/workspace/shared is already in another pair' $T/state/brev-sync/sync.log && [[ ! -e $T/boxes/hub/workspace/shared/.never ]]"
 : > "$T/broken"; sed -i '/Hub2\|Hub3/d' "$T/cfg/hyprpi/brev-sync.conf"
+# J550: a Teleport machine (ssh=tsh): no brev ls check; an expired login (tsh status fails) alerts once naming the pair,
+# while the other pairs keep syncing; a good login syncs it
+printf '#!/bin/sh\n[ "$1" = status ] && { [ -e %s/tsh-expired ] && exit 1; echo "Valid until: 2099-01-01"; exit 0; }\nexit 0\n' "$T" > "$T/bin/tsh"; chmod +x "$T/bin/tsh"
+mkdir -p "$T/boxes/omni-host/workspace/shared" "$T/home/Omni"
+echo '~/Omni omni-host workspace/shared ssh=tsh' >> "$T/cfg/hyprpi/brev-sync.conf"
+echo laptop-omni > "$T/home/Omni/to-omni.txt"; echo omni-side > "$T/boxes/omni-host/workspace/shared/from-omni.txt"
+: > "$T/unison-calls.log"; run; rc=$?
+ok "J550 Teleport pair: not in brev ls, still synced both ways (exit 0)" "[[ $rc -eq 0 && -f $T/boxes/omni-host/workspace/shared/to-omni.txt && -f $T/home/Omni/from-omni.txt ]]"
+ok "J550 … through the tsh-ssh wrapper (-sshcmd), the others through plain ssh" "grep '^omni-host ' $T/unison-calls.log | grep -q -- '-sshcmd' && ! grep '^hub ' $T/unison-calls.log | grep -q -- '-sshcmd'"
+touch "$T/tsh-expired"; : > "$T/alerts.log"; : > "$T/unison-calls.log"
+run; r1=$?; run; run; run
+ok "J550 Teleport login expired: exit 1, ONE alert naming the Omni pair and saying tsh login" "[[ $r1 -eq 1 ]] && [[ \$(grep -c '^hyprpi thoughts alert' $T/alerts.log) -eq 1 ]] && grep -q 'Omni <-> omni-host' $T/alerts.log && grep -q 'tsh login' $T/alerts.log"
+ok "J550 … no Unison run for it, while the hub pair kept syncing" "! grep -q '^omni-host ' $T/unison-calls.log && grep -q '^hub ' $T/unison-calls.log && [[ \$(cat $T/state/brev-sync/pairs/hub/fails) == 0 ]]"
+rm "$T/tsh-expired"; echo omni-host > "$T/broken"; : > "$T/alerts.log"
+run; run
+ok "J550 login back but the machine unreachable: still the same outage, no second alert" "[[ \$(grep -c '^hyprpi thoughts alert' $T/alerts.log) -eq 0 ]]"
+: > "$T/broken"; run; rc=$?
+ok "J550 reachable again: exit 0 and one 'working again' for the Omni pair" "[[ $rc -eq 0 ]] && grep -q 'working again (~/Omni <-> omni-host' $T/alerts.log"
+sed -i '/omni-host/d' "$T/cfg/hyprpi/brev-sync.conf"
 ok "status lists both pairs" "HOME=$T/home PATH=$T/bin:\$PATH XDG_CONFIG_HOME=$T/cfg XDG_STATE_HOME=$T/state $ROOT/brev/sync/brev-sync status | grep -c ' <-> .*: box ' | grep -qx 2"
 [[ $fails -eq 0 ]] && { echo "all passed"; rm -rf "$T"; } || echo "$fails FAILED (state $T)"
 exit $fails

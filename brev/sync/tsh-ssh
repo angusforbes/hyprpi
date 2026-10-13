@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# J550: Unison's -sshcmd for a host reached through Teleport (the Omnistation): Unison calls it like ssh
+# ([options] [-l USER] HOST COMMAND…); this turns that into `tsh ssh [USER@]HOST COMMAND`. No pty, so the byte stream
+# Unison speaks over stdin/stdout passes through untouched.
+user=""; host=""
+while (($#)); do
+  case "$1" in
+    -l) user="$2"; shift 2;;
+    -e|-o|-p|-i|-F|-b|-c|-m|-J|-L|-R|-D|-W) shift 2;;
+    -*) shift;;
+    *) host="$1"; shift; break;;
+  esac
+done
+# (Unison puts "-e none" after the host: ssh's escape-char option, which tsh has no use for)
+while [[ "${1:-}" == -e ]]; do shift 2; done
+[[ -n "$host" ]] || { echo "tsh-ssh: no host" >&2; exit 255; }
+[[ -n "$user" && "$host" != *@* ]] && host="$user@$host"
+exec "${BREV_SYNC_TSH:-tsh}" ssh "$host" "$@"
