@@ -78,7 +78,7 @@ chmod +x "$T/bin/stat"; o=$(PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" --c
 ok "a binding link owned by someone else: refused" '[[ $rc == 2 ]]'
 # J525 v2 (Tscheck2): Brev-only settings, and their order
 rm -f "$T/ts" "$T/nf"; printf 'tskey-auth-FAKE123\n' > "$KF"; chmod 600 "$KF"; : > "$T/calls"; o=$(run "$T/on.json")
-ok "Brev box: the daemon is (re)started with its rules off by a detached unit, before anything else" '[[ "$(grep -m1 -E "systemd-run|tailscale up" "$T/calls")" == systemd-run* ]] && [[ $(grep -n "set --netfilter-mode=off" "$T/calls" | head -1 | cut -d: -f1) -lt $(grep -n "tailscale up" "$T/calls" | cut -d: -f1) ]]'
+ok "Brev box: the daemon is (re)started with its rules off by a detached unit, before anything else" '[[ "$(grep -m1 -E "systemd-run|systemctl|tailscale up" "$T/calls")" == systemd-run* ]] && [[ $(grep -n "set --netfilter-mode=off" "$T/calls" | head -1 | cut -d: -f1) -lt $(grep -n "tailscale up" "$T/calls" | cut -d: -f1) ]]'
 ok "Brev box: up with --netfilter-mode=off and --accept-risk=lose-ssh" 'grep "tailscale up" "$T/calls" | grep -q -- "--netfilter-mode=off" && grep "tailscale up" "$T/calls" | grep -q -- "--accept-risk=lose-ssh"'
 rm -f "$T/ts" "$T/nf"; echo '{"ssh":["ssh","omni-box"],"tailscale":true}' > "$T/nonbrev.json"; chmod 644 "$T/nonbrev.json"; : > "$T/calls"
 o=$(PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" "$T/nonbrev.json" i "$T/bin/fakessh" omni-box 2>&1)
@@ -88,4 +88,6 @@ ok "not a Brev box, already joined: Tailscale SSH set without accept-risk, firew
 echo '{"ssh":["ssh","alias"],"brev":"hub","tailscale":true}' > "$T/brevfield.json"; chmod 644 "$T/brevfield.json"; rm -f "$T/ts" "$T/nf"; : > "$T/calls"
 o=$(PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" "$T/brevfield.json" i "$T/bin/fakessh" alias 2>&1)
 ok "the binding's \"brev\" field names the Brev box" 'grep -q -- "--netfilter-mode=off" "$T/calls"'
+rm -f "$T/ts" "$T/nf"; : > "$T/calls"; o=$(TS_SETUP_BREV=/nonexistent PATH="$T/bin:$PATH" "$R/brev/tailscale/ts-setup" "$T/brevfield.json" i "$T/bin/fakessh" alias 2>&1)
+ok "an explicit \"brev\" stays a Brev box even when brev ls can't answer" 'grep -q -- "--netfilter-mode=off" "$T/calls" && grep -q systemd-run "$T/calls"'
 echo "$pass passed, $fail failed"; exit $(( fail > 0 ))

@@ -43,8 +43,10 @@ elif [[ ! -f "$kf" ]]; then echo "ts-setup: no Tailscale auth key at $kf: not jo
 elif (( (8#$(stat -c %a "$kf") & 077) || (8#$(stat -c %a "$(dirname "$kf")") & 077) )); then echo "ts-setup: $kf must be 600 in a 700 folder: not joined" >&2; exit 2
 else in="$kf"; fi
 # J525 v2 (Tscheck2): a Brev box (the binding's "brev", else the ssh target, listed by `brev ls`) gets the Brev-only settings
-mode=""; bx=$(jq -r 'if (.brev|type)=="string" then .brev else "" end' "$CONF"); bx="${bx:-${SSH[-1]##*@}}"
-if command -v "${TS_SETUP_BREV:-brev}" >/dev/null 2>&1 && timeout -k 10 60 "${TS_SETUP_BREV:-brev}" ls 2>/dev/null | awk -v b="$bx" '$1==b{f=1} END{exit !f}'; then mode=brev; fi
+# (review) an explicit "brev" is a Brev box, whether or not `brev ls` answers right now; only the fallback asks brev ls
+mode=""; bx=$(jq -r 'if (.brev|type)=="string" then .brev else "" end' "$CONF")
+if [[ -n "$bx" ]]; then mode=brev
+elif command -v "${TS_SETUP_BREV:-brev}" >/dev/null 2>&1 && timeout -k 10 60 "${TS_SETUP_BREV:-brev}" ls 2>/dev/null | awk -v b="${SSH[-1]##*@}" '$1==b{f=1} END{exit !f}'; then mode=brev; fi
 out=$("${SSH[@]}" "bash ~/.hyprpi-$wl/ts-join.sh $(printf %q "$hn") ${sshf:--} $mode" < "$in" 2>/dev/null | tr -d '\r' | tail -1) || true
 echo "world: ${out:-tailscale: no answer from the machine}"
 [[ "$out" == tailnet* ]]
