@@ -83,6 +83,30 @@ for k in range(20):
     done += r.decide(req({"act": "open", "url": "https://x.y/"}), t0 + k * 0.1) is not None
 ok(f"rate limit: at most {R.RATE_N} in {R.RATE_S} s", done == R.RATE_N, str(done))
 
+# ---- input cut anywhere across reads (ParityCheck): the same gates byte by byte and at every split point
+def feed(r, parts, t=t0):
+    for x in parts: r.note_input(x, t)
+def splits(seq): return [[seq[:k], seq[k:]] for k in range(1, len(seq))] + [[bytes([c]) for c in seq]]
+for seq, act, extra in [(b"\x1b[2;2~", "paste", {}), (b"\x16", "paste", {}), (b"\x1b[13;5u", "focus", {"agent": "h-omni-a"}), (b"\r", "focus", {"agent": "h-omni-a"}),
+                        (b"\x1b[<16;4;5M", "open", {"url": "https://x.y/"}), (b"\x1b[<0;120;33M", "panel", {"kind": "board"}), (b"\x0e", "new", {})]:
+    good = True
+    for parts in splits(b"ab" + seq + b"cd"):
+        r = relay(); feed(r, parts)
+        if r.decide(req({"act": act, **extra}), t0 + 0.1) is None or r.decide(req({"act": act, **extra}), t0 + 0.2) is not None: good = False
+    ok(f"split anywhere / byte by byte: {seq!r} still allows one {act}", good)
+pasted = b"\x1b[200~pasted\r\x16\x0e\x1b[<16;4;5M\x1b[13;5utext\x1b[201~"
+good = True
+for parts in splits(pasted):
+    r = relay(); feed(r, parts)
+    if any(r.decide(req(o), t0 + 0.1) is not None for o in ({"act": "open", "url": "https://x.y/"}, {"act": "paste"}, {"act": "new"}, {"act": "focus", "agent": "h-omni-a"})): good = False
+ok("a bracketed paste cut anywhere / byte by byte: nothing inside it counts", good)
+r = relay(); feed(r, splits(pasted)[-1]); r.note_input(b"\r", t0)
+ok("… and a real Enter after it does", r.decide(req({"act": "focus", "agent": "h-omni-a"}), t0 + 0.1) == ["focus", "omni-a"])
+r = relay(); r.note_input(b"\x1b", t0); r.note_input(b"\r", t0 + R.TAIL_S + 0.1)
+ok("a lone Esc key, then Enter a moment later: the Enter counts (not read as Alt+Enter)", r.decide(req({"act": "focus", "agent": "h-omni-a"}), t0 + R.TAIL_S + 0.2) == ["focus", "omni-a"])
+r = relay(); r.note_input(b"\x1b[" + b"1;" * 60, t0); r.note_input(b"\r", t0)
+ok("an endless unfinished sequence isn't kept forever", len(r.in_tail) <= 64)
+
 # ---- what helpers hand back
 r = relay()
 ok("inject only from a paste helper", r.helper_output(b'{"inject": "x"}', "open", t0) == b"" and r.helper_output(b'{"inject": "x"}', "paste", t0) == b"\x1b[200~x\x1b[201~")

@@ -39,6 +39,9 @@ URL_RE = re.compile(r"https?://[^\s\x00-\x1f\x7f]{1,2000}", re.I)
 KINDS = {"agents", "room", "search", "board"}
 # stdin tokens: bracketed paste marks, SGR mouse, other CSI / SS3 / Alt+key sequences, single bytes
 TOK = re.compile(rb"\x1b\[20[01]~|\x1b\[<(\d+);\d+;\d+([Mm])|\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1bO.|\x1b.|[\x00-\xff]", re.S)
+# an escape sequence still unfinished at the end of a read: ESC, ESC [ params (incl. a mouse report's "<b;x;y"), ESC O
+INCOMPLETE = re.compile(rb"\x1b(?:\[[0-9;?<>=]*[ -/]*|O)?\Z")
+TAIL_S = 0.5
 GATES = {"focus": ("press", "enter"), "open": ("press", "enter"), "file": ("press", "enter"), "panel": ("press", "enter"),
          "new": ("new", "enter"), "paste": ("paste",)}
 
@@ -54,6 +57,7 @@ class Relay:
         self.L, self.l, self.nonce = letter, letter.lower(), nonce
         self.seen = {}           # input kind -> time of the last one not yet used
         self.in_paste = False    # inside a bracketed paste the user is typing (its Enters are text)
+        self.in_tail, self.in_tail_t = b"", 0.0  # an escape sequence cut off at the end of the last read (finished by the next)
         self.allow = {}          # agent name -> until (a jump to an agent the laptop just started)
         self.acts = collections.deque()
         self.out_buf = b""
@@ -61,7 +65,19 @@ class Relay:
 
     # ---- input: what the user did (only what this relay forwarded counts) ----
     def note_input(self, data, now=None):
+        """what the user did, from the bytes this relay forwarded. Reads can cut a sequence anywhere (b"\\x1b[20" + b"0~…"), so an
+        unfinished ESC / CSI / SS3 / mouse report at the end of a read is kept and finished by the next one (ParityCheck): a pasted
+        Enter never counts as a typed one, and a split Shift+Insert or click still counts. A kept ESC older than TAIL_S was a
+        lone Esc key: it is taken on its own, so a later Enter isn't read as Alt+Enter."""
         now = time.monotonic() if now is None else now
+        if self.in_tail and now - self.in_tail_t > TAIL_S: self.classify(self.in_tail, now); self.in_tail = b""
+        data = self.in_tail + data
+        m = INCOMPLETE.search(data)
+        if m and len(data) - m.start() <= 64: data, self.in_tail, self.in_tail_t = data[:m.start()], data[m.start():], now
+        else: self.in_tail = b""
+        self.classify(data, now)
+
+    def classify(self, data, now):
         for m in TOK.finditer(data):
             t = m.group(0)
             if t == b"\x1b[200~": self.in_paste = True; continue
