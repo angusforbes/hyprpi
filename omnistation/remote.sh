@@ -200,9 +200,12 @@ case "$cmd" in
         kill -0 "$pid" 2>/dev/null && { echo "remote.sh: the daemon (pid $pid) won't stop: nothing else changed" >&2; exit 3; }
       else echo "remote.sh: pid $pid in daemon.lock isn't the daemon ($comm): not killing it" >&2; exit 3; fi
     fi
-    tmux kill-session -t "hyprpi-$W-daemon" 2>/dev/null || true; rm -f "$HYPRPI_SOCKET"
+    tmux kill-session -t "hyprpi-$W-daemon" 2>/dev/null || true
     secrets_ok || exit 5
-    tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
+    # (live) an agent's own `hyprpi ensure` may already have started a new one: then keep it (and its socket); else start one here
+    np=$(tr -cd '0-9' < "$ROOT/run/daemon.lock" 2>/dev/null)
+    if [[ -n "$np" ]] && kill -0 "$np" 2>/dev/null && [[ "$np" != "$pid" ]]; then :
+    else rm -f "$HYPRPI_SOCKET"; tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"; fi
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
     for _ in $(seq 20); do np=$(tr -cd '0-9' < "$ROOT/run/daemon.lock" 2>/dev/null); [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && break; sleep 0.5; done
     # (an agent's own `hyprpi ensure` may have started one first: that one counts too)
