@@ -424,7 +424,7 @@ function draw() {
 // ---- daemon ----------------------------------------------------------------
 let lastFocusedId = "";
 function applyList(r) {
-  agents = r.agents || []; dormant = r.dormant || []; rooms = r.rooms || [];
+  agents = r.agents || []; dormant = r.dormant || []; rooms = (r.rooms || []).filter((x) => !x.remote); // J530: remote worlds have their own panels
   for (const id of closing.keys()) if (!agents.find((a) => a.id === id)) closing.delete(id);
   for (const a of agents) {
     const i = pendingNew.findIndex((p) => !p.known.has(a.id));

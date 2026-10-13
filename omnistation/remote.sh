@@ -156,6 +156,11 @@ case "$cmd" in
     [[ "${3:-}" == nostart ]] || tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null 2>&1 || true
     for _ in $(seq 20); do [[ -S "$ROOT/run/$NAME.rpc.sock" ]] && break; sleep 0.5; done
     exec node "$ROOT/hbroker.mjs" connect "$NAME" ;;
+  thoughts-relay)
+    # J530: a message for this world's Thoughts from the laptop (JSON on stdin); prints its answer (lib/remote-thoughts.mjs)
+    secrets_ok || exit 3
+    [[ -S "$HYPRPI_SOCKET" ]] || { echo '{"error":"the daemon on this machine is not running"}'; exit 0; }
+    exec env HYPRPI_REMOTE_WORLD="${W^^}" node "$DIR/lib/remote-thoughts.mjs" "${W^^}" ;;
   panel)
     # J480: one of the world's panels (room = Stream, board = Projects, search = Thoughts, agents), run HERE against this
     # machine's daemon, in the ssh terminal the laptop's panel window opened (omnistation/world X panel KIND)
@@ -163,6 +168,7 @@ case "$cmd" in
     secrets_ok || exit 3
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: world ${W^^}'s daemon isn't running here (start an agent: world ${W^^} new)" >&2; exit 4; }
     export HYPRPI_REMOTE_PANEL=1 TERM="${TERM:-xterm-256color}"
+    [[ -f "$ROOT/theme-colors.toml" ]] && export HYPRPI_THEME_COLORS="$ROOT/theme-colors.toml" # J530: the laptop's world colours (world X panel copies them)
     exec node "$DIR/mockups/$kind-tui.mjs" "${W^^}" ;;
   attach)
     tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null || bash "$ROOT/remote.sh" start "$NAME" >/dev/null

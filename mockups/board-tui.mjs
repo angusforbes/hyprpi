@@ -264,7 +264,7 @@ async function loadBoard() {
   try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; await bv.refresh(api, r, b); render(); } } catch { /* older daemon */ }
 }
 function applyList(r) {
-  agents = r.agents || []; rooms = r.rooms || [];
+  agents = r.agents || []; rooms = (r.rooms || []).filter((x) => !x.remote); // J530: remote worlds have their own panels
   if (!room) room = r.active_room || rooms[0]?.id || "A";
   if (!rooms.find((x) => x.id === room)) rooms = [...rooms, { id: room }].sort((a, b) => a.id.localeCompare(b.id));
   render();

@@ -1111,7 +1111,7 @@ async function start() {
 function applyRooms(r) {
   bumpThread(); // agents' colours/names feed the thread's evidence heads (Blink)
   known = [...(r.agents || []).map((a) => ({ ...a, live: true })), ...(r.dormant || []).map((a) => ({ ...a, live: false }))];
-  rooms = (r.rooms || []).map((x) => x.id).sort();
+  rooms = (r.rooms || []).filter((x) => !x.remote).map((x) => x.id).sort(); // J530: remote worlds have their own panels
   if (!room) room = r.active_room || rooms[0] || "A";
   if (!rooms.includes(room)) rooms = [...rooms, room].sort();
   render();

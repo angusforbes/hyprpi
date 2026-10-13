@@ -570,7 +570,7 @@ let lastFocusedId = "";
 const closing = new Map();
 let pendingNew = [];
 function applyList(r) {
-  agents = r.agents || []; rooms = r.rooms || []; dormant = r.dormant || [];
+  agents = r.agents || []; rooms = (r.rooms || []).filter((x) => !x.remote); /* J530: remote worlds have their own panels */ dormant = r.dormant || [];
   for (const id of closing.keys()) if (!agents.find((a) => a.id === id)) closing.delete(id);
   for (const a of agents) { // each newly listed agent replaces one placeholder
     const i = pendingNew.findIndex((p) => !p.known.has(a.id));

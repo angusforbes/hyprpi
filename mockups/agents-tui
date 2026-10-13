@@ -9,6 +9,7 @@
 # J295: a sandboxed world's panels run inside its sandbox (class hyprpi.g-*); the host never opens one for it.
 . "$(dirname "$(readlink -f "$0")")/../lib/isolated-guard.sh" # J333: no windows from an isolated hyprpi
 if [ -z "$HYPRPI_SANDBOX_WORLD" ] && node "$(dirname "$(readlink -f "$0")")/../lib/sandboxed-world.mjs" "${1:-}"; then echo "agents-tui: world $1 is sandboxed: its panels run inside its sandbox" >&2; exit 0; fi
+if [ -z "$HYPRPI_SANDBOX_WORLD" ] && [ -z "$HYPRPI_REMOTE_PANEL" ] && node "$(dirname "$(readlink -f "$0")")/../lib/remote-world.mjs" "${1:-}"; then echo "agents-tui: world $1 runs on its remote machine: its panels open there (omnistation/world $1 panel …)" >&2; exit 0; fi # J530
 exec kitty --class hyprpi.agents -o confirm_os_window_close=0 -o copy_on_select=clipboard \
   -o 'map ctrl+insert copy_or_noop' \
   -o 'map shift+insert paste_from_clipboard' \
