@@ -82,6 +82,14 @@ w(path.join(PI, "models.json"), { providers: { custom: { apiKey: SECRET, baseUrl
   eq("half-written appended line -> old figure kept", ctx.read(f).tokens, 888);
   fs.appendFileSync(f, JSON.stringify(cp).slice(30) + "\n");
   eq("line completed: compaction -> null", [ctx.read(f).status, ctx.read(f).tokens], ["awaiting", null]);
+  const capped = createContextReader({ firstTailBytes: 2048, maxTailBytes: 8192 });
+  const fc = w(path.join(T, "ses", "cap.jsonl"), jl([hdr(), msg(null, "user", {}, "cu"), asst("cu", U(0, 0, 0, 0, 55), {}, "ca")]));
+  capped.read(fc); let lastc = "ca"; const more = [];
+  for (let i = 0; i < 40; i++) { const t = msg(lastc, "toolResult", { content: [{ type: "text", text: "z".repeat(500) }] }); more.push(t); lastc = t.id; }
+  more.push(asst(lastc, U(0, 0, 0, 0, 66)));
+  fs.appendFileSync(fc, jl(more)); // ~24 KB appended > maxTailBytes 8 KB
+  const b0 = capped.stats.bytesRead, rc = capped.read(fc);
+  eq("append bigger than maxTailBytes -> bounded tail, not the whole append", [rc.tokens, capped.stats.incrementalReads, capped.stats.fullReads, capped.stats.bytesRead - b0 <= 8192], [66, 0, 2, true]);
   w(f, jl([hdr(), msg(null, "user")])); // replaced by a shorter file
   eq("replaced/shrunk file -> full re-read", [ctx.read(f).status, ctx.stats.fullReads], ["unknown", 2]);
   const big = createContextReader({ firstTailBytes: 1024, maxTailBytes: 4096 });
@@ -119,10 +127,10 @@ const LIST = {
     { id: "hp-dock2", name: "Docked2", room: "B", status: "idle", model: "x", session: "", pid: 8, host_pid: 0, container: "box2", compactions: null, session_start: 0, refresh_due: false, helpers: [], children: [] },
     { id: "sbx-world-g", name: "world-g", room: "G", status: "idle", model: "sandboxed", session: "", pid: 3003, host_pid: 0, container: "pi-sbx:world G", address: "", compactions: null, session_start: 0, refresh_due: false, helpers: [], children: [] },
     { id: "sbx-doorman-g", name: "Doorman-G", room: "G", status: "idle", model: "sandboxed", session: "", pid: 3003, host_pid: 0, container: "pi-sbx", address: "", compactions: null, session_start: 0, refresh_due: false, helpers: [], children: [] },
-    { id: "H-ghost", name: "Ghost", room: "H", status: "working", model: "m", session: "", pid: 4242, host_pid: 4243, container: "", compactions: null, session_start: 0, refresh_due: false, helpers: [], children: [] },
+    { id: "H-ghost", name: "Ghost", room: "H", status: "working", model: "m", session: sA, pid: 4242, host_pid: 4243, container: "", compactions: null, session_start: 0, refresh_due: false, helpers: [], children: [] },
   ],
-  thoughts: [{ room: "A", name: "Thoughts-A", running: true }, { room: "B", name: "Thoughts-B", running: false }, { room: "G", name: "Thoughts-G", running: false, sandboxed: "world-g" }, { room: "H", name: "Thoughts-H", running: false, remote: true }],
-  rooms: [{ id: "A" }, { id: "B" }, { id: "G" }, { id: "H", remote: true }, { id: "Q" }],
+  thoughts: [{ room: "A", name: "Thoughts-A", running: true }, { room: "C", name: "Thoughts-C", running: true }, { room: "B", name: "Thoughts-B", running: false }, { room: "G", name: "Thoughts-G", running: false, sandboxed: "world-g" }, { room: "H", name: "Thoughts-H", running: false, remote: true }],
+  rooms: [{ id: "A" }, { id: "B" }, { id: "C" }, { id: "G" }, { id: "H", remote: true }, { id: "Q" }],
 };
 const ORCH = { children: [
   { id: "hp-kid", name: "Kid", parent: "hp-a", status: "running", budget: { tokens: 1500000, minutes: 180 }, used: { tokens: 123456 }, started_at: NOW - 600e3, job: "J9", last_report: PROMPT },
@@ -146,9 +154,16 @@ w(path.join(STATE, "activity", "B.jsonl"), jl([ev(NOW - 3600e3, "restarted", "hp
 // Thoughts A: session + model marker; its process is a child of the daemon with the identity arguments
 w(path.join(STATE, "thoughts", "A", "x_thoughts-A.jsonl"), jl([hdr(NOW - 7200e3), msg(null, "user", {}, "tu"), asst("tu", U(0, 0, 0, 0, 20000), {}, "ta")]) + '{"type":"compaction","id":"tc1","parentId":"ta","timestamp":"' + iso(NOW) + '","summary":"s","firstKeptEntryId":"tu","tokensBefore":1}\n');
 w(path.join(STATE, "thoughts", "A.model.json"), { model: "claude-test", thinking: "" });
+// Thoughts-C: a >1 MB session (several 1 MB chunks), compaction lines across chunk edges and a half-written last one
+{
+  const big = [hdr(NOW - 60e3)]; let last = null;
+  for (let i = 0; i < 60; i++) { const u = msg(last, "user", { content: [{ type: "text", text: "q".repeat(40000) }] }); big.push(u); last = u.id; if (i % 20 === 19) { const c = { type: "compaction", id: "k" + i, parentId: last, timestamp: iso(NOW), summary: "s", firstKeptEntryId: last, tokensBefore: 1 }; big.push(c); last = c.id; } }
+  w(path.join(STATE, "thoughts", "C", "big_thoughts-C.jsonl"), jl(big) + '{"type":"compaction","id":"half"');
+}
 const proc = (pid, argv) => w(path.join(PROC, String(pid), "cmdline"), argv.join("\0") + "\0");
 const DAEMON = 900;
-w(path.join(PROC, String(DAEMON), "task", String(DAEMON), "children"), "5001 5002 5003 ");
+w(path.join(PROC, String(DAEMON), "task", String(DAEMON), "children"), "5001 5002 5003 5004 ");
+proc(5004, ["pi", "--session-dir", path.join(STATE, "thoughts", "C"), "--session-id", "thoughts-C"]);
 proc(5001, ["pi", "--mode", "rpc", "--session-dir", path.join(STATE, "thoughts", "A"), "--session-id", "thoughts-A", "--system-prompt", PROMPT]);
 proc(5002, ["pi", "--mode", "rpc", "--session-dir", path.join(T, "elsewhere"), "--session-id", "thoughts-B"]); // wrong session dir: not Thoughts-B
 proc(5003, ["node", "something-else"]);
@@ -157,10 +172,18 @@ proc(6001, ["pi", "--session-id", "thoughts-B", "--session-dir", path.join(STATE
 const HD = path.join(STATE, "worlds", "world-h"), GD = path.join(STATE, "worlds", "world-g");
 w(path.join(HD, "agents.json"), { world: "H", room: "H", at: NOW - 5e3, agents: [{ id: "h-1", name: "Hana", status: "working", model: "m", pid: 4444 }], thoughts: "idle" });
 w(path.join(HD, "status.pid"), "7001"); proc(7001, ["node", "/x/omnistation/world-status.mjs", "H"]);
-w(path.join(HD, "windows.json"), { world: "H", windows: { "0xa": { kind: "agent", home: 71, pid: 7002 }, "0xb": { kind: "agent", home: 72, pid: 7999 } } }); proc(7002, ["kitty"]); // 7999 doesn't exist
-fs.utimesSync(path.join(HD, "windows.json"), new Date(NOW), new Date(NOW));
-w(path.join(GD, "agents.json"), { world: "G", room: "G", at: NOW - 999e3, agents: [{ name: "Gee", status: "idle", model: "m" }], thoughts: "off" });
+w(path.join(HD, "windows.json"), { world: "world-h", windows: { "0xa": { kind: "agent", home: 71, pid: 7002, name: "hana" }, "0xb": { kind: "agent", home: 72, pid: 7999, name: "x" }, "0xc": { kind: "agent", home: 72, pid: 7003, name: "bo" }, "0xd": { kind: "agent", home: 72, pid: 7004, name: "cy" } } });
+proc(7002, ["kitty", "--class=hyprpi.h-agent", "--", "node", "/x/omnistation/remote-client.mjs", "H", "hana"]); // 7999 doesn't exist
+proc(7003, ["kitty", "--", "node", "/x/omnistation/remote-client.mjs", "I", "bo"]); // world I's client: not H's
+proc(7004, ["kitty", "--", "node", "/x/omnistation/remote-client.mjs", "H", "other"]); // a different agent than the entry says
+fs.utimesSync(path.join(HD, "windows.json"), new Date(NOW - 3 * 3600e3), new Date(NOW - 3 * 3600e3));
+w(path.join(GD, "agents.json"), { world: "G", room: "G", at: NOW - 999e3, agents: [{ name: "Gee", status: "idle", model: "m" }, { id: "hp-ginner", name: "Gid", status: "working", model: "m" }], thoughts: "off" });
 w(path.join(GD, "status.pid"), "7101"); proc(7101, ["node", "/x/omnistation/world-status.mjs", "H"]); // wrong world letter: not G's helper
+w(path.join(GD, "windows.json"), { world: "world-g", windows: { "0x1": { kind: "agent", home: 61, pid: 7201 }, "0x2": { kind: "panel", home: 61, pid: 7202 }, "0x3": { kind: "agent", home: 62, pid: 7203 }, "0x4": { kind: "agent", home: 62, pid: 7204 } } });
+proc(7201, ["kitty", "--class=hyprpi.g-agent", "--config", "x"]); proc(7202, ["kitty", "--class=hyprpi.g-mockup"]);
+proc(7203, ["bash"]); // the pid was reused by another program
+proc(7204, ["kitty", "--class=hyprpi.h-agent"]); // another world's window
+fs.utimesSync(path.join(GD, "windows.json"), new Date(NOW - 5 * 3600e3), new Date(NOW - 5 * 3600e3)); // unchanged for hours: still valid
 
 let clock = NOW;
 const reader = createTelemetryReader({ request, statePath: STATE, home: T, piDir: PI, procRoot: PROC, daemonPid: DAEMON, now: () => clock });
@@ -194,18 +217,23 @@ eq("container agent without host_pid: no laptop root, warned", [D2.pids, r.warni
 eq("sandbox placeholders share the relay pid: counted once", [row("sbx-world-g").pids, row("sbx-doorman-g").pids], [[3003], []]);
 const ghost = row("H-ghost");
 eq("an agent listed in a remote world never gets a laptop root", [ghost.pids, ghost.remote, ghost.envIds], [[], true, []]);
+eq("a remote agent's session path is never read on the laptop (same path as Alpha's)", [ghost.contextTokens, ghost.context.status, ghost.compactions], [null, "unknown", null]);
 const hana = r.agents.find((a) => a.kind === "remote-agent");
 eq("remote mirror agent: remote, no pids, no context", [hana.name, hana.world, hana.remote, hana.pids, hana.contextTokens, hana.envWorld ?? null], ["Hana", "H", true, [], null, null]);
 const envH = row("env:H"), envG = row("env:G");
-eq("remote world transport row: verified helper + live window pids only", [envH.pids, envH.envWorld, envH.remote], [[7001, 7002], "H", true]);
-eq("sandbox world: mirror agents share the placeholders' envIds; stale mirror warned; wrong helper not a root", [r.agents.find((a) => a.name === "Gee").envIds, envG.pids, r.warnings.some((x) => /world G: mirror is stale/.test(x))], [["sbx-world-g", "sbx-doorman-g"], [], true]);
+eq("remote world transport row: verified helper + windows whose remote-client.mjs H <name> matches (old windows.json fine)", [envH.pids, envH.envWorld, envH.remote], [[7001, 7002], "H", true]);
+const gee = r.agents.find((a) => a.name === "Gee"), gid = r.agents.find((a) => a.name === "Gid");
+eq("sandbox (local) world: mirror rows remote:false, own id as envIds or none (never the placeholders')", [gee.remote, gee.envIds, gid.remote, gid.envIds, gid.pids, gee.kind], [false, [], false, ["hp-ginner"], [], "sandbox-agent"]);
+eq("sandbox world row: local; windows by kitty --class=hyprpi.g-* marker even from an hours-old windows.json; reused / other-world pids and wrong helper not roots", [envG.remote, envG.pids, envG.envWorld], [false, [7201, 7202], "G"]);
+eq("stale mirror and unmarked window pids are warned", [r.warnings.some((x) => /world G: mirror is stale/.test(x)), r.warnings.some((x) => /window pid 7203 no longer carries/.test(x)), r.warnings.some((x) => /window pid 7004/.test(x))], [true, true, true]);
 eq("no Thoughts row for remote/sandboxed worlds", [!!row("thoughts:H"), !!row("thoughts:G")], [false, false]);
 // Thoughts
 eq("Thoughts-A: daemon child with its identity args; model marker; compactions counted", [TA.pids, TA.model, TA.compactions, TA.status, TA.sessionAgeSeconds], [[5001], "claude-test", 1, "running", 7200]);
 eq("Thoughts-A context after its compaction -> null (awaiting)", [TA.contextTokens, TA.context.status], [null, "awaiting"]);
 eq("Thoughts-A helpers + owned project", [TA.registeredHelpers, TA.priorityDetails.components.projects.points], [["hp-t1"], 5]);
+eq("Thoughts compactions counted in 1 MB chunks; the half-written one not yet", [row("thoughts:C").compactions, row("thoughts:C").pids], [3, [5004]]);
 eq("a not-running Thoughts whose look-alike process isn't the daemon's child: no row", !!row("thoughts:B"), false);
-eq("worlds list covers empty and remote worlds", r.worlds.map((x) => `${x.id}:${x.remote ? "r" : x.sandboxed ? "s" : "l"}:${x.agentCount}`), ["A:l:2", "B:l:2", "G:s:1", "H:r:1", "Q:l:0"]);
+eq("worlds list covers empty and remote worlds", r.worlds.map((x) => `${x.id}:${x.remote ? "r" : x.sandboxed ? "s" : "l"}:${x.agentCount}`), ["A:l:2", "B:l:2", "C:l:0", "G:s:2", "H:r:1", "Q:l:0"]);
 // no leaks
 const out = JSON.stringify(r);
 eq("no secret, prompt or report text in the output", [out.includes(SECRET), out.includes(PROMPT)], [false, false]);
