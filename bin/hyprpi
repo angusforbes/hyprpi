@@ -691,7 +691,7 @@ const commands = {
   // J528: the phone push settings (hyprpi.jsonc "phone.ntfy"), read straight from the file (no daemon needed; brev-autostop
   // uses `hyprpi ntfy config --json`), and a test push.
   ntfy: async () => {
-    const { ntfyConfig, phoneMessage } = await import("../lib/ntfy.mjs");
+    const { ntfyConfig } = await import("../lib/ntfy.mjs");
     const n = ntfyConfig();
     if (args[0] === "config" || !args[0]) {
       if (flag("--json")) return console.log(JSON.stringify(n));
@@ -700,7 +700,7 @@ const commands = {
     }
     if (args[0] === "test") {
       if (!n.topic) die("no phone.ntfy.topic in hyprpi.jsonc");
-      const { title, message } = phoneMessage("bonk", { world: "", agent: "hyprpi", text: `Test: phone pushes from hyprpi on ${os.hostname()} work${n.enabled ? "" : " (note: phone.ntfy.enabled is false, so hyprpi itself sends none)"}.` });
+      const title = "✅ hyprpi test push (nothing needs you)", message = `Test: phone pushes from hyprpi on ${os.hostname()} reach you. Real ones look like "❗ <agent> needs you (world X)" or "🔔 Decision (world X): …", with the world, agent, project, the question and its options.${n.enabled ? "" : " (Note: phone.ntfy.enabled is false, so hyprpi itself sends none yet.)"}`;
       const r = await fetch(n.server, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic: n.topic, title, message, tags: ["white_check_mark"] }), signal: AbortSignal.timeout(10000) });
       if (!r.ok) die(`${n.server} answered ${r.status}`);
       return console.log(`test push sent to ${n.server}/${n.topic}`);
