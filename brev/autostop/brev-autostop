@@ -222,7 +222,12 @@ alert() { # $1 = text, $2 = urgency: every channel, each best effort; says which
 # logged once per failure spell and changes nothing. Org: `credit_org ORG-ID` in the config, else brev's active org.
 # Env: BREV_AUTOSTOP_BILLING_URL (base, …/api), BREV_AUTOSTOP_CREDENTIALS (token file), BREV_AUTOSTOP_CREDIT_FORCE=1 (ignore
 # the interval, for a test), BREV_AUTOSTOP_DRY=1 (log the alert instead of sending it).
-credit_check() {
+credit_check() { # (J548) never traced: with `bash -x` the token would show in the trace
+  local _x=""; case $- in *x*) _x=1; set +x;; esac
+  credit_check_inner; local r=$?
+  [[ -z "$_x" ]] || set -x; return $r
+}
+credit_check_inner() {
   local levels hrs last org tok j cents T lv hit prev BOX="(credit)"
   levels="$(credit_warn)"; [[ -n "$levels" ]] || return 0
   [[ -z "${BREV_AUTOSTOP_PRIMARY:-}" ]] || return 0
@@ -232,15 +237,15 @@ credit_check() {
   [[ "${BREV_AUTOSTOP_CREDIT_FORCE:-}" == 1 || ! "$last" =~ ^[0-9]+$ ]] || (( T - last >= hrs * 3600 )) || return 0
   echo "$T" > "$ST/credit_try"
   org="$(cfg | awk '$1=="credit_org"{v=$2} END{print v}')"
-  [[ -n "$org" ]] || org="$(timeout -k 10 60 "$BREV" org ls 2>/dev/null | awk '$1=="*"{print $3; exit}')"
+  [[ -n "$org" ]] || org="$(timeout -k 10 60 "$BREV" org ls 2>/dev/null | awk '$1=="*"{for(i=2;i<=NF;i++) if($i~/^org-[A-Za-z0-9]+$/){print $i; exit}}')" # (the id column, whatever the name's words)
   tok="$(jq -r '.access_token // empty' "${BREV_AUTOSTOP_CREDENTIALS:-$HOME/.brev/credentials.json}" 2>/dev/null)"
   if [[ ! "$org" =~ ^org-[A-Za-z0-9]+$ || -z "$tok" ]]; then credit_fail "no org id or no brev login token"; return 0; fi
   # (the token goes to curl on a file descriptor, never on its command line or in the log)
-  j="$("$CURL" -fsS -m 30 -H @<(printf 'Authorization: Bearer %s\n' "$tok") "${BREV_AUTOSTOP_BILLING_URL:-https://brevapi2.us-west-2-prod.control-plane.brev.dev/api}/organizations/$org/billingprofile" 2>&1)" || { credit_fail "billingprofile call failed: $(head -c 160 <<<"$j" | tr '\n' ' ')"; return 0; }
+  j="$("$CURL" -fsS -m 30 -H @<(printf 'Authorization: Bearer %s\n' "$tok") "${BREV_AUTOSTOP_BILLING_URL:-https://brevapi2.us-west-2-prod.control-plane.brev.dev/api}/organizations/$org/billingprofile" 2>&1)" || { j="${j//"$tok"/<token>}"; credit_fail "billingprofile call failed: $(head -c 160 <<<"$j" | tr '\n' ' ' | sed -E 's/(Bearer|[Tt]oken)[^ ]* *[^ ]*/\1 <hidden>/g')"; return 0; } # (curl's own error text, with the token and anything after "Bearer" cut out)
   cents="$(jq -r '.credit_details.remaining_credits // empty' <<<"$j" 2>/dev/null)"
   [[ "$cents" =~ ^-?[0-9]+$ ]] || { credit_fail "billingprofile has no credit_details.remaining_credits"; return 0; }
   [[ -f "$ST/credit_fail" ]] && { rm -f "$ST/credit_fail"; log "credit: billingprofile readable again"; }
-  [[ -f "$ST/credit_fail_alerted" ]] && { rm -f "$ST/credit_fail_alerted"; alert "Brev auto-stop can read the Brev credit balance again (\$$(usd "$cents")); low-credit warnings are working." normal; }
+  [[ -f "$ST/credit_fail_alerted" ]] && { rm -f "$ST/credit_fail_alerted"; [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]] && log "DRY: would say the credit is readable again" || alert "Brev auto-stop can read the Brev credit balance again (\$$(usd "$cents")); low-credit warnings are working." normal; }
   echo "$cents" > "$ST/credit_cents"; echo "$T" > "$ST/credit_last"
   # the lowest level crossed: below $N (N > 0), or at/below $0 for level 0
   hit=""; for lv in $levels; do if (( lv > 0 ? cents < lv * 100 : cents <= 0 )); then hit="$lv"; fi; done
@@ -268,6 +273,7 @@ credit_fail() { # (J548 review) logged once per failure spell; if reads keep fai
   local since; since="$(cat "$ST/credit_fail" 2>/dev/null)"; [[ "$since" =~ ^[0-9]+$ ]] || return 0
   if (( $(now) - since >= 86400 )) && [[ ! -f "$ST/credit_fail_alerted" ]]; then
     now > "$ST/credit_fail_alerted"; local BOX="(credit)"
+    [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]] && { log "DRY: would alert that the credit can't be read for a day"; return 0; }
     alert "Brev auto-stop has not been able to read the Brev credit balance for a day ($1), so the low-credit warnings are not working. Check the brev login on $(hostname) (brev ls / brev login)." normal
   fi
 }
@@ -418,7 +424,9 @@ unhealthy_box() { # $1 = name, $2 = its status (UNHEALTHY or a failed state)
 # Brev's own view: every instance and its status
 out="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)"; rc=$?
 if [[ $rc -ne 0 ]]; then
-  [[ "$(cat "$ST/state" 2>/dev/null)" == brev-error ]] || { echo brev-error > "$ST/state"; log "brev ls failed (rc $rc): nothing done"; }; exit 0
+  [[ "$(cat "$ST/state" 2>/dev/null)" == brev-error ]] || { echo brev-error > "$ST/state"; log "brev ls failed (rc $rc): nothing done"; }
+  credit_check # (J548) its own read (it may fail too, and then counts toward the day-long "can't read" alert)
+  exit 0
 fi
 echo ok > "$ST/state"
 now > "$ST/heartbeat" # (J526) "this copy is working" (brev ls answered and there is a config): a backup copy elsewhere reads it
