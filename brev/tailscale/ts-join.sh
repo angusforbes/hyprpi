@@ -15,6 +15,7 @@ fi
 sudo systemctl enable --now tailscaled >/dev/null 2>&1 || true
 if running; then
   cat >/dev/null  # already joined: the key (if any was sent) is ignored
+  sudo tailscale set --netfilter-mode=off >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning off its firewall rules failed (Brev's ssh may be blocked)"; exit 7; }
   # (review) Tailscale SSH follows the binding both ways, and a failure says so
   if [[ "$WANT_SSH" == ssh ]]; then sudo tailscale set --ssh --accept-risk=lose-ssh >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning on Tailscale SSH failed"; exit 7; }
   else sudo tailscale set --ssh=false --accept-risk=lose-ssh >/dev/null 2>&1 || { echo "tailscale: in the tailnet as $(name), but turning off Tailscale SSH failed"; exit 7; }; fi
@@ -23,7 +24,9 @@ fi
 umask 077; kf="$(mktemp)"; trap 'rm -f "$kf"' EXIT
 tr -d '\r\n' > "$kf"
 [[ -s "$kf" ]] || { echo "tailscale: no auth key was sent"; exit 4; }
-args=(up --auth-key="file:$kf" --hostname="$HN"); [[ "$WANT_SSH" == ssh ]] && args+=(--ssh --accept-risk=lose-ssh)  # (J525 live) setup's own ssh comes through Brev, not the tailnet, but tailscale asks anyway
+# (J525 live) --netfilter-mode=off: Tailscale's default firewall rule drops 100.64.0.0/10 traffic that doesn't come in on tailscale0,
+# and Brev's own ssh proxy reaches the box from that range: with it on, `ssh BOX` through Brev stops working
+args=(up --auth-key="file:$kf" --hostname="$HN" --netfilter-mode=off); [[ "$WANT_SSH" == ssh ]] && args+=(--ssh --accept-risk=lose-ssh)  # (J525 live) setup's own ssh comes through Brev, not the tailnet, but tailscale asks anyway
 if ! out="$(sudo tailscale "${args[@]}" 2>&1)"; then echo "tailscale: up failed: $(tr '\n' ' ' <<<"$out" | sed 's/tskey-[A-Za-z0-9-]*/tskey-…/g' | cut -c1-200)"; exit 5; fi
 rm -f "$kf"
 running && echo "tailnet $(name)" || { echo "tailscale: joined but not running"; exit 6; }

@@ -34,6 +34,7 @@ printf 'tskey-auth-FAKE123\n' > "$KF"; chmod 644 "$KF"; o=$(run "$T/on.json")
 ok "a key file readable by others is refused" '[[ "$o" == *"600 in a 700 folder"* && ! -f "$T/ts" ]]'
 chmod 600 "$KF"; o=$(run "$T/on.json"); rc=$?
 ok "joins: tailnet name printed, hostname from the ssh target" '[[ $rc == 0 && "$o" == *"tailnet hub.tail1c2031.ts.net"* ]]'
+ok "joins with --netfilter-mode=off (Brev's ssh proxy comes from 100.64.0.0/10)" 'grep -q -- "--netfilter-mode=off" "$T/calls"'
 ok "Tailscale SSH on by default" 'grep -q -- "--ssh" "$T/calls"'
 ok "the key reached tailscale up through a 600 file, then was removed" '[[ "$(cat "$T/key-seen")" == tskey-auth-FAKE123 && "$(cat "$T/key-mode")" == 600 ]] && ! grep -rqs FAKE123 "$T/box"'
 ok "the key is never on a command line or in the output" '! grep -q FAKE123 "$T/calls" && [[ "$o" != *FAKE123* ]]'
@@ -46,7 +47,7 @@ ok "a refused key: clear failure, nonzero, key text masked" '[[ $rc != 0 && "$o"
 echo '{"ssh":["ssh","x"],"tailscale":{"hostname":"Bad Name"}}' > "$T/bad.json"; o=$(run "$T/bad.json"); rc=$?
 ok "a bad hostname is refused" '[[ $rc == 2 && "$o" == *"bad tailscale hostname"* ]]'
 rm -f "$T/ts"; printf 'tskey-auth-FAKE123\n' > "$KF"; run "$T/on.json" >/dev/null; touch "$T/set-fails"; o=$(run "$T/on.json"); rc=$?; rm -f "$T/set-fails"
-ok "already joined but Tailscale SSH can't be turned on: a clear failure" '[[ $rc != 0 && "$o" == *"turning on Tailscale SSH failed"* ]]'
+ok "already joined but tailscale set fails: a clear failure" '[[ $rc != 0 && "$o" == *"failed"* ]]'
 : > "$T/calls"; o=$(run "$T/obj.json"); ok "ssh false on a joined machine turns Tailscale SSH off" 'grep -q -- "--ssh=false" "$T/calls"'
 ok "whitespace-formatted status JSON still counts as Running (no key sent again)" '! grep -q " up" "$T/calls"'
 chmod 666 "$T/on.json"; o=$(run "$T/on.json"); rc=$?; chmod 644 "$T/on.json"
