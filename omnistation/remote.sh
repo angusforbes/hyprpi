@@ -169,7 +169,7 @@ case "$cmd" in
     secrets_ok || exit 5
     # J480: the daemon (and the Thoughts it starts) must never look like an agent to pi-entry: a tmux server first started from an
     # agent's environment passed HYPRPI_REMOTE_RPC/HYPRPI_NAME on, and Thoughts-I then ran as "hbroker serve brev-alpha"
-    tmux has-session -t hyprpi-$W-daemon 2>/dev/null || tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
+    tmux has-session -t "=hyprpi-$W-daemon" 2>/dev/null || tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
     [[ -S "$HYPRPI_SOCKET" ]] || { echo "remote.sh: the daemon didn't start (tmux attach -t hyprpi-$W-daemon shows why)" >&2; exit 4; }
     if tmux has-session -t "hyprpi-$W-$NAME" 2>/dev/null; then echo "agent $NAME already runs"; exit 0; fi
@@ -189,27 +189,33 @@ case "$cmd" in
     for _ in $(seq 20); do [[ -S "$ROOT/run/$NAME.rpc.sock" ]] && break; sleep 0.5; done
     exec node "$ROOT/hbroker.mjs" connect "$NAME" ;;
   restart-daemon)
-    # J530 (a slip on Omnistation): restarts this world's daemon ONLY by the pid in its lock file, after checking that pid really is
-    # node running bin/hyprpi daemon. Never `pgrep -f "bin/hyprpi daemon"`: the tmux SERVER's command line contains that text too
-    # (it is the first session's command), and killing it ends every agent's session. The agents keep running (they're in tmux).
-    pid=$(tr -cd '0-9' 2>/dev/null < "$ROOT/run/daemon.lock")
-    if [[ -n "$pid" && -r /proc/$pid/cmdline ]]; then
-      comm=$(cat /proc/$pid/comm 2>/dev/null); cl=$(tr '\0' ' ' < /proc/$pid/cmdline)
-      if [[ "$comm" == node* && "$cl" == *"bin/hyprpi daemon"* ]]; then kill "$pid"; for _ in $(seq 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
-        kill -0 "$pid" 2>/dev/null && { kill -9 "$pid"; sleep 1; } # (live) it can ignore TERM while its agents are connected
-        kill -0 "$pid" 2>/dev/null && { echo "remote.sh: the daemon (pid $pid) won't stop: nothing else changed" >&2; exit 3; }
-      else echo "remote.sh: pid $pid in daemon.lock isn't the daemon ($comm): not killing it" >&2; exit 3; fi
+    # J530 (a slip on Omnistation): restarts THIS world's daemon only. Never `pgrep -f "bin/hyprpi daemon"`: the tmux SERVER's command
+    # line contains that text too (it is the first session's command), and killing it ends every agent's session.
+    # (review) The pid comes from the lock file and must be exactly this world's daemon: argv node $DIR/bin/hyprpi daemon, and its
+    # HYPRPI_STATE this world's state. Its start time is checked before each signal, so a reused pid is never signalled. Sockets and
+    # tmux sessions are left to the daemon's own lock-protected start; tmux targets are exact (=name). Success = the daemon answers.
+    lockf="$ROOT/run/daemon.lock"
+    isdaemon() { local cl; [[ -r /proc/$1/cmdline ]] || return 1; mapfile -d '' -t cl < /proc/$1/cmdline
+      [[ "${#cl[@]}" -eq 3 && "${cl[0]##*/}" == node && "${cl[1]}" == "$DIR/bin/hyprpi" && "${cl[2]}" == daemon ]] || return 1
+      tr '\0' '\n' < /proc/$1/environ 2>/dev/null | grep -qxF "HYPRPI_STATE=$HYPRPI_STATE"; }
+    started() { awk '{print $22}' /proc/$1/stat 2>/dev/null; }
+    answers() { timeout 8 node -e 'import(process.argv[1]).then(async (c) => { await c.request("list", {}, { timeout: 2000, timeoutMs: 4000 }); process.exit(0); }).catch(() => process.exit(1))' "$DIR/lib/client.mjs" >/dev/null 2>&1; }
+    secrets_ok || exit 5 # (before anything is stopped: a refusal must leave the old daemon running)
+    pid=""; [[ -f "$lockf" ]] && pid=$(tr -cd '0-9' 2>/dev/null < "$lockf" || true)
+    if [[ -n "$pid" ]] && isdaemon "$pid"; then
+      t0=$(started "$pid"); kill "$pid" 2>/dev/null || true
+      for _ in $(seq 20); do [[ "$(started "$pid")" == "$t0" ]] || break; sleep 0.5; done
+      [[ "$(started "$pid")" == "$t0" ]] && isdaemon "$pid" && { kill -9 "$pid" 2>/dev/null || true; sleep 1; } # (live) it can ignore TERM
+      [[ "$(started "$pid")" == "$t0" ]] && { echo "remote.sh: the daemon (pid $pid) won't stop: nothing else changed" >&2; exit 3; }
+    elif [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then echo "remote.sh: pid $pid in daemon.lock isn't world ${W^^}'s daemon: not killing it" >&2; exit 3; fi
+    # an agent's own `hyprpi ensure` often starts the new one within a second or two; else one is started here, in tmux
+    for _ in $(seq 6); do answers && break; sleep 0.5; done
+    if ! answers; then
+      tmux kill-session -t "=hyprpi-$W-daemon" 2>/dev/null || true
+      tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"
+      for _ in $(seq 30); do answers && break; sleep 0.5; done
     fi
-    tmux kill-session -t "hyprpi-$W-daemon" 2>/dev/null || true
-    secrets_ok || exit 5
-    # (live) an agent's own `hyprpi ensure` may already have started a new one: then keep it (and its socket); else start one here
-    np=$(tr -cd '0-9' 2>/dev/null < "$ROOT/run/daemon.lock")
-    if [[ -n "$np" ]] && kill -0 "$np" 2>/dev/null && [[ "$np" != "$pid" ]]; then :
-    else rm -f "$HYPRPI_SOCKET"; tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"; fi
-    for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
-    for _ in $(seq 20); do np=$(tr -cd '0-9' 2>/dev/null < "$ROOT/run/daemon.lock"); [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && break; sleep 0.5; done
-    # (an agent's own `hyprpi ensure` may have started one first: that one counts too)
-    [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && echo "daemon restarted (world ${W^^}, pid $np)" || { echo "remote.sh: the daemon didn't come back (tmux attach -t hyprpi-$W-daemon)" >&2; exit 4; } ;;
+    answers && echo "daemon restarted (world ${W^^}, pid $(tr -cd '0-9' 2>/dev/null < "$lockf" || true))" || { echo "remote.sh: the daemon didn't come back (tmux attach -t hyprpi-$W-daemon)" >&2; exit 4; } ;;
   thoughts-relay)
     # J530: a message for this world's Thoughts from the laptop (JSON on stdin); prints its answer (lib/remote-thoughts.mjs)
     secrets_ok || exit 3
