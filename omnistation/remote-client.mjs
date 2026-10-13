@@ -11,7 +11,7 @@
 //      HYPRPI_REMOTE_WS = the world's first workspace (`world` passes it)
 //
 // Keys: Enter sends (while the agent works it is queued as a steer; Alt+Enter queues a follow-up), Esc interrupts the agent,
-// Ctrl+C clears the editor (twice on an empty one quits) where your keybindings keep it, Ctrl+D on an empty editor or /quit closes
+// Enter on an empty editor while disconnected retries the link now, Ctrl+C clears the editor (twice on an empty one quits) where your keybindings keep it, Ctrl+D on an empty editor or /quit closes
 // the window (the agent keeps running), Ctrl+L picks the model, Ctrl+O expands tool
 // output. Commands handled here: /model [filter], /quit; anything else starting with / goes to the agent as a prompt (its
 // extension commands, skills and templates run there).
@@ -34,7 +34,11 @@ const conf = JSON.parse(fs.readFileSync(CONF, "utf8"));
 const SSH = (conf.ssh || []).filter((a) => a !== "-t" && a !== "-tt"); // a pipe, not a terminal: no -t
 if (!SSH.length) { console.error(`h-client: "ssh" is empty in ${CONF}`); process.exit(2); }
 // the first connect starts the agent if it isn't running; a reconnect doesn't (review: `world X stop NAME` must stay stopped)
+// HYPRPI_REMOTE_DEBUG=1 logs to stderr (it garbles the screen); =/a/path appends to that file instead (test/remote-client-reconnect.mjs)
 const DEBUG = !!process.env.HYPRPI_REMOTE_DEBUG;
+const dlog = (s) => { if (!DEBUG) return; const f = process.env.HYPRPI_REMOTE_DEBUG; const l = `${new Date().toISOString().slice(11, 23)} ${s}\n`; if (f.includes("/")) { try { fs.appendFileSync(f, l); } catch {} } else process.stderr.write(l); };
+// J543: a link with nothing heard for DEAD_MS is dead (pings every PING_MS once the broker said hello); env only for the test
+const DEAD_MS = Number(process.env.HYPRPI_REMOTE_DEAD_MS) || 45000, PING_MS = Math.min(15000, Math.max(200, Math.floor(DEAD_MS / 3)));
 const remoteCmd = (first) => `HYPRPI_REMOTE_WS=${WS} bash ~/.hyprpi-${wl}/remote.sh connect ${NAME}${first ? "" : " nostart"}`;
 let everConnected = false, stopped = false, startFailed = false, startTries = 0; // J478
 // J479 (Angus: a window that found its agent stopped gave up for good, his queued message with it): "stopped" and "didn't
@@ -104,7 +108,26 @@ const fakeSession = {
   },
 };
 const footerData = { getGitBranch: () => null, getAvailableProviderCount: () => st.providers || 1, getExtensionStatuses: () => {
-  const m = new Map(st.extStatus); m.set("zz-link", st.connected ? "" : T.fg("warning", agentWait ? `${MARK} ${startFailed ? "not started" : "stopped"} · waiting (world ${WL} start ${NAME})` : everConnected ? `${MARK} reconnecting…` : "" /* J481: the hyprpi line says "starting" */)); /* J478: the window is up before the agent is; J479: waiting for a stopped agent */ for (const [k, v] of m) if (!v) m.delete(k); return m; } };
+  const m = new Map(st.extStatus); const lt = linkText(); m.set("zz-link", lt && T.fg("warning", lt)); for (const [k, v] of m) if (!v) m.delete(k); return m; } };
+// J543 (Angus: a window "stuck on 'reconnecting'"): the link's TRUE state for the footer, from `link` (set by connect below):
+// nothing when connected; else what it is doing now and why, with a live countdown (repainted every second while not connected)
+function linkText() {
+  const secs = (t) => Math.max(0, Math.ceil((t - Date.now()) / 1000));
+  if (st.connected) { // connected, but a quiet link is shown before it is given up on (pings are answered within a second)
+    const quiet = st.conn?.hLast ? Date.now() - st.conn.hLast : 0;
+    return quiet > 2 * PING_MS + 1000 ? `${MARK} no answer for ${Math.floor(quiet / 1000)} s (reconnects after ${Math.round(DEAD_MS / 1000)} s)` : "";
+  }
+  const q = outbox.length ? ` · ${outbox.length} to send` : "";
+  if (agentWait) return `${MARK} ${startFailed ? "not started" : "stopped"} · waiting (world ${WL} start ${NAME})${link.retryAt ? `, checking in ${secs(link.retryAt)} s` : ""}${q}`; // J479
+  if (link.state === "connecting") {
+    const for_ = Math.floor((Date.now() - link.since) / 1000);
+    if (!everConnected && for_ < 10) return ""; // J481: the hyprpi line says "starting"
+    return `${MARK} ${everConnected ? "reconnecting" : "connecting"}… (${for_} s${link.why ? `; last: ${link.why}` : ""})${q}`;
+  }
+  if (link.state === "login") return link.retryAt ? `${MARK} login expired: run tsh login (or your ssh login) · retrying in ${secs(link.retryAt)} s${q}` : `${MARK} login needed: finish it in the browser, or run tsh login${q}`;
+  if (link.state === "retry") return `${MARK} disconnected${link.why ? `: ${link.why}` : ""} · retrying in ${secs(link.retryAt)} s (Enter retries now)${q}`;
+  return "";
+}
 const footer = new FooterComponent(fakeSession, footerData);
 footer.setAutoCompactEnabled?.(true);
 for (const c of [chat, pendingBox, statusLine, workingBox, pickerBox, editor, footer]) ui.addChild(c);
@@ -117,10 +140,12 @@ setTitle(`π - ${NAME} - starting`); // J481: hyprpi's own title (the agent's re
 const st = { connected: false, conn: null, streaming: false, model: null, thinking: "", cwd: "~", sessionName: "", pending: 0,
   lastErr: "", expanded: false, streamingComp: null, pendingTools: new Map(), quitArmed: 0, extStatus: new Map(), stats: null, statsRev: 0, providers: 1 };
 let reqN = 0; const waiting = new Map(); const outbox = [];
+// J543: the link's state for the footer: connecting (an ssh is up, no hello yet) | connected | retry | login (waiting `retryAt`)
+const link = { state: "connecting", why: "", since: Date.now(), retryAt: 0 };
 const sendRaw = (obj) => { if (!st.conn) return false; st.conn.stdin.write(JSON.stringify(obj) + "\n"); return true; };
 const rpc = (obj, timeoutMs = 30000) => new Promise((resolve, reject) => {
   const id = `r${++reqN}`;
-  if (!sendRaw({ ...obj, id })) return reject(new Error("not connected"));
+  if (!sendRaw({ ...obj, id })) return reject(Object.assign(new Error("not connected"), { offline: true })); // never written
   const unknown = (m) => Object.assign(new Error(m), { unknown: true }); // no answer: it may or may not have arrived
   const t = setTimeout(() => { waiting.delete(id); reject(unknown(`${obj.type}: no answer`)); }, timeoutMs);
   waiting.set(id, (r) => { clearTimeout(t); r.success === false ? reject(r.error === "connection lost" ? unknown(r.error) : new Error(r.error || "failed")) : resolve(r.data); });
@@ -178,7 +203,7 @@ function renderHistory(messages) {
   ui.requestRender();
 }
 function onEvent(e) {
-  if (DEBUG && !["message_update", "tool_execution_update"].includes(e.type)) process.stderr.write(`event ${e.type} ${e.type === "extension_ui_request" ? e.method : ""} ${e.type === "queue_update" ? JSON.stringify(e).slice(0, 200) : ""}\n`);
+  if (DEBUG && !["message_update", "tool_execution_update"].includes(e.type)) dlog(`event ${e.type} ${e.type === "extension_ui_request" ? e.method : ""} ${e.type === "queue_update" ? JSON.stringify(e).slice(0, 200) : ""}`);
   try { onEvent1(e); } catch (err) { st.lastErr = `couldn't show a ${e?.type} event: ${err.message}`; paintChrome(); }
 }
 function onEvent1(e) {
@@ -337,24 +362,48 @@ async function setModel(v) {
 }
 async function submit(text) {
   if (dialog?.kind === "text") { sendRaw({ type: "extension_ui_response", id: dialog.id, value: text }); closeDialog(); return; } // (review) before the empty check: "" is an answer
-  const t = text.trim(); if (!t) return;
+  const t = text.trim(); if (!t) return retryNow(); // (J543: Enter on an empty editor while disconnected retries at once)
   if (t === "/quit" || t === "/exit") return quit();
   const m = t.match(/^\/model(?:\s+(.*))?$/); if (m) return pickModel((m[1] || "").trim());
   editor.addToHistory?.(t);
-  if (!st.connected) { outbox.push({ text, mode: "steer" }); paintChrome(); return; } // sent as soon as the link is up (the first connect takes seconds)
-  await send(text);
+  queue(text, "steer");
+}
+// J543: every message goes through the outbox, in order: sent at once when the link is up and its history is loaded, else kept
+// (shown above the editor and in the footer) until it is; Enter while disconnected also retries the link now
+function queue(text, mode) {
+  outbox.push({ text, mode }); dlog(`queued ${JSON.stringify(text)} (${outbox.length}; ${st.ready ? "ready" : "not ready"})`); paintChrome();
+  if (st.ready) flush(); else retryNow();
+}
+let flushing = false;
+async function flush() {
+  if (flushing) return; flushing = true;
+  try {
+    while (outbox.length && st.ready && st.conn) {
+      const o = outbox[0];
+      const r = await send(o.text, o.mode);
+      if (r === "offline") break; // never written: it stays first in the outbox for the next connection
+      if (outbox[0] === o) outbox.shift(); // sent, or back in the editor (refused / outcome unknown): never sent twice
+      paintChrome();
+    }
+  } finally { flushing = false; }
+  if (outbox.length && st.ready && st.conn) flush(); // (one queued while the last send was in flight)
 }
 // one prompt to the remote pi; "steer" is harmless when it is idle (it just starts) and needed when it is busy, so a prompt
 // is never refused because our idea of "busy" lags behind (review: queued offline prompts went out together)
 async function send(text, mode = "steer") {
   try {
     const r = await rpc({ type: "prompt", message: text, streamingBehavior: mode });
+    dlog(`sent ${JSON.stringify(text)}`);
     if (r?.disposition === "queued") { st.pending++; paintChrome(); }
+    return "sent";
   } catch (e) {
+    if (e.offline) return "offline";
     // (review) a dropped link after pi accepted it but before the answer came back: it may have been sent; never call it "not sent"
     st.lastErr = e.unknown ? "the connection dropped while sending: it may have arrived (the history shows it after the reconnect); it's also back in the editor, don't resend blindly"
       : `not sent (${e.message}); it's back in the editor`;
     editor.setText([editor.getText(), text].filter(Boolean).join("\n\n")); paintChrome(); // appended: several failures don't overwrite each other
+    dlog(`send failed (${e.message}): ${JSON.stringify(text)} back in the editor`);
+    return "failed";
   }
 }
 editor.onSubmit = (text) => { if (DEBUG) process.stderr.write(`submit ${JSON.stringify(text)}\n`); editor.setText(""); submit(text).catch((e) => { st.lastErr = e.message; paintChrome(); }); };
@@ -368,7 +417,7 @@ editor.onEscape = () => {
 editor.onAction("app.model.select", () => { pickModel().catch((e) => { st.lastErr = e.message; paintChrome(); }); });
 editor.onAction("app.tools.expand", () => { st.expanded = !st.expanded; for (const c of chat.children) c.setExpanded?.(st.expanded); ui.requestRender(); });
 editor.onAction("app.thinking.cycle", () => rpc({ type: "cycle_thinking_level" }).then(refreshState, () => {}));
-editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (dialog?.kind === "text") { editor.setText(""); return submit(t); } if (!t.trim()) return; editor.setText(""); if (!st.connected) { outbox.push({ text: t, mode: "followUp" }); return paintChrome(); } send(t, "followUp"); });
+editor.onAction("app.message.followUp", () => { const t = editor.getText(); if (dialog?.kind === "text") { editor.setText(""); return submit(t); } if (!t.trim()) return; editor.setText(""); queue(t, "followUp"); });
 editor.onAction("app.clear", () => {
   if (editor.getText()) { editor.setText(""); st.quitArmed = 0; ui.requestRender(); return; }
   if (Date.now() - st.quitArmed < 1500) return quit();
@@ -377,7 +426,7 @@ editor.onAction("app.clear", () => {
 editor.onCtrlD = () => quit();
 // a picker (model / dialog) takes the keys while open; typing filters it
 ui.addInputListener((data) => {
-  if (DEBUG) process.stderr.write(`key ${JSON.stringify(data)} focus=${dialog?.kind || "editor"}\n`);
+  if (DEBUG) { dlog(`key ${JSON.stringify(data)} focus=${dialog?.kind || "editor"}`); setImmediate(() => dlog(`editor ${JSON.stringify(editor.getText())}`)); }
   if (dialog?.kind !== "list") return undefined;
   if (dialog.filter !== undefined && data.length === 1 && data >= " " && data !== "\x7f") { dialog.filter += data; drawPicker(); return { consume: true }; }
   if (dialog.filter !== undefined && (data === "\x7f" || matchesKey(data, "backspace"))) { dialog.filter = dialog.filter.slice(0, -1); drawPicker(); return { consume: true }; }
@@ -408,24 +457,61 @@ function clean(str) {
 const scrub = (v) => typeof v === "string" ? clean(v) : Array.isArray(v) ? v.map(scrub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)])) : v;
 
 // ---- connection: one ssh per connect; reconnect with backoff after a drop or an expired login
-let backoff = 1000, closing = false;
+// J543 (Angus: a window "stuck on 'reconnecting'" that never came back and kept his message): exactly one ssh OR one retry timer
+// at a time, and every way a link ends leads to the next try: "close", or the ssh's "exit" (a leftover process can hold the pipe
+// open, then "close" never comes), or a kill. A link silent for DEAD_MS (a hung ssh or login tool, a slept laptop) is killed,
+// before the broker's hello too. Enter while disconnected, and waking from sleep, retry at once. The footer always shows the
+// true state (linkText): connecting / connected / disconnected and when it retries / login expired / agent stopped.
+let backoff = 1000, closing = false, retryTimer = null;
+function setLink(state, why = "", retryAt = 0) {
+  if (state !== link.state || why !== link.why) dlog(`link ${state}${why ? ` (${why})` : ""}${retryAt ? ` retry in ${Math.round((retryAt - Date.now()) / 1000)} s` : ""}`);
+  if (state === "connecting" && (link.state !== "connecting" || !retryAt)) link.since = Date.now();
+  Object.assign(link, { state, why, retryAt }); paintChrome();
+}
+function retryLater(ms, state, why = "") {
+  clearTimeout(retryTimer); setLink(state, why, Date.now() + ms);
+  retryTimer = setTimeout(() => { retryTimer = null; connect(); }, ms);
+}
+function retryNow() { if (retryTimer && !closing && !st.conn) { dlog("retrying now"); connect(); } }
+// a tick a second: the footer's countdown while not connected, and a slept laptop (a gap in the ticks) checks its link at once
+let lastTick = Date.now();
+setInterval(() => {
+  const now = Date.now(), gap = now - lastTick; lastTick = now;
+  if (gap > 5000) { dlog(`woke after ${Math.round(gap / 1000)} s`); if (st.conn) st.conn.hCheck?.(); else retryNow(); }
+  const lt = linkText(); if (lt !== lastLinkText) { lastLinkText = lt; dlog(`footer ${JSON.stringify(lt)}`); paintChrome(); }
+}, 1000);
+let lastLinkText = "";
 function connect() {
-  if (closing) return;
+  if (closing || st.conn) return; // never two links (a stray timer can't start a second one)
+  clearTimeout(retryTimer); retryTimer = null;
   const child = spawn(SSH[0], [...SSH.slice(1), remoteCmd(!everConnected && !startFailed)], { stdio: ["pipe", "pipe", "pipe"], detached: true }); // detached: no controlling terminal, so a login tool can't prompt on (and garble) this window; it fails and we retry
-  st.conn = child; let buf = "", errTail = "", hello = false, lastData = Date.now();
-  // keepalive: a ping every 15 s; nothing heard for 45 s = a dead link (e.g. the laptop slept), so drop it and reconnect
-  const ka = setInterval(() => {
-    if (Date.now() - lastData > 45000) { errTail += "\nno answer for 45 s"; killGroup(child); return; }
-    if (hello) sendRaw({ type: "broker_ping", t: Date.now() });
-  }, 15000);
+  st.conn = child; st.ready = false; child.hLast = Date.now(); let buf = "", errTail = "", hello = false, lastData = Date.now(), lastPing = 0, loginPrompt = false;
+  dlog(`connect: ssh pid ${child.pid}`); setLink("connecting", link.why);
+  // keepalive: a ping every PING_MS once the broker said hello; nothing heard for DEAD_MS = a dead link (hung, or the laptop
+  // slept), so drop it and reconnect; a login tool waiting on a browser login gets 3 minutes before that
+  const check = () => {
+    if (child.hDone || child.hKilled) return;
+    const now = Date.now(), dead = loginPrompt && !hello ? Math.max(DEAD_MS, 180000) : DEAD_MS;
+    if (now - lastData > dead) { errTail += `\nno answer for ${Math.round((now - lastData) / 1000)} s`; dlog(`link silent ${now - lastData} ms: killing ssh ${child.pid}`); kill(); return; }
+    if (hello && now - lastPing >= PING_MS) { lastPing = now; sendRaw({ type: "broker_ping", t: now }); }
+  };
+  const ka = setInterval(check, Math.min(PING_MS, 5000)); child.hCheck = check;
+  const kill = () => { if (child.hKilled) return; child.hKilled = true; killGroup(child); setTimeout(() => end("killed"), 3000); }; // (if even the kill leaves the pipe open)
   child.stdout.setEncoding("utf8"); // (review) whole characters, even when a chunk ends mid-character
   child.stdout.on("data", (chunk) => {
-    lastData = Date.now();
+    if (child.hDone) return; // (a link already given up on)
+    lastData = child.hLast = Date.now();
     buf += chunk; let i;
     while ((i = buf.indexOf("\n")) >= 0) {
       const l = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1); if (!l) continue;
       let r; try { r = scrub(JSON.parse(l)); } catch { continue; }
-      if (r.type === "broker_hello") { hello = true; everConnected = true; stopped = false; startFailed = false; startTries = 0; agentWait = false; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd; st.connected = true; st.lastErr = ""; backoff = 1000; paintChrome(); refreshState().then(reloadHistory).then(async () => { for (const o of outbox.splice(0)) await send(o.text, o.mode); paintChrome(); }); continue; }
+      if (r.type === "broker_hello") {
+        hello = true; everConnected = true; stopped = false; startFailed = false; startTries = 0; agentWait = false; if (r.cwd) st.cwd = r.home && r.cwd.startsWith(r.home) ? "~" + r.cwd.slice(r.home.length) : r.cwd;
+        st.connected = true; st.lastErr = ""; backoff = 1000; setLink("connected");
+        // history first, then what was typed meanwhile (in order, each once: flush)
+        refreshState().then(reloadHistory).then(() => { if (st.conn === child) { st.ready = true; dlog("ready"); flush(); } paintChrome(); });
+        continue;
+      }
       if (r.type === "broker_pong") continue;
       if (r.type === "response" && r.id && r.id === histId) { histId = null; booting = false; if (r.success !== false) renderHistory(r.data?.messages || []); }
       else if (booting && /^(message_|tool_execution_|turn_|bash_execution)/.test(r.type || "")) continue; // already in the coming snapshot (state events still apply)
@@ -437,15 +523,24 @@ function connect() {
     }
   });
   child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (d) => { errTail = clean(errTail + d).slice(-400); }); // (review) stderr is remote-derived too: scrubbed
+  child.stderr.on("data", (d) => {
+    if (child.hDone) return;
+    errTail = clean(errTail + d).slice(-400); // (review) stderr is remote-derived too: scrubbed
+    // a login tool asking for a (browser) login: say so now, not after the link times out
+    if (!hello && !loginPrompt && /https?:\/\/\S+/.test(errTail) && /login|sso|browser|authenticat/i.test(errTail)) { loginPrompt = true; lastData = Date.now(); setLink("login", "finish the login in your browser, or run tsh login"); }
+  });
   child.stdin.on("error", () => {});
-  child.on("error", (e) => { errTail += `\n${e.message}`; }); // (review) a missing ssh tool: shown, then retried; "exit" may not follow
-  child.on("error", () => setTimeout(() => { if (st.conn === child) child.emit("close", null, null); }, 100));
-  child.on("close", () => { // (J478) "close", not "exit": every line it printed has been read by then
+  child.on("error", (e) => { errTail += `\n${e.message}`; setTimeout(() => end("error"), 100); }); // (review) a missing ssh tool: shown, then retried; "exit" may not follow
+  child.on("close", () => end("close")); // (J478) "close", not "exit": every line it printed has been read by then
+  child.on("exit", () => setTimeout(() => end("exit"), 2000)); // J543: but a leftover process holding the pipe means no "close" ever
+  function end(how) {
     if (child.hDone) return; child.hDone = true;
     clearInterval(ka);
+    dlog(`link ended (${how})${errTail.trim() ? `: ${errTail.trim().split("\n").pop()}` : ""}`);
+    for (const s of [child.stdin, child.stdout, child.stderr]) { try { s.destroy(); } catch {} }
+    if (how !== "close") killGroup(child); // (whatever is left of it)
     if (st.conn === child) st.conn = null;
-    st.connected = false; setWorking(false);
+    st.connected = false; st.ready = false; setWorking(false);
     for (const [id, f] of waiting) { waiting.delete(id); f({ success: false, error: "connection lost" }); }
     if (closing) return;
     booting = false; histId = null;
@@ -459,20 +554,18 @@ function connect() {
       agentWait = true; stopped = false;
       const label = conf.label || "the remote machine";
       if (startFailed) { st.extStatus.set("hyprpi", `✗ \x1b[1m${NAME}\x1b[22m ${MARK} \x1b[2m· room ${WL} · didn't start · waiting\x1b[22m`); setTitle(`π - ${NAME} - didn't start`); } // J481's look, J479's waiting
-      st.lastErr = startFailed ? `agent ${NAME} didn't start on ${label} (world ${WL} start ${NAME} shows why); waiting for it, checking again in ${Math.round(backoff / 1000)} s`
-        : `agent ${NAME} isn't running on ${label} (stopped, or the machine restarted); waiting for it, checking again in ${Math.round(backoff / 1000)} s (world ${WL} start ${NAME} starts it); what you type is sent when it's back`;
-      paintChrome(); setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 30000); return;
+      st.lastErr = startFailed ? `agent ${NAME} didn't start on ${label} (world ${WL} start ${NAME} shows why); waiting for it`
+        : `agent ${NAME} isn't running on ${label} (stopped, or the machine restarted); waiting for it (world ${WL} start ${NAME} starts it); what you type is sent when it's back`;
+      retryLater(backoff, "agent"); backoff = Math.min(backoff * 2, 30000); return;
     }
     agentWait = false;
-    const why = errTail.trim().split("\n").filter(Boolean).pop() || "";
-    if (!everConnected && child.notRunning) { st.lastErr = ""; paintChrome(); setTimeout(connect, 1000); return; } // J481: still starting: no "disconnected" line, try again in 1 s
-    const expired = /expired|login|certificate|not logged in|tsh login|permission denied/i.test(errTail);
+    const why = (errTail.trim().split("\n").filter(Boolean).pop() || "").slice(0, 140);
+    if (!everConnected && child.notRunning) { st.lastErr = ""; retryLater(1000, "connecting"); return; } // J481: still starting: no "disconnected" line, try again in 1 s
+    const expired = loginPrompt || /expired|login|certificate|not logged in|tsh login|permission denied/i.test(errTail);
     st.lastErr = expired ? `the login to the remote machine has run out: run tsh login (or your ssh login), I'll reconnect by myself (${why.slice(0, 120)})`
-      : `disconnected${why ? ": " + why.slice(0, 140) : ""}; reconnecting in ${Math.round(backoff / 1000)} s`;
-    paintChrome();
-    setTimeout(connect, backoff); backoff = Math.min(backoff * 2, expired ? 15000 : 30000);
-    if (!hello) return;
-  });
+      : `disconnected${why ? ": " + why : ""}; reconnecting by itself (Enter retries now)`;
+    retryLater(backoff, expired ? "login" : "retry", why); backoff = Math.min(backoff * 2, expired ? 15000 : 30000);
+  }
 }
 // the ssh runs in its own process group (detached): end the whole group, so wrappers and proxies go too (review)
 function killGroup(c) { try { process.kill(-c.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-c.pid, "SIGKILL"); } catch {} }, 2000).unref(); }
