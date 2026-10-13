@@ -192,7 +192,7 @@ case "$cmd" in
     # J530 (a slip on Omnistation): restarts this world's daemon ONLY by the pid in its lock file, after checking that pid really is
     # node running bin/hyprpi daemon. Never `pgrep -f "bin/hyprpi daemon"`: the tmux SERVER's command line contains that text too
     # (it is the first session's command), and killing it ends every agent's session. The agents keep running (they're in tmux).
-    pid=$(tr -cd '0-9' < "$ROOT/run/daemon.lock" 2>/dev/null)
+    pid=$(tr -cd '0-9' 2>/dev/null < "$ROOT/run/daemon.lock")
     if [[ -n "$pid" && -r /proc/$pid/cmdline ]]; then
       comm=$(cat /proc/$pid/comm 2>/dev/null); cl=$(tr '\0' ' ' < /proc/$pid/cmdline)
       if [[ "$comm" == node* && "$cl" == *"bin/hyprpi daemon"* ]]; then kill "$pid"; for _ in $(seq 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
@@ -203,11 +203,11 @@ case "$cmd" in
     tmux kill-session -t "hyprpi-$W-daemon" 2>/dev/null || true
     secrets_ok || exit 5
     # (live) an agent's own `hyprpi ensure` may already have started a new one: then keep it (and its socket); else start one here
-    np=$(tr -cd '0-9' < "$ROOT/run/daemon.lock" 2>/dev/null)
+    np=$(tr -cd '0-9' 2>/dev/null < "$ROOT/run/daemon.lock")
     if [[ -n "$np" ]] && kill -0 "$np" 2>/dev/null && [[ "$np" != "$pid" ]]; then :
     else rm -f "$HYPRPI_SOCKET"; tmux new-session -d -s hyprpi-$W-daemon "unset HYPRPI_REMOTE_RPC HYPRPI_NAME HYPRPI_AGENT_ID HYPRPI_REMOTE_WORLD; $(declare -p HYPRPI_STATE HYPRPI_SOCKET XDG_RUNTIME_DIR HYPRPI_NO_ADOPT PATH ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS} | sed 's/^declare -x /export /'); exec node $(printf %q "$DIR/bin/hyprpi") daemon"; fi
     for _ in $(seq 30); do [[ -S "$HYPRPI_SOCKET" ]] && break; sleep 0.5; done
-    for _ in $(seq 20); do np=$(tr -cd '0-9' < "$ROOT/run/daemon.lock" 2>/dev/null); [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && break; sleep 0.5; done
+    for _ in $(seq 20); do np=$(tr -cd '0-9' 2>/dev/null < "$ROOT/run/daemon.lock"); [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && break; sleep 0.5; done
     # (an agent's own `hyprpi ensure` may have started one first: that one counts too)
     [[ -S "$HYPRPI_SOCKET" && -n "$np" ]] && kill -0 "$np" 2>/dev/null && echo "daemon restarted (world ${W^^}, pid $np)" || { echo "remote.sh: the daemon didn't come back (tmux attach -t hyprpi-$W-daemon)" >&2; exit 4; } ;;
   thoughts-relay)
