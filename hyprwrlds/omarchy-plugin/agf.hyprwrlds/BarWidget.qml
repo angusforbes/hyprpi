@@ -193,6 +193,12 @@ BarWidget {
   function selectWorld(w) { run("hyprctl eval " + Util.shellQuote("hyprwrlds.world(" + w + ")")) }
   // hyprpi (optional): `hyprpi` on PATH (hyprpi integration install path), else the default checkout.
   function toggleRoom() { run("command -v hyprpi >/dev/null && exec hyprpi room --toggle || exec \"$HOME/Harness/hyprpi/bin/hyprpi\" room --toggle") }
+  // J538 (Angus: "move the current Thoughts to the workspace and focus on it, if it's not already in there. If it is, do nothing"):
+  // a click on the current world brings that world's Thoughts panel (hyprpi's search panel; a remote or sandboxed world's own)
+  // here and focuses it, or opens it here; already on this workspace: nothing. Without hyprpi installed: nothing.
+  function summonThoughts(letter) {
+    run("p=\"$HOME/Harness/hyprpi/mockups/panels\"; [ -x \"$p\" ] && exec \"$p\" " + Util.shellQuote(letter) + " --only 3 --if-absent")
+  }
   function cycleWorld(delta) { run("hyprctl eval " + Util.shellQuote("hyprwrlds.cycle_world(" + delta + ")")) }
   function focusWorkspace(id) {
     run("hyprctl dispatch " + Util.shellQuote("hl.dsp.focus({ workspace = \"" + id + "\" })"))
@@ -237,9 +243,9 @@ BarWidget {
           verticalPadding: 6
           fixedWidth: root.vertical ? root.barSize : Style.space(root.cellWidth)
           fixedHeight: root.barSize
-          // Clicking the world you're already in toggles its hyprpi room widget
-          // (hyprpi, if installed); clicking another world just switches to it.
-          onPressed: function() { current ? root.toggleRoom() : root.selectWorld(modelData) }
+          // Clicking the world you're already in brings its hyprpi Thoughts panel here (J538; hyprpi, if
+          // installed); clicking another world just switches to it.
+          onPressed: function() { current ? root.summonThoughts(letter) : root.selectWorld(modelData) }
           onWheelMoved: function(delta) { root.cycleWorld(delta < 0 ? 1 : -1) }
         }
       }
