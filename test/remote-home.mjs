@@ -28,6 +28,7 @@ ok("0 remoteHome: from the state path, the env, and off elsewhere",
   const now = 1e12, raw = [{ id: "h-farside", workspace: 74, opened: { at: now - 5000, by: "Thoughts-H" } }, { id: "h-omni-alpha", workspace: 71 }, { id: "h-old", opened: { at: now - 3600e3 } }, { id: "h-win", opened: { at: now } }, { id: "h-done", opened: { at: now } }, { id: "h-far", workspace: 5, opened: { at: now } }];
   const ag = [{ id: "h-farside", launch: "farside" }, { id: "h-omni-alpha", launch: "omni-alpha" }, { id: "h-old", launch: "old" }, { id: "h-win", launch: "win", address: "0x1" }, { id: "h-done", launch: "done" }, { id: "h-far", launch: "far" }];
   const got = pickAutoOpens(raw, ag, { "h-done": now - 1000 }, now, 71, 80);
+  ok("0 auto-open: the workspace it was opened for when it has none", pickAutoOpens([{ id: "h-x", opened: { at: now, ws: 76 } }], [{ id: "h-x", launch: "x" }], {}, now, 71, 80)[0]?.ws === 76);
   ok("0 auto-open: only daemon-opened, recent, windowless, not yet opened; its workspace (or the world's first)", JSON.stringify(got) === JSON.stringify([{ id: "h-farside", launch: "farside", ws: 74 }, { id: "h-far", launch: "far", ws: 71 }]), JSON.stringify(got));
 }
 { // J543: on a remote machine a routed model is that machine's own name for it (its enabledModels); the laptop: unchanged
@@ -142,6 +143,15 @@ try {
       ok("8 laptop: a backlog after an outage is all played, 4 at a time, none lost or twice", JSON.stringify(got2) === JSON.stringify(bl.map((n) => n.id)), JSON.stringify(got2)); }
     ok("8 laptop: a new one plays once, cleaned (no control characters), unknown kinds dropped", p1.length === 1 && p1[0].kind === "ding" && p1[0].id === "h-omni-alpha" && !/[\x00-\x1f]/.test(p1[0].name + p1[0].text) && p2.length === 0, JSON.stringify([p1, p2]));
   }
+  { // 9 J543: a helper its parent closes (close_agent) is a "closed" notice, so the laptop closes its window as a local close does
+    const hc = await connect({ path: sock, onEvent: () => {} });
+    await hc.call("agent.hello", { agent_id: "h-helper", pid: 999999, name: "Helper", want_workspace: 73, cwd: T });
+    await api.call("orch.close", { thoughts: "H", id: "h-helper", reason: "test" }).catch((e) => console.log("close:", e.message));
+    hc.close?.(); let got = null;
+    for (let i = 0; i < 50 && !got; i++) { await sleep(250); got = ((await api.call("list", {})).notices || []).find((n) => n.kind === "closed" && n.id === "h-helper"); }
+    ok("9 a closed helper is a 'closed' notice for the laptop", !!got, JSON.stringify(got));
+    const { pickNotices } = await import(path.join(ROOT, "omnistation/auto-open.mjs")); const st = {}; pickNotices([], st, Date.now());
+    ok("9 … which the laptop's world-status takes (kind closed)", pickNotices([got || {}], st, Date.now())[0]?.kind === "closed"); }
   { const pl = fs.existsSync(path.join(T, "pi.log")) ? fs.readFileSync(path.join(T, "pi.log"), "utf8") : "";
     ok("7 started with an agent's env, the daemon's own pi calls (a topic label's pi -p too) carry no agent identity", /pi -p/.test(pl) && !/RPC=1|NAME=omni|ID=h-/.test(pl), pl.slice(0, 300)); }
   api.close?.(); agent.close?.();

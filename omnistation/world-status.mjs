@@ -57,6 +57,7 @@ function windowAgent(pid) {
   return i >= 0 && argv[i + 1] === WL && /^[a-z][a-z0-9-]{0,30}$/.test(argv[i + 2] || "") ? argv[i + 2] : null;
 }
 
+let lastMine = []; // J543: this world's windows (address, launch name), for a close
 let lastWin = "", lastSeenWindow = Date.now(), listAt = 0, lastList = null;
 // J543 (parity: Thoughts-H's open_agent "reported Farside … as opened, but none ever came live" on the laptop): an agent the remote
 // world's daemon opened itself (open_agent / spawn_agent there; its list says "opened": { at, by }) gets its window here, silently on
@@ -75,6 +76,7 @@ function autoOpen(raw, agents) {
 async function tick() {
   const cl = await clients(); if (!cl) return;
   const mine = cl.filter((c) => c.class === `hyprpi.${wl}-agent` && Number.isInteger(c.pid)).map((c) => ({ c, name: windowAgent(c.pid) })).filter((x) => x.name);
+  lastMine = mine.map(({ c, name }) => ({ address: c.address, name }));
   if (mine.length || cl.some((c) => c.class === `hyprpi.${wl}-panel`)) lastSeenWindow = Date.now(); // J543: the world's panels keep it too
   const windows = Object.fromEntries(mine.map(({ c, name }) => [c.address, { kind: "agent", home: c.workspace?.id || LO, pid: c.pid, name }]));
   const v = JSON.stringify(windows);
@@ -104,6 +106,11 @@ const noticeSt = {};
 function playNotices(list) {
   let cfg = {}; try { cfg = loadConfig(); } catch { /* defaults */ }
   for (const n of pickNotices(list, noticeSt, Date.now())) {
+    if (n.kind === "closed") { // J543: an agent closed on purpose there (spawn_agent's close_agent, /quit): its window goes, as locally
+      const launch = n.id ? n.id.slice(2) : "", w = launch && lastMine.find((x) => x.name === launch);
+      if (w && /^0x[0-9a-f]+$/.test(w.address)) execFile("hyprctl", ["dispatch", `hl.dsp.window.close({ window = "address:${w.address}" })`], { timeout: 5000 }, () => {});
+      continue;
+    }
     if (n.kind === "chime" || n.kind === "request") {
       if (n.kind === "chime" && cfg.chime === false) continue;
       execFile("paplay", [path.join(HERE, "..", "assets", "sounds", `${n.kind === "chime" ? "done" : "request"}.mp3`)], { timeout: 15000 }, () => {});

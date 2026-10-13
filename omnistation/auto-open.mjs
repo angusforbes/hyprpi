@@ -8,7 +8,7 @@ export function pickAutoOpens(raw, agents, seen, now, lo, hi) {
   for (const a of agents || []) {
     const r = (raw || []).find((x) => x && String(x.id) === a.id), at = Number(r?.opened?.at) || 0;
     if (!a.launch || a.address || !at || seen[a.id] || Math.abs(now - at) > 15 * 60e3) continue;
-    const ws = Number(r.workspace);
+    const ws = Number(r.workspace) || Number(r.opened?.ws); // (no windows there: its own workspace number, else the one it was opened for)
     out.push({ id: a.id, launch: a.launch, ws: Number.isInteger(ws) && ws >= lo && ws <= hi ? ws : lo });
   }
   return out;
@@ -18,7 +18,7 @@ export function pickAutoOpens(raw, agents, seen, now, lo, hi) {
 // "notices" ({ ts, kind: bonk|ding|chime|request, id, name, icon, text }). Which ones to play now: not played already (st.played, by kind+id+ts; a first look
 // only marks what is there, so nothing old replays when world-status starts), not older than 2 min, at most 4 at once (the rest next time). Updates st in place.
 export function pickNotices(notices, st, now) {
-  const list = (Array.isArray(notices) ? notices : []).filter((n) => n && Number.isFinite(Number(n.ts)) && /^(bonk|ding|chime|request)$/.test(String(n.kind)));
+  const list = (Array.isArray(notices) ? notices : []).filter((n) => n && Number.isFinite(Number(n.ts)) && /^(bonk|ding|chime|request|closed)$/.test(String(n.kind)));
   st.played ||= {};
   const key = (n) => `${n.kind}|${n.id}|${n.ts}`;
   // (ParityCheck) no high-water mark: a backlog after an outage is played 4 at a time over the next looks, none lost
