@@ -236,6 +236,7 @@ case "$cmd" in
     push_theme sync # J532: before the panel starts there
     hyprctl dispatch "hl.dsp.exec_cmd([[${line}]], { workspace = \"$PWS silent\" })" >/dev/null
     for _ in $(seq 40); do pgrep -u "$(id -u)" -f "omnistation/panel-loop\.sh $WL $NAME " >/dev/null && break; sleep 0.25; done  # hold the lock until it runs
+    setsid -f node "$H/omnistation/world-status.mjs" "$WL" </dev/null >/dev/null 2>&1 || true # J543: the world's panels keep its status helper (auto-open of new agents, sounds) running too
     echo "opened world $WL's $NAME panel on workspace $PWS" ;;
   *) echo "usage: world LETTER setup|new|start|open|focus|status|stop|start-mirror|open-mirror|binding|recover|panel|images [NAME]" >&2; exit 2 ;;
 esac

@@ -45,6 +45,9 @@ ok("0 remoteHome: from the state path, the env, and off elsewhere",
   const P2 = { routing: { default: "ordinary", ladder: ["anthropic/claude-haiku-4-5:low", "anthropic/claude-sonnet-5-5:medium", "anthropic/claude-opus-5-5:high"], kinds: { simple: 0, ordinary: 1, hard: 2, review: "openai-codex/gpt-6.1-sol:high" } } };
   const got = ["simple", "ordinary", "hard", "review"].map((k) => routeModel({ complexity: k }, P2).model);
   ok("0 on a remote machine every kind routes to a model it has (simple haiku, ordinary sonnet, hard opus, review gpt-6.1-sol)", JSON.stringify(got) === JSON.stringify([L[2], L[1], L[0], L[3]]), JSON.stringify(got));
+  const { nextStep } = await import(path.join(ROOT, "lib/routing.mjs"));
+  const up = nextStep(L[2], "low", P2), top = nextStep(L[0], "high", P2);
+  ok("0 escalation on a remote machine: its haiku-5-5 (simple) steps up to its sonnet-5-5; its opus is the top", up?.model === L[1] && up.step === 1 && top === null, JSON.stringify([up, top]));
   if (wasDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = wasDir;
   fs.rmSync(PD, { recursive: true, force: true });
   if (was === undefined) delete process.env.HYPRPI_REMOTE_HOME; else process.env.HYPRPI_REMOTE_HOME = was;
