@@ -196,6 +196,8 @@ case "$cmd" in
     if [[ -n "$pid" && -r /proc/$pid/cmdline ]]; then
       comm=$(cat /proc/$pid/comm 2>/dev/null); cl=$(tr '\0' ' ' < /proc/$pid/cmdline)
       if [[ "$comm" == node* && "$cl" == *"bin/hyprpi daemon"* ]]; then kill "$pid"; for _ in $(seq 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+        kill -0 "$pid" 2>/dev/null && { kill -9 "$pid"; sleep 1; } # (live) it can ignore TERM while its agents are connected
+        kill -0 "$pid" 2>/dev/null && { echo "remote.sh: the daemon (pid $pid) won't stop: nothing else changed" >&2; exit 3; }
       else echo "remote.sh: pid $pid in daemon.lock isn't the daemon ($comm): not killing it" >&2; exit 3; fi
     fi
     tmux kill-session -t "hyprpi-$W-daemon" 2>/dev/null || true; rm -f "$HYPRPI_SOCKET"
