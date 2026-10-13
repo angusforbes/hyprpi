@@ -70,6 +70,16 @@ const clients = () => hypr.clients().catch(() => []);
     }
     if (last) await hypr.focusWindow(last.address).catch(() => {});
     if (missing) spawn(`${here}../docker/world/world.sh`, ["start", w.name], { detached: true, stdio: "ignore" }).unref();
+    // J538 (ClickCheck538): one panel asked for and it had to be opened: world.sh opens it on its own workspace, so wait for it,
+    // then bring it here and focus it, as for one that was open already
+    if (missing && only.length === 1) {
+      const re = new RegExp(`^G: hyprpi-${KIND[only[0]]} `);
+      for (let i = 0; i < 150; i++) {
+        await sleep(100);
+        const c = (await clients()).find((x) => /^hyprpi\.g-/.test(x.class || "") && re.test(x.title || "") && envOf(x.pid).includes(`G_WORLD=${w.name}`));
+        if (c) { if (c.workspace?.id !== aw) await hypr.moveWindow(c.address, String(aw)).catch(() => {}); await hypr.focusWindow(c.address).catch(() => {}); break; }
+      }
+    }
     process.exit(0);
   }
 }
@@ -99,6 +109,15 @@ const clients = () => hypr.clients().catch(() => []);
       if (c) { if (c.workspace?.id !== aw) await hypr.moveWindow(c.address, String(aw)).catch(() => {}); last = c; continue; }
       const env = { ...process.env, HYPRPI_PANEL_WS: String(aw) }; delete env.HYPRPI_AGENT_ID;
       spawn(`${here}../omnistation/world`, [L, "panel", kind], { detached: true, stdio: "ignore", env }).unref();
+      // J538 (ClickCheck538): one panel asked for and opened just now (on this workspace, silently): focus it once it maps
+      if (only.length === 1) {
+        const before = new Set(mine.map((x) => x.address));
+        for (let i = 0; i < 150; i++) {
+          await sleep(100);
+          const nc = (await clients()).find((x) => x.class === `hyprpi.${L.toLowerCase()}-panel` && (x.title || "") === `hyprpi-${TITLE[kind]} ${L}` && !before.has(x.address));
+          if (nc) { if (nc.workspace?.id !== aw) await hypr.moveWindow(nc.address, String(aw)).catch(() => {}); last = nc; break; }
+        }
+      }
     }
     if (last && only.length === 1) await hypr.focusWindow(last.address).catch(() => {});
     process.exit(0);

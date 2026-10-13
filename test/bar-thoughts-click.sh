@@ -11,7 +11,10 @@ cat > "$T/bin/hyprctl" <<EOF
 #!/bin/bash
 # fake: -j VERB answers from $T/VERB.json; anything else is logged
 if [[ "\$1" == -j ]]; then v="\$2"; [[ -f "$T/\$v.json" ]] && cat "$T/\$v.json" || echo '[]'; exit 0; fi
-echo "\$*" >> "$T/dispatch.log"; echo ok
+echo "\$*" >> "$T/dispatch.log"
+# a remote panel opened through exec_cmd "maps" on the workspace it was opened on (as kitty would)
+if [[ "\$*" == *"--class=hyprpi.i-panel --title hyprpi-search"* ]]; then ws=\$(sed -n 's/.*workspace = "\([0-9]*\) silent".*/\1/p' <<< "\$*"); jq --argjson ws "\$ws" '. + [{"address":"0xnew1","class":"hyprpi.i-panel","title":"hyprpi-search I","workspace":{"id":\$ws,"name":(\$ws|tostring)},"pid":1,"floating":false,"fullscreen":0,"at":[0,0],"size":[100,100]}]' "$T/clients.json" > "$T/c.tmp" && mv "$T/c.tmp" "$T/clients.json"; fi
+echo ok
 EOF
 printf '#!/bin/sh\necho "kitty $*" >> %s/dispatch.log\n' "$T" > "$T/bin/kitty"
 printf '#!/bin/sh\nexit 1\n' > "$T/bin/pgrep" # fake: no running panel loop (the real laptop may have one for world I)
@@ -59,7 +62,8 @@ if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/remote/i.json" ]]; then
   click I
   ok "I (remote): already on ws 81 → nothing" "[[ ! -s $T/dispatch.log ]]"
   setup 82
-  click I; sleep 2
+  click I
+  ok "I (remote): not open → … and focused once it maps" "focused 0xnew1"
   ok "I (remote): not open → world I's remote search panel is opened here (omnistation/world I panel search)" "grep -qE 'hyprpi-search[\\]? I' $T/dispatch.log && grep -q 'panel-loop.sh I search' $T/dispatch.log"
 else echo "skip I: no remote binding for world I here"; fi
 echo "--- dispatch log of the last case"; cat "$T/dispatch.log" | cut -c1-200
