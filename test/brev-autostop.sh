@@ -53,7 +53,10 @@ fixture() { # every activity file N minutes old
   for f in "$H/.hyprpi-i/sessions/s1/a.jsonl" "$H/.hyprpi-i/state/thoughts/I.thread.jsonl" "$H/.hyprpi-i/state/boards/I.jsonl" "$H/workspace/outputs/x.png" "$H/workspace/shared/n.txt"; do echo x > "$f"; touch -d "-$1 min" "$f"; done
 }
 gpu_on() { printf '#!/usr/bin/env bash\nF="%s"; f="$F/gpu-$BOXNAME"; [[ -f "$f" ]] || f="$F/gpu"; [[ -f "$f" ]] && cat "$f"\n' "$F" > "$F/bin/nvidia-smi"; chmod +x "$F/bin/nvidia-smi"; }
-fresh() { rm -rf "$F/stopresult" "$F/hubfail" "$F/hubcalls" "$F/home-hub"; rm -rf "$F/bin/nvidia-smi" "$F"/gpu* "$F/more" "$F/nemo" "$F"/home-* "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
+# (no GPU by default: a stand-in nvidia-smi that answers nothing, like a box without one. Removing it let the probe find the
+# LAPTOP's real /usr/bin/nvidia-smi through PATH, so a busy laptop GPU made idle boxes look busy and their stops fail)
+nogpu() { printf '#!/bin/sh\nexit 9\n' > "$F/bin/nvidia-smi"; chmod +x "$F/bin/nvidia-smi"; }
+fresh() { rm -rf "$F/stopresult" "$F/hubfail" "$F/hubcalls" "$F/home-hub"; nogpu; rm -rf "$F"/gpu* "$F/more" "$F/nemo" "$F"/home-* "$F/state"/* "$F/calls" "$F/sshcalls" "$F/stopfail" "$F/sshfail" "$F/metrics" "$F/stophang" "$F/sshhold" "$F/sshheld"; }
 started_ago() { mkdir -p "$F/state/boxes/hyprpi-l40s"; echo $(( $(date +%s) - $1 * 60 )) > "$F/state/boxes/hyprpi-l40s/running_since"; } # pretend the timer first saw it RUNNING N min ago
 run() { "$S" run; }
 pass=0; fail=0
