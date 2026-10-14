@@ -145,7 +145,7 @@ async function main() {
   if (process.env.HYPRPI_TEST === "1" && /^[a-z-]+:\/.+\.mjs$/.test(process.env.HYPRPI_TEST_LINK_OP || "")) { const [o, m] = process.env.HYPRPI_TEST_LINK_OP.split(/:(.*)/); LINK_OPS[o] = path.relative(HERE, m); }
   async function relayOut(f) {
     const id = String(f.id || ""); if (!/^[0-9a-f-]{36}$/.test(id) || seenOut.has(id)) return; seenOut.set(id, Date.now());
-    for (const [k, t] of seenOut) if (Date.now() - t > 3600e3) seenOut.delete(k);
+    for (const [k, t] of seenOut) if (!relaying.has(k) && Date.now() - t > 13 * 3600e3) seenOut.delete(k); // (OriginCheck) never a pending one, and kept past the 12 h waits
     relaying.add(id);
     const back = (o) => { relaying.delete(id); log("ans", id, o.error ? `error: ${o.error}` : "answer"); const fr = { t: "ans", id, ...o }; if (!toRemote(fr)) answersWaiting.push(fr); }; // (down now: sent when it's back)
     if (f.kind === "call") { // J555 (Namesmith's J561): an allow-listed op the machine asks the laptop to do; its handler module answers
@@ -189,12 +189,13 @@ async function main() {
       const r = await req("relay.toAgent", { to: String(f.to || ""), world: String(f.world || ""), from: String(f.from || ""), fromWorld: WL, text: String(f.text || ""), mode: f.mode === "demand" ? "demand" : "talk" });
       log("agent", f.id, "→", r.to);
       if (!r.request_id) return back({ result: { to: r.to, note: r.note || `delivered to ${r.to}` } });
-      for (const t0 = Date.now(), end = t0 + 12 * 3600e3; Date.now() < end;) {
+      // a demand's answer is awaited 12 h; a talk's optional talk_reply 30 min (then it counts as delivered)
+      for (const t0 = Date.now(), end = t0 + (f.mode === "demand" ? 12 * 3600e3 : 30 * 60e3); Date.now() < end;) {
         await new Promise((res) => setTimeout(res, Date.now() - t0 < 30 * 60e3 ? 3000 : 30000));
         try { const a = await req("relay.agentResult", { request_id: r.request_id }); if (a.answer != null) return back({ result: { to: a.from || r.to, answer: String(a.answer) } }); }
         catch (e) { if (/unknown or expired/.test(e.message)) return back({ error: e.message }); c = null; }
       }
-      back({ error: "no answer within 12 h" });
+      back(f.mode === "demand" ? { error: "no answer within 12 h" } : { result: { to: r.to, note: `delivered to ${r.to}` } });
     } catch (e) { back({ error: `the laptop: ${e.message}` }); }
     finally { try { c?.close(); } catch { /* gone */ } }
   }
