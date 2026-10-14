@@ -132,7 +132,7 @@ try {
   fs.writeFileSync(innerBoot, `import cp from "node:child_process"; globalThis.__j566exec = (c) => cp.execSync(c, { encoding: "utf8", stdio: "pipe" });\n`);
   const net = await import("node:net"), liveSock = path.join(T, "live.sock"), server = net.createServer((c) => c.end()).listen(liveSock);
   await new Promise((r) => server.on("listening", r));
-  const child = spawnSandboxed([process.execPath, `--import=${PRELOAD}`, `--import=${innerBoot}`, new URL(import.meta.url).pathname, "--inner"], { log, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, J566_DUMMY: String(dummy.pid), J566_T: T, J566_HYPRPI: HYPRPI, J566_LIVESOCK: liveSock, HYPRPI_SOCKET: "/run/user/1000/hyprpi/inherited.sock", DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" } });
+  const child = spawnSandboxed([process.execPath, `--import=${PRELOAD}`, `--import=${innerBoot}`, new URL(import.meta.url).pathname, "--inner"], { log, binds: [T], tmp: fs.mkdtempSync(path.join(T, "tmp-")), stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, J566_DUMMY: String(dummy.pid), J566_T: T, J566_HYPRPI: HYPRPI, J566_LIVESOCK: liveSock, HYPRPI_SOCKET: "/run/user/1000/hyprpi/inherited.sock", DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" } });
   let so = "", se = ""; child.stdout.on("data", (d) => { so += d; }); child.stderr.on("data", (d) => { se += d; });
   const code = await new Promise((r) => child.on("exit", (c) => r(c)));
   const line = so.split("\n").find((l) => l.startsWith("J566-INNER "));
@@ -158,7 +158,7 @@ try {
   ok("B7 every refusal is logged for the runner, and the run that swallowed them still exits non-zero (86)", refusals.length >= 8 && code === 86, `${refusals.length} logged, exit ${code}`);
   await sleep(200);
   // the bluntest thing a test can do, with no node and no preload in the way: bash `kill -9 -1` (every process it may signal)
-  const blunt = spawnSandboxed(["bash", "-c", `sleep 30 & S=$!; kill -9 -1; sleep 0.3; kill -0 $S 2>/dev/null && echo own-sleep-alive || echo own-sleep-killed`], { log: path.join(T, "blunt.jsonl"), stdio: ["ignore", "pipe", "pipe"] });
+  const blunt = spawnSandboxed(["bash", "-c", `sleep 30 & S=$!; kill -9 -1; sleep 0.3; kill -0 $S 2>/dev/null && echo own-sleep-alive || echo own-sleep-killed`], { log: path.join(T, "blunt.jsonl"), tmp: fs.mkdtempSync(path.join(T, "tmp-")), stdio: ["ignore", "pipe", "pipe"] });
   let bo = ""; blunt.stdout.on("data", (x) => { bo += x; });
   await new Promise((r) => blunt.on("exit", r));
   await sleep(200);

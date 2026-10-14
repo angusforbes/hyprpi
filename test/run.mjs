@@ -51,12 +51,13 @@ const runOne = (file) => new Promise((done) => {
   const name = path.relative(ROOT, file).replace(/^(\.\.\/)+/, "").replace(/[/\\]/g, "_"), log = path.join(runDir, name + ".log"), guardLog = path.join(runDir, name + ".refusals.jsonl");
   const out = fs.openSync(log, "w"), t0 = Date.now();
   const cmd = file.endsWith(".sh") ? ["bash", file, ...testArgs] : [process.execPath, `--import=${PRELOAD}`, file, ...testArgs];
-  const child = spawnSandboxed(cmd, { net: netAll || wantsNet(file), log: guardLog, cwd: ROOT, stdio: ["ignore", out, out] });
+  const tmp = path.join(runDir, name + ".tmp"); fs.mkdirSync(tmp);
+  const child = spawnSandboxed(cmd, { tmp, net: netAll || wantsNet(file), log: guardLog, cwd: ROOT, stdio: ["ignore", out, out] });
   const timer = setTimeout(() => { fs.appendFileSync(log, `\n[test/run.mjs] timed out after ${timeoutS}s\n`); child.kill("SIGKILL"); }, timeoutS * 1000); // bwrap dies -> the namespace dies with it
   child.on("exit", (code, sig) => {
     clearTimeout(timer); fs.closeSync(out);
     let refusals = []; try { refusals = fs.readFileSync(guardLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l).why); } catch { /* none */ }
-    done({ file, log, code: code ?? 128, sig, refusals, secs: ((Date.now() - t0) / 1000).toFixed(1) });
+    done({ file, log, tmp, code: code ?? 128, sig, refusals, secs: ((Date.now() - t0) / 1000).toFixed(1) });
   });
 });
 
@@ -69,6 +70,7 @@ await Promise.all(Array.from({ length: Math.min(jobs, files.length) }, async () 
     if (!pass || !quiet) console.log(`${pass ? "ok  " : "FAIL"} ${rel} (${r.secs}s${r.code ? `, exit ${r.code}${hint}` : ""}${r.refusals.length ? `, ${r.refusals.length} guard refusal(s)` : ""})`);
     if (!pass) {
       for (const w of r.refusals.slice(0, 3)) console.log(`     ⛔ ${w}`);
+      console.log(`     (its /tmp is ${r.tmp} on the host)`);
       const tail = fs.readFileSync(r.log, "utf8").trimEnd().split("\n").slice(-12);
       for (const l of tail) console.log(`     | ${l}`);
     }
