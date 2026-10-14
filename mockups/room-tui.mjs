@@ -617,10 +617,16 @@ async function noteReconnect() {
   lostAt = 0; render();
   setTimeout(render, 5 * 60 * 1000 + 100);
 }
+// (LinkCheck, J555) one connection and one retry at a time: a failed handshake closes its half-open connection, and only the
+// newest attempt's close or failure schedules the next (onClose and catch both did, so connections multiplied per refusal)
+let linkGen = 0, linkRetry = null;
+function retryStart() { if (!linkRetry) linkRetry = setTimeout(() => { linkRetry = null; start(); }, 1500); }
 async function start() {
+  let c = null;
   if (restarting) return;
   try {
-    api = await connect({
+    const my = ++linkGen;
+    c = await connect({
       scrub: true, // J553 (9): no terminal command in the daemon's strings (an agent's OSC 52, title, …) reaches this screen (lib/client.mjs)
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
@@ -628,14 +634,16 @@ async function start() {
         else if (ev === "message" && data?.room) { (messages[data.room] ||= []).push(data); if (data.room === room) render(); }
         else if (ev === "activity" && data?.room) { const t = (activity[data.room] ||= []); t.push(data); if (t.length > 50000) t.splice(0, t.length - 40000); if (data.room === room) render(); }
       },
-      onClose: () => { online = false; api = null; lostAt ||= Date.now(); render(); setTimeout(start, 1500); },
+      onClose: () => { if (my !== linkGen) return; online = false; api = null; lostAt ||= Date.now(); render(); retryStart(); },
     });
+    if (my !== linkGen) { c.close(); return; }
+    api = c;
     online = true;
     noteReconnect();
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadRoom(room);
     loadBoard();
-  } catch { online = false; render(); setTimeout(start, 1500); }
+  } catch { linkGen++; api = null; online = false; render(); try { c?.close(); } catch { /* gone */ } retryStart(); }
 }
 
 function cycle(d) {

@@ -1098,24 +1098,32 @@ async function noteReconnect() {
   if (sysTurns.length > 20) sysTurns.shift();
   lostAt = 0; note = `🔌 reconnected: ${what}`; bumpThread(); if (TH.pinned) TH.unseen++; render(); // (review: don't jump a reader to the bottom)
 }
+// (LinkCheck, J555) one connection and one retry at a time: a failed handshake closes its half-open connection, and only the
+// newest attempt's close or failure schedules the next (onClose and catch both did, so connections multiplied per refusal)
+let linkGen = 0, linkRetry = null;
+function retryStart() { if (!linkRetry) linkRetry = setTimeout(() => { linkRetry = null; start(); }, 1500); }
 async function start() {
+  let c = null;
   try {
-    api = await connect({
+    const my = ++linkGen;
+    c = await connect({
       scrub: true, // J553 (9): no terminal command in the daemon's strings (an agent's OSC 52, title, …) reaches this screen (lib/client.mjs)
       onEvent: (ev, data) => {
         if (ev === "agents") applyRooms(data);
         else if (ev === "search-run" && data?.room === room) runFrom(data.mode, data.query); // /search, /ai from another panel
         else if (ev === "thoughts" && data?.room === room) { const nt = heldTurns(room); if (nt.map((x) => x.ts).join() !== turns.map((x) => x.ts).join()) { turns = nt; bumpThread(); } if (data.reset) { TH.entries = []; follow(); bumpThread(); loadThoughts(); } if (data.entry) { TH.entries.push(data.entry); if (TH.pinned) { if (shows(data.entry)) TH.unseen++; } else TH.scroll = 0; bumpThread(); } if (data.busy !== undefined) { TH.busy = !!data.busy; if (!TH.busy) setTimeout(nextStep, 400); } if (thoughtsOn) render(); }
       },
-      onClose: () => { online = false; api = null; lostAt ||= Date.now(); render(); setTimeout(start, 1500); },
+      onClose: () => { if (my !== linkGen) return; online = false; api = null; lostAt ||= Date.now(); render(); retryStart(); },
     });
+    if (my !== linkGen) { c.close(); return; }
+    api = c;
     online = true;
     noteReconnect();
     applyRooms(await api.call("ui.subscribe", { windows: false }));
     if (thoughtsOn) loadThoughts(); // after the world is known (J468Check: with no world argument it loaded and seeded room "")
     if (!startRan) { startRan = true; runFrom(startArgs.mode, startArgs.query); } // opened by /search or /ai elsewhere
     render();
-  } catch { online = false; render(); setTimeout(start, 1500); }
+  } catch { linkGen++; api = null; online = false; render(); try { c?.close(); } catch { /* gone */ } retryStart(); }
 }
 function applyRooms(r) {
   bumpThread(); // agents' colours/names feed the thread's evidence heads (Blink)

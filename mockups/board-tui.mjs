@@ -279,10 +279,16 @@ function applyList(r) {
   if (!rooms.find((x) => x.id === room)) rooms = [...rooms, { id: room }].sort((a, b) => a.id.localeCompare(b.id));
   render();
 }
+// (LinkCheck, J555) one connection and one retry at a time: a failed handshake closes its half-open connection, and only the
+// newest attempt's close or failure schedules the next (onClose and catch both did, so connections multiplied per refusal)
+let linkGen = 0, linkRetry = null;
+function retryStart() { if (!linkRetry) linkRetry = setTimeout(() => { linkRetry = null; start(); }, 1500); }
 async function start() {
+  let c = null;
   if (restarting) return;
   try {
-    api = await connect({
+    const my = ++linkGen;
+    c = await connect({
       scrub: true, // J553 (9): no terminal command in the daemon's strings (an agent's OSC 52, title, …) reaches this screen (lib/client.mjs)
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
@@ -290,8 +296,10 @@ async function start() {
         else if (ev === "board" && data?.room) wd.poke(data.room); // J555 W6: another world's board (the Decisions view lists it)
         else if (ev === "board.open" && data?.room === room && data.project) openCard(data.project, data.item);
       },
-      onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
+      onClose: () => { if (my !== linkGen) return; online = false; api = null; render(); retryStart(); },
     });
+    if (my !== linkGen) { c.close(); return; }
+    api = c;
     online = true;
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadBoard();
@@ -299,7 +307,7 @@ async function start() {
     // Opened by ⏎ on a project row in the agents panel: that card (asked just before we started).
     const req = await api.call("board.open", { room }).catch(() => null);
     if (req?.project) openCard(req.project, req.item);
-  } catch { online = false; render(); setTimeout(start, 1500); }
+  } catch { linkGen++; api = null; online = false; render(); try { c?.close(); } catch { /* gone */ } retryStart(); }
 }
 // The agents panel's ⏎ on a project row (daemon board.open): show that card. With an item (a click on a
 // job id like J402 in the Thoughts thread): the cursor on that item, scrolled near the top, archived
@@ -329,12 +337,14 @@ function cycle(dir) {
 // (lib/tui/laptop.mjs uploadImages; the old pty panel's relay did the same at paste time). Only pasted images (pi-clipboard-*)
 // that exist here: a path the text means on the machine is left alone. -> the text to send (throws when an upload fails).
 const PASTED = /(?:^|[\s("'`<\[])((?:~|\/)[^\s"'`<>()\[\]]*\/pi-clipboard-[^\s"'`<>()\[\]\/]+\.(?:png|jpe?g|webp|gif))(?=$|[\s)"'`>\].,;:!?])/gi;
-async function linkText(t) {
-  if (!linkPanel() || !api) return t;
+// (LinkCheck) the pasted images go where the text goes: in the Decisions view, the current decision's world (a remote world's over
+// ITS link; a laptop world: the laptop path stays), else this panel's own world
+async function linkText(t, { conn = api, remote = linkPanel() } = {}) {
+  if (!remote || !conn) return t;
   const imgs = [];
   for (const m of String(t).matchAll(PASTED)) { const f = m[1].replace(/^~(?=\/)/, process.env.HOME || "~"); if (!imgs.includes(f) && fs.existsSync(f)) imgs.push(f); }
   if (!imgs.length) return t;
-  const u = await uploadImages(api, t, imgs);
+  const u = await uploadImages(conn, t, imgs, { to: true });
   if (u.why) throw new Error(u.why.replace(/^✗ /, ""));
   return u.text;
 }
@@ -349,7 +359,8 @@ async function send() {
   }
   if (/^\/decisions?$/i.test(raw)) { box.remember(raw, sentIn); box.clear(); return setMode(mode === "decisions" ? "cards" : "decisions"); }
   let text = raw; // J555: as sent (a link panel's pasted images named on the machine)
-  try { text = await linkText(raw); } catch (e) { note = "✗ " + e.message; return render(); }
+  const dcur = mode === "decisions" && !raw.startsWith("/") ? dv.current() : null;
+  try { text = await linkText(raw, dcur?.api ? { conn: dcur.api, remote: !!dcur.remote } : {}); } catch (e) { note = "✗ " + e.message; return render(); }
   if (mode === "decisions" && !raw.startsWith("/")) { // the answer box: "2⏎" picks option 2, "L⏎" later, other words answer
     if (/^l$/i.test(raw)) { const x = dv.later(); box.clear(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; return render(); }
     const how = /^[1-9]$/.test(raw) ? { option: Number(raw) - 1 } : { text };
