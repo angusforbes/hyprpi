@@ -4,7 +4,7 @@
 //   - ~/.pi/agent/jot.json = the laptop's (same kinds and folders) with "timeZone" = the laptop's (J561 "22a": laptop-time stamps);
 //   - ~/.pi/agent/settings.json "packages" includes ~/.hyprpi-<x>/pi-jot (agents load it);
 //   - ~/.config/hyprpi/config.json "jotExtension" = that pi-jot (the world's Thoughts loads it; it reads this when its daemon starts);
-//   - ~/.hyprpi-<x>/pi-entry exports PI_JOT_RELAY=1 and PI_JOT_RELAY_SOCKET (the next remote.sh install writes the same);
+//   - ~/.hyprpi-<x>/pi-entry exports PI_JOT_RELAY=1, PI_JOT_RELAY_SOCKET and PI_JOT_RELAY_LINK (the next remote.sh install writes the same);
 //   - ~/.pi/agent/AGENTS.md gets the "hyprpi:jot" section (laptop notes are the master; copies here or in the shared folder are fine).
 // Idempotent; prints one line per change.
 const fs = require("fs"), path = require("path");
@@ -32,7 +32,7 @@ if (c && c.jotExtension !== `${PJ}/src/extension.ts`) { c.jotExtension = `${PJ}/
 const pe = `${ROOT}/pi-entry`;
 try {
   let t = fs.readFileSync(pe, "utf8");
-  const want = `export PI_JOT_RELAY=1 PI_JOT_RELAY_SOCKET=${ROOT}/jot.sock`;
+  const want = `export PI_JOT_RELAY=1 PI_JOT_RELAY_SOCKET=${ROOT}/jot.sock PI_JOT_RELAY_LINK=${ROOT}/run/daemon.sock`; // (J569: the daemon's link.call, J555)
   const t2 = t.replace(/then export PI_JOT_RELAY=1; exec /, "then exec ").replace(/^export PI_JOT_RELAY=1[^\n]*\n/m, "").replace(/^(#![^\n]*\n(?:#[^\n]*\n)*)/, `$1${want}\n`);
   if (t2 !== t) { fs.writeFileSync(pe + ".new", t2, { mode: 0o755 }); fs.renameSync(pe + ".new", pe); said("pi-entry: every pi here runs pi-jot in relay mode"); }
 } catch (e) { said(`pi-entry not changed (${e.message}); remote.sh install writes it`); }

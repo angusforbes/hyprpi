@@ -89,7 +89,7 @@ jot_setup() {
   elif [[ "$(basename "${SSH[0]}")" == ssh ]]; then
     systemctl --user link "$H/omnistation/hyprpi-jot-relay@.service" >/dev/null 2>&1 || true
     systemctl --user enable --now "hyprpi-jot-relay@$wl.service" >/dev/null 2>&1 && echo "world: the laptop's jot relay for world $WL is on (hyprpi-jot-relay@$wl)" || echo "world: couldn't start hyprpi-jot-relay@$wl (systemctl --user status hyprpi-jot-relay@$wl)" >&2
-  else echo "world: world $WL is reached with ${SSH[0]}, not ssh: only agents with a laptop window can jot (no relay socket yet)"; fi
+  else echo "world: world $WL is reached with ${SSH[0]}, not ssh: no relay socket; windowless agents and Thoughts jot over the world's link (J555; up while one of its panels is open here), windows through themselves"; fi
   echo "world: pi-jot $(git -C "$pj" rev-parse --short HEAD) installed for world $WL: its jots go to this laptop's $(jq -r '.root // "~/Obsidian"' "$jc" 2>/dev/null || echo ~/Obsidian), stamped in ${tz:-local time} (agents and Thoughts started before this pick it up on their next start)"
 }
 case "$cmd" in
