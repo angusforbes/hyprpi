@@ -19,6 +19,7 @@
 // ^F (or /decisions): the Decisions view (@hyprpi N68, lib/tui/decisions-view.mjs): every open Decide
 // item on this world's cards; ^↑↓ step; "2⏎" picks option 2 (Alt+2 at once), ⏎ alone takes the
 // recommendation, "L⏎" (Alt+L) puts one off (end of the list), Esc back; other words + ⏎ answer in his words.
+// J555 W6: every world's decisions (this world's first; remote ones over their links, marked 📡), each answered on its own world.
 // What is typed goes to the board: "@p text" (to its members: update the card), "@p" alone (the
 // card, who, changes), "D1 b", "N2 ?", /todo /note /done /drop /fold /split /merge /spinout …
 // (/help lists them).
@@ -35,6 +36,7 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, n
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
 import { createBoardView, boardCompletions, REF_RE, refPid } from "../lib/tui/board-view.mjs";
 import { createDecisionsView } from "../lib/tui/decisions-view.mjs";
+import { createWorldDecisions } from "../lib/tui/world-decisions.mjs";
 import { createInputBox, createHistory, atTint, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, parseCommand } from "../lib/tui/command-line.mjs";
 import { SENT_STICKY_MS } from "../lib/tui/sent.mjs";
@@ -45,9 +47,12 @@ let board = { room: "", projects: [], names: {}, live: {} };
 const bv = createBoardView({ render: () => render(), note: (t) => { note = t; noteSeen = t; noteAt = Date.now(); render(); } }); // J200: "✓ @p tidied" as each /tidy lands
 // The Decisions view (@hyprpi N68): ^F (or /decisions) switches cards ⇄ decisions, like the Stream's ^F
 // cycles its views. In it the box is the answer box: 1…9 / L / ⏎ act while it is empty.
-const dv = createDecisionsView();
+// J555 W6 (Angus 20a): it shows every world's open decisions: the other worlds' boards come from lib/tui/world-decisions.mjs (local
+// worlds from the laptop daemon, remote ones over their links), fetched only while the view is shown.
+const wd = createWorldDecisions({ api: () => api, room: () => room, onChange: () => render() });
+const dv = createDecisionsView({ others: () => wd.worlds() });
 let mode = "cards";
-const setMode = (m) => { mode = m; note = m === "decisions" ? "" : note; render(); };
+const setMode = (m) => { mode = m; note = m === "decisions" ? "" : note; if (m === "decisions") wd.start(); else wd.stop(); render(); };
 const hereAgents = () => agents.filter((a) => a.room === room);
 const hereProjects = () => (board.room === room ? board.projects : []).filter((p) => p.status !== "archived");
 const boardHere = () => (board.room === room ? board : null);
@@ -157,6 +162,7 @@ function refAt(x, y) {
 // true = handled (a ✗ note counts); false = not a reference here (the click does what it did before).
 function jumpRef(t, y) {
   const bh = boardHere();
+  if (mode === "decisions" && items[rowMeta[y]?.msg]?.other) return false; // J555 W6: another world's decision: its refs aren't this board's
   if (t[0] === "@") {
     const p = (bh?.projects || []).find((x) => x.name === t.slice(1)); if (!p) return false;
     if (p.status === "archived") { note = `@${p.name} is archived (/unarchive @${p.name})`; render(); return true; }
@@ -227,7 +233,7 @@ function draw() {
   const busy = mode === "decisions" ? "" : bv.status(c, false);
   // J204 (Angus: "maybe just include that info in the grayed out text after the prompt"): what the
   // prompt said before J198 ("decisions @hyprpi N2", "projects @hyprpi"), leading the empty box's grey hint.
-  const where = "  " + (mode === "decisions" ? `decisions${dcur ? ` ${dcur.p.unfiled ? "unfiled" : "@" + dcur.p.name} ${dcur.it.h}` : ""}` : `projects${open ? " @" + open.name : ""}`) + " · ";
+  const where = "  " + (mode === "decisions" ? `decisions${dcur ? `${dcur.api ? " " + dcur.world : ""} ${dcur.p.unfiled ? "unfiled" : "@" + dcur.p.name} ${dcur.it.h}` : ""}` : `projects${open ? " @" + open.name : ""}`) + " · ";
   const hint = slash ? dim("  " + (slash.length ? slash.join(" · ") + (slash.length === 1 ? "  (Tab)" : "") : "unknown command · /help"))
     : (busy ? "  " + busy : "") + (note ? (note.startsWith("✗") ? `  ${ESC}31m${note}${ESC}39m` : note.startsWith("✓") ? `  ${ESC}32m${bold(note)}${ESC}39m` : dim("  " + note)) : text ? (mode === "decisions" && dcur ? dim("  ⏎ answers " + dcur.it.h + " in your words") : "") : dim(where + (mode === "decisions" ? (dcur ? "2⏎ picks b · ⏎ ★ · or type an answer · L⏎ later · Alt+1…9 / Alt+L at once · ^↑↓ next · ^F cards" : "^F or Esc: the cards") : bv.cursorHint() || (open
       ? `text → @${open.name}'s members · D1 b answers · N2 ? asks · /todo /note /done · ⏎ or Esc: all projects`
@@ -281,6 +287,7 @@ async function start() {
       onEvent: (ev, data) => {
         if (ev === "agents") applyList(data);
         else if (ev === "board" && data?.room === room) loadBoard();
+        else if (ev === "board" && data?.room) wd.poke(data.room); // J555 W6: another world's board (the Decisions view lists it)
         else if (ev === "board.open" && data?.room === room && data.project) openCard(data.project, data.item);
       },
       onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
@@ -288,6 +295,7 @@ async function start() {
     online = true;
     applyList(await api.call("ui.subscribe", { windows: false }));
     await loadBoard();
+    if (mode === "decisions") wd.start(); // (the laptop daemon's worlds now that it answers)
     // Opened by ⏎ on a project row in the agents panel: that card (asked just before we started).
     const req = await api.call("board.open", { room }).catch(() => null);
     if (req?.project) openCard(req.project, req.item);
@@ -310,7 +318,7 @@ function cycle(dir) {
   if (!rooms.length) return;
   const i = rooms.findIndex((r) => r.id === room);
   room = rooms[(i + dir + rooms.length) % rooms.length].id;
-  note = ""; bv.focus(null); bv.st.cur = null; bv.st.top = 0; dv.st.cur = null; dv.st.top = 0; board = { room: "", projects: [], names: {}, live: {} };
+  note = ""; bv.focus(null); bv.st.cur = null; bv.st.top = 0; dv.st.cur = null; dv.st.top = 0; board = { room: "", projects: [], names: {}, live: {} }; wd.reset();
   render(); loadBoard();
 }
 
@@ -345,7 +353,7 @@ async function send() {
   if (mode === "decisions" && !raw.startsWith("/")) { // the answer box: "2⏎" picks option 2, "L⏎" later, other words answer
     if (/^l$/i.test(raw)) { const x = dv.later(); box.clear(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; return render(); }
     const how = /^[1-9]$/.test(raw) ? { option: Number(raw) - 1 } : { text };
-    try { const r = await dv.answer(api, room, how); if (how.text) box.remember(raw, sentIn); box.clear(); note = r.note; }
+    try { const r = await dv.answer(api, room, how); if (how.text) box.remember(raw, sentIn); box.clear(); note = r.note; if (r.world) wd.refresh(); }
     catch (e) { note = "✗ " + e.message; }
     return render();
   }
@@ -432,14 +440,14 @@ function onKey(d) {
 // picks option 2 and "L⏎" puts it off (send()), so an answer may start with any letter or digit
 // (pi·wpzt's test: "let's wait" / "2 weeks is fine" were taken as keys).
 function decisionKey(d) {
-  const answer = (how) => { dv.answer(api, room, how).then((r) => { note = r.note; render(); }).catch((e) => { note = "✗ " + e.message; render(); }); };
+  const answer = (how) => { dv.answer(api, room, how).then((r) => { note = r.note; if (r.world) wd.refresh(); render(); }).catch((e) => { note = "✗ " + e.message; render(); }); };
   if (d === "\x1b[1;5A" || d === "\x1b[1;5B") { dv.step(d.endsWith("A") ? -1 : 1); note = ""; render(); return true; }
   const sc = { "\x1b[5~": dv.page(), "\x1b[6~": -dv.page() }[d];
   if (sc !== undefined) { dv.scroll(sc); render(); return true; }
-  if (/^\x1b[1-9]$/.test(d)) { if (!api) { note = "✗ daemon offline"; render(); return true; } answer({ option: Number(d[1]) - 1 }); return true; }
+  if (/^\x1b[1-9]$/.test(d)) { if (!api && !dv.current()?.api) { note = "✗ daemon offline"; render(); return true; } answer({ option: Number(d[1]) - 1 }); return true; }
   if (d === "\x1bl" || d === "\x1bL") { const x = dv.later(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; render(); return true; }
   if (box.text) return false;
-  if (d === "\r") { if (!api) { note = "✗ daemon offline"; render(); return true; } answer({ recommend: true }); return true; }
+  if (d === "\r") { if (!api && !dv.current()?.api) { note = "✗ daemon offline"; render(); return true; } answer({ recommend: true }); return true; }
   if (d === "\x1b") { if (box.dropSelection()) return true; setMode("cards"); return true; }
   return false;
 }
@@ -497,7 +505,7 @@ process.on("SIGTERM", quit);
 
 // ---- restart onto new code (the launcher loops on exit 75; the state rides along) ------
 const CODE = [new URL("./board-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/decisions-view.mjs", "decisions.mjs", "tui/laptop.mjs", "tui/members.mjs", "tui/sent.mjs", "tui/world-tabs.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/decisions-view.mjs", "tui/world-decisions.mjs", "remote-world.mjs", "decisions.mjs", "tui/laptop.mjs", "tui/members.mjs", "tui/sent.mjs", "tui/world-tabs.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
@@ -520,7 +528,7 @@ try { // back where we were after a restart
   if (k) {
     if (!process.argv[2] && k.room) room = k.room;
     if (k.focus) bv.focus(k.focus);
-    if (k.mode === "decisions") mode = "decisions";
+    if (k.mode === "decisions") { mode = "decisions"; wd.start(); }
     if (Array.isArray(k.later)) dv.st.later = k.later;
     if (k.dcur) dv.st.cur = k.dcur;
     bv.st.top = Number(k.top) || 0; bv.st.anchor = k.anchor || null; bv.st.cur = k.cur || null; bv.st.help = !!k.help;
