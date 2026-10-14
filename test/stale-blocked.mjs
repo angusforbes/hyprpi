@@ -91,7 +91,7 @@ try {
   ok("A its next turn clears the ×", a.status === "working" && !a.blocked_on, JSON.stringify(a));
   await upd({ status: "done" }); await sleep(200);
   a = await me();
-  ok("A that turn ends done (the open decision doesn't re-block it)", a.status === "done" && a.run === "done", `${a.status}/${a.run}`);
+  ok("A that turn ends with its decision still open: × again, run done, still takes work (Sentry note 1)", a.status === "blocked" && a.run === "done" && a.takes_work === true && /decision @mathbac/.test((a.blocked_on || []).join(" ")), JSON.stringify({ s: a.status, r: a.run, t: a.takes_work, b: a.blocked_on }));
   const ask = await err(() => api.call("thoughts.ask", { room: "A", agent: "Dossier", question: "status?" }));
   ok("A ask_agent reaches a done agent", ask === "", ask);
 
@@ -104,7 +104,7 @@ try {
   await upd({ status: "working" });
   await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: edge.item.h, answer: "a" });
   await upd({ status: "done" });
-  ok("EDGE decision answered mid-turn never blocks its end", (await me()).status === "done");
+  { const m = await me(); ok("EDGE decision answered mid-turn never blocks its end (only the still-open earlier decision may show)", m.status === "done" || (m.status === "blocked" && !(m.blocked_on || []).some((x) => x.includes(edge.item.h)) && !(m.blocked_on || []).some((x) => /bonk/.test(x))), JSON.stringify({ s: m.status, b: m.blocked_on })); }
 
   // ---- B) a bonk at the prompt still holds it
   await upd({ status: "blocked", quiet: true, note: "need your brev login" });
@@ -130,7 +130,7 @@ try {
   ok("C at the turn's end: ×, run done, held (a bonk)", a.status === "blocked" && a.run === "done" && a.takes_work === false, JSON.stringify(a));
   ok("C no second push at the turn's end", pushes().filter((x) => x.kind === "bonk" || /bonk/.test(x.key || "")).length === p1);
   await upd({ status: "working" }); await upd({ status: "done" });
-  ok("C working again clears it; the next turn ends done", (await me()).status === "done");
+  { const m = await me(); ok("C working again clears the bonk; the next turn ends without it (only a still-open decision may show)", m.status === "done" || (m.status === "blocked" && !(m.blocked_on || []).some((x) => /bonk/.test(x)) && m.takes_work === true), JSON.stringify({ s: m.status, b: m.blocked_on })); }
 
   // independent check: a board decision layered over a bonk cannot erase the bonk.
   await upd({ status: "working" });
