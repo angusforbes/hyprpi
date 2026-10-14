@@ -75,6 +75,8 @@ The pointer is saved before and restored after (focus dispatches warp it).
 
 ## How to test without touching Angus's desktop
 
+**Run tests with the test guard (J566).** `node test/run.mjs FILE…` (or `--all`, the daily gate's unit set) runs each test in a bubblewrap pid + network namespace with the live runtime folder masked and live hyprpi state read-only, plus a preload that refuses kills of pids the test didn't start, `hyprpi send … /quit` and live-daemon commands; a refusal fails the test. A test that can end processes, close agents or windows starts with `import { requireSandbox } from "./guard/sandbox.mjs"; await requireSandbox(import.meta.url);` and uses test/guard/fake-proc.mjs (synthetic /proc, spyKill, spy). Rules and builder checklist: ~/.pi/agent/skills/isolated-app-tests/SKILL.md. Proof: `node test/test-guard.mjs`.
+
 Nested Hyprland (recreate after reboot):
 1. `printf '%s\n' 'hl.monitor({ output = "", mode = "1600x1000", position = "auto", scale = 1 })' > /tmp/hyprcu-nested/hyprland.lua`
 2. `hyprctl dispatch 'hl.dsp.exec_cmd("[workspace 9 silent] Hyprland -c /tmp/hyprcu-nested/hyprland.lua")'`

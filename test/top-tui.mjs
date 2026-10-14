@@ -8,6 +8,7 @@
 //   - every key press that could act (x, y, Enter) is preceded by select(), which ABORTS the test unless the highlighted row
 //     is exactly the expected one (by id), so a failed search can never confirm a close on the wrong row.
 //   node test/top-tui.mjs   (exit 0 = pass)
+import { requireSandbox } from "./guard/sandbox.mjs"; await requireSandbox(import.meta.url); // J566: in the test guard's own pid namespace (can't see or signal a real process)
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

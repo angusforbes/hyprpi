@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// test-guard: net (a real pi talks to its model)
 // J452 W3, manual (makes two small model calls): the REAL pi with this checkout's hyprpi extension, against an isolated daemon
 // (stall limit 8 s, above a model's first-token delay; checks every 0.5 s, pulses every 0.5 s). Agent Sleeper runs `sleep 20` (a tool with no output): it must be
 // reported stalled, waiting on "bash: sleep 9". Agent Printer runs a 20-second loop that prints every second: never reported.
