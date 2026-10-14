@@ -409,7 +409,10 @@ export default function hyprpi(pi: ExtensionAPI) {
   if (process.env.HYPRPI_AGENT_ID && typeof (pi as any).registerShortcut === "function") {
     (pi as any).registerShortcut("shift+insert", {
       description: "Paste (SUPER+V): a screenshot as its file path, else the clipboard text",
-      handler: async (ctx: any) => { clipboardPaste((t: string) => { try { if (t) ctx.ui.pasteToEditor(t); } catch { /* no editor */ } }); },
+      // J590c (Angus: "i have to press super+V twice else i dont see anything, and then it gives me two different filepaths to
+      // the same file"): the paste lands after wl-paste returns, outside pi's key handling, and pi's pasteToEditor only feeds the
+      // editor (no redraw), so the path sat unseen until the next key. setStatus(…, undefined) is a no-op that asks pi to redraw.
+      handler: async (ctx: any) => { clipboardPaste((t: string) => { try { if (t) { ctx.ui.pasteToEditor(t); ctx.ui.setStatus?.("hyprpi-paste", undefined); } } catch { /* no editor */ } }); },
     });
   }
   // J537 (Angus: "make that appear in eevry hyprpi agent window when it starts up, they way the pi logo appears for
