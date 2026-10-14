@@ -487,6 +487,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     stopped = true;
     held.length = 0; // J591: nothing left to retry from this instance (the daemon re-delivers what wasn't acked)
     if (restartTimer) { clearInterval(restartTimer); restartTimer = null; }
+    reloadReq = false; if (reloadTimer) { clearInterval(reloadTimer); reloadTimer = null; } // (CrashCheck: it kept retrying from a retired instance)
     try { stopInput?.(); } catch { /* gone */ } stopInput = null;
     if (retry) clearTimeout(retry);
     for (const w of demands.values()) w.done();
