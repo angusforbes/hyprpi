@@ -95,6 +95,17 @@ try {
   const ask = await err(() => api.call("thoughts.ask", { room: "A", agent: "Dossier", question: "status?" }));
   ok("A ask_agent reaches a done agent", ask === "", ask);
 
+  // independent checks: a decision-only overlay accepts ask, but a pending block never makes a live run free.
+  await upd({ status: "working" });
+  const edge = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Edge decision", options: ["yes", "no"] });
+  ok("EDGE working agent with pending decision refuses work", /is working/.test(await err(() => giveWork("must not deliver"))));
+  await upd({ status: "done" });
+  ok("EDGE ask_agent reaches decision-blocked agent", (await err(() => api.call("thoughts.ask", { room: "A", agent: "Dossier", question: "a different question?" }))) === "");
+  await upd({ status: "working" });
+  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: edge.item.h, answer: "a" });
+  await upd({ status: "done" });
+  ok("EDGE decision answered mid-turn never blocks its end", (await me()).status === "done");
+
   // ---- B) a bonk at the prompt still holds it
   await upd({ status: "blocked", quiet: true, note: "need your brev login" });
   a = await me();
@@ -121,6 +132,15 @@ try {
   await upd({ status: "working" }); await upd({ status: "done" });
   ok("C working again clears it; the next turn ends done", (await me()).status === "done");
 
+  // independent check: a board decision layered over a bonk cannot erase the bonk.
+  await upd({ status: "working" });
+  await upd({ status: "blocked", quiet: true, note: "held bonk" });
+  const both = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Edge layered decision", options: ["yes", "no"] });
+  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: both.item.h, answer: "a" });
+  await upd({ status: "done" }); await sleep(500);
+  ok("EDGE answering decision leaves bonk held", (await me()).status === "blocked" && (await me()).takes_work === false && /a bonk/.test((await me()).blocked_on.join(" ")));
+  await upd({ status: "working" }); await upd({ status: "done" });
+
   // ---- D) Angus answers the Decide item on the board
   await upd({ status: "working" });
   const r2 = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "29. which seed?", options: ["1", "2"] });
@@ -135,6 +155,19 @@ try {
   await sleep(200);
   a = await me();
   ok("D answering D1 on the board clears the ×", a.status === "idle" && a.run === "done" && !a.blocked_on, `${a.status}/${a.run}`);
+
+  // Independent regression: a different ding after a recent board decision is not filed by autoDecide.
+  await upd({ status: "working" });
+  const skipped = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Edge seed question", options: ["1", "2"] });
+  await upd({ status: "blocked", quiet: true, decision: "Different window-only question: which GPU? a) A100 b) L40S" });
+  await upd({ status: "done" }); await sleep(400);
+  a = await me();
+  ok("REGRESSION unfiled ding must hold despite an existing board question", a.status === "blocked" && a.takes_work === false, JSON.stringify(a.blocked_on) + " takes_work=" + a.takes_work);
+  ok("REGRESSION work must refuse for the unfiled ding", /is blocked/.test(await err(() => giveWork("must not reach unfiled ding"))));
+  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: skipped.item.h, answer: "a" });
+  await sleep(400);
+  ok("REGRESSION answering seed must not erase different window-only question", (await me()).status === "blocked", (await me()).status);
+  await upd({ status: "working" }); await upd({ status: "done" });
 
   // ---- E) the self-check
   await upd({ status: "working" });
