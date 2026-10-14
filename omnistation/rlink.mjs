@@ -28,6 +28,7 @@ const SOCK = linkSocket(WL), CTL = SOCK.replace(/\.sock$/, ".ctl");
 // (LinkAgents) the panels' socket listens ONLY while the link is up: down, a panel's connect fails (as with a daemon that isn't
 // running) instead of half-opening a channel whose calls time out, which made panels retry without closing it (connections grew
 // with every outage). The control socket (status, one link per world) always answers.
+const HELLO_MS = Number(process.env.HYPRPI_LINK_HELLO_MS) || 60000; // an ssh that hasn't said hello by then is ended (a stuck login)
 const IDLE_MS = Number(process.env.HYPRPI_LINK_IDLE_MS) || 10 * 60e3, PING_MS = Number(process.env.HYPRPI_LINK_PING_MS) || 15000, DEAD_MS = PING_MS * 3;
 const log = (...a) => { if (process.env.HYPRPI_LINK_LOG) try { fs.appendFileSync(process.env.HYPRPI_LINK_LOG, `${new Date().toISOString()} ${a.join(" ")}\n`); } catch { /* none */ } };
 
@@ -69,7 +70,10 @@ async function main() {
   const clients = new Map(); // c -> { sock, opened, queue: [lines], uploads: Map(id -> local request id) }
   let nextC = 1, child = null, up = false, why = "starting", backoff = 1000, lastHeard = 0, lastClient = Date.now(), timer = null, downSince = Date.now();
   const toRemote = (o) => { if (child && up) { try { child.stdin.write(JSON.stringify(o) + "\n"); return true; } catch { /* below */ } } return false; };
-  const closeClient = (c) => { const k = clients.get(c); if (!k) return; clients.delete(c); try { k.sock.destroy(); } catch { /* gone */ } if (!clients.size) lastClient = Date.now(); };
+  const panels = () => [...clients.values()].filter((k) => !k.probe).length; // (LinkCheck) a daemon probe isn't a panel
+  const closeClient = (c) => { const k = clients.get(c); if (!k) return; clients.delete(c); try { k.sock.destroy(); } catch { /* gone */ } if (!k.probe && !panels()) lastClient = Date.now(); };
+  // (LinkCheck) end one ssh: TERM, then KILL 2 s later if it's still THAT process; never its replacement
+  const endSsh = (old) => { if (!old || old.killing) return; old.killing = true; try { process.kill(-old.pid, "SIGTERM"); } catch { /* gone */ } setTimeout(() => { if (old.exitCode === null && old.signalCode === null) { try { process.kill(-old.pid, "SIGKILL"); } catch { /* gone */ } } }, 2000).unref(); };
 
   // ---- the link (one ssh)
   const isTsh = path.basename(w.ssh[0]) === "tsh";
@@ -174,10 +178,10 @@ async function main() {
   }
   // keepalive: a ping every PING_MS; nothing heard for DEAD_MS = dead (a slept laptop, a hung ssh): end it, reconnect
   setInterval(() => {
-    if (child && up) { if (Date.now() - lastHeard > DEAD_MS) { log("silent for", DEAD_MS, "ms"); const old = child; if (!old.killing) { old.killing = true; try { process.kill(-old.pid, "SIGTERM"); } catch { /* gone */ } setTimeout(() => { if (old.exitCode === null && old.signalCode === null) { try { process.kill(-old.pid, "SIGKILL"); } catch { /* gone */ } } }, 2000).unref(); } } else toRemote({ t: "p", ts: Date.now() }); } // (LinkCheck) the OLD ssh only, never its replacement
-    else if (child && !up && Date.now() - lastHeard > 60000) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } } // (a login prompt or a hang before hello)
+    if (child && up) { if (Date.now() - lastHeard > DEAD_MS) { log("silent for", DEAD_MS, "ms"); endSsh(child); } else toRemote({ t: "p", ts: Date.now() }); } // (LinkCheck) the OLD ssh only, never its replacement
+    else if (child && !up && Date.now() - lastHeard > HELLO_MS) endSsh(child); // (a login prompt or a hang before hello: TERM, then KILL)
     // idle: up with no panel for IDLE_MS; down (nobody can connect then) for 6 × IDLE_MS (panel-link.sh restarts it while a panel lives)
-    if (!clients.size && !relaying.size && !answersWaiting.length && (up ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
+    if (!panels() && !relaying.size && !answersWaiting.length && (up ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
   }, Math.min(PING_MS, 5000)).unref?.();
   // a laptop waking from sleep: check at once rather than at the next ping
   let lastTick = Date.now();
@@ -202,7 +206,7 @@ async function main() {
         if (k.opened) toRemote({ t: "d", c, l }); else if (k.queue.length < 200) k.queue.push(l);
       }
     });
-    const gone = () => { if (clients.get(c) === k) { clients.delete(c); toRemote({ t: "x", c }); if (!clients.size) lastClient = Date.now(); } };
+    const gone = () => { if (clients.get(c) === k) { clients.delete(c); toRemote({ t: "x", c }); if (!panels()) lastClient = Date.now(); } };
     sock.on("close", gone); sock.on("error", gone);
   });
   let listening = false;
