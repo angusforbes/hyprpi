@@ -1080,6 +1080,7 @@ async function openSession(id) {
     sess.items = r.items; sess.before = r.before; sess.more = r.more; sess.end = r.end;
     renderSession({ toEnd: true });
   } catch (e) {
+    if (sess.agent !== id) return; // (PhoneCheck562) a late answer for a session he has already left
     // J562 (Angus: "I'm not seeing hub agents in wI"): an agent that's gone (closed, or a stale link) or whose session can't be
     // read: back to this world's agent list with a note, never a dead page
     if (sess.agent === id && /no such agent|not a session/i.test(e.message)) { const nm = sessAgent()?.name || "that agent"; openAgent.delete(world); setView("agents"); note(`✗ ${nm}'s session can't be opened (${e.message}); here is world ${world}'s list`); return; }
@@ -1099,11 +1100,11 @@ async function pollSession() {
     const r = await Promise.race([call("GET", `/api/session?agent=${encodeURIComponent(id)}&after=${from}`), new Promise((_, no) => setTimeout(() => no(new Error("slow")), 20000))]); // (OnceReview) a poll that never answers can't block polling for good
     if (sess.agent !== id || sess.end !== from) return;
     renderSessionHead();
+    sess.gone = 0; // (PhoneCheck562) any good answer, even an empty one, ends a run of misses
     if (!r.items.length) { sess.end = r.end; return; }
     sess.items.push(...r.items); sess.end = r.end;
     addSession(r.items, "end"); // J230: added in place (was: the whole page redrawn every poll, images and all)
     if (!splace.pinned && r.items.some((it) => it.k !== "result")) $("#snew").hidden = false; // he's reading further up: don't move him
-    sess.gone = 0;
   } catch (e) { // the next poll tries again; J562 (PhoneCheck562): an agent that's gone while open (closed) answers "no such agent"
     // on every poll: after 3 in a row, back to the world's list with a note (one miss can be a remote world's slow listing)
     if (sess.agent === id && /no such agent|not a session/i.test(e?.message || "") && ++sess.gone >= 3) { const nm = sessAgent()?.name || "that agent"; sess.gone = 0; openAgent.delete(world); setView("agents"); note(`✗ ${nm} is gone (its session can't be read any more); here is world ${world}'s list`); }
