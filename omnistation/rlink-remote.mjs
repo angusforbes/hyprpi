@@ -9,6 +9,9 @@
 //                   {t:"u",c,id,name,data} upload: a pasted image (base64, at most 10 MB) written to ~/.hyprpi-<x>/clipboard/NAME
 //                                        (600), answered {t:"ur",c,id,path} or {t:"ur",c,id,error}
 //   here → laptop:  {t:"hi",v,home}      ready; {t:"d",c,l} a daemon line; {t:"x",c,e} channel c ended; {t:"P",ts} pong
+//                   {t:"out",id,to,from,text,mode,fromThoughts}  J555 (Angus 17b): this machine's message for another world's
+//                                        Thoughts (Thoughts-A …), from the daemon (link.attach / its "link.out" events)
+//   laptop → here:  {t:"ans",id,answer} or {t:"ans",id,error}   its answer, handed to the daemon (link.answer)
 // Only this world's daemon socket is ever connected; nothing a frame says is run. Stdin closing (the ssh ended) ends everything.
 import net from "node:net";
 import fs from "node:fs";
@@ -55,13 +58,29 @@ process.stdin.on("data", (d) => {
     let f; try { f = JSON.parse(l); } catch { continue; }
     const c = Number(f.c);
     if (f.t === "p") { send({ t: "P", ts: f.ts }); continue; }
+    if (f.t === "ans" && typeof f.id === "string") { daemonCall("link.answer", { id: f.id, ...(typeof f.answer === "string" ? { answer: f.answer } : { error: String(f.error || "no answer") }) }); continue; } // (no channel)
     if (!Number.isInteger(c) || c < 1) continue;
     if (f.t === "o") open(c);
     else if (f.t === "d") { const s = chans.get(c); if (s && typeof f.l === "string") s.write(f.l + "\n"); }
     else if (f.t === "x") { const s = chans.get(c); chans.delete(c); try { s?.end(); s?.destroy(); } catch { /* gone */ } }
     else if (f.t === "u") upload(f);
+
   }
 });
 process.stdin.on("end", () => process.exit(0));
 process.stdin.on("error", () => process.exit(0));
+// J555: this machine's messages for other worlds' Thoughts: one daemon connection attached as the link (re-attached after a daemon
+// restart), its "link.out" events passed to the laptop
+let dconn = null, dbuf = "", nextId = 1;
+const daemonCall = (method, params) => { try { dconn?.write(JSON.stringify({ id: nextId++, method, params }) + "\n"); } catch { /* reconnecting */ } };
+function attach() {
+  const s = net.createConnection(SOCK); dbuf = "";
+  s.setEncoding("utf8");
+  s.on("connect", () => { dconn = s; daemonCall("link.attach", {}); });
+  s.on("data", (d) => { dbuf += d; let i; while ((i = dbuf.indexOf("\n")) >= 0) { const l = dbuf.slice(0, i); dbuf = dbuf.slice(i + 1); let m; try { m = JSON.parse(l); } catch { continue; }
+    if (m.event === "link.out" && m.data && typeof m.data.id === "string") send({ t: "out", ...m.data }); } });
+  const again = () => { if (dconn === s) dconn = null; setTimeout(attach, 2000).unref?.(); };
+  s.on("error", () => {}); s.on("close", again);
+}
+attach();
 send({ t: "hi", v: 1, home: os.homedir() });

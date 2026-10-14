@@ -83,8 +83,9 @@ async function main() {
       while ((i = buf.indexOf("\n")) >= 0) {
         const l = buf.slice(0, i); buf = buf.slice(i + 1);
         let f; try { f = JSON.parse(l); } catch { continue; }
-        if (f.t === "hi") { up = true; why = ""; backoff = 1000; log("up"); listen(); for (const [c, k] of clients) if (!k.opened) { k.opened = true; toRemote({ t: "o", c }); for (const q of k.queue.splice(0)) toRemote({ t: "d", c, l: q }); } continue; }
+        if (f.t === "hi") { up = true; why = ""; backoff = 1000; log("up"); listen(); for (const fr of answersWaiting.splice(0)) toRemote(fr); for (const [c, k] of clients) if (!k.opened) { k.opened = true; toRemote({ t: "o", c }); for (const q of k.queue.splice(0)) toRemote({ t: "d", c, l: q }); } continue; }
         if (f.t === "P") continue;
+        if (f.t === "out") { relayOut(f); continue; }
         const k = clients.get(Number(f.c));
         if (!k) continue;
         if (f.t === "d" && typeof f.l === "string") { try { k.sock.write(f.l + "\n"); } catch { /* gone */ } }
@@ -103,12 +104,39 @@ async function main() {
     };
     ch.on("close", end); ch.on("error", (e) => { err += `\n${e.message}`; end(); });
   }
+  // J555 (Angus 17b): the machine's message for one of the LAPTOP's Thoughts (Thoughts-A …): asked here (the laptop daemon's
+  // thoughts.relayAsk, as the laptop's own relay to a remote world does), its answer polled and sent back over the link
+  const seenOut = new Map(); // id -> when (a re-attached link resends what's still waiting: asked once)
+  const relaying = new Set(), answersWaiting = [];
+  async function relayOut(f) {
+    const id = String(f.id || ""); if (!/^[0-9a-f-]{36}$/.test(id) || seenOut.has(id)) return; seenOut.set(id, Date.now());
+    for (const [k, t] of seenOut) if (Date.now() - t > 3600e3) seenOut.delete(k);
+    relaying.add(id);
+    const back = (o) => { relaying.delete(id); log("ans", id, o.error ? `error: ${o.error}` : "answer"); const fr = { t: "ans", id, ...o }; if (!toRemote(fr)) answersWaiting.push(fr); }; // (down now: sent when it's back)
+    const to = String(f.to || "").toUpperCase();
+    if (!/^[A-I]$/.test(to)) return back({ error: "bad world" });
+    let c = null;
+    try {
+      const { connect } = await import(path.join(HERE, "../lib/client.mjs"));
+      const { socketPath } = await import(path.join(HERE, "../lib/paths.mjs"));
+      const req = async (m, p) => { if (!c || c.closed) c = await connect({ path: socketPath() }); return c.call(m, p, { timeoutMs: 15000 }); };
+      const { request_id } = await req("thoughts.relayAsk", { room: to, from: String(f.from || `Thoughts-${WL}`).slice(0, 80), text: String(f.text || ""), mode: f.mode === "talk" ? "talk" : "demand", fromThoughts: /^[A-I]$/.test(String(f.fromThoughts || "")) ? f.fromThoughts : "", via: `via world ${WL}'s link` });
+      log("out", id, "→ Thoughts-" + to);
+      for (const end = Date.now() + 30 * 60e3; Date.now() < end;) {
+        await new Promise((r) => setTimeout(r, 3000));
+        try { const r = await req("thoughts.relayResult", { request_id }); if (r.answer != null) { back({ answer: String(r.answer) }); return; } }
+        catch (e) { log("relayResult:", e.message); if (/unknown or expired/.test(e.message)) { back({ error: e.message }); return; } c = null; } // a laptop daemon restart: keep waiting
+      }
+      back({ error: "no answer within 30 min" });
+    } catch (e) { back({ error: `the laptop: ${e.message}` }); }
+    finally { try { c?.close(); } catch { /* gone */ } }
+  }
   // keepalive: a ping every PING_MS; nothing heard for DEAD_MS = dead (a slept laptop, a hung ssh): end it, reconnect
   setInterval(() => {
     if (child && up) { if (Date.now() - lastHeard > DEAD_MS) { log("silent for", DEAD_MS, "ms"); try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* gone */ } }, 2000).unref(); } else toRemote({ t: "p", ts: Date.now() }); }
     else if (child && !up && Date.now() - lastHeard > 60000) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } } // (a login prompt or a hang before hello)
     // idle: up with no panel for IDLE_MS; down (nobody can connect then) for 6 × IDLE_MS (panel-link.sh restarts it while a panel lives)
-    if (!clients.size && (up ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
+    if (!clients.size && !relaying.size && !answersWaiting.length && (up ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
   }, Math.min(PING_MS, 5000)).unref?.();
   // a laptop waking from sleep: check at once rather than at the next ping
   let lastTick = Date.now();
