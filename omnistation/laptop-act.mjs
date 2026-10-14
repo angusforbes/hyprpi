@@ -21,7 +21,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as hypr from "../lib/hypr.mjs";
 
@@ -164,8 +164,10 @@ async function paste() {
   const data = await run("wl-paste", ["--type", img], { timeout: 15000, encoding: "buffer", maxBuffer: 10e6 + 1024 });
   if (data.code !== 0 || !data.stdout.length) return fail("couldn't read the image on the clipboard");
   if (data.stdout.length > 10e6) return fail("the image is over 10 MB (Thoughts' limit)");
-  const f = `pi-clipboard-${randomUUID()}.${img === "image/jpeg" ? "jpg" : img.split("/")[1]}`, rel = `.hyprpi-${wl}/clipboard`;
-  const r = await remote(`umask 077; d="$HOME/${rel}"; mkdir -p "$d" && chmod 700 "$d" && cat > "$d/${f}.part" && mv "$d/${f}.part" "$d/${f}"`, { input: data.stdout, timeout: 60000 });
+  // J595 (Angus "37a", after J593): named by content, so pasting the same image again gives the same path there and no new file:
+  // the bytes go to a unique .part file; if a byte-identical file of that name exists the part is dropped, else it's renamed in
+  const f = `pi-clipboard-${createHash("sha256").update(data.stdout).digest("hex").slice(0, 16)}.${img === "image/jpeg" ? "jpg" : img.split("/")[1]}`, rel = `.hyprpi-${wl}/clipboard`;
+  const r = await remote(`umask 077; d="$HOME/${rel}"; mkdir -p "$d" && chmod 700 "$d" && t="$d/${f}.$$.part" && cat > "$t" && if [ -f "$d/${f}" ] && cmp -s "$t" "$d/${f}"; then rm -f "$t"; else mv -f "$t" "$d/${f}"; fi`, { input: data.stdout, timeout: 60000 });
   if (r.code !== 0) return fail(`couldn't send the image to world ${WL}'s machine`);
   say({ inject: `~/${rel}/${f} ` }); // a space after it, as the box's own pasted path (you paste, then type on)
 }

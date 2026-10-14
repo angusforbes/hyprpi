@@ -3,11 +3,12 @@
 
 Inside the sandbox wl-paste is a stand-in, so a clipboard image can't reach the agent. Here, on the host:
 if the Wayland clipboard offers an image, save it to ~/Screenshots (shared into the sandbox at the same
-path) as pi-clipboard-<uuid>.<ext>, mode 600, and type its ABSOLUTE path ("/home/<user>/Screenshots/… ")
+path) as pi-clipboard-<sha256 16 hex>.<ext> (J595: the same image is the same file), mode 600, and type its ABSOLUTE path ("/home/<user>/Screenshots/… ")
 into the window. Not "~/…": inside the sandbox HOME is /home/agent, so a tilde path would point at a
 folder that doesn't exist there (J318).
 Anything else (or any error) is a plain text paste, like paste_from_clipboard. Never raises.
 """
+import hashlib
 import os
 import re
 import subprocess
@@ -34,16 +35,28 @@ def save_clipboard_image(run=subprocess.run):
     d = os.path.expanduser('~/Screenshots')
     if not os.path.isdir(d):
         d = '/tmp'  # ~/Screenshots missing: not shared into the sandbox, so say so (the path shows it)
-    f = os.path.join(d, f'pi-clipboard-{uuid.uuid4()}.{ext}')
-    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # J595 (after J593): named by content, so pasting the same image again types the same path and writes no new file
+    r = run(['wl-paste', '--type', img], capture_output=True, timeout=15)
+    data = r.stdout
+    if r.returncode or not data:
+        raise RuntimeError('wl-paste gave no image')
+    f = os.path.join(d, f'pi-clipboard-{hashlib.sha256(data).hexdigest()[:16]}.{ext}')
+    try:
+        if os.path.isfile(f) and os.path.getsize(f) == len(data):
+            with open(f, 'rb') as old:
+                if old.read() == data:
+                    return f + ' '
+    except OSError:
+        pass
+    tmp = f'{f}.{uuid.uuid4().hex}.part'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, 'wb') as out:
-            r = run(['wl-paste', '--type', img], stdout=out, stderr=subprocess.DEVNULL, timeout=15)
-        if r.returncode or os.path.getsize(f) == 0:
-            raise RuntimeError('wl-paste gave no image')
+            out.write(data)
+        os.replace(tmp, f)
     except BaseException:
         try:
-            os.unlink(f)
+            os.unlink(tmp)
         except OSError:
             pass
         raise
