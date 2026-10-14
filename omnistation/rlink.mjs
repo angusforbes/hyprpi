@@ -107,7 +107,7 @@ async function main() {
         const k = clients.get(Number(f.c));
         if (!k) continue;
         if (f.t === "d" && typeof f.l === "string") { k.heard = true; try { k.sock.write(f.l + "\n"); } catch { /* gone */ } }
-        else if (f.t === "x") { const kk = clients.get(Number(f.c)); closeClient(Number(f.c)); if (kk && !kk.heard && /ECONNREFUSED|ENOENT/.test(String(f.e || ""))) daemonDown(); }
+        else if (f.t === "x") { const kk = clients.get(Number(f.c)); closeClient(Number(f.c)); if (kk && !kk.heard && /ECONNREFUSED|ENOENT/.test(String(f.e || ""))) { log("channel", f.c, "refused:", f.e); daemonDown(); } }
         else if (f.t === "ur") { const rid = k.uploads.get(f.id); k.uploads.delete(f.id); if (rid != null) { try { k.sock.write(JSON.stringify(f.error ? { id: rid, error: `upload: ${f.error}` } : { id: rid, result: { path: f.path } }) + "\n"); } catch { /* gone */ } } }
       }
     });
@@ -126,7 +126,7 @@ async function main() {
   // retries would multiply, as with a down link), so the panel socket closes until a probe channel gets a daemon answer again
   let probing = null;
   function daemonDown() {
-    if (probing || !up) return; log("daemon down: probing"); why = `world ${WL}'s daemon doesn't answer`; unlisten(); for (const c of [...clients.keys()]) closeClient(c);
+    if (probing || !up) return; log("daemon down: probing"); downSince = Date.now(); /* panels can't connect now: the longer, "down" idle rule applies */ why = `world ${WL}'s daemon doesn't answer`; unlisten(); for (const c of [...clients.keys()]) closeClient(c);
     const probe = () => {
       if (!up) { probing = null; return; }
       const c = nextC++; const k = { sock: { write: (l) => { if (/"result"/.test(l)) { clients.delete(c); toRemote({ t: "x", c }); clearTimeout(probing); probing = null; why = ""; log("daemon back"); listen(); } }, destroy() {} }, opened: true, queue: [], uploads: new Map(), probe: true };
@@ -181,14 +181,14 @@ async function main() {
     if (child && up) { if (Date.now() - lastHeard > DEAD_MS) { log("silent for", DEAD_MS, "ms"); endSsh(child); } else toRemote({ t: "p", ts: Date.now() }); } // (LinkCheck) the OLD ssh only, never its replacement
     else if (child && !up && Date.now() - lastHeard > HELLO_MS) endSsh(child); // (a login prompt or a hang before hello: TERM, then KILL)
     // idle: up with no panel for IDLE_MS; down (nobody can connect then) for 6 × IDLE_MS (panel-link.sh restarts it while a panel lives)
-    if (!panels() && !relaying.size && !answersWaiting.length && (up ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
+    if (!panels() && !relaying.size && !answersWaiting.length && (up && !probing ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
   }, Math.min(PING_MS, 5000)).unref?.();
   // a laptop waking from sleep: check at once rather than at the next ping
   let lastTick = Date.now();
   setInterval(() => { const now = Date.now(); if (now - lastTick > 20000 && child && up) { lastHeard = 0; } lastTick = now; }, 2000).unref?.();
 
   // ---- the panels' side
-  const srv = net.createServer((sock) => {
+  const onPanel = (sock) => {
     const c = nextC++; const k = { sock, opened: false, queue: [], uploads: new Map() }; clients.set(c, k); lastClient = Date.now();
     if (up) { k.opened = true; toRemote({ t: "o", c }); }
     let buf = ""; let nUp = 0;
@@ -208,11 +208,11 @@ async function main() {
     });
     const gone = () => { if (clients.get(c) === k) { clients.delete(c); toRemote({ t: "x", c }); if (!panels()) lastClient = Date.now(); } };
     sock.on("close", gone); sock.on("error", gone);
-  });
-  let listening = false;
-  function listen() { if (listening) return; listening = true; try { fs.unlinkSync(SOCK); } catch { /* none */ } srv.listen(SOCK, () => { try { fs.chmodSync(SOCK, 0o600); } catch { /* fine */ } log("listening", SOCK); }); }
-  function unlisten() { if (!listening) return; listening = false; try { srv.close(); } catch { /* fine */ } try { fs.unlinkSync(SOCK); } catch { /* gone */ } }
-  srv.on("error", (e) => { log(`panel socket: ${e.message}`); listening = false; });
+  };
+  // a NEW server each time it listens (a closed one may still be finishing; reusing it left the socket accepting while "down")
+  let srv = null;
+  function listen() { if (srv) return; const s = net.createServer(onPanel); srv = s; s.on("error", (e) => { log(`panel socket: ${e.message}`); if (srv === s) srv = null; }); try { fs.unlinkSync(SOCK); } catch { /* none */ } s.listen(SOCK, () => { try { fs.chmodSync(SOCK, 0o600); } catch { /* fine */ } log("listening", SOCK); }); }
+  function unlisten() { if (!srv) return; const s = srv; srv = null; try { s.close(); } catch { /* fine */ } try { fs.unlinkSync(SOCK); } catch { /* gone */ } }
   const ctl = net.createServer((sock) => {
     let b = ""; sock.setEncoding("utf8");
     sock.on("data", (d) => { b += d; let i; while ((i = b.indexOf("\n")) >= 0) { const l = b.slice(0, i); b = b.slice(i + 1); let m = null; try { m = JSON.parse(l); } catch { continue; }

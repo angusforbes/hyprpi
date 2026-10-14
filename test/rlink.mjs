@@ -20,7 +20,7 @@ fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomT
 fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } } }));
 const denv = { ...process.env, HYPRPI_SOCKET: dsock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_NOTIFY_TEST: "1" };
 for (const k of ["HYPRPI_AGENT_ID", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "HYPRPI_REMOTE_HOME", "HYPRPI_REMOTE_LINK"]) delete denv[k];
-let d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env: denv, stdio: "ignore" });
+let d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env: denv, stdio: ["ignore", "ignore", fs.openSync(path.join(T, "d.err"), "a")] });
 // the stand-in ssh: runs the remote end against that daemon, notes its pid; the binding names it (its basename decides "tsh")
 const SSH = path.join(T, "fakessh"), PIDS = path.join(T, "remote.pids");
 fs.writeFileSync(SSH, `#!/bin/sh\necho $$ >> ${PIDS}\nexec env HYPRPI_STATE=${S} HYPRPI_SOCKET=${dsock} ${process.execPath} ${path.join(ROOT, "omnistation/rlink-remote.mjs")}\n`, { mode: 0o755 });
@@ -98,6 +98,6 @@ try {
   try { link?.kill(); } catch { /* gone */ }
   for (const p of pidsNow()) { try { process.kill(p, "SIGKILL"); } catch { /* gone */ } }
   d.kill(); await sleep(300);
-  fs.rmSync(T, { recursive: true, force: true });
+  if (fails && process.env.KEEP) console.log("kept " + T); else fs.rmSync(T, { recursive: true, force: true });
 }
 console.log(fails ? `FAIL (${fails})` : "PASS"); process.exit(fails ? 1 : 0);
