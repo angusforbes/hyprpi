@@ -58,7 +58,7 @@ process.stdin.on("data", (d) => {
     let f; try { f = JSON.parse(l); } catch { continue; }
     const c = Number(f.c);
     if (f.t === "p") { send({ t: "P", ts: f.ts }); continue; }
-    if (f.t === "ans" && typeof f.id === "string") { daemonCall("link.answer", { id: f.id, ...(typeof f.answer === "string" ? { answer: f.answer } : { error: String(f.error || "no answer") }) }); continue; } // (no channel)
+    if (f.t === "ans" && typeof f.id === "string") { daemonCall("link.answer", { id: f.id, ...("result" in f ? { result: f.result } : typeof f.answer === "string" ? { answer: f.answer } : { error: String(f.error || "no answer") }) }); continue; } // (no channel)
     if (!Number.isInteger(c) || c < 1) continue;
     if (f.t === "o") open(c);
     else if (f.t === "d") { const s = chans.get(c); if (s && typeof f.l === "string") s.write(f.l + "\n"); }

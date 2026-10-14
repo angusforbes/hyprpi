@@ -32,7 +32,8 @@ fs.mkdirSync(RD); fs.mkdirSync(RUN, { mode: 0o700 });
 fs.writeFileSync(SSH, `#!/bin/sh\necho $$ >> ${PIDS}\nexec env HYPRPI_STATE=${rem.state} HYPRPI_SOCKET=${rem.sock} ${process.execPath} ${path.join(ROOT, "omnistation/rlink-remote.mjs")}\n`, { mode: 0o755 });
 fs.writeFileSync(path.join(RD, "h.json"), JSON.stringify({ ssh: [SSH, "host"] }));
 // the link runs as the laptop: its daemon socket is the laptop daemon's
-const lenv = { ...process.env, XDG_RUNTIME_DIR: RUN, HYPRPI_REMOTE_DIR: RD, HYPRPI_SOCKET: lap.sock, HYPRPI_LINK_LOG: F("link.log"), HYPRPI_LINK_PING_MS: "1000" };
+fs.writeFileSync(F("echo-op.mjs"), "export async function handle(world, args) { return { world, echo: args }; }\n");
+const lenv = { ...process.env, XDG_RUNTIME_DIR: RUN, HYPRPI_REMOTE_DIR: RD, HYPRPI_SOCKET: lap.sock, HYPRPI_LINK_LOG: F("link.log"), HYPRPI_LINK_PING_MS: "1000", HYPRPI_TEST: "1", HYPRPI_TEST_LINK_OP: `echo:${F("echo-op.mjs")}` };
 delete lenv.HYPRPI_REMOTE_LINK; delete lenv.HYPRPI_AGENT_ID;
 let link = null;
 const lapRelay = () => { try { const r = JSON.parse(fs.readFileSync(path.join(lap.state, "requests.json"), "utf8")); const list = (Array.isArray(r) ? r : Object.entries(r.requests || r)).map(([id, v]) => ({ id, ...v })); return list.filter((x) => x.relay && x.thoughts === "A"); } catch { return []; } };
@@ -61,12 +62,19 @@ try {
   if (req2) await lapc.call("thoughts.answer", { room: "A", request_id: req2.id, text: "yes, take Linkpath" });
   const th = await waitFor(async () => ((await remc.call("thoughts.get", { room: "H" })).entries || []).find((e) => /take Linkpath/.test(e.text || "")), 12000);
   ok("2 … and the answer lands in Thoughts-H's thread on the machine", !!th, "");
+  // 5 (Namesmith's J561) link.call: a process on the machine asks the laptop to run an allow-listed op
+  const lc = await remc.call("link.call", { op: "echo", args: { path: "Notes/x.md", n: 1 } }).catch((e) => ({ err: e.message }));
+  ok("5 link.call runs the laptop's op handler and returns its result", lc.result?.world === "H" && lc.result?.echo?.path === "Notes/x.md", JSON.stringify(lc));
+  const lu = await remc.call("link.call", { op: "nosuch", args: {} }).catch((e) => ({ err: e.message }));
+  ok("5 an op the laptop doesn't allow is refused", /no op nosuch/.test(lu.err || ""), JSON.stringify(lu));
   // 3
   ok("3 no fake world A on the machine (no Thoughts-A thread, no room A)", !fs.existsSync(path.join(rem.state, "thoughts", "A.thread.jsonl")) && !fs.existsSync(path.join(rem.state, "rooms", "A.jsonl")));
   // 4 the link gone: refused with the reason again
   link.kill(); link = null; for (const p of fs.readFileSync(PIDS, "utf8").split("\n").filter(Boolean)) { try { process.kill(Number(p), "SIGKILL"); } catch { /* gone */ } }
   await sleep(1500);
   const t4 = await ag.call("talk", { to: ["Thoughts-A"], text: "still there?", mode: "talk" });
+  const ln = await ag.call("link.call", { op: "echo", args: {} }).catch((e) => ({ err: e.message }));
+  ok("5 without the link, link.call says there is none", /no link to the laptop/.test(ln.err || ""), JSON.stringify(ln));
   ok("4 without the link: refused with the reason (never a local fake world)", !(t4.delivered || []).length && (t4.skipped || []).some((s) => /isn't on this machine/.test(s.reason)), JSON.stringify(t4));
   ag.close?.(); lapc.close?.(); remc.close?.();
 } finally {

@@ -135,11 +135,25 @@ async function main() {
   // thoughts.relayAsk, as the laptop's own relay to a remote world does), its answer polled and sent back over the link
   const seenOut = new Map(); // id -> when (a re-attached link resends what's still waiting: asked once)
   const relaying = new Set(), answersWaiting = [];
+  // the ops a world's machine may ask the laptop to do (link.call): op -> a module (relative to omnistation/) exporting
+  // handle(world, args) -> JSON. Tests may add one (HYPRPI_TEST=1, HYPRPI_TEST_LINK_OP=op:/abs/module.mjs)
+  const LINK_OPS = { jot: "../lib/jot-relay-host.mjs" };
+  if (process.env.HYPRPI_TEST === "1" && /^[a-z-]+:\/.+\.mjs$/.test(process.env.HYPRPI_TEST_LINK_OP || "")) { const [o, m] = process.env.HYPRPI_TEST_LINK_OP.split(/:(.*)/); LINK_OPS[o] = path.relative(HERE, m); }
   async function relayOut(f) {
     const id = String(f.id || ""); if (!/^[0-9a-f-]{36}$/.test(id) || seenOut.has(id)) return; seenOut.set(id, Date.now());
     for (const [k, t] of seenOut) if (Date.now() - t > 3600e3) seenOut.delete(k);
     relaying.add(id);
     const back = (o) => { relaying.delete(id); log("ans", id, o.error ? `error: ${o.error}` : "answer"); const fr = { t: "ans", id, ...o }; if (!toRemote(fr)) answersWaiting.push(fr); }; // (down now: sent when it's back)
+    if (f.kind === "call") { // J555 (Namesmith's J561): an allow-listed op the machine asks the laptop to do; its handler module answers
+      const mod = LINK_OPS[String(f.op || "")];
+      if (!mod) return back({ error: `no op ${String(f.op || "?").slice(0, 40)} on the laptop` });
+      try {
+        const m = await import(path.join(HERE, mod));
+        if (typeof m.handle !== "function") throw new Error(`${mod} has no handle()`);
+        const result = await Promise.race([m.handle(WL, f.args ?? null), new Promise((_, rej) => setTimeout(() => rej(new Error("the op took over 60 s")), 60000))]);
+        return back({ result: result ?? null });
+      } catch (e) { return back({ error: String(e?.message || e).slice(0, 500) }); }
+    }
     const to = String(f.to || "").toUpperCase();
     if (!/^[A-I]$/.test(to)) return back({ error: "bad world" });
     let c = null;
