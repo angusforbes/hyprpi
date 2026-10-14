@@ -44,7 +44,8 @@ function textGlyphs(root) {
     n.replaceWith(frag);
   }
 }
-function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden = !text; }
+let noteAt = 0;
+function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden = !text; noteAt = text ? Date.now() : 0; }
 async function call(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   const j = await r.json().catch(() => ({}));
@@ -278,17 +279,19 @@ function save(w) {
   saveTimers[w] = setTimeout(() => { try { localStorage.setItem(LS(w), JSON.stringify({ entries: cached(w).entries.slice(-KEEP) })); } catch { /* full: memory only */ } }, 400);
 }
 const sig = (l) => `${l.length}:${l[l.length - 1]?.ts || 0}:${String(l[l.length - 1]?.text || "").length}`;
+let fetchNoted = false; // a "✗" note from a failed thread fetch, cleared by the next good one
+const fetchNote = (e) => { fetchNoted = true; note("✗ " + e.message); };
 async function fetchWorld(w) {
   const t = await call("GET", `/api/thoughts?world=${w}`);
   const c = cached(w), next = t.entries || [], changed = !c.loaded || sig(next) !== sig(c.entries);
   c.entries = next; c.busy = !!t.busy; c.loaded = true; save(w);
-  if (w === world) { busy = c.busy; if (changed) render(); renderTop(); note(""); }
+  if (w === world) { busy = c.busy; if (changed) render(); renderTop(); if (fetchNoted || Date.now() - noteAt > 8000) { fetchNoted = false; note(""); } } // (J562: its own error note at once; any other note, e.g. the Agnt fallback, stays at least 8 s)
   else if (changed) prerenderSoon();
 }
 const prefetched = new Set();
 function refreshAll() {
   const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
-  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {}), fetchStream(w).catch(() => {});
+  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) fetchNote(e); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {}), fetchStream(w).catch(() => {});
 }
 function setWorld(w) {
   if (!w || w === world) return;
@@ -301,8 +304,9 @@ function setWorld(w) {
   if (filsWin) filsPost({ world: w });
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
   newestBtn.hidden = true;
-  if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
-  fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
+  if (view === "session") { clearInterval(sess.timer); setView("agents"); } // J562 (PhoneCheck562): another world: its agent list, not the old world's open session (a jump to an agent elsewhere opens its session after this)
+  else if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
+  fetchWorld(w).catch(fetchNote); // then fresh, in the background
   fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); fetchStream(w).catch(() => {});
 }
 // J417 follow-up: a new version of the page on the laptop → reload (the draft and waiting 📎 files are
