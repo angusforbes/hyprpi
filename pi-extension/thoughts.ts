@@ -29,14 +29,14 @@ export default function thoughts(pi: ExtensionAPI) {
   // older pasted screenshots and big tool outputs leave what each request sends (the session keeps them) as a
   // stub with a file:// link; anything that isn't a file is saved first. Angus's current message (and its
   // images) and the latest tool result are never pruned.
-  const seen = new Set<string>(), told = new Set<string>();
+  const seen = new Set<string>();
   pi.on("context", async (e: any, ctx: any) => { try { // (J563 v2: fail soft, as in upkeep.ts)
     let S: any; try { S = loadUpkeep(); } catch { return; }
     if (!S?.prune?.enabled) return;
     const r = pruneMessages(e?.messages || [], S, { dir: path.join(statePath(S.prune.saveDir || "~/.local/state/hyprpi/pruned"), `thoughts-${ROOM}`), seen, hint: "you have no read tool: to look at it again, pass the path to an agent in images of ask_agent / give_work" });
     if (!r.stats.images && !r.stats.outputs) return;
     return { messages: r.messages };
-  } catch (err) { failSoft("pruning", err, { ctx, call: (m: string, p: any) => request(m, { room: ROOM, ...p }, { timeoutMs: 20000 }), agentId: `Thoughts-${ROOM}`, told }); return; } });
+  } catch (err) { failSoft("pruning", err, { ctx, call: (m: string, p: any) => request(m, { ...p, room: ROOM }, { timeoutMs: 20000 }), agentId: `Thoughts-${ROOM}`, room: ROOM }); return; } });
   const call = (method: string, params: any = {}, timeoutMs = 20000) => request(method, { room: ROOM, ...params }, { timeoutMs });
   const out = (text: string, details: any = {}) => ({ content: [{ type: "text", text }], details });
 

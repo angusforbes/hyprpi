@@ -29,20 +29,23 @@ import { pruneMessages } from "../lib/prune.mjs";
 // his window. The turn goes on unchanged (unpruned); the full trace goes to ~/.local/state/hyprpi/upkeep-errors.log; the window
 // shows ONE short dim line and the world's Thoughts ONE alert, the first time each step fails in this pi process (not every turn).
 export const UPKEEP_ERROR_LOG = path.join(process.env.HYPRPI_STATE || path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi"), "upkeep-errors.log");
-export function failSoft(where: string, err: any, o: { ctx?: any; call?: (m: string, p?: any) => Promise<any>; agentId?: string; told: Set<string> }) {
+// "told" lives on globalThis, so an in-process /reload (which re-runs this file) doesn't re-announce the same failure (UpkeepCheck)
+const TOLD: Set<string> = ((globalThis as any).__hyprpiUpkeepTold ??= new Set<string>());
+export function failSoft(where: string, err: any, o: { ctx?: any; call?: (m: string, p?: any) => Promise<any>; agentId?: string; room?: string; told?: Set<string> }) {
   const msg = String(err?.message ?? err).split("\n")[0].slice(0, 140);
   try { fs.mkdirSync(path.dirname(UPKEEP_ERROR_LOG), { recursive: true }); fs.appendFileSync(UPKEEP_ERROR_LOG, `${new Date().toISOString()} ${o.agentId || "?"} ${where}: ${err?.stack || msg}\n`); } catch { /* no log: still soft */ }
-  if (o.told.has(where)) return;
-  o.told.add(where);
+  const key = `${o.agentId || "?"}:${where}`;
+  if (TOLD.has(key)) return;
+  TOLD.add(key);
   try { o.ctx?.ui?.notify?.(`⚠ upkeep: ${where} skipped (${msg}); reported`, "warning"); } catch { /* no UI */ }
-  const ws = Number(process.env.HYPRPI_WORKSPACE) || 1, room = "ABCDEFGHI"[Math.min(8, Math.floor((ws - 1) / 10))] || "A";
+  const ws = Number(process.env.HYPRPI_WORKSPACE) || 1, room = o.room || "ABCDEFGHI"[Math.min(8, Math.floor((ws - 1) / 10))] || "A"; // (Thoughts passes its own room: it has no HYPRPI_WORKSPACE)
   o.call?.("thoughts.alert", { room, text: `upkeep: ${where} failed in agent ${o.agentId || "?"} (${msg}); its turns carry on without it. Trace: ${UPKEEP_ERROR_LOG}` }).catch(() => {});
 }
 
 export function upkeepAgent(pi: ExtensionAPI, { call, agentId, idle }: { call: (m: string, p?: any) => Promise<any>; agentId: string; idle: () => boolean }) {
-  const seen = new Set<string>(), told = new Set<string>();
+  const seen = new Set<string>();
   let noted = 0, pending = { images: 0, outputs: 0, bytes: 0 };
-  pi.on("context", async (e: any, ctx: any) => { try { return await pruneContext(e); } catch (err) { failSoft("pruning", err, { ctx, call, agentId, told }); return; } });
+  pi.on("context", async (e: any, ctx: any) => { try { return await pruneContext(e); } catch (err) { failSoft("pruning", err, { ctx, call, agentId }); return; } });
   async function pruneContext(e: any) {
     let S: any; try { S = loadUpkeep(); } catch { return; }
     if (!S?.prune?.enabled) return;

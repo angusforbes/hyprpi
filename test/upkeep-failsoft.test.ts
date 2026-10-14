@@ -35,4 +35,16 @@ test("a throwing hook: the turn goes on, one short line, the trace logged, one T
   const alerts = calls.filter(([m]) => m === "thoughts.alert");
   expect(alerts.length).toBe(1);
   expect(alerts[0][1].room).toBe("B"); // workspace 14 = world B
+  // a /reload re-runs the extension: the same failure isn't announced again in this process (UpkeepCheck)
+  const hooks2: Record<string, any> = {};
+  upkeepAgent({ on: (n: string, h: any) => { hooks2[n] = h; }, registerTool: () => {}, sendMessage: () => {} } as any, { call: async (m: string, p: any) => { calls.push([m, p]); return {}; }, agentId: "hp-test", idle: () => true });
+  await hooks2.context(boom, ctx);
+  expect(notes.length).toBe(1); expect(calls.filter(([m]) => m === "thoughts.alert").length).toBe(1);
+});
+
+test("Thoughts' failures alert its own room (it has no HYPRPI_WORKSPACE)", async () => {
+  const { failSoft } = await import("../pi-extension/upkeep.ts");
+  const got: any[] = [];
+  failSoft("pruning", new Error("x"), { call: async (m: string, p: any) => { got.push(p); }, agentId: "Thoughts-E", room: "E" });
+  expect(got[0].room).toBe("E");
 });
