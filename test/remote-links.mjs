@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // J553 (2): a link a REMOTE agent prints in its laptop window (omnistation/remote-client.mjs in kitty) names something on the remote
-// machine (file:///home/aforbes/work/x.png). The window's kitty hands every Ctrl+clicked link to `laptop-act.mjs X url` (its
+// machine (file:///home/you/work/x.png). The window's kitty hands every Ctrl+clicked link to `laptop-act.mjs X url` (its
 // open_url_with, set by `world X open`), which opens http(s) here and copies a file:// path over from the machine (as the remote
 // panels do), and refuses anything else. Without a network or a desktop:
 //   A) `world H open NAME` (stub hyprctl / pi / setsid; a throwaway binding and client deps): the kitty line it dispatches gives the

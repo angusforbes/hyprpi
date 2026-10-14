@@ -211,7 +211,7 @@ case "$cmd" in
     kc=(); uk="${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}/kitty.conf"; [[ -f "$uk" ]] && kc+=(--config "$uk")
     [[ -f "$H/terminal-helpers/kitty/pi.conf" ]] && kc+=(--config "$H/terminal-helpers/kitty/pi.conf")
     [[ "$cmd" == open ]] && ttl=() || ttl=(--title "📡 $WL: $NAME")
-    # J553 (2): a link Ctrl+clicked in this window names something on the REMOTE machine (file:///home/aforbes/…): this window's
+    # J553 (2): a link Ctrl+clicked in this window names something on the REMOTE machine (file:///home/you/…): this window's
     # kitty hands every link to laptop-act's `url` (http(s) opens here; a file:// path is copied from the machine to
     # ~/Downloads/hyprpi-<x>/ and opened, a type that could run something only gets its folder opened; anything else is refused)
     nd=$(command -v node || echo node)
