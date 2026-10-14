@@ -150,6 +150,9 @@ try {
   ok("F hyprpi ntfy config --json reads hyprpi.jsonc (brev-autostop's source)", j.enabled === true && j.topic === "angus-x" && j.server === "https://ntfy.example" && j.maxPerHour === 7, c.stdout + c.stderr);
   angus.close?.(); agent.close?.();
 } finally { d.kill(); }
+// (J575: wait for the daemon to exit before removing its state dir: it could still be writing there, and rmSync then failed
+// with ENOTEMPTY after every check had passed)
+if (d.exitCode === null && d.signalCode === null) await new Promise((r) => { d.once("exit", r); setTimeout(r, 5000); });
 console.log(fails ? `${fails} FAILED (state ${S})` : "all passed");
-if (!fails) fs.rmSync(S, { recursive: true, force: true });
+if (!fails) fs.rmSync(S, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 process.exit(fails ? 1 : 0);

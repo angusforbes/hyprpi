@@ -10,6 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { requireSandbox } from "./guard/sandbox.mjs";
+await requireSandbox(import.meta.url); // (J575: it starts and ends a daemon and a server: only ever inside the test guard)
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j472-")), RD = path.join(T, "remote"), BIN = path.join(T, "bin");
 fs.mkdirSync(RD); fs.mkdirSync(BIN);
