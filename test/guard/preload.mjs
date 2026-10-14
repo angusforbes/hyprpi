@@ -38,7 +38,7 @@ if (!globalThis.__hyprpiTestGuard) {
   Object.assign(env, { HYPRPI_TEST_GUARD: "1", HYPRPI_NO_ENSURE: "1" });
   const imp = `--import=${SELF}`;
   if (!String(env.NODE_OPTIONS || "").includes(SELF)) env.NODE_OPTIONS = `${env.NODE_OPTIONS ? env.NODE_OPTIONS + " " : ""}${imp}`;
-  const CARRY = ["HYPRPI_TEST_HOST_PORTS", "HYPRPI_TEST_LIVE_SOCKETS", "HYPRPI_TEST_GUARD", "HYPRPI_TEST_ROOT", "HYPRPI_TEST_SANDBOX", "HYPRPI_TEST_OUTER_PIDNS", "HYPRPI_TEST_GUARD_LOG", "HYPRPI_NO_ENSURE"];
+  const CARRY = ["HYPRPI_TEST_NET_SHARED", "HYPRPI_TEST_HOST_ABSTRACT", "HYPRPI_TEST_HOST_PORTS", "HYPRPI_TEST_LIVE_SOCKETS", "HYPRPI_TEST_GUARD", "HYPRPI_TEST_ROOT", "HYPRPI_TEST_SANDBOX", "HYPRPI_TEST_OUTER_PIDNS", "HYPRPI_TEST_GUARD_LOG", "HYPRPI_NO_ENSURE"];
 
   const refuse = (why) => {
     refusals.push(why);
@@ -98,6 +98,15 @@ if (!globalThis.__hyprpiTestGuard) {
     };
     let portSet = null;
     const hostPort = (n) => { if (!portSet) { try { portSet = new Set(fs.readFileSync(env.HYPRPI_TEST_HOST_PORTS, "utf8").split("\n").filter(Boolean).map(Number)); } catch { portSet = false; } } return portSet === false || portSet.has(n); };
+    // the sockets bound inside this run's own network namespace (pathname ones, resolved), read when a connect needs it
+    const boundHere = (p) => {
+      let t = ""; try { t = fs.readFileSync("/proc/net/unix", "utf8"); } catch { return true; }
+      const want = new Set([p]); try { want.add(fs.realpathSync(p)); } catch { /* missing: connect will say so */ }
+      if (![...want].some((w) => fs.existsSync(w))) return true; // nothing there: the kernel answers ENOENT itself
+      return t.split("\n").slice(1).some((l) => { const x = l.trim().split(/\s+/)[7]; if (!x || x.startsWith("@")) return false; if (!x.startsWith("/")) return x.split("/").pop() === String(p).split("/").pop(); if (want.has(x)) return true; try { return want.has(fs.realpathSync(x)); } catch { return false; } });
+    };
+    let absSet = null;
+    const hostAbstract = (p) => { if (!absSet) { try { absSet = new Set(fs.readFileSync(env.HYPRPI_TEST_HOST_ABSTRACT, "utf8").split("\n").filter(Boolean)); } catch { absSet = false; } } return absSet === false || absSet.has("@" + String(p).slice(1)); };
     const origConnect = net.Socket.prototype.connect;
     net.Socket.prototype.connect = function connect(...a) {
       const first = Array.isArray(a[0]) ? a[0][0] : a[0];
@@ -107,6 +116,8 @@ if (!globalThis.__hyprpiTestGuard) {
         const host = String((first && typeof first === "object" ? first.host : typeof a[1] === "string" ? a[1] : "") || "localhost").replace(/^\[|\]$/g, "");
         if (/^(localhost|127\.\d+\.\d+\.\d+|::1|0\.0\.0\.0|::|::ffff:127\.\d+\.\d+\.\d+)$/i.test(host) && hostPort(port)) refuse(`test guard: refused a connection to ${host}:${port}: a service listening on the HOST (this run shares its network with --net / test-guard: net). Start the test's own server on a port of its own.`);
       }
+      if (p && sandboxed && !String(p).startsWith("\0") && env.HYPRPI_TEST_NET_SHARED !== "1" && !boundHere(p)) refuse(`test guard: refused a connection to ${p}: no process of this test run is listening there (in the sandbox's own network namespace /proc/net/unix lists only the run's sockets), so it belongs to something OUTSIDE the run (a socket made after the sandbox started, or a link to one). Give the test its own sockets in a temp dir.`);
+      if (p && String(p).startsWith("\0") && env.HYPRPI_TEST_NET_SHARED === "1" && hostAbstract(p)) refuse(`test guard: refused a connection to the abstract socket @${String(p).slice(1)}: it belongs to the HOST (this run shares its network with --net / test-guard: net).`);
       if (p && underLive(p, dirs) && (!sandboxed || (!fs.existsSync(p) && hostLive(p)))) refuse(`test guard: refused a connection to ${p}: that is the live desktop's runtime folder (the live hyprpi daemon, Hyprland, the session bus)${sandboxed ? ", masked in the test's sandbox" : ""}. Give the test (and every process it starts) its own HYPRPI_SOCKET / XDG_RUNTIME_DIR in a temp dir.`);
       return origConnect.apply(this, a);
     };

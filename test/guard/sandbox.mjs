@@ -85,6 +85,13 @@ export function guardEnv(base = process.env, { log, net = false } = {}) {
   // --net shares the host's network, so the host's own loopback services (the phone server, the MCP gateway…) would be reachable:
   // the ports listening on the host now go to the preload, which refuses a connection to them on a local address
   if (net) {
+    e.HYPRPI_TEST_NET_SHARED = "1";
+    try { // abstract unix sockets bound on the host now (shared with --net): refused by the preload too
+      let t = ""; try { t = fs.readFileSync("/proc/net/unix", "utf8"); } catch { /* none */ }
+      const names = [...new Set(t.split("\n").slice(1).map((l) => l.trim().split(/\s+/)[7]).filter((x) => x && x.startsWith("@")))];
+      const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "testguard-abstract-")), "abstract.txt"); fs.writeFileSync(f, names.join("\n") + "\n");
+      e.HYPRPI_TEST_HOST_ABSTRACT = f;
+    } catch { e.HYPRPI_TEST_HOST_ABSTRACT = "-"; }
     try {
       const ports = new Set();
       for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) { let t = ""; try { t = fs.readFileSync(f, "utf8"); } catch { continue; } for (const l of t.split("\n").slice(1)) { const c = l.trim().split(/\s+/); if (c[3] === "0A" && c[1]) ports.add(parseInt(c[1].split(":").pop(), 16)); } }
