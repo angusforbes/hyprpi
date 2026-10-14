@@ -710,7 +710,7 @@ function renderAgents({ keepScroll = false } = {}) {
           + `<div style="display:flex;gap:6px;margin-top:6px"><input id="heldin" placeholder="1, 1 text, 2 text …" disabled autocomplete="off" style="flex:1"><button id="heldgo" disabled>Decide</button></div><div class="small" id="heldmsg"></div>`
           : `<div class="small">${l.held.phoneDecisions ? "This one (a gateway / mode change) is decided at the laptop only." : "Read-only here: decisions for this world are made at the laptop (phone decisions are off)."}</div>`) + `</div>`);
     }
-    { const wd = worlds.find((x) => x.id === world); if (wd?.sandboxed) html.push(`<div class="small sbxhead">Agents ${esc(world)} ${esc(wd.sandboxed)} · a sandboxed world: its agents run inside the sandbox</div>`); } // J450: as the desktop's "Agents G 🐳"
+    { const wd = worlds.find((x) => x.id === world); if (wd?.sandboxed) html.push(`<div class="small sbxhead">Agents ${esc(world)} ${esc(wd.sandboxed)} · ${wd.sandboxed === "📡" || wd.remote ? "a remote world: its agents run on its own machine" : "a sandboxed world: its agents run inside the sandbox"}</div>`); } // (J562: H and I are remote, not sandboxed) // J450: as the desktop's "Agents G 🐳"
     if (l.offline) html.push(`<div class="psum" style="margin:8px 0"><h3>📡 World ${esc(world)} is offline</h3><div class="small">${esc(l.offline)}. Its agents keep running there; this list comes back by itself.</div></div>`); // J472
     for (const x of l.agents) html.push(agentRow(x));
     if (!l.agents.length && l.loaded && !l.offline) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
@@ -1079,7 +1079,12 @@ async function openSession(id) {
     if (sess.agent !== id) return;
     sess.items = r.items; sess.before = r.before; sess.more = r.more; sess.end = r.end;
     renderSession({ toEnd: true });
-  } catch (e) { sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">✗ ${esc(e.message)}</div>`; }
+  } catch (e) {
+    // J562 (Angus: "I'm not seeing hub agents in wI"): an agent that's gone (closed, or a stale link) or whose session can't be
+    // read: back to this world's agent list with a note, never a dead page
+    if (sess.agent === id && /no such agent|not a session/i.test(e.message)) { const nm = sessAgent()?.name || "that agent"; openAgent.delete(world); setView("agents"); note(`✗ ${nm}'s session can't be opened (${e.message}); here is world ${world}'s list`); return; }
+    sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">✗ ${esc(e.message)}</div>`;
+  }
   clearInterval(sess.timer); sess.timer = setInterval(pollSession, 1500);
 }
 // J474 (Angus: a send to a world H agent showed TWICE): a remote world's session read can take longer than the 1.5 s poll, so two
