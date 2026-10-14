@@ -20,6 +20,9 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi search [ROOM] [--toggle]  open the search window for a room (default: current world)
   hyprpi find [--room R] [--ai] QUERY  search from the terminal (keyword, or AI with --ai)
   hyprpi list [--json]        live agents and rooms
+  hyprpi top [--once] [--json] [--sort cpu|mem|uptime|priority] [--interval SECONDS] [--samples N]
+                              read-only agent process-tree CPU/RSS, activity priority and context; refresh 2s
+                              keys: c/m/u/p sort, j/k or arrows scroll, left/right pan, q quit; JSON is one shot unless --samples
   hyprpi post [--room R] TEXT post to a room as you (every agent there gets it)
   hyprpi send AGENT TEXT      prompt one agent directly
   hyprpi thoughts new W [--handoff FILE]   a fresh session for world W's Thoughts (the old one archived, never deleted)
@@ -563,6 +566,7 @@ const commands = {
   search: cmdSearch,
   find: cmdFind,
   list: cmdList,
+  top: async () => { const { runTop } = await import("../lib/top.mjs"); await runTop(args); },
   post: async () => {
     const room = opt("--room");
     const via = opt("--via") || "cli";
