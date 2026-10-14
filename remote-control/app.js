@@ -44,8 +44,8 @@ function textGlyphs(root) {
     n.replaceWith(frag);
   }
 }
-let noteAt = 0;
-function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden = !text; noteAt = text ? Date.now() : 0; }
+let noteAt = 0, fetchNoted = false;
+function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden = !text; noteAt = text ? Date.now() : 0; fetchNoted = false; } // (any new note replaces a fetch error's; fetchNote sets the flag after)
 async function call(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   const j = await r.json().catch(() => ({}));
@@ -279,8 +279,8 @@ function save(w) {
   saveTimers[w] = setTimeout(() => { try { localStorage.setItem(LS(w), JSON.stringify({ entries: cached(w).entries.slice(-KEEP) })); } catch { /* full: memory only */ } }, 400);
 }
 const sig = (l) => `${l.length}:${l[l.length - 1]?.ts || 0}:${String(l[l.length - 1]?.text || "").length}`;
-let fetchNoted = false; // a "✗" note from a failed thread fetch, cleared by the next good one
-const fetchNote = (e) => { fetchNoted = true; note("✗ " + e.message); };
+// a "✗" note from a failed thread fetch, cleared by the next good one (declared with note(), which resets it)
+const fetchNote = (e) => { note("✗ " + e.message); fetchNoted = true; };
 async function fetchWorld(w) {
   const t = await call("GET", `/api/thoughts?world=${w}`);
   const c = cached(w), next = t.entries || [], changed = !c.loaded || sig(next) !== sig(c.entries);
