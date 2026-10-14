@@ -29,7 +29,7 @@ import { connect } from "../lib/client.mjs";
 import { completeAt } from "../lib/at-names.mjs";
 import { urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
-import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY, linkPanel, uploadImages } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop; J555: or runs on it (a link panel)
 let worldBar = null;
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
   graphemes, gw, strip, width, clip } from "../lib/tui/term.mjs";
@@ -315,6 +315,21 @@ function cycle(dir) {
 }
 
 // ---- sending ---------------------------------------------------------------------------
+// J555: a link panel (omnistation/panel-link.sh: this panel runs on the laptop, its world's daemon on another machine). An image
+// pasted into the box (Ctrl+V: ~/Screenshots/pi-clipboard-….png, lib/tui/input-box.mjs) is a LAPTOP file the agents there can't
+// read, so before the text goes to the board it is uploaded over the link and the text names its path on that machine
+// (lib/tui/laptop.mjs uploadImages; the old pty panel's relay did the same at paste time). Only pasted images (pi-clipboard-*)
+// that exist here: a path the text means on the machine is left alone. -> the text to send (throws when an upload fails).
+const PASTED = /(?:^|[\s("'`<\[])((?:~|\/)[^\s"'`<>()\[\]]*\/pi-clipboard-[^\s"'`<>()\[\]\/]+\.(?:png|jpe?g|webp|gif))(?=$|[\s)"'`>\].,;:!?])/gi;
+async function linkText(t) {
+  if (!linkPanel() || !api) return t;
+  const imgs = [];
+  for (const m of String(t).matchAll(PASTED)) { const f = m[1].replace(/^~(?=\/)/, process.env.HOME || "~"); if (!imgs.includes(f) && fs.existsSync(f)) imgs.push(f); }
+  if (!imgs.length) return t;
+  const u = await uploadImages(api, t, imgs);
+  if (u.why) throw new Error(u.why.replace(/^✗ /, ""));
+  return u.text;
+}
 async function send() {
   const sentIn = room; // J468Check: the world it was typed in, for its ↑ history, even if Ctrl+Tab moved on during an await
   const raw = box.text.trim();
@@ -325,17 +340,19 @@ async function send() {
     resendAsk = 0;
   }
   if (/^\/decisions?$/i.test(raw)) { box.remember(raw, sentIn); box.clear(); return setMode(mode === "decisions" ? "cards" : "decisions"); }
+  let text = raw; // J555: as sent (a link panel's pasted images named on the machine)
+  try { text = await linkText(raw); } catch (e) { note = "✗ " + e.message; return render(); }
   if (mode === "decisions" && !raw.startsWith("/")) { // the answer box: "2⏎" picks option 2, "L⏎" later, other words answer
     if (/^l$/i.test(raw)) { const x = dv.later(); box.clear(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; return render(); }
-    const how = /^[1-9]$/.test(raw) ? { option: Number(raw) - 1 } : { text: raw };
+    const how = /^[1-9]$/.test(raw) ? { option: Number(raw) - 1 } : { text };
     try { const r = await dv.answer(api, room, how); if (how.text) box.remember(raw, sentIn); box.clear(); note = r.note; }
     catch (e) { note = "✗ " + e.message; }
     return render();
   }
   try {
-    const r = await bv.input(raw, { api, room, board: boardHere() || { projects: [] } });
+    const r = await bv.input(text, { api, room, board: boardHere() || { projects: [] } });
     if (!r) { // not the board's: the commands every panel has (/tinker, /quit; lib/tui/command-line.mjs)
-      if (parseCommand(raw)) { box.remember(raw, sentIn); box.clear(); cmds.run(raw); return render(); }
+      if (parseCommand(text)) { box.remember(raw, sentIn); box.clear(); cmds.run(text); return render(); }
       note = "✗ not a board command · /help"; return render();
     }
     if (r.confirm) note = r.note; // a confirm prompt (/spinout, /merge): not sent yet, ⏎ again runs it
@@ -480,7 +497,7 @@ process.on("SIGTERM", quit);
 
 // ---- restart onto new code (the launcher loops on exit 75; the state rides along) ------
 const CODE = [new URL("./board-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/decisions-view.mjs", "decisions.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/decisions-view.mjs", "decisions.mjs", "tui/laptop.mjs", "tui/members.mjs", "tui/sent.mjs", "tui/world-tabs.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
