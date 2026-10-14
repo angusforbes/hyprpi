@@ -48,7 +48,10 @@ export function sandboxArgs({ net = false, tmp = "", binds = [] } = {}) {
   // another test's daemon…), from /proc/net/unix: hidden behind /dev/null. (Abstract sockets are cut off by the network namespace.)
   const masked = a.filter((x, i) => a[i - 1] === "--tmpfs");
   const lookups = /^\/run\/systemd\/(?:resolve|userdb|journal)\//; // name/user lookups and logging: read-only services, kept
-  for (const s of liveSocketPaths()) if (!lookups.test(s) && !masked.some((d) => s === d || s.startsWith(d + "/")) && exists(s) && !isDir(s) && writable(s)) a.push("--ro-bind", "/dev/null", s); // (one we can't open needs no mask)
+  const under = (x, d) => x === d || x.startsWith(d + "/");
+  const sockMasks = liveSocketPaths().filter((x) => !lookups.test(x) && !masked.some((d) => under(x, d)) && exists(x) && !isDir(x) && writable(x)); // (one we can't open needs no mask)
+  const privTmp = (x) => !!tmp && (under(x, "/tmp") || under(x, "/var/tmp"));
+  for (const x of sockMasks) if (!privTmp(x)) a.push("--ro-bind", "/dev/null", x);
   // host-root files show as "nobody" in the user namespace; test/guard/shim/stat (in place of /usr/bin/stat, which it calls under
   // a hidden name in the masked runtime folder) shows them as root again, so "owned by you or root" checks behave as on the host
   const realStat = "/usr/bin/stat", shim = fileURLToPath(new URL("./shim/stat", import.meta.url));
@@ -58,7 +61,11 @@ export function sandboxArgs({ net = false, tmp = "", binds = [] } = {}) {
   // a private /tmp (a folder of the run's own, kept on the host for inspection): sockets other programs make in /tmp later, or
   // links to them, aren't there (W5). Then the folders the caller needs from the real /tmp (its log folder, fixtures) on top.
   if (isDir("/var/tmp")) a.push("--tmpfs", "/var/tmp");
-  if (tmp) { a.push("--bind", tmp, "/tmp"); for (const b of binds) if (b && isDir(b)) a.push("--bind", b, b); }
+  if (tmp) {
+    a.push("--bind", tmp, "/tmp"); const kept = binds.filter((b) => b && isDir(b)); for (const b of kept) a.push("--bind", b, b);
+    // sockets inside a folder brought back from the real /tmp are covered again (after the binds, which would re-expose them)
+    for (const x of sockMasks) if (privTmp(x) && kept.some((b) => under(x, b))) a.push("--ro-bind", "/dev/null", x);
+  }
   return a;
 }
 
@@ -71,22 +78,25 @@ export function liveSocketPaths() {
 }
 
 // The environment a guarded test gets (on top of the caller's)
-export function guardEnv(base = process.env, { log, net = false, tmp = "" } = {}) {
+export function guardEnv(base = process.env, { log, net = false, tmp = "", binds = [] } = {}) {
   // the guard's own lists go into the private /tmp (seen there as /tmp/.testguard/…), else the real one
   const gdir = tmp ? path.join(tmp, ".testguard") : fs.mkdtempSync(path.join(os.tmpdir(), "testguard-"));
   fs.mkdirSync(gdir, { recursive: true });
   const put = (name, text) => { fs.writeFileSync(path.join(gdir, name), text); return tmp ? `/tmp/.testguard/${name}` : path.join(gdir, name); };
   const e = { ...base, HYPRPI_TEST: base.HYPRPI_TEST || "1", HYPRPI_TEST_GUARD: "1", HYPRPI_TEST_SANDBOX: "1", HYPRPI_NO_ENSURE: "1" };
+  if (tmp) e.HYPRPI_TEST_PRIVATE_TMP = "1"; else delete e.HYPRPI_TEST_PRIVATE_TMP;
+  e.HYPRPI_TEST_BINDS = (binds || []).join(":"); // real folders brought into the private /tmp: their sockets aren't the run's own
   try { e.HYPRPI_TEST_OUTER_PIDNS = fs.readlinkSync("/proc/self/ns/pid"); } catch { /* inSandbox then fails closed */ }
   delete e.HYPRPI_TEST_ROOT; // the test's own node process becomes the root
   delete e.HYPRPI_AGENT_ID; delete e.HYPRPI_WORKSPACE; // a test is never an agent
   // no inherited way back to the live session: a test sets its own socket / state / display if it needs one
-  for (const k of ["HYPRPI_SOCKET", "HYPRPI_STATE", "HYPRPI_REMOTE_LINK", "HYPRPI_REMOTE_PANEL", "DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "DISPLAY", "KITTY_LISTEN_ON", "KITTY_PID", "KITTY_WINDOW_ID", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "PULSE_SERVER", "TMUX", "ZELLIJ"]) delete e[k];
+  for (const k of ["HYPRPI_SOCKET", "HYPRPI_STATE", "HYPRPI_REMOTE_LINK", "HYPRPI_REMOTE_PANEL", "DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "DISPLAY", "KITTY_LISTEN_ON", "KITTY_PID", "KITTY_WINDOW_ID", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "NIRI_SOCKET", "SWAYSOCK", "PULSE_SERVER", "TMUX", "ZELLIJ"]) delete e[k];
   if (log) e.HYPRPI_TEST_GUARD_LOG = log;
   // the host's live sockets in its runtime folder (masked in the sandbox): reaching for one of these is the test going for the live
   // daemon / Hyprland / bus, which the preload refuses loudly; other paths there (a bogus test instance's) just don't exist
   try {
-    const live = liveSocketPaths().filter((p) => p.startsWith(`/run/user/${UID}/`) || p.startsWith(`/tmp/hyprpi-${UID}/`));
+    // (Hyprland's event socket, .socket2.sock, is only read: an isolated test daemon listening for events just finds it missing)
+    const live = liveSocketPaths().filter((p) => (p.startsWith(`/run/user/${UID}/`) || p.startsWith(`/tmp/hyprpi-${UID}/`)) && !p.endsWith("/.socket2.sock"));
     e.HYPRPI_TEST_LIVE_SOCKETS = put("sockets.txt", live.join("\n") + "\n");
   } catch { /* then the preload refuses every missing path there */ }
   // --net shares the host's network, so the host's own loopback services (the phone server, the MCP gateway…) would be reachable:

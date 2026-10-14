@@ -11,6 +11,7 @@
 // A refusal throws (code ETESTGUARD), is printed to stderr, appended to $HYPRPI_TEST_GUARD_LOG, and makes the process exit non-zero
 // even if the test swallowed the error (try { process.kill(…) } catch {} must not hide it).
 import fs from "node:fs";
+import path from "node:path";
 import net from "node:net";
 import os from "node:os";
 import dns from "node:dns";
@@ -40,7 +41,7 @@ if (!globalThis.__hyprpiTestGuard) {
   Object.assign(env, { HYPRPI_TEST_GUARD: "1", HYPRPI_NO_ENSURE: "1" });
   const imp = `--import=${SELF}`;
   if (!String(env.NODE_OPTIONS || "").includes(SELF)) env.NODE_OPTIONS = `${env.NODE_OPTIONS ? env.NODE_OPTIONS + " " : ""}${imp}`;
-  const CARRY = ["HYPRPI_TEST_NET_SHARED", "HYPRPI_TEST_HOST_ABSTRACT", "HYPRPI_TEST_HOST_PORTS", "HYPRPI_TEST_LIVE_SOCKETS", "HYPRPI_TEST_GUARD", "HYPRPI_TEST_ROOT", "HYPRPI_TEST_SANDBOX", "HYPRPI_TEST_OUTER_PIDNS", "HYPRPI_TEST_GUARD_LOG", "HYPRPI_NO_ENSURE"];
+  const CARRY = ["HYPRPI_TEST_BINDS", "HYPRPI_TEST_PRIVATE_TMP", "HYPRPI_TEST_NET_SHARED", "HYPRPI_TEST_HOST_ABSTRACT", "HYPRPI_TEST_HOST_PORTS", "HYPRPI_TEST_LIVE_SOCKETS", "HYPRPI_TEST_GUARD", "HYPRPI_TEST_ROOT", "HYPRPI_TEST_SANDBOX", "HYPRPI_TEST_OUTER_PIDNS", "HYPRPI_TEST_GUARD_LOG", "HYPRPI_NO_ENSURE"];
 
   const refuse = (why) => {
     refusals.push(why);
@@ -133,7 +134,9 @@ if (!globalThis.__hyprpiTestGuard) {
           });
         } else refuse(why("")); // (socket.connect(port, name) without options: the name can't be checked first)
       }
-      if (p && sandboxed && !String(p).startsWith("\0") && env.HYPRPI_TEST_NET_SHARED !== "1" && !boundHere(p)) refuse(`test guard: refused a connection to ${p}: no process of this test run is listening there (in the sandbox's own network namespace /proc/net/unix lists only the run's sockets), so it belongs to something OUTSIDE the run (a socket made after the sandbox started, or a link to one). Give the test its own sockets in a temp dir.`);
+      const rp = path.resolve(String(p)), inBind = String(env.HYPRPI_TEST_BINDS || "").split(":").filter(Boolean).some((b) => rp === b || rp.startsWith(b + "/"));
+      const inPrivateTmp = env.HYPRPI_TEST_PRIVATE_TMP === "1" && /^\/(?:var\/)?tmp\//.test(rp) && !inBind; // (only the run's own sockets, or stale ones, can be there)
+      if (p && sandboxed && !String(p).startsWith("\0") && env.HYPRPI_TEST_NET_SHARED !== "1" && !inPrivateTmp && !boundHere(p)) refuse(`test guard: refused a connection to ${p}: no process of this test run is listening there (in the sandbox's own network namespace /proc/net/unix lists only the run's sockets), so it belongs to something OUTSIDE the run (a socket made after the sandbox started, or a link to one). Give the test its own sockets in a temp dir.`);
       if (p && String(p).startsWith("\0") && env.HYPRPI_TEST_NET_SHARED === "1" && hostAbstract(p)) refuse(`test guard: refused a connection to the abstract socket @${String(p).slice(1)}: it belongs to the HOST (this run shares its network with --net / test-guard: net).`);
       if (p && underLive(p, dirs) && (!sandboxed || (!fs.existsSync(p) && hostLive(p)))) refuse(`test guard: refused a connection to ${p}: that is the live desktop's runtime folder (the live hyprpi daemon, Hyprland, the session bus)${sandboxed ? ", masked in the test's sandbox" : ""}. Give the test (and every process it starts) its own HYPRPI_SOCKET / XDG_RUNTIME_DIR in a temp dir.`);
       return origConnect.apply(this, a);
