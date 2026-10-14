@@ -52,6 +52,11 @@ const runOne = (file) => new Promise((done) => {
   const out = fs.openSync(log, "w"), t0 = Date.now();
   const cmd = file.endsWith(".sh") ? ["bash", file, ...testArgs] : [process.execPath, `--import=${PRELOAD}`, file, ...testArgs];
   const tmp = path.join(runDir, name + ".tmp"); fs.mkdirSync(tmp);
+  // a test file that lives in /tmp: its folder's regular files are copied into the private /tmp (sockets and other files there stay out)
+  if (file.startsWith("/tmp/")) {
+    const dir = path.dirname(file), into = path.join(tmp, path.relative("/tmp", dir)); fs.mkdirSync(into, { recursive: true });
+    for (const n of fs.readdirSync(dir)) { const src = path.join(dir, n); try { const st = fs.lstatSync(src); if (st.isFile() && st.size < 5e6) fs.copyFileSync(src, path.join(into, n)); } catch { /* skip */ } }
+  }
   const child = spawnSandboxed(cmd, { tmp, net: netAll || wantsNet(file), log: guardLog, cwd: ROOT, stdio: ["ignore", out, out] });
   const timer = setTimeout(() => { fs.appendFileSync(log, `\n[test/run.mjs] timed out after ${timeoutS}s\n`); child.kill("SIGKILL"); }, timeoutS * 1000); // bwrap dies -> the namespace dies with it
   child.on("exit", (code, sig) => {

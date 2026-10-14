@@ -57,6 +57,7 @@ export function sandboxArgs({ net = false, tmp = "", binds = [] } = {}) {
   for (const d of [path.join(HOME, ".local/state/hyprpi"), path.join(HOME, ".config/hyprpi")]) if (isDir(d)) a.push("--ro-bind", d, d);
   // a private /tmp (a folder of the run's own, kept on the host for inspection): sockets other programs make in /tmp later, or
   // links to them, aren't there (W5). Then the folders the caller needs from the real /tmp (its log folder, fixtures) on top.
+  if (isDir("/var/tmp")) a.push("--tmpfs", "/var/tmp");
   if (tmp) { a.push("--bind", tmp, "/tmp"); for (const b of binds) if (b && isDir(b)) a.push("--bind", b, b); }
   return a;
 }
