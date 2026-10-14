@@ -32,6 +32,11 @@ export default function hyprpi(pi: ExtensionAPI) {
   agentDrafts(pi); // J194: the editor's unsent text survives a closed / crashed / restarted window
   const AGENT_ID = process.env.HYPRPI_AGENT_ID;
   if (!AGENT_ID) return;
+  // J537l (Angus: "i still see the Pi icon for a split second after I press SUPER+A"): pi draws its own logo header when its
+  // TUI starts, and the hypi header (setHeader below) can only replace it at session_start, a moment later. In an agent window
+  // pi skips drawing its own (as with quietStartup: true, an empty placeholder), so the hypi header is the first thing shown.
+  // Extensions load before pi's TUI starts, so this lands in time; any problem leaves pi's header as it was.
+  try { const IM: any = (PiAgent as any).InteractiveMode; if (IM?.prototype?.shouldShowStartupHeader) IM.prototype.shouldShowStartupHeader = function () { return false; }; } catch { /* pi's own header */ }
   laterModes(pi); // /notnow and /discuss (J46): hyprpi agent windows only (they file on the board)
 
   let conn: Conn | null = null;
@@ -462,11 +467,13 @@ export default function hyprpi(pi: ExtensionAPI) {
               hint("app.tools.expand", "to expand tools"), hint("app.thinking.toggle", "to expand thinking"), hint("app.editor.external", "for external editor"),
               raw("/", "for commands"), raw("!", "to run bash"), raw("!!", "to run bash (no context)"), hint("app.message.followUp", "to queue follow-up"),
               hint("app.message.dequeue", "to edit all queued messages"), hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"), raw("drop files", "to attach")].filter(Boolean);
-            return beside([top, ...full]).map((l) => fit(l, width));
+            return ["", ...beside([top, ...full]), ""].map((l) => fit(l, width)); // J537l: the blank lines pi's own header has above and below
           }
           const hints = [hint("app.interrupt", "interrupt"), bound("app.clear") ? raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit") : hint("app.exit", "exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].filter(Boolean).join(theme.fg("muted", " · "));
           return [
-            ...beside([top, hints, theme.fg("dim", "https://github.com/angusforbes/hyprpi")]), // J537h: no "Press ctrl+o…" line; J537i (Angus): the repo link on line 3
+            "", // J537l: the blank lines pi's own header has above and below
+            ...beside([top, hints, theme.fg("dim", "https://pi.dev · https://github.com/angusforbes/hyprpi")]), // J537h: no "Press ctrl+o…" line; J537i, J537l (Angus): pi's site and the repo on line 3
+            "",
           ].map((l) => fit(l, width));
         },
         invalidate() {},
