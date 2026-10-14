@@ -55,7 +55,7 @@ try {
   try { process.kill(pidsNow().at(-1), "SIGKILL"); } catch { /* gone */ }
   ok("3 a forced drop closes the panels' connections (they reconnect by themselves)", await waitFor(() => closed >= 2, 5000), `closed ${closed}`);
   ok("3 the link comes back by itself (a new ssh)", await waitFor(() => pidsNow().length > before, 8000), JSON.stringify(pidsNow()));
-  const c = await connect(); const l3 = await c.call("list", {}).catch((e) => ({ err: e.message }));
+  const c = await (async () => { for (let i = 0; i < 40; i++) { try { return await connect(); } catch { await sleep(250); } } return null; })(); const l3 = c ? await c.call("list", {}).catch((e) => ({ err: e.message })) : { err: "no connection" };
   ok("3 a new connection works after it", (l3.rooms || []).some((r) => r.id === "H"), JSON.stringify(l3).slice(0, 200));
   // 4 the remote end hangs (stopped): the keepalive finds it (3 s here) and brings the link back
   const n4 = pidsNow().length, stuck = pidsNow().at(-1);
@@ -67,16 +67,18 @@ try {
   ok("4 … and works again", !!c2);
   c.close?.(); c2?.close?.(); a.close?.(); b.close?.();
   // 6 idle: no panel for 4 s → it ends and removes its socket
-  ok("6 with no panel for a while the link ends and removes its socket", await waitFor(() => link.exitCode !== null && !fs.existsSync(LSOCK), 15000), `exit ${link.exitCode}, sock ${fs.existsSync(LSOCK)}`);
+  ok("6 with no panel for a while the link ends and removes its sockets", await waitFor(() => link.exitCode !== null && !fs.existsSync(LSOCK) && !fs.existsSync(LSOCK.replace(/\.sock$/, ".ctl")), 15000), `exit ${link.exitCode}, sock ${fs.existsSync(LSOCK)}`);
   // 5 an expired Teleport login: a `tsh` whose status fails; no ssh may start
   const TB = path.join(T, "tbin"); fs.mkdirSync(TB); const TSH = path.join(TB, "tsh"), TLOG = path.join(T, "tsh.log");
   fs.writeFileSync(TSH, `#!/bin/sh\necho "$*" >> ${TLOG}\n[ "$1" = status ] && { echo "ERROR: Not logged in." >&2; exit 1; }\nexit 9\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(RD, "h.json"), JSON.stringify({ ssh: [TSH, "ssh", "me@host"] }));
   link = spawn(process.execPath, [path.join(ROOT, "omnistation/rlink.mjs"), "H"], { env: lenv, stdio: "ignore" });
-  await waitFor(() => fs.existsSync(LSOCK), 5000); await sleep(1500);
+  await waitFor(() => fs.existsSync(LSOCK.replace(/\.sock$/, ".ctl")), 5000); await sleep(1500);
   const st = await new Promise((res) => { const p = spawn(process.execPath, [path.join(ROOT, "omnistation/rlink.mjs"), "H", "--status"], { env: lenv }); let o = ""; p.stdout.on("data", (x) => { o += x; }); p.on("close", () => res(o)); });
   ok("5 an expired login: the link is down and says to run tsh login", /down \(.*tsh login/.test(st), st);
   ok("5 … and no ssh was started", !fs.readFileSync(TLOG, "utf8").includes("ssh"), fs.readFileSync(TLOG, "utf8"));
+  // (LinkAgents) while the link is down a panel can't connect at all (as with a daemon that isn't running): no half-open channel
+  ok("5 … and a panel's connect fails at once while it's down (the panel socket isn't there)", await connect({ timeout: 1000 }).then((x) => { x.close?.(); return false; }, () => true) && !fs.existsSync(LSOCK));
 } finally {
   try { link?.kill(); } catch { /* gone */ }
   for (const p of pidsNow()) { try { process.kill(p, "SIGKILL"); } catch { /* gone */ } }

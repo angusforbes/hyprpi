@@ -24,12 +24,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { linkSocket } = await import(path.join(HERE, "../lib/paths.mjs"));
 const WL = String(process.argv[2] || "").toUpperCase(), wl = WL.toLowerCase();
 if (!/^[A-I]$/.test(WL)) { console.error("usage: rlink.mjs LETTER [--status]"); process.exit(2); }
-const SOCK = linkSocket(WL);
+const SOCK = linkSocket(WL), CTL = SOCK.replace(/\.sock$/, ".ctl");
+// (LinkAgents) the panels' socket listens ONLY while the link is up: down, a panel's connect fails (as with a daemon that isn't
+// running) instead of half-opening a channel whose calls time out, which made panels retry without closing it (connections grew
+// with every outage). The control socket (status, one link per world) always answers.
 const IDLE_MS = Number(process.env.HYPRPI_LINK_IDLE_MS) || 10 * 60e3, PING_MS = Number(process.env.HYPRPI_LINK_PING_MS) || 15000, DEAD_MS = PING_MS * 3;
 const log = (...a) => { if (process.env.HYPRPI_LINK_LOG) try { fs.appendFileSync(process.env.HYPRPI_LINK_LOG, `${new Date().toISOString()} ${a.join(" ")}\n`); } catch { /* none */ } };
 
 if (process.argv.includes("--status")) {
-  const c = net.createConnection(SOCK);
+  const c = net.createConnection(CTL);
   c.on("connect", () => { c.write(JSON.stringify({ id: 1, method: "link.status", params: {} }) + "\n"); });
   let b = ""; c.on("data", (d) => { b += d; if (b.includes("\n")) { try { const r = JSON.parse(b.split("\n")[0]).result || {}; console.log(`world ${WL} link: ${r.up ? "up" : "down" + (r.why ? ` (${r.why})` : "")}, ${r.panels} panel connection(s)`); } catch { console.log("?"); } process.exit(0); } });
   c.on("error", () => { console.log(`world ${WL} link: not running`); process.exit(1); });
@@ -45,12 +48,12 @@ async function main() {
   if (!w) { console.error(`rlink: world ${WL} isn't bound to a remote machine`); process.exit(2); }
   // one per world: a live link answers on the socket
   fs.mkdirSync(path.dirname(SOCK), { recursive: true, mode: 0o700 });
-  const alive = await new Promise((res) => { const c = net.createConnection(SOCK); c.on("connect", () => { c.destroy(); res(true); }); c.on("error", () => res(false)); });
+  const alive = await new Promise((res) => { const c = net.createConnection(CTL); c.on("connect", () => { c.destroy(); res(true); }); c.on("error", () => res(false)); });
   if (alive) process.exit(0);
-  try { fs.unlinkSync(SOCK); } catch { /* none */ }
+  for (const f of [SOCK, CTL]) { try { fs.unlinkSync(f); } catch { /* none */ } }
 
   const clients = new Map(); // c -> { sock, opened, queue: [lines], uploads: Map(id -> local request id) }
-  let nextC = 1, child = null, up = false, why = "starting", backoff = 1000, lastHeard = 0, lastClient = Date.now(), timer = null;
+  let nextC = 1, child = null, up = false, why = "starting", backoff = 1000, lastHeard = 0, lastClient = Date.now(), timer = null, downSince = Date.now();
   const toRemote = (o) => { if (child && up) { try { child.stdin.write(JSON.stringify(o) + "\n"); return true; } catch { /* below */ } } return false; };
   const closeClient = (c) => { const k = clients.get(c); if (!k) return; clients.delete(c); try { k.sock.destroy(); } catch { /* gone */ } if (!clients.size) lastClient = Date.now(); };
 
@@ -80,7 +83,7 @@ async function main() {
       while ((i = buf.indexOf("\n")) >= 0) {
         const l = buf.slice(0, i); buf = buf.slice(i + 1);
         let f; try { f = JSON.parse(l); } catch { continue; }
-        if (f.t === "hi") { up = true; why = ""; backoff = 1000; log("up"); for (const [c, k] of clients) if (!k.opened) { k.opened = true; toRemote({ t: "o", c }); for (const q of k.queue.splice(0)) toRemote({ t: "d", c, l: q }); } continue; }
+        if (f.t === "hi") { up = true; why = ""; backoff = 1000; log("up"); listen(); for (const [c, k] of clients) if (!k.opened) { k.opened = true; toRemote({ t: "o", c }); for (const q of k.queue.splice(0)) toRemote({ t: "d", c, l: q }); } continue; }
         if (f.t === "P") continue;
         const k = clients.get(Number(f.c));
         if (!k) continue;
@@ -92,7 +95,8 @@ async function main() {
     const end = () => {
       if (ch.hDone) return; ch.hDone = true;
       if (child === ch) { child = null; }
-      up = false; why = (err.trim().split("\n").pop() || "the link ended").slice(0, 200); log("down:", why);
+      if (up) downSince = Date.now();
+      up = false; why = (err.trim().split("\n").pop() || "the link ended").slice(0, 200); log("down:", why); unlisten();
       for (const c of [...clients.keys()]) closeClient(c); // the panels reconnect by themselves (as after a daemon restart)
       try { process.kill(-ch.pid, "SIGTERM"); } catch { /* gone */ }
       if (!timer) { timer = setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 30000); }
@@ -103,7 +107,8 @@ async function main() {
   setInterval(() => {
     if (child && up) { if (Date.now() - lastHeard > DEAD_MS) { log("silent for", DEAD_MS, "ms"); try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* gone */ } }, 2000).unref(); } else toRemote({ t: "p", ts: Date.now() }); }
     else if (child && !up && Date.now() - lastHeard > 60000) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } } // (a login prompt or a hang before hello)
-    if (!clients.size && Date.now() - lastClient > IDLE_MS) bye();
+    // idle: up with no panel for IDLE_MS; down (nobody can connect then) for 6 × IDLE_MS (panel-link.sh restarts it while a panel lives)
+    if (!clients.size && (up ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
   }, Math.min(PING_MS, 5000)).unref?.();
   // a laptop waking from sleep: check at once rather than at the next ping
   let lastTick = Date.now();
@@ -120,7 +125,6 @@ async function main() {
       while ((i = buf.indexOf("\n")) >= 0) {
         const l = buf.slice(0, i); buf = buf.slice(i + 1); if (!l.trim()) continue;
         let m = null; try { m = JSON.parse(l); } catch { /* passed on as it is */ }
-        if (m?.method === "link.status") { sock.write(JSON.stringify({ id: m.id, result: { up, why, panels: [...clients.values()].filter((x) => x !== k).length } }) + "\n"); continue; }
         if (m?.method === "link.upload") {
           const p = m.params || {};
           if (!up) { sock.write(JSON.stringify({ id: m.id, error: `the link to world ${WL} is down${why ? ` (${why})` : ""}` }) + "\n"); continue; }
@@ -132,9 +136,19 @@ async function main() {
     const gone = () => { if (clients.get(c) === k) { clients.delete(c); toRemote({ t: "x", c }); if (!clients.size) lastClient = Date.now(); } };
     sock.on("close", gone); sock.on("error", gone);
   });
-  srv.listen(SOCK, () => { try { fs.chmodSync(SOCK, 0o600); } catch { /* fine */ } log("listening", SOCK); });
-  srv.on("error", (e) => { console.error(`rlink: ${e.message}`); process.exit(1); });
-  function bye() { log("idle: bye"); try { srv.close(); } catch { /* fine */ } try { fs.unlinkSync(SOCK); } catch { /* gone */ } if (child) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } } process.exit(0); }
+  let listening = false;
+  function listen() { if (listening) return; listening = true; try { fs.unlinkSync(SOCK); } catch { /* none */ } srv.listen(SOCK, () => { try { fs.chmodSync(SOCK, 0o600); } catch { /* fine */ } log("listening", SOCK); }); }
+  function unlisten() { if (!listening) return; listening = false; try { srv.close(); } catch { /* fine */ } try { fs.unlinkSync(SOCK); } catch { /* gone */ } }
+  srv.on("error", (e) => { log(`panel socket: ${e.message}`); listening = false; });
+  const ctl = net.createServer((sock) => {
+    let b = ""; sock.setEncoding("utf8");
+    sock.on("data", (d) => { b += d; let i; while ((i = b.indexOf("\n")) >= 0) { const l = b.slice(0, i); b = b.slice(i + 1); let m = null; try { m = JSON.parse(l); } catch { continue; }
+      if (m?.method === "link.status") sock.write(JSON.stringify({ id: m.id, result: { up, why, panels: clients.size } }) + "\n"); } });
+    sock.on("error", () => {});
+  });
+  ctl.listen(CTL, () => { try { fs.chmodSync(CTL, 0o600); } catch { /* fine */ } });
+  ctl.on("error", (e) => { console.error(`rlink: ${e.message}`); process.exit(1); });
+  function bye() { log("idle: bye"); unlisten(); try { ctl.close(); } catch { /* fine */ } try { fs.unlinkSync(CTL); } catch { /* gone */ } if (child) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } } process.exit(0); }
   for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, bye);
   connect();
 }

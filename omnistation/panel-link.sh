@@ -7,9 +7,12 @@
 WL="${1^^}"; KIND="$2"
 [[ "$WL" =~ ^[A-I]$ && "$KIND" =~ ^(search|room|agents|board)$ ]] || { echo "usage: panel-link.sh LETTER search|room|agents|board" >&2; exit 2; }
 H="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# the world's link: started now, and checked every 30 s while this panel lives (it ends by itself when no panel needs it; one per
+# world, so a second start just exits)
 setsid -f node "$H/omnistation/rlink.mjs" "$WL" </dev/null >/dev/null 2>&1 || true
-for _ in $(seq 20); do node "$H/omnistation/rlink.mjs" "$WL" --status >/dev/null 2>&1 && break; sleep 0.25; done
-f=$(mktemp -t "hyprpi-$KIND-$WL.XXXXXX"); trap 'rm -f "$f"' EXIT
+( while sleep 30; do setsid -f node "$H/omnistation/rlink.mjs" "$WL" </dev/null >/dev/null 2>&1 || true; done ) & keeper=$!
+for _ in $(seq 20); do node "$H/omnistation/rlink.mjs" "$WL" --status 2>/dev/null | grep -q ": up" && break; sleep 0.25; done
+f=$(mktemp -t "hyprpi-$KIND-$WL.XXXXXX"); trap 'rm -f "$f"; kill "$keeper" 2>/dev/null' EXIT
 case "$KIND" in search) SV=HYPRPI_SEARCH_TUI_STATEFILE ;; room) SV=HYPRPI_ROOM_TUI_STATEFILE ;; board) SV=HYPRPI_BOARD_TUI_STATEFILE ;; agents) SV=HYPRPI_AGENTS_TUI_LOOP ;; esac
 export HYPRPI_REMOTE_LINK="$WL"
 unset HYPRPI_REMOTE_PANEL HYPRPI_LAPTOP_RELAY HYPRPI_AGENT_ID
