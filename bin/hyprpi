@@ -50,7 +50,7 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
                               members (slots kept) unless they are also on another project
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
-  hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; its × clears like ✓, on a click or typing in the window)
+  hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; raised mid-turn, the × shows when the turn ends (J601); its × clears like ✓, on a click or typing in the window)
   hyprpi status [FOCUS] [--world X] [--self] [--json]   the /status facts: running jobs, recently done, waiting on
                               you, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
   hyprpi daemon               run the daemon in the foreground
@@ -434,7 +434,8 @@ async function cmdList() {
   for (const room of r.rooms) {
     console.log(`Room ${room.id}${room.id === r.active_room ? "  (current)" : ""}`);
     for (const a of r.agents.filter((x) => x.room === room.id)) {
-      console.log(`  ${(a.icon ? a.icon + " " : "") + a.display}\t${a.status}\t${a.workspace_label || "?"}\t${a.model}\t${a.id}`);
+      const st = a.status === "blocked" && a.blocked_on ? `blocked (${[...a.blocked_on, ...(a.takes_work ? ["at its prompt, takes work"] : [])].join("; ") || "waiting on Angus"})` : a.status; // J601
+      console.log(`  ${(a.icon ? a.icon + " " : "") + a.display}\t${st}\t${a.workspace_label || "?"}\t${a.model}\t${a.id}`);
     }
     const th = (r.thoughts || []).find((t) => t.room === room.id);
     if (th) console.log(th.sandboxed ? `  💭 ${th.name}\tin its sandbox\t(sandboxed world: reached through ${th.sandboxed}; no host Thoughts)` : `  💭 ${th.name}\t${th.running ? "running" : "starts when talked to"}\t(world agent: talk to it any time)`); // J267
