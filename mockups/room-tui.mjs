@@ -41,7 +41,7 @@ import { sentLine, SENT_STICKY_MS } from "../lib/tui/sent.mjs"; // J165
 import { userName, HUMAN_KEY } from "../lib/policy.mjs"; // J261: the human's display name
 import { wordAt, urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
-import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, linkPanel, uploadImages, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 import { withPill, pillHit } from "../lib/tui/new-pill.mjs"; // J247: "↓ N new" while scrolled up
 import { heldFor, decideHeld, heldKeyAction, openHeldReview, autoNotes, rulesCommand } from "../lib/held.mjs"; // J268: sandbox messages held for Angus, answered y / n here
 let worldBar = null;
@@ -729,13 +729,31 @@ async function send() {
   }
   if (view === "help") view = "stream";
   input = ""; ic = 0;
-  const text = raw.startsWith("//") ? raw.slice(1) : raw;
+  let text = raw.startsWith("//") ? raw.slice(1) : raw;
   if (!text && !api) return render();
   if (!text) return render(); // Enter on an empty line: nothing to post (the agents live in panel 1)
   if (!api) return render();
   scroll = 0; streamSel = null; // J247: sending takes you to the bottom
   // @names alone: they need a message.
   if (onlyAt(text)) { input = raw + " "; ic = graphemes(input).length; note = "add your message after the @names (a room post goes to everyone)"; return render(); }
+  // J555: a laptop (link) panel of a remote world: a pasted screenshot is a LAPTOP file; it goes to that machine first (over the
+  // link) and the text names it there, so the world's agents can read it (the pty panel's relay uploaded it at paste time)
+  let why = "";
+  if (linkPanel()) { const imgs = imagePaths(text); if (imgs.length) { const u = await uploadImages(api, text, imgs); text = u.text; why = u.why || ""; } }
+  await deliver(raw, text);
+  if (why) { note = (note ? note + "  " : "") + why; noteSeen = note; render(); } // (an image that couldn't go: its laptop path stays in the text)
+}
+// Image paths in a message that exist here (as the Thoughts panel's imagePaths: "~/Screenshots/pi-clipboard-….png" from Ctrl+V)
+function imagePaths(text) {
+  const outp = [];
+  for (const m of String(text).matchAll(/(?:^|[\s("'`<\[])((?:~|\/)[^\s"'`<>()\[\]]*\.(?:png|jpe?g|webp|gif))(?=$|[\s)"'`>\].,;:!?])/gi)) {
+    const f = m[1].replace(/^~(?=\/)/, process.env.HOME || "~");
+    if (!outp.includes(f) && fs.existsSync(f)) outp.push(f);
+  }
+  return outp;
+}
+async function deliver(raw, text) {
+  if (!api) { input = raw; ic = graphemes(raw).length; note = "✗ daemon offline (kept in the box)"; return render(); } // (the link dropped during the upload)
   // A room post (every agent in the room gets it), or "@Name text" / "@project text": just them.
   let targets = [], body = text;
   const at = text.match(/^((?:@\S+[\s,]+)+)([\s\S]+)$/);
