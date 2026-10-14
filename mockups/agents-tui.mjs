@@ -34,7 +34,7 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold
 import { createInputBox, createHistory, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
-import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
+import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, linkPanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 let worldBar = null;
 
 // ---- state -----------------------------------------------------------------
@@ -215,6 +215,9 @@ function sandboxedWs(ws) {
 }
 
 function reportedRows(r, W) {
+  // J555: a remote world's own panel (on its machine, or on the laptop through the world's link) lists that world's agents itself:
+  // the laptop's report of them (world-status.mjs, worlds/world-<x>/agents.json) would show each one twice
+  if (remotePanel()) return [];
   const j = reportedFor(r); if (!j) return [];
   const age = Date.now() - Number(j.at || 0);
   if (!(age < 90000)) return [dim(clip(`  ◇ world ${SAFE(j.room, 1)}'s own agents: not reporting (last ${Math.round(age / 60000)} min ago)`, W))];
@@ -410,7 +413,7 @@ function draw() {
   const nParked = agents.filter((a) => a.parked && (!a.parked_from || a.parked_from === room)).length;
   const nClosed = dormant.filter((a) => a.room === room).length;
   const extra = [nParked && `${nParked} parked`, nClosed && `${nClosed} closed`].filter(Boolean).join(" · ");
-  const left = ` hyprpi agents ${online ? "" : "· daemon offline "}`; // the same label form in every panel (Angus)
+  const left = ` hyprpi agents ${online ? "" : linkPanel() ? `· link to ${room} down ` : "· daemon offline "}`; // the same label form in every panel (Angus); J555: a link panel's daemon is behind the world's link
   const right = `${live.length} live${extra ? " · " + extra : ""} `;
   const mid = W - width(left) - width(tabs.replace(/\x1b\[[0-9;]*m/g, "")) - width(right);
   worldBar = { y: rows.length + 1, x0: width(left) }; // only this world's letter is drawn (J198); a click on it does nothing (lib/tui/world-tabs.mjs)
@@ -447,21 +450,38 @@ function applyList(r) {
   render();
 }
 
+// J555: one connection at a time, one retry timer. Through a world's link (HYPRPI_REMOTE_LINK) the socket answers even while the
+// link itself is down (rlink holds the calls), so a connect can succeed and its ui.subscribe time out: that half-open connection
+// is closed before the next try (it used to stay, subscribed, and each one's own close started yet another), and the panel says
+// it's offline until the daemon has answered.
+let gen = 0, retryTimer = null;
+function retry() { if (!retryTimer && !restarting) retryTimer = setTimeout(() => { retryTimer = null; start(); }, 1500); }
 async function start() {
   if (restarting) return;
+  const my = ++gen; let c = null;
   try {
-    api = await connect({
+    c = await connect({
       scrub: true, // J553 (9): no terminal command in the daemon's strings (an agent's OSC 52, title, …) reaches this screen (lib/client.mjs)
       onEvent: (ev, data) => {
+        if (my !== gen) return;
         if (ev === "agents") applyList(data);
         else if (ev === "board" && data?.room === room) loadBoard();
       },
-      onClose: () => { online = false; api = null; render(); setTimeout(start, 1500); },
+      onClose: () => { if (my !== gen) return; online = false; api = null; render(); retry(); },
     });
+    if (my !== gen) { c.close(); return; }
+    api = c;
+    const r = await c.call("ui.subscribe", { windows: false });
+    if (my !== gen) return;
     online = true;
-    applyList(await api.call("ui.subscribe", { windows: false }));
+    applyList(r);
     await loadBoard();
-  } catch { online = false; render(); setTimeout(start, 1500); }
+  } catch {
+    if (my !== gen) return;
+    gen++; api = null; online = false; render(); // (gen++: the half-open connection's own close is not a second retry)
+    try { c?.close(); } catch { /* gone */ }
+    retry();
+  }
 }
 
 // ---- actions ---------------------------------------------------------------
