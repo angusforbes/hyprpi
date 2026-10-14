@@ -450,7 +450,7 @@ export default function hyprpi(pi: ExtensionAPI) {
           }
           const hints = [hint("app.interrupt", "interrupt"), bound("app.clear") ? raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit") : hint("app.exit", "exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].filter(Boolean).join(theme.fg("muted", " · "));
           return [
-            ...beside([top, hints]), // J537h (Angus: "we already have ctrl+o more"): no "Press ctrl+o…" line
+            ...beside([top, hints, theme.fg("dim", "https://github.com/angusforbes/hyprpi")]), // J537h: no "Press ctrl+o…" line; J537i (Angus): the repo link on line 3
           ].map((l) => fit(l, width));
         },
         invalidate() {},
