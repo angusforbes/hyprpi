@@ -58,6 +58,10 @@ if (process.argv[2] === "--inner") {
     const t2 = Date.now(); let left = members; while (Date.now() - t2 < 2000 && left.length) left = members.filter((m) => { try { const s = fs.readFileSync(`/proc/${m}/stat`, "latin1"); return !/^\S+ \(.*\) Z/.test(s); } catch { return false; } });
     return { members: members.length, left: left.length };
   });
+  // worker threads (no --import preload of their own; the guard adds itself through --require)
+  const { Worker } = await import("node:worker_threads");
+  const inWorker = (opts) => new Promise((r) => { const w = new Worker(`try { process.kill(${D}, "SIGTERM"); require("worker_threads").parentPort.postMessage("sent") } catch (e) { require("worker_threads").parentPort.postMessage(e.code) }`, { eval: true, ...opts }); w.on("message", r); w.on("error", (e) => r("error " + e.message)); });
+  out.push({ name: "worker", value: await inWorker({}) }, { name: "worker bare", value: await inWorker({ execArgv: [], env: {} }) });
   // sockets: a server the outer half listens on (a stand-in for a live service) and the live runtime folder
   const net = await import("node:net");
   const tryConnect = (p) => new Promise((r) => { const c = net.createConnection(p); c.on("connect", () => { c.destroy(); r("connected"); }); c.on("error", (e) => r(e.code)); setTimeout(() => r("timeout"), 2000); });
@@ -143,6 +147,7 @@ try {
   // (run directly the dummy's pid doesn't exist in the sandbox: "No such process". Run under test/run.mjs the sandbox is nested and the
   // dummy's small pid can be reused INSIDE the inner sandbox, so the kill lands on the sandbox's own process: still never the dummy.)
   const bk = res["bash script kill"] || {};
+  ok("B3 a worker thread's process.kill(dummy) is refused too (also one started with execArgv: [] and env: {})", [res.worker?.value, res["worker bare"]?.value].every((v) => v === "ETESTGUARD" || (!!globalThis.__hyprpiTestGuard && v === "ESRCH")), // (nested under run.mjs the dummy's small pid number can be one the inner sandbox already used: ESRCH, still never the dummy) `${res.worker?.value} / ${res["worker bare"]?.value}`);
   ok("B4 a bash script the guard can't read still can't reach the dummy (the kernel resolves its pid inside the sandbox only)", (/kill rc=1/.test(bk.stdout || "") && /No such process/.test(bk.stderr || "")) || (!!globalThis.__hyprpiTestGuard && bk.signal === "SIGTERM"), JSON.stringify(bk).slice(0, 160));
   ok("B5 `hyprpi send Claw /quit` spawned from node is refused by the preload", res["hyprpi send /quit (node spawn)"]?.threw === "ETESTGUARD" && /hyprpi send … \/quit/.test(res["hyprpi send /quit (node spawn)"].msg));
   ok("B5 `hyprpi send Claw /quit` from a bash script is refused by bin/hyprpi itself (exit 86)", /rc=86/.test(res["hyprpi send /quit (bash script)"]?.stdout || "") && /test guard: refused `hyprpi send Claw \/quit`/.test(res["hyprpi send /quit (bash script)"]?.stderr || ""), JSON.stringify(res["hyprpi send /quit (bash script)"]).slice(0, 200));

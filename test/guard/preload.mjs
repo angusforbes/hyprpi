@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import cp from "node:child_process";
+import wt from "node:worker_threads";
 import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
 import { killRefusal, commandRefusal, procStat, parseRoot, underLive, liveDirs, groupMembers } from "./core.mjs";
@@ -102,6 +103,20 @@ if (!globalThis.__hyprpiTestGuard) {
       if (p && underLive(p, dirs) && (!sandboxed || (!fs.existsSync(p) && hostLive(p)))) refuse(`test guard: refused a connection to ${p}: that is the live desktop's runtime folder (the live hyprpi daemon, Hyprland, the session bus)${sandboxed ? ", masked in the test's sandbox" : ""}. Give the test (and every process it starts) its own HYPRPI_SOCKET / XDG_RUNTIME_DIR in a temp dir.`);
       return origConnect.apply(this, a);
     };
+  }
+  // ---- worker threads: `--import` preloads don't run in workers, so every Worker gets this guard through --require ----
+  {
+    const WORKER_GUARD = fileURLToPath(new URL("./preload-worker.cjs", import.meta.url)), Orig = wt.Worker;
+    if (typeof Orig === "function") {
+      wt.Worker = class GuardedWorker extends Orig {
+        constructor(file, opts = {}) {
+          const base = Array.isArray(opts?.execArgv) ? opts.execArgv : process.execArgv.filter((a) => !a.startsWith("--import"));
+          const o = { ...(opts || {}), execArgv: [...base.filter((a) => a !== `--require=${WORKER_GUARD}`), `--require=${WORKER_GUARD}`] };
+          if (o.env && typeof o.env === "object") { const e = { ...o.env }; for (const k of CARRY) if (env[k] != null && e[k] == null) e[k] = env[k]; o.env = e; }
+          super(file, o);
+        }
+      };
+    }
   }
   syncBuiltinESMExports();
   globalThis.__hyprpiTestGuard = { ctx, refusals, sandboxed };

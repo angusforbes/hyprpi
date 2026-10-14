@@ -65,7 +65,8 @@ await Promise.all(Array.from({ length: Math.min(jobs, files.length) }, async () 
   while (queue.length) {
     const r = await runOne(queue.shift()); results.push(r);
     const pass = r.code === 0 && !r.refusals.length, rel = path.relative(ROOT, r.file);
-    if (!pass || !quiet) console.log(`${pass ? "ok  " : "FAIL"} ${rel} (${r.secs}s${r.code ? `, exit ${r.code}` : ""}${r.refusals.length ? `, ${r.refusals.length} guard refusal(s)` : ""})`);
+    const hint = !pass && !r.refusals.length && (r.code === 143 || r.code === 137 || r.code === 129) ? " - the sandbox was signalled from inside (e.g. kill 0 / kill -1 in a shell): the guard ended the test there" : "";
+    if (!pass || !quiet) console.log(`${pass ? "ok  " : "FAIL"} ${rel} (${r.secs}s${r.code ? `, exit ${r.code}${hint}` : ""}${r.refusals.length ? `, ${r.refusals.length} guard refusal(s)` : ""})`);
     if (!pass) {
       for (const w of r.refusals.slice(0, 3)) console.log(`     ⛔ ${w}`);
       const tail = fs.readFileSync(r.log, "utf8").trimEnd().split("\n").slice(-12);

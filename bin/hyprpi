@@ -741,8 +741,9 @@ if (process.env.HYPRPI_TEST_GUARD === "1" && !["help", "--help", "-h", "version"
   const uid = process.getuid?.() ?? 1000, sock = process.env.HYPRPI_SOCKET ? path.resolve(process.env.HYPRPI_SOCKET) : "";
   const live = !sock || [`/run/user/${uid}`, `/tmp/hyprpi-${uid}`].some((d) => sock === d || sock.startsWith(d + "/"));
   const quit = cmd === "send" && args.slice(1).some((a) => /^\/(quit|exit|q)\b/.test(a));
-  if (quit && (live || process.env.HYPRPI_TEST_ALLOW_QUIT_TEST_DAEMON !== "1")) die(`test guard: refused \`hyprpi send ${args.join(" ")}\` in a test run: it ends an agent. Tests close only fake agents (a spied seam, or their own daemon with HYPRPI_TEST_ALLOW_QUIT_TEST_DAEMON=1). Skill: isolated-app-tests`, 86);
-  if (live) die(`test guard: refused \`hyprpi ${cmd}\` in a test run: it would reach the LIVE daemon (no HYPRPI_SOCKET of the test's own). Start a temp daemon (HYPRPI_SOCKET / HYPRPI_STATE in a temp dir). Skill: isolated-app-tests`, 86);
+  const refuse = (why) => { if (process.env.HYPRPI_TEST_GUARD_LOG) { try { fs.appendFileSync(process.env.HYPRPI_TEST_GUARD_LOG, JSON.stringify({ t: Date.now(), pid: process.pid, why }) + "\n"); } catch { /* best effort */ } } die(why, 86); }; // logged: the runner fails the test even if a script swallows this exit code
+  if (quit && (live || process.env.HYPRPI_TEST_ALLOW_QUIT_TEST_DAEMON !== "1")) refuse(`test guard: refused \`hyprpi send ${args.join(" ")}\` in a test run: it ends an agent. Tests close only fake agents (a spied seam, or their own daemon with HYPRPI_TEST_ALLOW_QUIT_TEST_DAEMON=1). Skill: isolated-app-tests`);
+  if (live) refuse(`test guard: refused \`hyprpi ${cmd}\` in a test run: it would reach the LIVE daemon (no HYPRPI_SOCKET of the test's own). Start a temp daemon (HYPRPI_SOCKET / HYPRPI_STATE in a temp dir). Skill: isolated-app-tests`);
 }
 const fn = commands[cmd];
 if (!fn) die(`unknown command '${cmd}'\n\n${HELP}`, 2);
