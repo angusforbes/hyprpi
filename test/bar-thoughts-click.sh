@@ -52,20 +52,26 @@ setup 2 "$(win 0xaaa1 hyprpi.mockup 'hyprpi-search A' 5)" "$(win 0xaaa2 hyprpi.m
 click A
 ok "A: one copy here (another elsewhere) → nothing" "[[ ! -s $T/dispatch.log ]]"
 
-# I (a remote world, ~/.config/hyprpi/remote/i.json): its remote Thoughts panel window
-if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/remote/i.json" ]]; then
+# I (a remote world): its remote Thoughts panel window. J575: against a FIXTURE binding (a temp XDG_CONFIG_HOME with remote/i.json),
+# never Angus's live ~/.config/hyprpi/remote/i.json, in both panel modes: "pty" (J480: panel-loop.sh over ssh -t) and "link"
+# (J555: panel-link.sh, the local panel through the world's link), the live binding's mode since J555.
+mkdir -p "$T/cfg/hyprpi/remote"
+clickI() { XDG_CONFIG_HOME="$T/cfg" timeout 20 "$ROOT/mockups/panels" I --only 3 --if-absent >/dev/null 2>&1; true; }
+for mode in pty link; do
+  printf '{"ssh":["ssh","nohost-j575.invalid"],"label":"Fixture I","prefix":"fx-","panels":"%s"}\n' "$mode" > "$T/cfg/hyprpi/remote/i.json"
   setup 82 "$(win 0xccc1 hyprpi.i-panel 'hyprpi-search I' 81)"
-  click I
-  ok "I (remote): its Thoughts panel on ws 81, I'm on ws 82 → moved to 82" "grep -q '0xccc1' $T/dispatch.log && grep -q '82' $T/dispatch.log"
-  ok "I (remote): … and focused" "focused 0xccc1"
+  clickI
+  ok "I (remote, $mode): its Thoughts panel on ws 81, I'm on ws 82 → moved to 82" "grep -q '0xccc1' $T/dispatch.log && grep -q '82' $T/dispatch.log"
+  ok "I (remote, $mode): … and focused" "focused 0xccc1"
   setup 81 "$(win 0xccc1 hyprpi.i-panel 'hyprpi-search I' 81)"
-  click I
-  ok "I (remote): already on ws 81 → nothing" "[[ ! -s $T/dispatch.log ]]"
+  clickI
+  ok "I (remote, $mode): already on ws 81 → nothing" "[[ ! -s $T/dispatch.log ]]"
   setup 82
-  click I
-  ok "I (remote): not open → … and focused once it maps" "focused 0xnew1"
-  ok "I (remote): not open → world I's remote search panel is opened here (omnistation/world I panel search)" "grep -qE 'hyprpi-search[\\]? I' $T/dispatch.log && grep -q 'panel-loop.sh I search' $T/dispatch.log"
-else echo "skip I: no remote binding for world I here"; fi
+  clickI
+  ok "I (remote, $mode): not open → … and focused once it maps" "focused 0xnew1"
+  want=$([[ $mode == link ]] && echo 'panel-link.sh I search' || echo 'panel-loop.sh I search')
+  ok "I (remote, $mode): not open → world I's remote search panel is opened here ($want)" "grep -qE 'hyprpi-search[\\]? I' $T/dispatch.log && grep -q '$want' $T/dispatch.log"
+done
 echo "--- dispatch log of the last case"; cat "$T/dispatch.log" | cut -c1-200
 [[ $fails -eq 0 ]] && echo "all passed" || echo "$fails FAILED (state $T)"
 exit $fails

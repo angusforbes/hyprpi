@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// test-guard: skip live: reads the live phone server on 127.0.0.1:8897 (not a unit test; run it by hand: node test/run.mjs --net test/phone-remote-agents.mjs)
+// test-guard: skip live (reads Angus's LIVE phone server on 127.0.0.1:8897, read-only; -live keeps it out of the gate, and the guard would refuse that host port anyway. Run it by hand, unguarded: node test/phone-remote-agents-live.mjs)
 // J562 proof (Angus: "Hey I'm not seeing hub agents in wI … No agents working in I"): the phone page (π, the live server on
 // 127.0.0.1:8897) in a HEADLESS Chromium of its own (temp profile, no window), driven over CDP with the page's own code
 // (window.__rc): world I's Agnt lists hub-alpha and its session opens; world H's lists omni-alpha and Mailwise and they open;
 // a stale / closed agent (a gone Ping helper) falls back to the world's agent list with a note instead of a dead "✗ no such
 // agent or session" page. Read-only: nothing is sent to any agent.
-//   node test/phone-remote-agents.mjs [http://127.0.0.1:8897]   (exit 0 = pass)
+//   node test/phone-remote-agents-live.mjs [http://127.0.0.1:8897]   (exit 0 = pass)
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
