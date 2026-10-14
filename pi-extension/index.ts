@@ -441,8 +441,9 @@ export default function hyprpi(pi: ExtensionAPI) {
           const top = theme.fg("dim", `Pi v${P.VERSION || ""}${hyVer ? ` · hyprpi ${hyVer}` : ""}`);
           const M: string[] = marks[mode], mw = [...M[0].replace(/\x1b\[[0-9;]*m/g, "")].length, pad = " ".repeat(mw);
           // text beside the mark, line by line; mark lines without text stand alone, text past the mark is indented to it (J537c: 3 or 6 lines)
-          // J537j (Angus: "add a space before each of the three lines"): a one-space left margin, as pi's own header has
-          const beside = (T: string[]) => Array.from({ length: Math.max(M.length, T.length) }, (_, i) => " " + (T[i] === undefined ? (M[i] ?? "") : `${M[i] ?? pad} ${T[i]}`));
+          // J537k (Angus: "add a space before each of the three lines" — "i dont see a space between the mark and the 3 lines of
+          // notes"): two spaces between the mark and its text (J537j had put the space at the left edge instead)
+          const beside = (T: string[]) => Array.from({ length: Math.max(M.length, T.length) }, (_, i) => (T[i] === undefined ? (M[i] ?? "") : `${M[i] ?? pad}  ${T[i]}`));
           // J537f (Angus: "(empty) to suspend"?): a hint whose key is unbound (keybindings.json "app.clear": [] etc.) is left out, not shown keyless
           const bound = (k: string) => typeof P.keyText !== "function" || P.keyText(k) !== "";
           const hint = (k: string, d: string) => (!bound(k) ? "" : typeof P.keyHint === "function" ? P.keyHint(k, d) : theme.fg("dim", d));
