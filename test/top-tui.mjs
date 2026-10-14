@@ -93,7 +93,8 @@ const actions = {
   focusRow: (a) => real.focusRow(a, { request, procRoot: P, clients: async () => windows, blocked: () => false, focusWindow: async (addr) => { calls.focus.push(addr); },
     windowForPid: (pid) => { for (let p = pid, g = 0; p > 1 && g < 10; p = procs.get(p)?.ppid ?? 0, g++) { const w = windows.find((x) => x.pid === p); if (w) return w; } return null; } }),
 };
-const telemetry = { read: async () => ({ agents: agentsMeta(), worlds: [], warnings: [] }), close: () => {} };
+let daemonDown = false;
+const telemetry = { read: async () => daemonDown ? { agents: [], worlds: [], warnings: ["daemon not answering: test"], authoritative: false } : ({ agents: agentsMeta(), worlds: [], warnings: [] }), close: () => {} };
 let clock = 0;
 const sampler = new ProcSampler({ procRoot: P, clockTicks: 100, pageSize: 4096, selfPid: 900, fullScanEvery: 1, now: () => (clock += 500) });
 
@@ -126,8 +127,10 @@ const until = async (f, ms = 5000) => { const t = Date.now(); while (Date.now() 
 // select(re): Home, then down until the highlight matches; THROWS (aborting the whole test, before any x/y) if it never does
 class Abort extends Error {}
 async function select(re) {
-  key("home"); await sleep(30);
-  for (let i = 0, last = null; i < 60; i++) { if (re.test(hl())) return; if (hl() === last) break; last = hl(); key("down"); await sleep(15); }
+  for (let pass = 0; pass < 3 && !re.test(hl()); pass++) { // (a refresh can land between two keys: a few passes)
+    key("home"); await sleep(40);
+    for (let i = 0, last = null; i < 80; i++) { if (re.test(hl())) return; if (hl() === last) break; last = hl(); key("down"); await sleep(20); }
+  }
   if (!re.test(hl())) throw new Abort(`select ${re}: not found (highlight: "${hl().slice(0, 30)}"); aborting before any action`);
 }
 try {
@@ -198,9 +201,16 @@ try {
   await select(/^pi \(pid 610\)/); key("return"); await until(() => calls.focus.length, 2000);
   ok("W3 Enter on another CLI focuses its terminal's window", calls.focus[0] === "0xaaa");
   // a stale row: its pid reused between the last refresh and Enter → no focus
-  drop(610); put(610, { comm: "pi", ppid: 500, argv: ["pi"], start: 88888 }); const f0 = calls.focus.length;
-  key("return"); await sleep(200);
-  ok("W4 Enter on a row whose pid was reused since the refresh: no focus, it says so", calls.focus.length === f0 && /can't focus: it has ended/.test(footer()), footer());
+  await select(/^pi \(pid 610\)/);
+  const f0 = calls.focus.length; drop(610); put(610, { comm: "pi", ppid: 500, argv: ["pi"], start: 88888 }); key("return"); // reused, and Enter before any refresh
+  await sleep(200);
+  ok("W4 Enter on a row whose pid was reused since the refresh: no focus", calls.focus.length === f0, footer());
+  // (TopCheck564b) the daemon stops answering: the agents' pi look like Other agents now; x / Enter must do nothing
+  daemonDown = true; await sleep(800);
+  await select(/\(pid 560\b/); // Parent's pi, now shown as an Other agents row ("hp-parent (pid 560, not registered)")
+  const k1 = calls.kill.length, c1 = calls.close.length; key("x"); await sleep(40); key("y"); await sleep(200);
+  ok("W4 daemon not answering: x on an agent's pi shown as Other does nothing, and says why", calls.kill.length === k1 && calls.close.length === c1 && /daemon isn't answering/.test(footer()), footer());
+  daemonDown = false;
   key("q"); await run;
   ok("the terminal's raw mode is restored", inp.isRaw === false);
 } catch (e) {
