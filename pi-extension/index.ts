@@ -450,7 +450,7 @@ export default function hyprpi(pi: ExtensionAPI) {
           }
           const hints = [hint("app.interrupt", "interrupt"), bound("app.clear") ? raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit") : hint("app.exit", "exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].filter(Boolean).join(theme.fg("muted", " · "));
           return [
-            ...beside([top, hints, theme.fg("dim", `Press ${key("app.tools.expand", "ctrl+o")} to show full startup help`)]),
+            ...beside([top, hints]), // J537h (Angus: "we already have ctrl+o more"): no "Press ctrl+o…" line
           ].map((l) => fit(l, width));
         },
         invalidate() {},
