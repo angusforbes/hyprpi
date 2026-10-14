@@ -128,7 +128,8 @@ export function sandboxCommand(argv, opts = {}) { return ["bwrap", [...sandboxAr
 // test needs to see at the same path (the log's folder is added). The returned child has .testTmp = that folder.
 export function spawnSandboxed(argv, opts = {}) {
   const tmp = opts.tmp || fs.mkdtempSync(path.join(os.tmpdir(), "testguard-tmp-"));
-  const binds = [...(opts.binds || []), ...(opts.log ? [path.dirname(opts.log)] : [])];
+  // (/tmp/jiti: the TypeScript loader's compile cache; starting it empty made a daemon's start-up seconds slower)
+  const binds = [...(opts.binds || []), ...(opts.log ? [path.dirname(opts.log)] : []), ...["/tmp/jiti"].filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } })];
   const o = { ...opts, tmp, binds };
   const [cmd, args] = sandboxCommand(argv, o);
   const child = spawn(cmd, args, { cwd: opts.cwd, stdio: opts.stdio || "inherit", env: guardEnv(opts.env || process.env, o) });
