@@ -16,19 +16,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (f, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { try { const v = await f(); if (v) return v; } catch { /* not yet */ } await sleep(100); } return null; };
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j555r-")), F = (n) => path.join(T, n);
 const { connect } = await import(path.join(ROOT, "lib/client.mjs"));
-function daemon(tag, state) {
+function daemon(tag, state, extra = {}) {
   const cfg = F(`cfg-${tag}`), sock = F(`${tag}.sock`);
   fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true }); fs.mkdirSync(state, { recursive: true });
   fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10 }));
   fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } } }));
-  const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: state, XDG_CONFIG_HOME: cfg, HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_NOTIFY_TEST: "1" };
+  const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: state, XDG_CONFIG_HOME: cfg, HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_NOTIFY_TEST: "1", ...extra };
   for (const k of ["HYPRPI_AGENT_ID", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "HYPRPI_REMOTE_HOME", "HYPRPI_REMOTE_LINK"]) delete env[k];
   return { sock, state, d: spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: "ignore" }) };
 }
-const rem = daemon("rem", path.join(T, ".hyprpi-h", "state")), lap = daemon("lap", F("lapstate"));
+// the laptop: world H bound to a remote machine (its binding), and the same runtime dir as the link (W8: dictation to Thoughts-H)
+fs.mkdirSync(F("run"), { mode: 0o700 }); fs.mkdirSync(path.join(F("cfg-lap"), "hyprpi", "remote"), { recursive: true, mode: 0o700 });
+fs.writeFileSync(path.join(F("cfg-lap"), "hyprpi", "remote", "h.json"), JSON.stringify({ ssh: [F("fakessh"), "host"] }), { mode: 0o600 });
+const rem = daemon("rem", path.join(T, ".hyprpi-h", "state")), lap = daemon("lap", F("lapstate"), { XDG_RUNTIME_DIR: F("run") });
 fs.mkdirSync(path.join(lap.state, "rooms"), { recursive: true }); fs.writeFileSync(path.join(lap.state, "rooms", "A.jsonl"), "");
 const SSH = F("fakessh"), PIDS = F("remote.pids"), RD = F("remote"), RUN = F("run");
-fs.mkdirSync(RD); fs.mkdirSync(RUN, { mode: 0o700 });
+fs.mkdirSync(RD);
 fs.writeFileSync(SSH, `#!/bin/sh\necho $$ >> ${PIDS}\nexec env HYPRPI_STATE=${rem.state} HYPRPI_SOCKET=${rem.sock} ${process.execPath} ${path.join(ROOT, "omnistation/rlink-remote.mjs")}\n`, { mode: 0o755 });
 fs.writeFileSync(path.join(RD, "h.json"), JSON.stringify({ ssh: [SSH, "host"] }));
 // the link runs as the laptop: its daemon socket is the laptop daemon's
@@ -67,6 +70,10 @@ try {
   ok("5 link.call runs the laptop's op handler and returns its result", lc.result?.world === "H" && lc.result?.echo?.path === "Notes/x.md", JSON.stringify(lc));
   const lu = await remc.call("link.call", { op: "nosuch", args: {} }).catch((e) => ({ err: e.message }));
   ok("5 an op the laptop doesn't allow is refused", /no op nosuch/.test(lu.err || ""), JSON.stringify(lu));
+  // 6 (W8) a dictation on the laptop for Thoughts-H (voice.dictate, room H) goes to Thoughts-H on its machine through the link
+  const vd = await lapc.call("voice.dictate", { room: "H", text: "J555 dictated hello" }).catch((e) => ({ err: e.message }));
+  const th6 = await waitFor(async () => ((await remc.call("thoughts.get", { room: "H" })).entries || []).find((e) => e.role === "you" && e.text === "J555 dictated hello" && e.via === "voice"), 8000);
+  ok("6 a laptop dictation for Thoughts-H lands in Thoughts-H's thread on the machine (via the link)", vd.remote === true && !!th6, JSON.stringify(vd));
   // 3
   ok("3 no fake world A on the machine (no Thoughts-A thread, no room A)", !fs.existsSync(path.join(rem.state, "thoughts", "A.thread.jsonl")) && !fs.existsSync(path.join(rem.state, "rooms", "A.jsonl")));
   // 4 the link gone: refused with the reason again
