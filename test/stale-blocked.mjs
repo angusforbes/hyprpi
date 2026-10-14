@@ -156,6 +156,18 @@ try {
   a = await me();
   ok("D answering D1 on the board clears the ×", a.status === "idle" && a.run === "done" && !a.blocked_on, `${a.status}/${a.run}`);
 
+  // Independent delta check: another agent's exact open question must be linked, not silently dropped.
+  await watcher.call("board.project", { action: "join", project: "mathbac" });
+  const sharedQ = "Shared edge question: which GPU do we choose?";
+  const shared = await watcher.call("board.item", { action: "add", project: "mathbac", section: "decide", text: sharedQ, options: ["A100", "L40S"] });
+  await upd({ status: "working" });
+  await upd({ status: "blocked", quiet: true, decision: sharedQ + " a) A100 b) L40S" });
+  await upd({ status: "done" }); await sleep(700);
+  a = await me();
+  ok("DELTA duplicate decision remains visible until the existing board question is answered", a.status === "blocked" && (a.blocked_on || []).some(x => x.includes(shared.item.h)), JSON.stringify({ status: a.status, run: a.run, blocked_on: a.blocked_on }));
+  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: shared.item.h, answer: "a" });
+  await upd({ status: "working" }); await upd({ status: "done" });
+
   // Independent regression: a different ding after a recent board decision is not filed by autoDecide.
   await upd({ status: "working" });
   const skipped = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Edge seed question", options: ["1", "2"] });
