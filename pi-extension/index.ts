@@ -22,7 +22,7 @@ import { upkeepAgent } from "./upkeep.ts";
 import { codeVersion } from "../lib/codever.mjs";
 import { loadPolicy } from "../lib/policy.mjs";
 import { orchAgent } from "./orch.ts";
-import { draftStore } from "../lib/tui/input-box.mjs";
+import { draftStore, clipboardPaste } from "../lib/tui/input-box.mjs";
 import { statusPrompt } from "../lib/status.mjs";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
@@ -401,6 +401,17 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_e: any, ctx: any) => { ctxRef = ctx; stopped = false; watchTyping(ctx); await ensure(); });
+  // J590 (Angus: "super+v should allow me to copy the file path into the agent window. it works in the TUIs but not the
+  // agent windows"): SUPER+V reaches an agent window as Shift+Insert (Omarchy; terminal-helpers/kitty/pi.conf passes it on).
+  // Like the panels (lib/tui/input-box.mjs clipboardPaste): a screenshot is saved as ~/Screenshots/pi-clipboard-<id>.png and
+  // its path pasted; anything else is pasted as text. Both go in as a bracketed paste (pasteToEditor), so pi treats them as
+  // any paste: a long one collapses to [paste #1 …], a path gets its space.
+  if (process.env.HYPRPI_AGENT_ID && typeof (pi as any).registerShortcut === "function") {
+    (pi as any).registerShortcut("shift+insert", {
+      description: "Paste (SUPER+V): a screenshot as its file path, else the clipboard text",
+      handler: async (ctx: any) => { clipboardPaste((t: string) => { try { if (t) ctx.ui.pasteToEditor(t); } catch { /* no editor */ } }); },
+    });
+  }
   // J537 (Angus: "make that appear in eevry hyprpi agent window when it starts up, they way the pi logo appears for
   // pi"): the hypi mark (lib/hypi-mark.mjs, from make-final.py's grid, the same as π's icon) in pi's logo spot, with pi's version and short key
   // hints beside it as pi lays them out. Only in a hyprpi agent window's TUI; any problem leaves pi's own header.
