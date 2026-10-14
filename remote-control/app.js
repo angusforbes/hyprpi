@@ -299,7 +299,10 @@ function setWorld(w) {
   world = w;
   const c = cached(w);
   busy = c.busy || !!worlds.find((x) => x.id === w)?.thoughtsBusy;
-  history.replaceState(null, "", `?world=${w}`);
+  // the world is remembered here, not in the URL (Angus: "Add to Home Screen" saved ?world=D); an explicit ?world= in the
+  // address is dropped once read, so the address stays bare
+  try { localStorage.setItem("hyprpi-rc.world", w); } catch { /* memory only */ }
+  if (location.search) history.replaceState(null, "", location.pathname);
   tellHere();
   if (filsWin) filsPost({ world: w });
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
@@ -322,7 +325,7 @@ function applyState(s) {
   if (s.directory) { const sig = JSON.stringify(s.directory); if (sig !== dirSig) { dirSig = sig; dirVer++; setDirectory(s.directory); if (world) rerenderAll(); } }
   if (s.theme) { for (const [k, v] of Object.entries(s.theme)) document.documentElement.style.setProperty("--" + k, v); document.querySelector("meta[name=theme-color]").content = s.theme.bg; }
   const first = !stateSeen; stateSeen = true;
-  if (!world) setWorld(new URLSearchParams(location.search).get("world") || s.active);
+  if (!world) setWorld(new URLSearchParams(location.search).get("world") || (() => { try { return localStorage.getItem("hyprpi-rc.world"); } catch { return null; } })() || s.active);
   if (first) tellHere(); // J416: the world it opened on (?world= sets it without setWorld)
   renderTop();
   if (first) refreshAll();
@@ -1316,6 +1319,6 @@ sinput.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(fi
 window.__rc = { openSession, sess, cached, setWorld, boardOf, setView, agentsOf, jumpTo, linkNames, textGlyphs, streamOf, streamOnly, chatKeys }; // for tests (CDP)
 // A reload (the URL keeps ?world=): show that world's cached thread before the server answers.
 let stateSeen = false;
-{ const w0 = new URLSearchParams(location.search).get("world"); if (/^[A-Z]$/.test(w0 || "")) { world = w0; render({ keep: "end" }); } }
+{ const w0 = new URLSearchParams(location.search).get("world") || (() => { try { return localStorage.getItem("hyprpi-rc.world"); } catch { return null; } })(); if (/^[A-Z]$/.test(w0 || "")) { world = w0; try { localStorage.setItem("hyprpi-rc.world", w0); } catch { /* */ } render({ keep: "end" }); } if (location.search) history.replaceState(null, "", location.pathname); }
 call("GET", "/api/state").then(applyState).catch((e) => note("✗ " + e.message));
 listen();
