@@ -158,6 +158,7 @@ async function main() {
         return back({ result: result ?? null });
       } catch (e) { return back({ error: String(e?.message || e).slice(0, 500) }); }
     }
+    if (f.kind === "agent" || f.kind === "deliver") return relayAgent(f, back); // J603
     const to = String(f.to || "").toUpperCase();
     if (!/^[A-I]$/.test(to)) return back({ error: "bad world" });
     let c = null;
@@ -167,12 +168,33 @@ async function main() {
       const req = async (m, p) => { if (!c || c.closed) c = await connect({ path: socketPath() }); return c.call(m, p, { timeoutMs: 15000 }); };
       const { request_id } = await req("thoughts.relayAsk", { room: to, from: String(f.from || `Thoughts-${WL}`).slice(0, 80), text: String(f.text || ""), mode: f.mode === "talk" ? "talk" : "demand", fromThoughts: /^[A-I]$/.test(String(f.fromThoughts || "")) ? f.fromThoughts : "", via: `via world ${WL}'s link` });
       log("out", id, "→ Thoughts-" + to);
-      for (const end = Date.now() + 30 * 60e3; Date.now() < end;) {
-        await new Promise((r) => setTimeout(r, 3000));
+      for (const t0 = Date.now(), end = t0 + 12 * 3600e3; Date.now() < end;) { // J603: answerable for 12 h (3 s polls, then 30 s)
+        await new Promise((r) => setTimeout(r, Date.now() - t0 < 30 * 60e3 ? 3000 : 30000));
         try { const r = await req("thoughts.relayResult", { request_id }); if (r.answer != null) { back({ answer: String(r.answer) }); return; } }
         catch (e) { log("relayResult:", e.message); if (/unknown or expired/.test(e.message)) { back({ error: e.message }); return; } c = null; } // a laptop daemon restart: keep waiting
       }
-      back({ error: "no answer within 30 min" });
+      back({ error: "no answer within 12 h" });
+    } catch (e) { back({ error: `the laptop: ${e.message}` }); }
+    finally { try { c?.close(); } catch { /* gone */ } }
+  }
+  // J603: a remote world's message for a LAPTOP agent (kind "agent": relay.toAgent; a demand's answer polled, 12 h) or a late
+  // answer for one (kind "deliver": relay.deliver); the laptop daemon delivers it, or gives it to the agent's world's Thoughts
+  async function relayAgent(f, back) {
+    let c = null;
+    try {
+      const { connect } = await import(path.join(HERE, "../lib/client.mjs"));
+      const { socketPath } = await import(path.join(HERE, "../lib/paths.mjs"));
+      const req = async (m, p) => { if (!c || c.closed) c = await connect({ path: socketPath() }); return c.call(m, p, { timeoutMs: 15000 }); };
+      if (f.kind === "deliver") { const r = await req("relay.deliver", { origin: f.origin || {}, from: String(f.from || ""), text: String(f.text || "") }); log("deliver", f.id, "→", r.to); return back({ result: r }); }
+      const r = await req("relay.toAgent", { to: String(f.to || ""), world: String(f.world || ""), from: String(f.from || ""), fromWorld: WL, text: String(f.text || ""), mode: f.mode === "demand" ? "demand" : "talk" });
+      log("agent", f.id, "→", r.to);
+      if (!r.request_id) return back({ result: { to: r.to, note: r.note || `delivered to ${r.to}` } });
+      for (const t0 = Date.now(), end = t0 + 12 * 3600e3; Date.now() < end;) {
+        await new Promise((res) => setTimeout(res, Date.now() - t0 < 30 * 60e3 ? 3000 : 30000));
+        try { const a = await req("relay.agentResult", { request_id: r.request_id }); if (a.answer != null) return back({ result: { to: a.from || r.to, answer: String(a.answer) } }); }
+        catch (e) { if (/unknown or expired/.test(e.message)) return back({ error: e.message }); c = null; }
+      }
+      back({ error: "no answer within 12 h" });
     } catch (e) { back({ error: `the laptop: ${e.message}` }); }
     finally { try { c?.close(); } catch { /* gone */ } }
   }
