@@ -35,7 +35,7 @@ if (!globalThis.__hyprpiTestGuard) {
   const spawned = new Map(); // pid -> start ticks, children this process started
   const dirs = liveDirs();
   const nsLastPid = () => { try { return Number(fs.readFileSync("/proc/sys/kernel/ns_last_pid", "utf8")); } catch { return null; } };
-  const ctx = { procRoot: "/proc", root, sandboxed, spawned, nsLastPid, self: process.pid, liveDirs: dirs, allowTestSocketQuit: env.HYPRPI_TEST_ALLOW_QUIT_TEST_DAEMON === "1" };
+  const ctx = { procRoot: "/proc", root, sandboxed, spawned, nsLastPid, self: process.pid, liveDirs: dirs, allowTestSocketQuit: env.HYPRPI_TEST_ALLOW_QUIT_TEST_DAEMON === "1", netShared: env.HYPRPI_TEST_NET_SHARED === "1" };
   const refusals = [];
   Object.assign(env, { HYPRPI_TEST_GUARD: "1", HYPRPI_NO_ENSURE: "1" });
   const imp = `--import=${SELF}`;

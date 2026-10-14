@@ -219,6 +219,12 @@ export function commandRefusal(argv, env, ctx = {}) {
       if (/\b(?:kill|stop|restart|terminate-session|terminate-user|kill-session|kill-user|reboot|poweroff|suspend|hibernate)\b/.test(w.join(" "))) return `test guard: refused \`${shown}\`: stops real services or sessions. ${HOW}`;
       continue;
     }
+    if (ctx.netShared && ["curl", "wget", "nc", "ncat", "netcat", "socat", "telnet", "http", "xh", "websocat", "grpcurl"].includes(b)) {
+      // with --net the host's loopback services are reachable: a network client aimed at this machine is refused (node's own
+      // connections are checked by the preload; a client from a shell script isn't seen here)
+      if (w.slice(1).some((x) => /(^|[/@:\[,=])(localhost\.?|127\.\d+(\.\d+){0,2}|0\.0\.0\.0|\[?::1\]?|0x7f[0-9a-f]*|2130706433)([:/\],]|$)/i.test(x) || /^(unix|abstract|unix-connect|abstract-connect|UNIX-CONNECT|ABSTRACT-CONNECT):/i.test(x) || x === "-U" || x === "--unix-socket" || x === "--abstract-unix-socket")) return `test guard: refused \`${shown}\`: a network client aimed at THIS machine while the run shares the host network (--net / test-guard: net). Talk to the test's own servers from node, or drop --net. ${HOW}`;
+      continue;
+    }
     if (b === "reprieve") { if (/\b(?:park|close)\b/.test(w.join(" "))) return `test guard: refused \`${shown}\`: parks a real window. ${HOW}`; continue; }
   }
   return "";
