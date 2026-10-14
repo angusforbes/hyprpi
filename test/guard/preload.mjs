@@ -12,6 +12,8 @@
 // even if the test swallowed the error (try { process.kill(…) } catch {} must not hide it).
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import dns from "node:dns";
 import cp from "node:child_process";
 import wt from "node:worker_threads";
 import { syncBuiltinESMExports } from "node:module";
@@ -107,14 +109,29 @@ if (!globalThis.__hyprpiTestGuard) {
     };
     let absSet = null;
     const hostAbstract = (p) => { if (!absSet) { try { absSet = new Set(fs.readFileSync(env.HYPRPI_TEST_HOST_ABSTRACT, "utf8").split("\n").filter(Boolean)); } catch { absSet = false; } } return absSet === false || absSet.has("@" + String(p).slice(1)); };
+    const localAddrs = () => { const out = new Set(); try { for (const l of Object.values(os.networkInterfaces())) for (const x of l || []) out.add(x.address); } catch { /* none */ } return out; };
+    const isLocalAddr = (a) => { const x = String(a || "").replace(/^::ffff:/i, ""); return /^127\./.test(x) || x === "0.0.0.0" || x === "::" || x === "::1" || localAddrs().has(x); };
     const origConnect = net.Socket.prototype.connect;
     net.Socket.prototype.connect = function connect(...a) {
       const first = Array.isArray(a[0]) ? a[0][0] : a[0];
       const p = typeof first === "string" && !/^\d+$/.test(first) ? first : first && typeof first === "object" ? first.path : null;
       const port = typeof first === "number" || /^\d+$/.test(String(first ?? "")) ? Number(first) : first && typeof first === "object" ? Number(first.port) : NaN;
-      if (!p && Number.isInteger(port) && env.HYPRPI_TEST_HOST_PORTS) {
-        const host = String((first && typeof first === "object" ? first.host : typeof a[1] === "string" ? a[1] : "") || "localhost").replace(/^\[|\]$/g, "");
-        if (/^(localhost|127\.\d+\.\d+\.\d+|::1|0\.0\.0\.0|::|::ffff:127\.\d+\.\d+\.\d+)$/i.test(host) && hostPort(port)) refuse(`test guard: refused a connection to ${host}:${port}: a service listening on the HOST (this run shares its network with --net / test-guard: net). Start the test's own server on a port of its own.`);
+      if (!p && Number.isInteger(port) && env.HYPRPI_TEST_HOST_PORTS && hostPort(port)) {
+        // a port that was listening on the HOST when the run started: refused when the address (after name resolution) is this
+        // machine's: loopback in any spelling (127.1, localhost.), the any-address, or one of its interfaces' addresses
+        const opts = first && typeof first === "object" ? first : null;
+        const host = String((opts ? opts.host : typeof a[1] === "string" ? a[1] : "") || "localhost").replace(/^\[|\]$/g, "");
+        const why = (addr) => `test guard: refused a connection to ${host}:${port}${addr && addr !== host ? ` (${addr})` : ""}: a service listening on the HOST (this run shares its network with --net / test-guard: net). Start the test's own server on a port of its own.`;
+        if (net.isIP(host)) { if (isLocalAddr(host)) refuse(why(host)); }
+        else if (opts) {
+          const lk = typeof opts.lookup === "function" ? opts.lookup : dns.lookup;
+          opts.lookup = (h, o, cb) => lk(h, o, (err, addr, fam) => {
+            if (err) return cb(err, addr, fam);
+            const list = Array.isArray(addr) ? addr.map((x) => x.address) : [addr];
+            if (list.some(isLocalAddr)) { try { refuse(why(list.join(", "))); } catch (e) { return cb(e); } }
+            return cb(err, addr, fam);
+          });
+        } else refuse(why("")); // (socket.connect(port, name) without options: the name can't be checked first)
       }
       if (p && sandboxed && !String(p).startsWith("\0") && env.HYPRPI_TEST_NET_SHARED !== "1" && !boundHere(p)) refuse(`test guard: refused a connection to ${p}: no process of this test run is listening there (in the sandbox's own network namespace /proc/net/unix lists only the run's sockets), so it belongs to something OUTSIDE the run (a socket made after the sandbox started, or a link to one). Give the test its own sockets in a temp dir.`);
       if (p && String(p).startsWith("\0") && env.HYPRPI_TEST_NET_SHARED === "1" && hostAbstract(p)) refuse(`test guard: refused a connection to the abstract socket @${String(p).slice(1)}: it belongs to the HOST (this run shares its network with --net / test-guard: net).`);

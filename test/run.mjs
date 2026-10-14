@@ -48,7 +48,7 @@ for (const f of skipped) { console.log(`skip ${path.relative(ROOT, f)} (${skipOf
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "hyprpi-testrun-"));
 const wantsNet = (f) => { try { return /^\s*(?:\/\/|#)\s*test-guard:\s*net\b/m.test(fs.readFileSync(f, "utf8").split("\n").slice(0, 20).join("\n")); } catch { return false; } };
 const runOne = (file) => new Promise((done) => {
-  const name = path.relative(ROOT, file).replace(/[/\\]/g, "_"), log = path.join(runDir, name + ".log"), guardLog = path.join(runDir, name + ".refusals.jsonl");
+  const name = path.relative(ROOT, file).replace(/^(\.\.\/)+/, "").replace(/[/\\]/g, "_"), log = path.join(runDir, name + ".log"), guardLog = path.join(runDir, name + ".refusals.jsonl");
   const out = fs.openSync(log, "w"), t0 = Date.now();
   const cmd = file.endsWith(".sh") ? ["bash", file, ...testArgs] : [process.execPath, `--import=${PRELOAD}`, file, ...testArgs];
   const child = spawnSandboxed(cmd, { net: netAll || wantsNet(file), log: guardLog, cwd: ROOT, stdio: ["ignore", out, out] });
