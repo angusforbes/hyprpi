@@ -47,6 +47,9 @@ put(500, { comm: "kitty", argv: ["kitty"] });                                   
 put(501, { comm: "pi", ppid: 500, argv: ["pi"], env: { HYPRPI_AGENT_ID: "hp-atlas" } });             // agent Atlas (world A)
 put(511, { comm: "pi", ppid: 500, argv: ["pi"], env: { HYPRPI_AGENT_ID: "hp-bolt" } });              // agent Bolt (world B): briefs, projects, helpers
 put(521, { comm: "pi", ppid: 500, argv: ["pi"], env: { HYPRPI_AGENT_ID: "hp-stale" } });             // agent Stale: its registered pid gets reused later
+put(560, { comm: "pi", ppid: 500, argv: ["pi"], env: { HYPRPI_AGENT_ID: "hp-parent" } });           // agent Parent, in the kitty window
+put(561, { comm: "pi", ppid: 560, argv: ["pi"], env: { HYPRPI_AGENT_ID: "hp-kid" } });              // agent Kid: headless, nested under Parent
+put(570, { comm: "bash", ppid: 500, argv: ["bash", "/opt/tools/claude"], cwd: WORK });                // a claude launcher run as `bash /…/claude`
 put(600, { comm: "pi", ppid: 500, argv: ["pi"], cwd: path.join(WORK, "pi-proj") });                  // a plain pi (Other agents)
 put(601, { comm: "sleep", ppid: 600, argv: ["sleep", "600"] });                                      //   … with a child
 put(610, { comm: "pi", ppid: 500, argv: ["pi"], cwd: WORK });                                        // a decoy plain pi: must survive
@@ -65,9 +68,11 @@ const agentsMeta = () => [
   { id: "hp-bolt", kind: "agent", name: "Bolt", world: "B", status: "working", pids: [511], envIds: ["hp-bolt"], registeredHelpers: ["hp-kid"], priorityDetails: { components: { jobs: { value: 2 }, projects: { value: 1 } } } },
   { id: "hp-stale", kind: "agent", name: "Stale", world: "B", status: "idle", pids: [521], envIds: ["hp-stale"], registeredHelpers: [], priorityDetails: { components: {} } },
   { id: "hp-aardvark", kind: "agent", name: "Aardvark", world: "B", status: "working", pids: [531], envIds: ["hp-aardvark"], registeredHelpers: [], priorityDetails: { components: {} } },
+  { id: "hp-parent", kind: "agent", name: "Parent", world: "C", status: "idle", pids: [560], envIds: ["hp-parent"], registeredHelpers: ["hp-kid"], priorityDetails: { components: {} } },
+  { id: "hp-kid", kind: "agent", name: "Kid", world: "C", status: "idle", pids: [561], envIds: ["hp-kid"], registeredHelpers: [], priorityDetails: { components: {} } },
   { id: "thoughts:A", kind: "thoughts", name: "Thoughts-A", world: "A", status: "idle", pids: [], envIds: [], priorityDetails: { components: {} } },
 ].filter((a) => listedIds.has(a.id));
-let listedIds = new Set(["hp-atlas", "hp-bolt", "hp-stale", "thoughts:A"]);
+let listedIds = new Set(["hp-atlas", "hp-bolt", "hp-stale", "hp-parent", "hp-kid", "thoughts:A"]);
 const calls = { kill: [], close: [], focus: [], agentFocus: [] };
 const request = async (m, p) => {
   if (m === "list") return { agents: [...listedIds].filter((x) => x.startsWith("hp-")).map((id) => ({ id })) };
@@ -85,7 +90,7 @@ const actions = {
   closeAgent: (t) => real.closeAgent(t, { ...seams, request, sleep: (ms) => sleep(Math.min(ms, 20)), timeoutMs: 2000, clients: async () => windows, blocked: () => false,
     windowForPid: (pid) => { for (let p = pid, g = 0; p > 1 && g < 10; p = procs.get(p)?.ppid ?? 0, g++) { const w = windows.find((x) => x.pid === p); if (w) return w; } return null; },
     closeWindow: async (addr) => { calls.close.push([t.id, addr]); listedIds.delete(t.id); for (const p of t.rootPids) drop(p); } }),
-  focusRow: (a) => real.focusRow(a, { request, clients: async () => windows, blocked: () => false, focusWindow: async (addr) => { calls.focus.push(addr); },
+  focusRow: (a) => real.focusRow(a, { request, procRoot: P, clients: async () => windows, blocked: () => false, focusWindow: async (addr) => { calls.focus.push(addr); },
     windowForPid: (pid) => { for (let p = pid, g = 0; p > 1 && g < 10; p = procs.get(p)?.ppid ?? 0, g++) { const w = windows.find((x) => x.pid === p); if (w) return w; } return null; } }),
 };
 const telemetry = { read: async () => ({ agents: agentsMeta(), worlds: [], warnings: [] }), close: () => {} };
@@ -104,6 +109,7 @@ ok("detection: claude, codex (script + native), pi; not vim claude.md / bash -lc
   ok("W5 --json: plain pi with folder, tree (2 pids), uptime, RSS", by(600)?.tool === "Pi" && by(600).cwd === path.join(WORK, "pi-proj") && by(600).processCount === 2 && by(600).uptimeSeconds > 0 && by(600).rssBytes > 0);
   ok("W5 --json: Claude Code with its folder and terminal", by(620)?.tool === "Claude Code" && by(620).cwd === path.join(WORK, "cc-proj") && by(620).terminal === "kitty");
   ok("W5 --json: Codex wrapper + native binary are ONE row rooted at the wrapper (TopCheck564)", by(630)?.tool === "Codex" && by(630).processCount === 2 && !by(631));
+  ok("W5 --json: `bash /opt/tools/claude` is Claude Code (TopCheck564b)", by(570)?.tool === "Claude Code");
   ok("W5 --json: vim claude.md, bash -lc claude, claudette aren't agents", !other.some((a) => [640, 641, 642].includes(a.rootPid)));
   ok("W5 --json: the agents' own pi processes aren't Other agents", !other.some((a) => [501, 511, 521].includes(a.rootPid)));
 }
@@ -159,6 +165,12 @@ try {
   await until(() => /not closed/.test(footer()), 4000);
   ok("W4 Stale's registered pid now belongs to vim: nothing signalled or closed, it says so", /not closed: .*not this agent's pi/.test(footer()) && calls.kill.length === 0 && calls.close.length === 2 && has(521), footer());
 
+  // W4 (TopCheck564b): a headless agent nested under another agent: its close must NOT close the parent's window
+  await select(/^Kid\b/); key("x"); await sleep(40); key("y");
+  await until(() => /closed Kid|not closed/.test(footer()), 4000);
+  const kidKill = calls.kill.find(([p]) => p === 561);
+  ok("W4 closing nested Kid never closes Parent's window: SIGTERM to Kid's own pi only", !calls.close.some(([id]) => id === "hp-kid") && kidKill?.[1] === "SIGTERM" && has(560) && listedIds.has("hp-parent"), JSON.stringify({ close: calls.close, kill: calls.kill }));
+  calls.kill.length = 0; listedIds.delete("hp-kid");
   // W3: an Other agents tree ends by its exact pids; the decoy pi lives
   await select(/^pi \(pid 600\)/); key("x"); await sleep(40);
   ok("W3 the confirm names the pi, its folder, and its 2 pids", /^Close Pi pi \(pid 600\) in .*pi-proj\? ! 2 processes get SIGTERM \(exact pids\)/.test(footer()), footer());
@@ -185,6 +197,10 @@ try {
   ok("W3 Enter on an agent asks the daemon to focus it", calls.agentFocus[0] === "hp-aardvark");
   await select(/^pi \(pid 610\)/); key("return"); await until(() => calls.focus.length, 2000);
   ok("W3 Enter on another CLI focuses its terminal's window", calls.focus[0] === "0xaaa");
+  // a stale row: its pid reused between the last refresh and Enter → no focus
+  drop(610); put(610, { comm: "pi", ppid: 500, argv: ["pi"], start: 88888 }); const f0 = calls.focus.length;
+  key("return"); await sleep(200);
+  ok("W4 Enter on a row whose pid was reused since the refresh: no focus, it says so", calls.focus.length === f0 && /can't focus: it has ended/.test(footer()), footer());
   key("q"); await run;
   ok("the terminal's raw mode is restored", inp.isRaw === false);
 } catch (e) {
