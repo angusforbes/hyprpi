@@ -364,7 +364,7 @@ async function send() {
   if (mode === "decisions" && !raw.startsWith("/")) { // the answer box: "2⏎" picks option 2, "L⏎" later, other words answer
     if (/^l$/i.test(raw)) { const x = dv.later(); box.clear(); note = x ? `${x.it.h} later: at the end of the list` : "nothing to put off"; return render(); }
     const how = /^[1-9]$/.test(raw) ? { option: Number(raw) - 1 } : { text };
-    try { const r = await dv.answer(api, room, how); if (how.text) box.remember(raw, sentIn); box.clear(); note = r.note; if (r.world) wd.refresh(); }
+    try { const r = await dv.answer(api, room, how, dcur); if (how.text) box.remember(raw, sentIn); box.clear(); note = r.note; if (r.world) wd.refresh(); }
     catch (e) { note = "✗ " + e.message; }
     return render();
   }
