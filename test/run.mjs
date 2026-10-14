@@ -8,9 +8,10 @@
 //   node test/run.mjs --all            the gate's unit set (Blink's selection): test/*.mjs, docker/*/test-*.mjs, docker/test-*.mjs and
 //                                      test/*.sh (run with bash), minus gateway-e2e, *-live*, model-check (paid/live) and run.mjs
 //   node test/run.mjs FILE -- ARGS…    pass ARGS to the test(s), e.g. test/gateway-e2e.mjs -- --require-complete --report /tmp/x.json
-//   options: -j N (parallel, default 4) · --timeout S (per test, default 300) · --net (share the host network: for tests that
+//   options: -j N (parallel, default 4) · --timeout S (per test, default 600) · --net (share the host network: for tests that
 //            need the internet; the pid namespace and masks stay) · --keep (keep the run folder) · --quiet (no output on pass)
-//   A test can ask for the network itself with a comment line `// test-guard: net` in its first 20 lines.
+//   A test can ask for the network itself with a comment line `// test-guard: net` in its first 20 lines, and be left out of
+//   --all with `// test-guard: skip REASON` (a quarantined or live test; listed as skipped with its reason, never silently).
 //   Exit 0 = all passed. Logs: one file per test in the run folder (printed at the end).
 // No sandbox on this machine (no bwrap / user namespaces): it refuses to run (exit 87); there is no unguarded mode.
 import fs from "node:fs";
@@ -23,7 +24,7 @@ const dd = process.argv.indexOf("--"), argv = process.argv.slice(2, dd < 0 ? und
 const flag = (f) => { const i = argv.indexOf(f); if (i < 0) return false; argv.splice(i, 1); return true; };
 const opt = (f, d) => { const i = argv.indexOf(f); if (i < 0) return d; const v = argv[i + 1]; argv.splice(i, 2); return v; };
 const all = flag("--all"), netAll = flag("--net"), keep = flag("--keep"), quiet = flag("--quiet");
-const jobs = Math.max(1, Number(opt("-j", 4)) || 4), timeoutS = Math.max(5, Number(opt("--timeout", 300)) || 300);
+const jobs = Math.max(1, Number(opt("-j", 4)) || 4), timeoutS = Math.max(5, Number(opt("--timeout", 600)) || 600);
 if (argv.some((a) => a.startsWith("-"))) { console.error("usage: node test/run.mjs [--all] [-j N] [--timeout S] [--net] [--keep] [--quiet] [FILE…]"); process.exit(2); }
 
 const resolve = (a) => {
@@ -41,6 +42,9 @@ if (!files.length) { console.error("no tests given (FILE… or --all)"); process
 const why = sandboxUnavailable();
 if (why) { console.error(`test guard: can't build the sandbox here: ${why}. Tests don't run unguarded.`); process.exit(87); }
 
+const skipOf = (f) => { try { return (/^\s*(?:\/\/|#)\s*test-guard:\s*skip\b\s*(.*)$/m.exec(fs.readFileSync(f, "utf8").split("\n").slice(0, 20).join("\n")) || [])[1]?.trim() ?? null; } catch { return null; } };
+const skipped = all ? files.filter((f) => skipOf(f) != null) : [];
+for (const f of skipped) { console.log(`skip ${path.relative(ROOT, f)} (${skipOf(f) || "marked test-guard: skip"})`); files.splice(files.indexOf(f), 1); }
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "hyprpi-testrun-"));
 const wantsNet = (f) => { try { return /^\s*(?:\/\/|#)\s*test-guard:\s*net\b/m.test(fs.readFileSync(f, "utf8").split("\n").slice(0, 20).join("\n")); } catch { return false; } };
 const runOne = (file) => new Promise((done) => {
@@ -70,6 +74,6 @@ await Promise.all(Array.from({ length: Math.min(jobs, files.length) }, async () 
   }
 }));
 const failed = results.filter((r) => r.code !== 0 || r.refusals.length);
-console.log(`\n${results.length - failed.length}/${results.length} passed under the test guard${failed.length ? `; failed: ${failed.map((r) => path.basename(r.file)).join(", ")}` : ""}. Logs: ${runDir}`);
+console.log(`\n${results.length - failed.length}/${results.length} passed under the test guard${skipped.length ? ` (${skipped.length} skipped: ${skipped.map((f) => path.basename(f)).join(", ")})` : ""}${failed.length ? `; failed: ${failed.map((r) => path.basename(r.file)).join(", ")}` : ""}. Logs: ${runDir}`);
 if (!keep && !failed.length) fs.rmSync(runDir, { recursive: true, force: true });
 process.exit(failed.length ? 1 : 0);

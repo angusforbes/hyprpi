@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// test-guard: skip J565 quarantine (J564 v3 replaces it; it then runs, inside the guard)
 // J565 incident quarantine. The previous test mixed an isolated daemon with live /proc and real signals.
 // It must not be restored until process discovery is synthetic, every action uses a fake signal seam,
 // and failed selection/assertions abort before confirmation. No test body here.

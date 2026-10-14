@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// test-guard: skip live: reads the live phone server on 127.0.0.1:8897 (not a unit test; run it by hand: node test/run.mjs --net test/phone-remote-agents.mjs)
 // J562 proof (Angus: "Hey I'm not seeing hub agents in wI … No agents working in I"): the phone page (π, the live server on
 // 127.0.0.1:8897) in a HEADLESS Chromium of its own (temp profile, no window), driven over CDP with the page's own code
 // (window.__rc): world I's Agnt lists hub-alpha and its session opens; world H's lists omni-alpha and Mailwise and they open;

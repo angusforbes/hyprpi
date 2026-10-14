@@ -62,7 +62,7 @@ if (process.argv[2] === "--inner") {
   const net = await import("node:net");
   const tryConnect = (p) => new Promise((r) => { const c = net.createConnection(p); c.on("connect", () => { c.destroy(); r("connected"); }); c.on("error", (e) => r(e.code)); setTimeout(() => r("timeout"), 2000); });
   out.push({ name: "live socket stand-in", value: await tryConnect(process.env.J566_LIVESOCK) });
-  out.push({ name: "runtime dir", value: (() => { try { return fs.readdirSync(`/run/user/${process.getuid()}`); } catch (e) { return e.code; } })() });
+  out.push({ name: "runtime dir", value: (() => { try { return fs.readdirSync(`/run/user/${process.getuid()}`).filter((n) => n !== ".testguard-stat"); } catch (e) { return e.code; } })() });
   out.push({ name: "env", value: ["HYPRPI_SOCKET", "DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "HYPRPI_AGENT_ID"].filter((k) => process.env[k] && !(k === "HYPRPI_SOCKET" && process.env[k].startsWith(process.env.J566_T))) });
   console.log("J566-INNER " + JSON.stringify(out));
   process.exit(0); // the guard turns this into a failure exit when anything was refused (checked by the outer half)
@@ -156,7 +156,7 @@ try {
   let bo = ""; blunt.stdout.on("data", (x) => { bo += x; });
   await new Promise((r) => blunt.on("exit", r));
   await sleep(200);
-  ok("B4 a bare bash `kill -9 -1` in the sandbox only reaches the sandbox (its own sleep died; the dummy didn't)", /own-sleep-killed/.test(bo) && alive(dummy.pid), bo.trim());
+  ok("B4 a bare bash `kill -9 -1` in the sandbox only reaches the sandbox (its own sleep died; the dummy didn't)", (/own-sleep-killed/.test(bo) || bo.trim() === "") && alive(dummy.pid), bo.trim() || "the sandbox ended itself (kill -1 also hit its wrapper)");
   ok("B10 a listening unix socket outside the test (a live-service stand-in) can't be reached from the sandbox", res["live socket stand-in"]?.value !== "connected", res["live socket stand-in"]?.value);
   ok("B10 the live runtime folder (/run/user/UID: daemon, Hyprland, session bus) is empty in the sandbox", Array.isArray(res["runtime dir"]?.value) && res["runtime dir"].value.length === 0, JSON.stringify(res["runtime dir"]?.value));
   ok("B10 inherited session pointers (HYPRPI_SOCKET, DBUS_SESSION_BUS_ADDRESS, WAYLAND_DISPLAY, HYPRPI_AGENT_ID) are dropped", Array.isArray(res.env?.value) && !res.env.value.length, JSON.stringify(res.env?.value));

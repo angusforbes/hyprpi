@@ -49,6 +49,10 @@ export function sandboxArgs({ net = false } = {}) {
   const masked = a.filter((x, i) => a[i - 1] === "--tmpfs");
   const lookups = /^\/run\/systemd\/(?:resolve|userdb|journal)\//; // name/user lookups and logging: read-only services, kept
   for (const s of liveSocketPaths()) if (!lookups.test(s) && !masked.some((d) => s === d || s.startsWith(d + "/")) && exists(s) && !isDir(s) && writable(s)) a.push("--ro-bind", "/dev/null", s); // (one we can't open needs no mask)
+  // host-root files show as "nobody" in the user namespace; test/guard/shim/stat (in place of /usr/bin/stat, which it calls under
+  // a hidden name in the masked runtime folder) shows them as root again, so "owned by you or root" checks behave as on the host
+  const realStat = "/usr/bin/stat", shim = fileURLToPath(new URL("./shim/stat", import.meta.url));
+  if (isDir(`/run/user/${UID}`) && exists(realStat) && exists(shim)) a.push("--ro-bind", realStat, `/run/user/${UID}/.testguard-stat`, "--ro-bind", shim, realStat);
   // live hyprpi state and config: readable (some code reads defaults) but not writable
   for (const d of [path.join(HOME, ".local/state/hyprpi"), path.join(HOME, ".config/hyprpi")]) if (isDir(d)) a.push("--ro-bind", d, d);
   return a;
@@ -71,12 +75,21 @@ export function guardEnv(base = process.env, { log } = {}) {
   // no inherited way back to the live session: a test sets its own socket / state / display if it needs one
   for (const k of ["HYPRPI_SOCKET", "HYPRPI_STATE", "HYPRPI_REMOTE_LINK", "HYPRPI_REMOTE_PANEL", "DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "DISPLAY", "KITTY_LISTEN_ON", "KITTY_PID", "KITTY_WINDOW_ID", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "PULSE_SERVER", "TMUX", "ZELLIJ"]) delete e[k];
   if (log) e.HYPRPI_TEST_GUARD_LOG = log;
+  // the host's live sockets in its runtime folder (masked in the sandbox): reaching for one of these is the test going for the live
+  // daemon / Hyprland / bus, which the preload refuses loudly; other paths there (a bogus test instance's) just don't exist
+  try {
+    const live = liveSocketPaths().filter((p) => p.startsWith(`/run/user/${UID}/`) || p.startsWith(`/tmp/hyprpi-${UID}/`));
+    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "testguard-live-")), "sockets.txt"); fs.writeFileSync(f, live.join("\n") + "\n");
+    e.HYPRPI_TEST_LIVE_SOCKETS = f;
+  } catch { /* then the preload refuses every missing path there */ }
   if (!String(e.NODE_OPTIONS || "").includes(PRELOAD)) e.NODE_OPTIONS = `${e.NODE_OPTIONS ? e.NODE_OPTIONS + " " : ""}--import=${PRELOAD}`;
   return e;
 }
 
 // The full command for running argv in the sandbox: -> [cmd, args]
-export function sandboxCommand(argv, opts = {}) { return ["bwrap", [...sandboxArgs(opts), "--", ...argv]]; }
+// (a small sh stays the test's parent, so the test isn't the namespace's init's direct child: code that walks its parents, e.g.
+// docker/world/doorman-mcp.mjs's "ancestors above pid 1", sees a normal process tree)
+export function sandboxCommand(argv, opts = {}) { return ["bwrap", [...sandboxArgs(opts), "--", "/bin/sh", "-c", '"$@"; exit $?', "testguard", ...argv]]; }
 
 // Start argv in the sandbox (async); -> ChildProcess. opts: { net, log, env, stdio, cwd }
 export function spawnSandboxed(argv, opts = {}) {

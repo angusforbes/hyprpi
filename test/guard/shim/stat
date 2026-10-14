@@ -1,0 +1,15 @@
+#!/bin/bash
+# J566 test guard: inside the sandbox's user namespace, files owned by the host's root (/, /home, /usr…) show as the overflow user
+# ("nobody", 65534), so ownership checks like omnistation/remote.sh's "owned by you or root" fail on every path. This stand-in,
+# mounted over /usr/bin/stat only inside the guard (the real one is at /run/user/UID/.testguard-stat there), prints them as root
+# again; every other output of the real stat is passed through untouched.
+REAL="/run/user/$(id -u)/.testguard-stat"; [[ -x "$REAL" ]] || REAL=/usr/bin/stat
+ov=$(cat /proc/sys/kernel/overflowuid 2>/dev/null || echo 65534); ovg=$(cat /proc/sys/kernel/overflowgid 2>/dev/null || echo 65534)
+ovn=$(getent passwd "$ov" | cut -d: -f1); ovn=${ovn:-nobody}; ovgn=$(getent group "$ovg" | cut -d: -f1); ovgn=${ovgn:-nobody}
+fmt=0; f=""; prev=""; for a in "$@"; do case "$a" in --format=*|--printf=*) fmt=1; f="${a#*=}";; -c?*) fmt=1; f="${a#-c}";; esac; [[ "$prev" == -c ]] && { fmt=1; f="$a"; }; prev="$a"; done
+if (( fmt )); then
+  num=""; [[ "$f" == *%u* || "$f" == *%g* ]] && num="s/(^|[^0-9])${ov}([^0-9]|\$)/\\10\\2/g;"
+  "$REAL" "$@" | sed -E "${num} s/(^|[^[:alnum:]_])${ovn}([^[:alnum:]_]|\$)/\\1root\\2/g; s/(^|[^[:alnum:]_])${ovgn}([^[:alnum:]_]|\$)/\\1root\\2/g"
+  exit "${PIPESTATUS[0]}"
+fi
+exec "$REAL" "$@"

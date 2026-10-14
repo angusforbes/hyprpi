@@ -37,7 +37,7 @@ if (!globalThis.__hyprpiTestGuard) {
   Object.assign(env, { HYPRPI_TEST_GUARD: "1", HYPRPI_NO_ENSURE: "1" });
   const imp = `--import=${SELF}`;
   if (!String(env.NODE_OPTIONS || "").includes(SELF)) env.NODE_OPTIONS = `${env.NODE_OPTIONS ? env.NODE_OPTIONS + " " : ""}${imp}`;
-  const CARRY = ["HYPRPI_TEST_GUARD", "HYPRPI_TEST_ROOT", "HYPRPI_TEST_SANDBOX", "HYPRPI_TEST_OUTER_PIDNS", "HYPRPI_TEST_GUARD_LOG", "HYPRPI_NO_ENSURE"];
+  const CARRY = ["HYPRPI_TEST_LIVE_SOCKETS", "HYPRPI_TEST_GUARD", "HYPRPI_TEST_ROOT", "HYPRPI_TEST_SANDBOX", "HYPRPI_TEST_OUTER_PIDNS", "HYPRPI_TEST_GUARD_LOG", "HYPRPI_NO_ENSURE"];
 
   const refuse = (why) => {
     refusals.push(why);
@@ -86,13 +86,20 @@ if (!globalThis.__hyprpiTestGuard) {
   for (const n of ["spawn", "spawnSync", "execFile", "execFileSync", "fork"]) wrap(n, false);
   for (const n of ["exec", "execSync"]) wrap(n, true);
 
-  // ---- sockets into the live runtime folders (outside the sandbox only: inside, those folders are an empty tmpfs) ----
-  if (!sandboxed) {
+  // ---- sockets into the live runtime folders. Outside the sandbox: refused. Inside, those folders are an empty tmpfs, so a socket
+  // there that the test didn't create (it doesn't exist) is the test reaching for the LIVE daemon / Hyprland / bus: refused too, so
+  // the run fails with this message instead of a vague "daemon not reachable". ----
+  {
+    let liveSet = null;
+    const hostLive = (p) => { // was this a live socket on the host when the sandbox was built? (no list: assume yes)
+      if (!liveSet) { try { liveSet = new Set(fs.readFileSync(env.HYPRPI_TEST_LIVE_SOCKETS, "utf8").split("\n").filter(Boolean)); } catch { liveSet = false; } }
+      return liveSet === false || liveSet.has(p) || liveSet.has(String(p).replace(/\/+$/, ""));
+    };
     const origConnect = net.Socket.prototype.connect;
     net.Socket.prototype.connect = function connect(...a) {
       const first = Array.isArray(a[0]) ? a[0][0] : a[0];
       const p = typeof first === "string" && !/^\d+$/.test(first) ? first : first && typeof first === "object" ? first.path : null;
-      if (p && underLive(p, dirs)) refuse(`test guard: refused a connection to ${p}: that is the live desktop's runtime folder (the live hyprpi daemon, Hyprland, the session bus). Give the test its own HYPRPI_SOCKET / XDG_RUNTIME_DIR in a temp dir.`);
+      if (p && underLive(p, dirs) && (!sandboxed || (!fs.existsSync(p) && hostLive(p)))) refuse(`test guard: refused a connection to ${p}: that is the live desktop's runtime folder (the live hyprpi daemon, Hyprland, the session bus)${sandboxed ? ", masked in the test's sandbox" : ""}. Give the test (and every process it starts) its own HYPRPI_SOCKET / XDG_RUNTIME_DIR in a temp dir.`);
       return origConnect.apply(this, a);
     };
   }
