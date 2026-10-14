@@ -78,12 +78,19 @@ push_theme() {
 # committed copy, ~/Harness/pi-jot or HYPRPI_PIJOT_DIR) as a pi package and the laptop's jot.json (same kinds and folders); its agents
 # run it in relay mode (remote.sh's pi-entry sets PI_JOT_RELAY=1), so every jot file access goes back through the laptop window.
 jot_setup() {
-  local pj="${HYPRPI_PIJOT_DIR:-$HOME/Harness/pi-jot}" jc="${PI_JOT_CONFIG:-$HOME/.pi/agent/jot.json}"
-  [[ -d "$pj/.git" && -f "$pj/src/extension.ts" ]] || { echo "world: no pi-jot at $pj: /jot-* in this world's windows stays off"; return 0; }
+  local pj="${HYPRPI_PIJOT_DIR:-$HOME/Harness/pi-jot}" jc="${PI_JOT_CONFIG:-$HOME/.pi/agent/jot.json}" tz
+  [[ -d "$pj/.git" && -f "$pj/src/extension.ts" ]] || { echo "world: no pi-jot at $pj: /jot-* in this world stays off"; return 0; }
   git -C "$pj" archive --format=tar HEAD | "${SSH[@]}" "set -e; d=\$HOME/.hyprpi-$wl/pi-jot; rm -rf \"\$d.new\"; mkdir -p \"\$d.new\"; tar -x -C \"\$d.new\"; test -f \"\$d.new/src/extension.ts\"; rm -rf \"\$d.old\"; [ ! -e \"\$d\" ] || mv \"\$d\" \"\$d.old\"; mv \"\$d.new\" \"\$d\"; rm -rf \"\$d.old\""
-  [[ -f "$jc" ]] && "${SSH[@]}" "mkdir -p \$HOME/.pi/agent && cat > \$HOME/.pi/agent/jot.json.new && mv \$HOME/.pi/agent/jot.json.new \$HOME/.pi/agent/jot.json" < "$jc"
-  "${SSH[@]}" "export PATH=\$HOME/.local/bin:\$PATH; node -e 'const fs=require(\"fs\"),p=process.env.HOME+\"/.pi/agent/settings.json\",pkg=process.env.HOME+\"/.hyprpi-$wl/pi-jot\";let j={};try{j=JSON.parse(fs.readFileSync(p,\"utf8\"))}catch{};const a=Array.isArray(j.packages)?j.packages:[];if(!a.includes(pkg)){j.packages=[...a,pkg];fs.writeFileSync(p,JSON.stringify(j,null,2)+\"\\n\")}'"
-  echo "world: pi-jot $(git -C "$pj" rev-parse --short HEAD) installed for world $WL's agents: their /jot-* notes go to this laptop's $(jq -r '.root // "~/Obsidian"' "$jc" 2>/dev/null || echo ~/Obsidian) (agents started before this pick it up on their next start)"
+  # J561: jot.json (the laptop's, with its time zone), pi packages, Thoughts' jotExtension, relay mode in pi-entry, AGENTS.md (omnistation/jot-setup-remote.mjs)
+  tz=$(node -p 'Intl.DateTimeFormat().resolvedOptions().timeZone' 2>/dev/null || true)
+  "${SSH[@]}" "export PATH=\$HOME/.local/bin:\$PATH HYPRPI_JOT_JSON=$( [[ -f "$jc" ]] && base64 -w0 < "$jc" ); node - $wl $(printf %q "$tz")" < "$H/omnistation/jot-setup-remote.mjs"
+  # the laptop end for windowless agents and Thoughts: the relay socket, forwarded over ssh (plain ssh bindings only)
+  if [[ "${HYPRPI_JOT_RELAY_SERVICE:-1}" == 0 ]]; then echo "world: (the laptop jot relay service is left alone: HYPRPI_JOT_RELAY_SERVICE=0)"
+  elif [[ "$(basename "${SSH[0]}")" == ssh ]]; then
+    systemctl --user link "$H/omnistation/hyprpi-jot-relay@.service" >/dev/null 2>&1 || true
+    systemctl --user enable --now "hyprpi-jot-relay@$wl.service" >/dev/null 2>&1 && echo "world: the laptop's jot relay for world $WL is on (hyprpi-jot-relay@$wl)" || echo "world: couldn't start hyprpi-jot-relay@$wl (systemctl --user status hyprpi-jot-relay@$wl)" >&2
+  else echo "world: world $WL is reached with ${SSH[0]}, not ssh: only agents with a laptop window can jot (no relay socket yet)"; fi
+  echo "world: pi-jot $(git -C "$pj" rev-parse --short HEAD) installed for world $WL: its jots go to this laptop's $(jq -r '.root // "~/Obsidian"' "$jc" 2>/dev/null || echo ~/Obsidian), stamped in ${tz:-local time} (agents and Thoughts started before this pick it up on their next start)"
 }
 case "$cmd" in
   binding) jq -n --arg w "$WL" --argjson ws "$WS" --arg label "$LABEL" --arg dir "~/.hyprpi-$wl" --arg conf "$CONF" --args '{world:$w, ssh:$ARGS.positional, workspace:$ws, label:$label, remoteDir:$dir, conf:$conf}' "${SSH[@]}" ;;
