@@ -27,6 +27,10 @@ for (const [label, home] of [["live skill", null], ["no skill (fallback)", fs.mk
   check(`${label}: an ambiguous reply → ask first`, /more than one open question/i.test(p) && /ask/i.test(p));
   check(`${label}: the 'which?' line names both`, /naming both/i.test(p));
   check(`${label}: no cap on open questions`, /(no limit on how many questions|any number of questions may be open)/i.test(p));
+  check(`${label}: J568 lists that aren't questions get C1/F1/S1 labels, never bare numbers`, /aren't questions/i.test(p) && /C1/.test(p) && /bare numbers/i.test(p));
+  check(`${label}: J568 a clarifying either/or is a numbered question with full labels`, /clarifying either\/or/i.test(p) && /16a/.test(p) && /did you mean X or Y/i.test(p));
   check(`${label}: no old bare-letter / "2. Ship it" rule left`, !/lettered a, b, c/.test(p) && !/"2\. Ship it now/.test(p) && !/options 1, 2, 3"? style\)?\s*$/m.test(p.replace(/there is no separate "options 1, 2, 3" style/, "")));
 }
+{ const skill = fs.readFileSync(path.join(os.homedir(), ".pi/agent/skills/numbered-questions/SKILL.md"), "utf8").split(/^## Rules\s*$/m)[1].replace(/^## (.*)$/gm, "$1:").trim();
+  const p = await render(null); check("live skill: the preamble carries the skill's Rules section verbatim (J568)", p.includes(skill)); }
 console.log(fail ? `${fail} failed` : "all passed"); process.exit(fail ? 1 : 0);
