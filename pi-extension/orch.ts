@@ -49,7 +49,12 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   }
   // The time cap also while one long tool call runs (Knock's J130 finding 4): the steer lands at its end, and
   // the tools after it are blocked.
-  setInterval(() => { if (me?.budget?.minutes) checkCap(); }, 30000).unref?.();
+  // J591 (Angus's screenshot: "pi crashed … This extension ctx is stale after session replacement or reload", 5 times in
+  // crashes.json, all from here): the timer outlived a /reload or session switch and called the old pi; it now stops at
+  // session_shutdown, and a stale call is swallowed rather than crashing the window.
+  const capTimer = setInterval(() => { try { if (me?.budget?.minutes) checkCap(); } catch { /* old session's pi */ } }, 30000);
+  capTimer.unref?.();
+  pi.on("session_shutdown", async () => { clearInterval(capTimer); });
   pi.on("tool_call", async (e: any) => {
     toolCalls++;
     if (!stopped) return;

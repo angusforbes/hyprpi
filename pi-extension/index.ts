@@ -60,7 +60,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
   pi.registerCommand("hyprpi-reload", {
     description: "Reload this window's pi runtime (hyprpi upkeep does this by itself when the agent-side code changed)",
-    handler: async (_a: any, ctx: any) => { ctxRef?.ui?.notify?.("🧹 reloading: hyprpi code changed", "info"); await ctx.reload(); },
+    handler: async (_a: any, ctx: any) => { safeNotify("🧹 reloading: hyprpi code changed", "info"); await ctx.reload(); },
   });
   // J130 orchestration primitives (spawn_agent, report_to_parent, wait_report, close_agent, …; budgets).
   const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef, flushHeld: () => flushHeld(), dropHeld: (pred: (m: any) => boolean) => dropHeld(pred) });
@@ -74,6 +74,8 @@ export default function hyprpi(pi: ExtensionAPI) {
   // second used to both start a turn; pi rejected the second ASYNCHRONOUSLY and it vanished (J61).
   // `starting` holds the rest until the turn has begun; a send that fails (now or later) is held again.
   let starting: ReturnType<typeof setTimeout> | null = null;
+  // J591: ctxRef can be a stale ctx after a reload, and touching its .ui then throws; a notice must never crash the window
+  const safeNotify = (text: string, kind?: any) => { try { ctxRef?.ui?.notify?.(text, kind); } catch { /* stale ctx */ } };
   const send = (message: any, opts: any) => {
     // J272 fix 6: a message that waited here (or in the daemon) for minutes says so, so the agent doesn't take a
     // stale question for an unanswered one and re-send what it already sent (Harbor, J262).
@@ -86,9 +88,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     try {
       if (opts?.triggerTurn && !opts.deliverAs) { if (starting) clearTimeout(starting); starting = setTimeout(() => { starting = null; releaseHeld(); }, 5000); }
       const r: any = pi.sendMessage(message, opts);
-      if (r && typeof r.then === "function") r.catch((e: any) => { ctxRef?.ui?.notify?.(`hyprpi: a message was refused (${e?.message || e}); trying again`, "warning"); again(); });
+      if (r && typeof r.then === "function") r.catch((e: any) => { safeNotify(`hyprpi: a message was refused (${e?.message || e}); trying again`, "warning"); again(); });
     }
-    catch (e) { ctxRef?.ui?.notify?.(`hyprpi: could not deliver message (${(e as Error).message}); trying again`, "warning"); again(); }
+    catch (e) { safeNotify(`hyprpi: could not deliver message (${(e as Error).message}); trying again`, "warning"); again(); }
   };
   // Steered ones are tracked until they show up in the session (message_end): Esc clears pi's queues
   // and drops queued custom messages without a trace (pi·wpzt's diagnosis), so whatever didn't land
@@ -139,7 +141,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     if (!held.length) return;
     const n = held.length;
     while (held.length) send(held.shift(), { triggerTurn: false });
-    ctxRef?.ui?.notify?.(`hyprpi: ${n} request${n === 1 ? "" : "s"} kept after Esc; ${n === 1 ? "it is" : "they are"} answered with your next message`, "info");
+    safeNotify(`hyprpi: ${n} request${n === 1 ? "" : "s"} kept after Esc; ${n === 1 ? "it is" : "they are"} answered with your next message`, "info");
   }
   const reclaimSteered = () => { if (steered.size) { held.unshift(...steered.values()); steered.clear(); } };
 
@@ -207,12 +209,12 @@ export default function hyprpi(pi: ExtensionAPI) {
       reloadReq = true; armReload();
     } else if (event === "restart") {
       restartReq = { compact: d?.compact !== false, by: String(d?.by || "") };
-      ctxRef?.ui?.notify?.(`🔄 restart asked${restartReq.by && restartReq.by !== "itself" ? ` by ${restartReq.by}` : ""}${idle() ? "" : "; it waits until this turn ends"}${restartReq.compact ? " (compacting first)" : ""}`, "info");
+      safeNotify(`🔄 restart asked${restartReq.by && restartReq.by !== "itself" ? ` by ${restartReq.by}` : ""}${idle() ? "" : "; it waits until this turn ends"}${restartReq.compact ? " (compacting first)" : ""}`, "info");
       armRestart();
     } else if (event.startsWith("orch.")) {
       orchEvent(event, d); // J130
     } else if (event === "note") {
-      if (d?.text) ctxRef?.ui?.notify?.(String(d.text), "info");
+      if (d?.text) safeNotify(String(d.text), "info");
     } else if (event === "self") {
       showSelf(d);
     } else if (event === "prompt") {
@@ -281,7 +283,7 @@ export default function hyprpi(pi: ExtensionAPI) {
           }
           ctxRef?.abort?.();
           if (d.interrupt) interrupting = true;
-          ctxRef?.ui?.notify?.(d.interrupt ? `hyprpi: ${t?.from?.name || "Thoughts"} interrupted this turn` : `hyprpi: ${t?.from?.name || "Thoughts"} stopped this work (Angus changed his mind)`, "warning");
+          safeNotify(d.interrupt ? `hyprpi: ${t?.from?.name || "Thoughts"} interrupted this turn` : `hyprpi: ${t?.from?.name || "Thoughts"} stopped this work (Angus changed his mind)`, "warning");
         } else if (deliver) inject(message);
         reply({ ok: true, started, aborted: running, dropped, delivered: deliver });
       } catch (e) { reply({ ok: false, error: (e as Error).message }); }
