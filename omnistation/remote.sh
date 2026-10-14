@@ -107,10 +107,13 @@ case "$cmd" in
     [[ -f "$c" ]] || printf '{\n  "//terminalCommand": "headless (omnistation/remote.sh): agents run in tmux; no desktop terminal is ever opened",\n  "terminalCommand": ["tmux"]\n}\n' > "$c"
     # J543: only the agent's own pi (remote.sh start exports HYPRPI_RPC_NAME, its slug, into its tmux command; agents started before
     # that go by HYPRPI_NAME; a one-shot `pi -p`, `--mode` or `--no-session` call is never one), so nothing else with an agent's env (a daemon an agent's ensure started) can take its socket
+    # J559 / J561: every pi here (agents, Thoughts, windowless ones) runs pi-jot in relay mode (PI_JOT_RELAY=1): its /jot-* notes are
+    # written on the laptop, never on this machine: through the laptop's relay socket ($ROOT/jot.sock, forwarded by its
+    # hyprpi-jot-relay service), else through the agent's laptop window (pi-jot src/io.ts, hyprpi lib/jot-relay-host.mjs)
     # J471: hyprpi starts agents through pi-entry, which runs pi in RPC mode behind hbroker for an agent started by `start`
     # (HYPRPI_REMOTE_RPC=1) and is plain pi for everything else (the daemon's own pi calls)
     [[ -f "$ROOT/hbroker.mjs" ]] || { echo "remote.sh: $ROOT/hbroker.mjs is missing (world-h setup copies it)" >&2; exit 3; }
-    printf '#!/usr/bin/env bash\n# hyprpi'"'"'s pi command on this machine (omnistation/remote.sh, J471)\nn="${HYPRPI_RPC_NAME:-${HYPRPI_NAME:-}}"\nif [[ "${HYPRPI_REMOTE_RPC:-}" == 1 && "$n" =~ ^[a-z][a-z0-9-]{0,30}$ && " $* " != *" -p "* && " $* " != *" --print "* && " $* " != *" --mode "* && " $* " != *" --no-session "* ]]; then exec node %q serve "$n" -- "$@"; fi\nexec pi "$@"\n' "$ROOT/hbroker.mjs" > "$ROOT/pi-entry"; chmod 755 "$ROOT/pi-entry"
+    printf '#!/usr/bin/env bash\n# hyprpi'"'"'s pi command on this machine (omnistation/remote.sh, J471)\nexport PI_JOT_RELAY=1 PI_JOT_RELAY_SOCKET=%q\nn="${HYPRPI_RPC_NAME:-${HYPRPI_NAME:-}}"\nif [[ "${HYPRPI_REMOTE_RPC:-}" == 1 && "$n" =~ ^[a-z][a-z0-9-]{0,30}$ && " $* " != *" -p "* && " $* " != *" --print "* && " $* " != *" --mode "* && " $* " != *" --no-session "* ]]; then exec node %q serve "$n" -- "$@"; fi\nexec pi "$@"\n' "$ROOT/jot.sock" "$ROOT/hbroker.mjs" > "$ROOT/pi-entry"; chmod 755 "$ROOT/pi-entry"
     node -e 'const fs=require("fs"),[c,e]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(c,"utf8"));j.pi=e;fs.writeFileSync(c,JSON.stringify(j,null,2)+"\n")' "$c" "$ROOT/pi-entry"
     # J543 (parity): `bonk` / `ding` (the skill every agent knows) for the agents here: they mark the agent blocked through hyprpi,
     # quietly, with the message; the daemon keeps it as a notice and the laptop plays the sound and shows the toast (world-status.mjs)

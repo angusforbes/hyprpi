@@ -1,6 +1,6 @@
 # Agent resource snapshot
 
-`hyprpi top` is a read-only, Linux-only snapshot of agent activity on the machine where it runs. It connects to the existing hyprpi daemon; it does not start it, send agents work, open windows, change process priorities, or stop anything.
+`hyprpi top` is a Linux-only view of agent activity on the machine where it runs: every hyprpi agent by world, plus the other coding agents running here (plain pi, Claude Code, Codex, Gemini CLI, aider and the like). It connects to the existing hyprpi daemon; it does not start it. `--once` and `--json` only report. The live view (J564) can also act on the highlighted row, and only after you confirm: focus its window, or close it.
 
 ## Run it
 
@@ -16,7 +16,20 @@
 
 Live refresh defaults to two seconds. Without a terminal, or with JSON, the default is one snapshot; --samples requests a bounded sequence (JSON Lines with --json). CPU counters are primed for half a second before the first output. --interval accepts 0.5–60 seconds. All agents remain grouped by world; sorting applies within each world.
 
-Keys: c CPU, m memory, u uptime, p priority; j/k or up/down to scroll; PgUp/PgDn to page; left/right to pan across the wide table; Home to return to the top-left; q, Escape or Ctrl+C to quit. No key controls another process. The normal terminal screen and cursor are restored on exit. Nothing takes desktop focus.
+Keys: up/down or j/k move the highlight through the rows of all worlds; PgUp/PgDn move a page, Home/End to the first and last row; left/right pan across the wide table; c CPU, m memory, u uptime, p priority sort within each world; Enter focuses the highlighted agent's window; x or Delete closes it after a y/N confirm; q, Escape or Ctrl+C quit. The highlight stays on the same agent across refreshes and re-sorts; if that agent disappears it moves to the nearest row and says so. The normal terminal screen and cursor are restored on exit. Nothing takes desktop focus except Enter.
+
+## Acting on a row (J564)
+
+- Enter: a hyprpi agent's window is focused through the daemon (as `hyprpi focus` does, remote worlds included); another CLI's terminal window is found from its process (the nearest terminal ancestor) and focused. A Thoughts agent has no window of its own.
+- x or Delete: the footer asks "Close NAME (world X)? [y/N]" and lists warnings: running briefs, owned projects, live helpers, working right now. y closes it; anything else cancels and nothing happens.
+  - A hyprpi agent is closed the way a person would close it: its window is closed (no window: SIGTERM to its own pi). The daemon records that as a deliberate close; top waits until the daemon no longer lists it and says how it went.
+  - An Other agents row (a CLI that isn't a hyprpi agent) gets SIGTERM on exactly the processes of its tree as shown when you confirmed. If any are still running a few seconds later, a second confirm offers SIGKILL for those exact processes.
+  - Thoughts agents, sandboxed world G's processes and remote world H/I agents aren't closed from top: the footer says where to do it instead.
+- Safety: the target is fixed when you press x (its agent id, and every pid with its start time); a refresh or re-sort during the confirm can't change what is closed. Before any signal each pid's start time is checked again, so a pid that was reused by another process is never touched. There are no name or pattern kills, and top never signals itself, pid 1 or any process it didn't show in that row.
+
+## Other agents
+
+Processes of coding-agent CLIs that aren't hyprpi agents are grouped by their CLI process into rows in the "Other agents" section (JSON: world "Unattributed", with tool, cwd, terminal and terminalPid). A CLI is recognised by its executable or CLI script only: pi; claude (Claude Code), codex (including its native per-platform binary), gemini, aider, opencode, goose, cursor-agent, amp, crush, qwen; or node/bun/python running one of their package entry points; or a launcher script with that exact name. A wrapper and the binary it starts are one row. Never a substring of the command line: `bash -c claude`, `vim claude.md` or `claudette` are not agents. Each row shows the tree's CPU, RSS, uptime and process count, and in JOB / TOPIC its working folder and terminal. Its session or model isn't read.
 
 ## Read the numbers
 

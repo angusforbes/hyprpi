@@ -30,7 +30,7 @@
 set -euo pipefail
 H="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 WL="${1:-}"; WL="${WL^^}"; shift || true
-[[ "$WL" =~ ^[A-I]$ ]] || { echo "usage: world LETTER setup|new|start|open|status|stop|start-mirror|open-mirror|binding [NAME]" >&2; exit 2; }
+[[ "$WL" =~ ^[A-I]$ ]] || { echo "usage: world LETTER setup|jot|new|start|open|status|stop|start-mirror|open-mirror|binding [NAME]" >&2; exit 2; }
 wl="${WL,,}"
 CDIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi/remote"
 CONF="${HYPRPI_REMOTE_CONF:-$CDIR/$wl.json}"
@@ -73,6 +73,24 @@ push_theme() {
   if [[ "${1:-}" == sync || "${1:-}" == force ]]; then "${SSH[@]}" "$send" < "$src" >/dev/null 2>&1 && echo "$sum" > "$mark"; return 0; fi # (a panel: before it starts there)
   ( "${SSH[@]}" "$send" < "$src" >/dev/null 2>&1 && echo "$sum" > "$mark" ) </dev/null >/dev/null 2>&1 &
   disown || true
+}
+# J559 (Angus "15b"): /jot-* in this world's agent windows writes to the LAPTOP's notes. The machine gets pi-jot (this laptop's
+# committed copy, ~/Harness/pi-jot or HYPRPI_PIJOT_DIR) as a pi package and the laptop's jot.json (same kinds and folders); its agents
+# run it in relay mode (remote.sh's pi-entry sets PI_JOT_RELAY=1), so every jot file access goes back through the laptop window.
+jot_setup() {
+  local pj="${HYPRPI_PIJOT_DIR:-$HOME/Harness/pi-jot}" jc="${PI_JOT_CONFIG:-$HOME/.pi/agent/jot.json}" tz
+  [[ -d "$pj/.git" && -f "$pj/src/extension.ts" ]] || { echo "world: no pi-jot at $pj: /jot-* in this world stays off"; return 0; }
+  git -C "$pj" archive --format=tar HEAD | "${SSH[@]}" "set -e; d=\$HOME/.hyprpi-$wl/pi-jot; rm -rf \"\$d.new\"; mkdir -p \"\$d.new\"; tar -x -C \"\$d.new\"; test -f \"\$d.new/src/extension.ts\"; rm -rf \"\$d.old\"; [ ! -e \"\$d\" ] || mv \"\$d\" \"\$d.old\"; mv \"\$d.new\" \"\$d\"; rm -rf \"\$d.old\""
+  # J561: jot.json (the laptop's, with its time zone), pi packages, Thoughts' jotExtension, relay mode in pi-entry, AGENTS.md (omnistation/jot-setup-remote.mjs)
+  tz=$(node -p 'Intl.DateTimeFormat().resolvedOptions().timeZone' 2>/dev/null || true)
+  "${SSH[@]}" "export PATH=\$HOME/.local/bin:\$PATH HYPRPI_JOT_JSON=$( [[ -f "$jc" ]] && base64 -w0 < "$jc" ); node - $wl $(printf %q "$tz")" < "$H/omnistation/jot-setup-remote.mjs"
+  # the laptop end for windowless agents and Thoughts: the relay socket, forwarded over ssh (plain ssh bindings only)
+  if [[ "${HYPRPI_JOT_RELAY_SERVICE:-1}" == 0 ]]; then echo "world: (the laptop jot relay service is left alone: HYPRPI_JOT_RELAY_SERVICE=0)"
+  elif [[ "$(basename "${SSH[0]}")" == ssh ]]; then
+    systemctl --user link "$H/omnistation/hyprpi-jot-relay@.service" >/dev/null 2>&1 || true
+    systemctl --user enable --now "hyprpi-jot-relay@$wl.service" >/dev/null 2>&1 && echo "world: the laptop's jot relay for world $WL is on (hyprpi-jot-relay@$wl)" || echo "world: couldn't start hyprpi-jot-relay@$wl (systemctl --user status hyprpi-jot-relay@$wl)" >&2
+  else echo "world: world $WL is reached with ${SSH[0]}, not ssh: only agents with a laptop window can jot (no relay socket yet)"; fi
+  echo "world: pi-jot $(git -C "$pj" rev-parse --short HEAD) installed for world $WL: its jots go to this laptop's $(jq -r '.root // "~/Obsidian"' "$jc" 2>/dev/null || echo ~/Obsidian), stamped in ${tz:-local time} (agents and Thoughts started before this pick it up on their next start)"
 }
 case "$cmd" in
   binding) jq -n --arg w "$WL" --argjson ws "$WS" --arg label "$LABEL" --arg dir "~/.hyprpi-$wl" --arg conf "$CONF" --args '{world:$w, ssh:$ARGS.positional, workspace:$ws, label:$label, remoteDir:$dir, conf:$conf}' "${SSH[@]}" ;;
@@ -134,7 +152,9 @@ case "$cmd" in
     if nvm=$(node "$H/lib/models-resolve.mjs" --config "$H/$mcfg"); then
       printf '%s\n' "$nvm" | "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.json"
       "${SSH[@]}" "cat > ~/.hyprpi-$wl/nv-models.mjs && export PATH=\$HOME/.local/bin:\$HOME/.npm-global/bin:\$PATH; [ -n \"\${NODE_EXTRA_CA_CERTS:-}\" ] || [ ! -r /etc/ssl/certs/ca-certificates.crt ] || export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt; HYPRPI_REMOTE_THOUGHTS_MODEL=$(printf %q "$tm") node ~/.hyprpi-$wl/nv-models.mjs --check --key-file $(printf %q "$mkey") --models ~/.hyprpi-$wl/nv-models.json" < "$H/lib/nv-models.mjs"
-    else echo "world: $mcfg didn't resolve (above); the machine's nv-inference models are unchanged" >&2; fi ;;
+    else echo "world: $mcfg didn't resolve (above); the machine's nv-inference models are unchanged" >&2; fi
+    jot_setup ;;
+  jot) jot_setup ;; # (J559: just pi-jot + jot.json, also part of setup)
   start|status|stop) "${SSH[@]}" "$R $cmd $NAME" ;;
   rename) NEW="${3:-}"; [[ "$NEW" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || { echo "world: rename NAME NEW" >&2; exit 2; }
     "${SSH[@]}" "$R rename $NAME $NEW" && echo "renamed $NAME to $NEW (same session); reopen its window: world $WL open $NEW" ;;

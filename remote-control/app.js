@@ -44,7 +44,8 @@ function textGlyphs(root) {
     n.replaceWith(frag);
   }
 }
-function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden = !text; }
+let noteAt = 0, fetchNoted = false;
+function note(text) { const n = $("#note"); n.textContent = text || ""; n.hidden = !text; noteAt = text ? Date.now() : 0; fetchNoted = false; } // (any new note replaces a fetch error's; fetchNote sets the flag after)
 async function call(method, url, body) {
   const r = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   const j = await r.json().catch(() => ({}));
@@ -278,17 +279,19 @@ function save(w) {
   saveTimers[w] = setTimeout(() => { try { localStorage.setItem(LS(w), JSON.stringify({ entries: cached(w).entries.slice(-KEEP) })); } catch { /* full: memory only */ } }, 400);
 }
 const sig = (l) => `${l.length}:${l[l.length - 1]?.ts || 0}:${String(l[l.length - 1]?.text || "").length}`;
+// a "✗" note from a failed thread fetch, cleared by the next good one (declared with note(), which resets it)
+const fetchNote = (e) => { note("✗ " + e.message); fetchNoted = true; };
 async function fetchWorld(w) {
   const t = await call("GET", `/api/thoughts?world=${w}`);
   const c = cached(w), next = t.entries || [], changed = !c.loaded || sig(next) !== sig(c.entries);
   c.entries = next; c.busy = !!t.busy; c.loaded = true; save(w);
-  if (w === world) { busy = c.busy; if (changed) render(); renderTop(); note(""); }
+  if (w === world) { busy = c.busy; if (changed) render(); renderTop(); if (fetchNoted || Date.now() - noteAt > 8000) { fetchNoted = false; note(""); } } // (J562: its own error note at once; any other note, e.g. the Agnt fallback, stays at least 8 s)
   else if (changed) prerenderSoon();
 }
 const prefetched = new Set();
 function refreshAll() {
   const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
-  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) note("✗ " + e.message); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {}), fetchStream(w).catch(() => {});
+  for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) fetchNote(e); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {}), fetchStream(w).catch(() => {});
 }
 function setWorld(w) {
   if (!w || w === world) return;
@@ -301,8 +304,9 @@ function setWorld(w) {
   if (filsWin) filsPost({ world: w });
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
   newestBtn.hidden = true;
-  if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
-  fetchWorld(w).catch((e) => note("✗ " + e.message)); // then fresh, in the background
+  if (view === "session") { clearInterval(sess.timer); setView("agents"); } // J562 (PhoneCheck562): another world: its agent list, not the old world's open session (a jump to an agent elsewhere opens its session after this)
+  else if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
+  fetchWorld(w).catch(fetchNote); // then fresh, in the background
   fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); fetchStream(w).catch(() => {});
 }
 // J417 follow-up: a new version of the page on the laptop → reload (the draft and waiting 📎 files are
@@ -710,7 +714,7 @@ function renderAgents({ keepScroll = false } = {}) {
           + `<div style="display:flex;gap:6px;margin-top:6px"><input id="heldin" placeholder="1, 1 text, 2 text …" disabled autocomplete="off" style="flex:1"><button id="heldgo" disabled>Decide</button></div><div class="small" id="heldmsg"></div>`
           : `<div class="small">${l.held.phoneDecisions ? "This one (a gateway / mode change) is decided at the laptop only." : "Read-only here: decisions for this world are made at the laptop (phone decisions are off)."}</div>`) + `</div>`);
     }
-    { const wd = worlds.find((x) => x.id === world); if (wd?.sandboxed) html.push(`<div class="small sbxhead">Agents ${esc(world)} ${esc(wd.sandboxed)} · a sandboxed world: its agents run inside the sandbox</div>`); } // J450: as the desktop's "Agents G 🐳"
+    { const wd = worlds.find((x) => x.id === world); if (wd?.sandboxed) html.push(`<div class="small sbxhead">Agents ${esc(world)} ${esc(wd.sandboxed)} · ${wd.sandboxed === "📡" || wd.remote ? "a remote world: its agents run on its own machine" : "a sandboxed world: its agents run inside the sandbox"}</div>`); } // (J562: H and I are remote, not sandboxed) // J450: as the desktop's "Agents G 🐳"
     if (l.offline) html.push(`<div class="psum" style="margin:8px 0"><h3>📡 World ${esc(world)} is offline</h3><div class="small">${esc(l.offline)}. Its agents keep running there; this list comes back by itself.</div></div>`); // J472
     for (const x of l.agents) html.push(agentRow(x));
     if (!l.agents.length && l.loaded && !l.offline) html.push(`<div class="small empty" style="text-align:center;margin-top:30vh">No agents in world ${esc(world)}.</div>`);
@@ -1069,7 +1073,7 @@ const sess = { agent: null, items: [], before: 0, more: false, end: 0, loading: 
 const sessAgent = () => { for (const l of agentLists.values()) { const a = l.agents.find((x) => x.id === sess.agent); if (a) return a; } return null; };
 const sessNearEnd = () => sessEl.scrollHeight - sessEl.scrollTop - sessEl.clientHeight < 80;
 async function openSession(id) {
-  sess.agent = id; sess.items = []; sess.results = new Map(); sess.before = 0; sess.more = false; sess.end = 0;
+  sess.agent = id; sess.items = []; sess.results = new Map(); sess.before = 0; sess.more = false; sess.end = 0; sess.gone = 0;
   splace.pinned = true; splace.el = null;
   loadSessDraft(id); // J194: this agent's own unsent draft (or an empty box)
   setView("session");
@@ -1079,7 +1083,13 @@ async function openSession(id) {
     if (sess.agent !== id) return;
     sess.items = r.items; sess.before = r.before; sess.more = r.more; sess.end = r.end;
     renderSession({ toEnd: true });
-  } catch (e) { sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">✗ ${esc(e.message)}</div>`; }
+  } catch (e) {
+    if (sess.agent !== id) return; // (PhoneCheck562) a late answer for a session he has already left
+    // J562 (Angus: "I'm not seeing hub agents in wI"): an agent that's gone (closed, or a stale link) or whose session can't be
+    // read: back to this world's agent list with a note, never a dead page
+    if (sess.agent === id && /no such agent|not a session/i.test(e.message)) { const nm = sessAgent()?.name || "that agent"; openAgent.delete(world); setView("agents"); note(`✗ ${nm}'s session can't be opened (${e.message}); here is world ${world}'s list`); return; }
+    sessEl.innerHTML = `<div class="small empty" style="text-align:center;margin-top:30vh">✗ ${esc(e.message)}</div>`;
+  }
   clearInterval(sess.timer); sess.timer = setInterval(pollSession, 1500);
 }
 // J474 (Angus: a send to a world H agent showed TWICE): a remote world's session read can take longer than the 1.5 s poll, so two
@@ -1094,11 +1104,15 @@ async function pollSession() {
     const r = await Promise.race([call("GET", `/api/session?agent=${encodeURIComponent(id)}&after=${from}`), new Promise((_, no) => setTimeout(() => no(new Error("slow")), 20000))]); // (OnceReview) a poll that never answers can't block polling for good
     if (sess.agent !== id || sess.end !== from) return;
     renderSessionHead();
+    sess.gone = 0; // (PhoneCheck562) any good answer, even an empty one, ends a run of misses
     if (!r.items.length) { sess.end = r.end; return; }
     sess.items.push(...r.items); sess.end = r.end;
     addSession(r.items, "end"); // J230: added in place (was: the whole page redrawn every poll, images and all)
     if (!splace.pinned && r.items.some((it) => it.k !== "result")) $("#snew").hidden = false; // he's reading further up: don't move him
-  } catch { /* the next poll tries again */ }
+  } catch (e) { // the next poll tries again; J562 (PhoneCheck562): an agent that's gone while open (closed) answers "no such agent"
+    // on every poll: after 3 in a row, back to the world's list with a note (one miss can be a remote world's slow listing)
+    if (sess.agent === id && /no such agent|not a session/i.test(e?.message || "") && ++sess.gone >= 3) { const nm = sessAgent()?.name || "that agent"; sess.gone = 0; openAgent.delete(world); setView("agents"); note(`✗ ${nm} is gone (its session can't be read any more); here is world ${world}'s list`); }
+  }
   finally { sessPolling = false; }
 }
 async function loadOlder() {

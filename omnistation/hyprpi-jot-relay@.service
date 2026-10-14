@@ -1,0 +1,12 @@
+[Unit]
+Description=J561 pi-jot relay for remote world %i: its windowless agents and Thoughts write their jots to this laptop's notes
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/env node %h/Harness/hyprpi/omnistation/jot-relayd.mjs %i
+Restart=always
+RestartSec=10
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
