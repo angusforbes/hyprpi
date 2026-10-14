@@ -23,6 +23,17 @@ def main(args):
     pass
 
 
+def _same(a, b):
+    """Byte-identical files (both already the same size)."""
+    with open(a, 'rb') as x, open(b, 'rb') as y:
+        while True:
+            p, q = x.read(1 << 20), y.read(1 << 20)
+            if p != q:
+                return False
+            if not p:
+                return True
+
+
 def save_clipboard_image(run=subprocess.run):
     """Return the path text to type ("/home/<user>/Screenshots/pi-clipboard-….png "), or None if no image."""
     r = run(['wl-paste', '--list-types'], capture_output=True, text=True, timeout=5)
@@ -35,25 +46,26 @@ def save_clipboard_image(run=subprocess.run):
     d = os.path.expanduser('~/Screenshots')
     if not os.path.isdir(d):
         d = '/tmp'  # ~/Screenshots missing: not shared into the sandbox, so say so (the path shows it)
-    # J595 (after J593): named by content, so pasting the same image again types the same path and writes no new file
-    r = run(['wl-paste', '--type', img], capture_output=True, timeout=15)
-    data = r.stdout
-    if r.returncode or not data:
-        raise RuntimeError('wl-paste gave no image')
-    f = os.path.join(d, f'pi-clipboard-{hashlib.sha256(data).hexdigest()[:16]}.{ext}')
-    try:
-        if os.path.isfile(f) and os.path.getsize(f) == len(data):
-            with open(f, 'rb') as old:
-                if old.read() == data:
-                    return f + ' '
-    except OSError:
-        pass
-    tmp = f'{f}.{uuid.uuid4().hex}.part'
+    # J595 (after J593): named by content, so pasting the same image again types the same path and writes no new file.
+    # Streamed to a .part file (no image held in kitty's memory), hashed, then renamed to its content name, or dropped
+    # when a byte-identical file of that name is already there.
+    tmp = os.path.join(d, f'pi-clipboard-{uuid.uuid4().hex}.part')
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, 'wb') as out:
-            out.write(data)
-        os.replace(tmp, f)
+            r = run(['wl-paste', '--type', img], stdout=out, stderr=subprocess.DEVNULL, timeout=15)
+        size = os.path.getsize(tmp)
+        if r.returncode or size == 0:
+            raise RuntimeError('wl-paste gave no image')
+        h = hashlib.sha256()
+        with open(tmp, 'rb') as part:
+            for chunk in iter(lambda: part.read(1 << 20), b''):
+                h.update(chunk)
+        f = os.path.join(d, f'pi-clipboard-{h.hexdigest()[:16]}.{ext}')
+        if os.path.isfile(f) and os.path.getsize(f) == size and _same(tmp, f):
+            os.unlink(tmp)
+        else:
+            os.replace(tmp, f)
     except BaseException:
         try:
             os.unlink(tmp)
