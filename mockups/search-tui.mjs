@@ -1247,8 +1247,9 @@ process.stdout.on("resize", render);
 
 // Restart when this panel's own code changes (a hyprpi update), so it is never stale.
 import { spawn as spawnChild } from "node:child_process";
-const CODE = [new URL("./search-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/markdown.mjs", "thoughts-lines.mjs", "tui/new-pill.mjs", "held.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+// J597: every local file it imports, from its import graph (lib/tui/code-watch.mjs), not a hand-kept list
+import { codeFilesOf } from "../lib/tui/code-watch.mjs";
+const CODE = codeFilesOf(new URL("./search-tui.mjs", import.meta.url).pathname);
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

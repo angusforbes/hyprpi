@@ -515,8 +515,9 @@ function quit() { out(`${ESC}?2004l${ESC}?1002l${ESC}?1000l${ESC}?1006l${ESC}?10
 process.on("SIGTERM", quit);
 
 // ---- restart onto new code (the launcher loops on exit 75; the state rides along) ------
-const CODE = [new URL("./board-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "at-names.mjs", "tui/board-view.mjs", "tui/input-box.mjs", "tui/shimmer.mjs", "tui/term.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/decisions-view.mjs", "tui/world-decisions.mjs", "remote-world.mjs", "decisions.mjs", "tui/laptop.mjs", "tui/members.mjs", "tui/sent.mjs", "tui/world-tabs.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+// J597: every local file it imports, from its import graph (lib/tui/code-watch.mjs), not a hand-kept list
+import { codeFilesOf } from "../lib/tui/code-watch.mjs";
+const CODE = codeFilesOf(new URL("./board-tui.mjs", import.meta.url).pathname);
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

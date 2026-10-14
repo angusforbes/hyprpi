@@ -109,7 +109,9 @@ try {
   await type("/todo @omni after the drop"); await key("\r", 2000);
   ok("7 … and the panel's commands reach the board again", await waitFor(async () => (await items("p-omni")).some((x) => x.text === "after the drop"), 8000), scr.dump().split("\n").slice(-4).join(" | "));
   // 8 laptop.mjs is in the panel's restart watch list
-  ok("8 board-tui restarts onto a new lib/tui/laptop.mjs too", /"tui\/laptop\.mjs"/.test(fs.readFileSync(path.join(ROOT, "mockups/board-tui.mjs"), "utf8").split("const CODE")[1] || ""), "");
+  // (J597: the watch list is the panel's import graph, lib/tui/code-watch.mjs)
+  const { codeFilesOf } = await import("../lib/tui/code-watch.mjs");
+  ok("8 board-tui restarts onto a new lib/tui/laptop.mjs too", /const CODE = codeFilesOf\(/.test(fs.readFileSync(path.join(ROOT, "mockups/board-tui.mjs"), "utf8")) && codeFilesOf(path.join(ROOT, "mockups/board-tui.mjs")).includes(path.join(ROOT, "lib/tui/laptop.mjs")), "");
   al.close?.();
 } finally {
   if (panel) { try { panel.stdin.write("\x11"); } catch { /* gone */ } await sleep(500); try { panel.kill(); } catch { /* gone */ } }

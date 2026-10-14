@@ -975,8 +975,9 @@ process.on("SIGTERM", quit);
 
 // Restart when the TUI's own code changes (a hyprpi update), so an open panel is never
 // stale: same room, same window. Not while something is typed or a search is running.
-const CODE = [new URL("./room-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "search-view.mjs", "at-names.mjs", "stream.mjs", "tui/shimmer.mjs", "tui/input-box.mjs", "tui/command-line.mjs", "tui/agent-click.mjs", "tui/new-pill.mjs", "held.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+// J597: every local file it imports, from its import graph (lib/tui/code-watch.mjs), not a hand-kept list
+import { codeFilesOf } from "../lib/tui/code-watch.mjs";
+const CODE = codeFilesOf(new URL("./room-tui.mjs", import.meta.url).pathname);
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {

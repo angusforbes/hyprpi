@@ -682,8 +682,9 @@ process.stdout.on("resize", render);
 setInterval(render, 30000);
 
 // Restart when the panel's own code changes (a hyprpi update), so it is never stale.
-const CODE = [new URL("./agents-tui.mjs", import.meta.url).pathname,
-  ...["client.mjs", "paths.mjs", "tui/term.mjs", "tui/input-box.mjs", "tui/command-line.mjs"].map((f) => new URL("../lib/" + f, import.meta.url).pathname)];
+// J597: every local file it imports, from its import graph (lib/tui/code-watch.mjs), not a hand-kept list
+import { codeFilesOf } from "../lib/tui/code-watch.mjs";
+const CODE = codeFilesOf(new URL("./agents-tui.mjs", import.meta.url).pathname);
 const codeStamp = () => CODE.map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join(",");
 const codeAtStart = codeStamp();
 setInterval(() => {
