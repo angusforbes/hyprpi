@@ -37,22 +37,24 @@ def precomp(pct, gap, size=204):
 def err(a, b, fgmask=None):
     a = np.asarray(a).astype(float); b = np.asarray(b).astype(float); d = np.abs(a - b).mean(axis=2)
     return d[fgmask].mean() if fgmask is not None else d.mean()
-font = ImageFont.truetype(F, 24)
-VARS = [(86, "half"), (82, "half")]
-rows = []
-sheet = Image.new("RGB", (40 + 3 * 460, 60 + len(VARS) * 720), (238, 238, 236)); d = ImageDraw.Draw(sheet)
-for i, (p, g) in enumerate(VARS):
-    target, pc = precomp(p, GAPS[g]); pc.save(os.path.join(HERE, f"precomp-{p}-{g}.png"))
-    plain_g, pc_g = glass(target, LIGHT), glass(pc, LIGHT)
-    fg = np.any(np.abs(np.asarray(target).astype(float) - np.array(LIGHT)) > 3, axis=2)
-    e0, e1 = err(plain_g, target, fg), err(pc_g, target, fg)
-    rows.append((p, g, e0, e1))
-    big = [im.resize((408, 408), Image.NEAREST) for im in (target, plain_g, pc_g)]
-    y = 40 + i * 720
-    d.text((20, y - 30 if i else 10), f"{p}-{g}: plain target · ordinary icon through glass · pre-compensated through glass", fill=(20, 20, 20), font=font)
-    for j, (sm, bg) in enumerate(zip((target, plain_g, pc_g), big)):
-        t = rounded(sm); sheet.paste(t, (40 + j * 460, y + 10), t); t = rounded(bg); sheet.paste(t, (40 + j * 460, y + 230), t)
-    d.text((40 + 460, y + 650), f"error {e0:.1f}", fill=(60, 60, 60), font=font); d.text((40 + 920, y + 650), f"error {e1:.1f}", fill=(60, 60, 60), font=font)
-sheet.save(os.path.join(HERE, "precomp-compare.png"))
-for r in rows: print("%d-%s: mean colour error on the mark, ordinary %.1f -> pre-compensated %.1f /255" % r)
-print("clamped (out of gamut):", [c for c in DEEP.values() if any(v in (0, 255) for v in unfrost(c))])
+if __name__ == "__main__":
+    font = ImageFont.truetype(F, 24)
+    VARS = [(86, "half"), (82, "half")]
+    rows = []
+    sheet = Image.new("RGB", (40 + 3 * 460, 60 + len(VARS) * 720), (238, 238, 236)); d = ImageDraw.Draw(sheet)
+    for i, (p, g) in enumerate(VARS):
+        target, pc = precomp(p, GAPS[g]); pc.save(os.path.join(HERE, f"precomp-{p}-{g}.png"))
+        plain_g, pc_g = glass(target, LIGHT), glass(pc, LIGHT)
+        fg = np.any(np.abs(np.asarray(target).astype(float) - np.array(LIGHT)) > 3, axis=2)
+        e0, e1 = err(plain_g, target, fg), err(pc_g, target, fg)
+        rows.append((p, g, e0, e1))
+        big = [im.resize((408, 408), Image.NEAREST) for im in (target, plain_g, pc_g)]
+        y = 40 + i * 720
+        d.text((20, y - 30 if i else 10), f"{p}-{g}: plain target · ordinary icon through glass · pre-compensated through glass", fill=(20, 20, 20), font=font)
+        for j, (sm, bg) in enumerate(zip((target, plain_g, pc_g), big)):
+            t = rounded(sm); sheet.paste(t, (40 + j * 460, y + 10), t); t = rounded(bg); sheet.paste(t, (40 + j * 460, y + 230), t)
+        d.text((40 + 460, y + 650), f"error {e0:.1f}", fill=(60, 60, 60), font=font); d.text((40 + 920, y + 650), f"error {e1:.1f}", fill=(60, 60, 60), font=font)
+    sheet.save(os.path.join(HERE, "precomp-compare.png"))
+    for r in rows: print("%d-%s: mean colour error on the mark, ordinary %.1f -> pre-compensated %.1f /255" % r)
+    print("clamped (out of gamut):", [c for c in DEEP.values() if any(v in (0, 255) for v in unfrost(c))])
+
