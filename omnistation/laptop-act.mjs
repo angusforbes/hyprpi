@@ -97,9 +97,11 @@ function open(url) {
 
 const RUNS = /\.(desktop|sh|bash|zsh|fish|run|bin|appimage|exe|msi|bat|cmd|com|jar|deb|rpm|flatpakref|flatpak|snap|py|pl|rb|js|mjs|cjs|ps1|command|x86_64)$/i;
 async function file(p) {
-  if (!p.startsWith("/") || p.length > 1024 || /[\x00-\x1f\x7f]/.test(p)) return fail("not a file path");
+  // (LinkCheck, J555) "~/…" from a laptop-run panel means the remote machine's home, so it is resolved there
+  if (!(p.startsWith("/") || p.startsWith("~/")) || p.length > 1024 || /[\x00-\x1f\x7f]/.test(p) || /(^|\/)\.\.(\/|$)/.test(p.slice(0, 2) === "~/" ? p.slice(2) : "")) return fail("not a file path");
   const max = 50 << 20;
-  const r = await remote(`f=${sh(p)}; [ -f "$f" ] && [ -r "$f" ] || exit 3; [ "$(stat -c %s -- "$f")" -le ${max} ] || exit 4; cat -- "$f"`, { encoding: "buffer", maxBuffer: max + 1024, timeout: 120000 });
+  const fexpr = p.startsWith("~/") ? `"$HOME"/${sh(p.slice(2))}` : sh(p);
+  const r = await remote(`f=${fexpr}; [ -f "$f" ] && [ -r "$f" ] || exit 3; [ "$(stat -c %s -- "$f")" -le ${max} ] || exit 4; cat -- "$f"`, { encoding: "buffer", maxBuffer: max + 1024, timeout: 120000 });
   if (r.code === 3) return fail(`${p} isn't a readable file on world ${WL}'s machine`);
   if (r.code === 4) return fail(`${p} is over 50 MB: not copied`);
   if (r.code !== 0) return fail(`couldn't copy ${p} from world ${WL}'s machine`);

@@ -48,8 +48,22 @@ async function main() {
   if (!w) { console.error(`rlink: world ${WL} isn't bound to a remote machine`); process.exit(2); }
   // one per world: a live link answers on the socket
   fs.mkdirSync(path.dirname(SOCK), { recursive: true, mode: 0o700 });
-  const alive = await new Promise((res) => { const c = net.createConnection(CTL); c.on("connect", () => { c.destroy(); res(true); }); c.on("error", () => res(false)); });
-  if (alive) process.exit(0);
+  // (LinkCheck) one link per world: an exclusive lock (O_EXCL, holding our pid) taken BEFORE anything is probed or unlinked; a
+  // stale one (its pid gone, or not an rlink.mjs for this world) is taken over once; the loser never touches the owner's sockets
+  const LOCK = SOCK.replace(/\.sock$/, ".lock");
+  const isLink = (pid) => { try { const a = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0"); return a.some((x) => x.endsWith("/rlink.mjs")) && a.includes(WL) && !a.includes("--status"); } catch { return false; } };
+  for (let tries = 0; ; tries++) {
+    try { const fd = fs.openSync(LOCK, "wx", 0o600); fs.writeSync(fd, String(process.pid)); fs.closeSync(fd); break; }
+    catch (e) {
+      if (e.code !== "EEXIST" || tries > 1) process.exit(0);
+      let old = 0; try { old = Number(fs.readFileSync(LOCK, "utf8")); } catch { /* being written: try again */ }
+      if (!old) { await new Promise((r) => setTimeout(r, 100)); continue; }
+      if (old !== process.pid && isLink(old)) process.exit(0);
+      try { if (Number(fs.readFileSync(LOCK, "utf8")) === old) fs.unlinkSync(LOCK); } catch { /* another took it */ }
+    }
+  }
+  const unlock = () => { try { if (Number(fs.readFileSync(LOCK, "utf8")) === process.pid) fs.unlinkSync(LOCK); } catch { /* gone */ } };
+  process.on("exit", unlock);
   for (const f of [SOCK, CTL]) { try { fs.unlinkSync(f); } catch { /* none */ } }
 
   const clients = new Map(); // c -> { sock, opened, queue: [lines], uploads: Map(id -> local request id) }
@@ -88,8 +102,8 @@ async function main() {
         if (f.t === "out") { relayOut(f); continue; }
         const k = clients.get(Number(f.c));
         if (!k) continue;
-        if (f.t === "d" && typeof f.l === "string") { try { k.sock.write(f.l + "\n"); } catch { /* gone */ } }
-        else if (f.t === "x") closeClient(Number(f.c));
+        if (f.t === "d" && typeof f.l === "string") { k.heard = true; try { k.sock.write(f.l + "\n"); } catch { /* gone */ } }
+        else if (f.t === "x") { const kk = clients.get(Number(f.c)); closeClient(Number(f.c)); if (kk && !kk.heard && /ECONNREFUSED|ENOENT/.test(String(f.e || ""))) daemonDown(); }
         else if (f.t === "ur") { const rid = k.uploads.get(f.id); k.uploads.delete(f.id); if (rid != null) { try { k.sock.write(JSON.stringify(f.error ? { id: rid, error: `upload: ${f.error}` } : { id: rid, result: { path: f.path } }) + "\n"); } catch { /* gone */ } } }
       }
     });
@@ -103,6 +117,19 @@ async function main() {
       if (!timer) { timer = setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 30000); }
     };
     ch.on("close", end); ch.on("error", (e) => { err += `\n${e.message}`; end(); });
+  }
+  // (LinkCheck) the link is up but the world's DAEMON doesn't answer (restarting, stopped): panels must not connect then either (their
+  // retries would multiply, as with a down link), so the panel socket closes until a probe channel gets a daemon answer again
+  let probing = null;
+  function daemonDown() {
+    if (probing || !up) return; log("daemon down: probing"); why = `world ${WL}'s daemon doesn't answer`; unlisten(); for (const c of [...clients.keys()]) closeClient(c);
+    const probe = () => {
+      if (!up) { probing = null; return; }
+      const c = nextC++; const k = { sock: { write: (l) => { if (/"result"/.test(l)) { clients.delete(c); toRemote({ t: "x", c }); clearTimeout(probing); probing = null; why = ""; log("daemon back"); listen(); } }, destroy() {} }, opened: true, queue: [], uploads: new Map(), probe: true };
+      clients.set(c, k); toRemote({ t: "o", c }); toRemote({ t: "d", c, l: JSON.stringify({ id: 1, method: "room.current", params: {} }) });
+      probing = setTimeout(() => { if (clients.get(c) === k) { clients.delete(c); toRemote({ t: "x", c }); } probe(); }, 2000);
+    };
+    probe();
   }
   // J555 (Angus 17b): the machine's message for one of the LAPTOP's Thoughts (Thoughts-A …): asked here (the laptop daemon's
   // thoughts.relayAsk, as the laptop's own relay to a remote world does), its answer polled and sent back over the link
@@ -133,7 +160,7 @@ async function main() {
   }
   // keepalive: a ping every PING_MS; nothing heard for DEAD_MS = dead (a slept laptop, a hung ssh): end it, reconnect
   setInterval(() => {
-    if (child && up) { if (Date.now() - lastHeard > DEAD_MS) { log("silent for", DEAD_MS, "ms"); try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* gone */ } }, 2000).unref(); } else toRemote({ t: "p", ts: Date.now() }); }
+    if (child && up) { if (Date.now() - lastHeard > DEAD_MS) { log("silent for", DEAD_MS, "ms"); const old = child; if (!old.killing) { old.killing = true; try { process.kill(-old.pid, "SIGTERM"); } catch { /* gone */ } setTimeout(() => { if (old.exitCode === null && old.signalCode === null) { try { process.kill(-old.pid, "SIGKILL"); } catch { /* gone */ } } }, 2000).unref(); } } else toRemote({ t: "p", ts: Date.now() }); } // (LinkCheck) the OLD ssh only, never its replacement
     else if (child && !up && Date.now() - lastHeard > 60000) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* gone */ } } // (a login prompt or a hang before hello)
     // idle: up with no panel for IDLE_MS; down (nobody can connect then) for 6 × IDLE_MS (panel-link.sh restarts it while a panel lives)
     if (!clients.size && !relaying.size && !answersWaiting.length && (up ? Date.now() - lastClient > IDLE_MS : Date.now() - Math.max(lastClient, downSince) > 6 * IDLE_MS)) bye();
@@ -171,7 +198,7 @@ async function main() {
   const ctl = net.createServer((sock) => {
     let b = ""; sock.setEncoding("utf8");
     sock.on("data", (d) => { b += d; let i; while ((i = b.indexOf("\n")) >= 0) { const l = b.slice(0, i); b = b.slice(i + 1); let m = null; try { m = JSON.parse(l); } catch { continue; }
-      if (m?.method === "link.status") sock.write(JSON.stringify({ id: m.id, result: { up, why, panels: clients.size } }) + "\n"); } });
+      if (m?.method === "link.status") sock.write(JSON.stringify({ id: m.id, result: { up: up && !probing, why, panels: [...clients.values()].filter((x) => !x.probe).length } }) + "\n"); } });
     sock.on("error", () => {});
   });
   ctl.listen(CTL, () => { try { fs.chmodSync(CTL, 0o600); } catch { /* fine */ } });

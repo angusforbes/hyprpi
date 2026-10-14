@@ -20,7 +20,7 @@ fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomT
 fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } } }));
 const denv = { ...process.env, HYPRPI_SOCKET: dsock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_NOTIFY_TEST: "1" };
 for (const k of ["HYPRPI_AGENT_ID", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "HYPRPI_REMOTE_HOME", "HYPRPI_REMOTE_LINK"]) delete denv[k];
-const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env: denv, stdio: "ignore" });
+let d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env: denv, stdio: "ignore" });
 // the stand-in ssh: runs the remote end against that daemon, notes its pid; the binding names it (its basename decides "tsh")
 const SSH = path.join(T, "fakessh"), PIDS = path.join(T, "remote.pids");
 fs.writeFileSync(SSH, `#!/bin/sh\necho $$ >> ${PIDS}\nexec env HYPRPI_STATE=${S} HYPRPI_SOCKET=${dsock} ${process.execPath} ${path.join(ROOT, "omnistation/rlink-remote.mjs")}\n`, { mode: 0o755 });
@@ -39,6 +39,10 @@ try {
   let closed = 0;
   const a = await (async () => { for (let i = 0; i < 50; i++) { try { return await connect({ onClose: () => closed++ }); } catch { await sleep(100); } } throw new Error("no link socket"); })();
   ok("1 the link socket is private (600)", (fs.statSync(LSOCK).mode & 0o777) === 0o600);
+  // (LinkCheck) one link per world: more starts at once all leave, the first stays
+  const extra = Array.from({ length: 8 }, () => spawn(process.execPath, [path.join(ROOT, "omnistation/rlink.mjs"), "H"], { env: lenv, stdio: "ignore" }));
+  await waitFor(() => extra.every((x) => x.exitCode !== null), 8000);
+  ok("1 eight more starts at once: all leave, the one link stays (its lock)", extra.every((x) => x.exitCode === 0) && link.exitCode === null && Number(fs.readFileSync(LSOCK.replace(/\.sock$/, ".lock"), "utf8")) === link.pid, JSON.stringify(extra.map((x) => x.exitCode)));
   const l1 = await a.call("list", {});
   ok("1 a panel connection through the link reaches world H's daemon", JSON.stringify((l1.rooms || []).map((r) => r.id)) === '["H"]', JSON.stringify(l1.rooms));
   const b = await connect({ onClose: () => closed++ });
@@ -65,7 +69,18 @@ try {
   try { process.kill(stuck, "SIGCONT"); process.kill(stuck, "SIGKILL"); } catch { /* gone */ }
   const c2 = await (async () => { for (let i = 0; i < 40; i++) { try { const x = await connect(); await x.call("list", {}, { timeoutMs: 3000 }); return x; } catch { await sleep(250); } } return null; })();
   ok("4 … and works again", !!c2);
-  c.close?.(); c2?.close?.(); a.close?.(); b.close?.();
+  // 7 (LinkCheck) the link stays up but the world's DAEMON goes away (a restart): panels can't connect while it's gone (no channel
+  // storm), and connect again once it's back
+  c?.close?.(); c2?.close?.(); a.close?.(); b.close?.(); await sleep(300);
+  d.kill(); await waitFor(() => d.exitCode !== null || d.signalCode !== null, 5000);
+  const opensBefore = () => (fs.existsSync(LOG) ? fs.readFileSync(LOG, "utf8").split("\n").length : 0);
+  let fails7 = 0; const t7 = Date.now();
+  for (let i = 0; i < 20; i++) { try { const x = await connect({ timeout: 500 }); await x.call("list", {}, { timeoutMs: 500 }).catch(() => {}); x.close(); } catch { fails7++; } await sleep(200); }
+  ok("7 while the daemon is gone, panel connects fail (the panel socket is closed), not half-open channels", fails7 >= 15 && /daemon down/.test(fs.readFileSync(LOG, "utf8")), `fails ${fails7}/20; ${fs.readFileSync(LOG, "utf8").slice(-300)}`);
+  d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env: denv, stdio: "ignore" });
+  const c7 = await (async () => { for (let i = 0; i < 60; i++) { try { const x = await connect({ timeout: 1000 }); await x.call("list", {}, { timeoutMs: 2000 }); return x; } catch { await sleep(250); } } return null; })();
+  ok("7 … and the panels connect again once the daemon is back", !!c7 && /daemon back/.test(fs.readFileSync(LOG, "utf8")), fs.readFileSync(LOG, "utf8").slice(-300));
+  c7?.close?.();
   // 6 idle: no panel for 4 s → it ends and removes its socket
   ok("6 with no panel for a while the link ends and removes its sockets", await waitFor(() => link.exitCode !== null && !fs.existsSync(LSOCK) && !fs.existsSync(LSOCK.replace(/\.sock$/, ".ctl")), 15000), `exit ${link.exitCode}, sock ${fs.existsSync(LSOCK)}`);
   // 5 an expired Teleport login: a `tsh` whose status fails; no ssh may start
