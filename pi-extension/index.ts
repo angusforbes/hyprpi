@@ -77,6 +77,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   // J591: ctxRef can be a stale ctx after a reload, and touching its .ui then throws; a notice must never crash the window
   const safeNotify = (text: string, kind?: any) => { try { ctxRef?.ui?.notify?.(text, kind); } catch { /* stale ctx */ } };
   const send = (message: any, opts: any) => {
+    if (stopped) return; // J591 (CrashCheck): an old instance after /reload or session_shutdown sends nothing (its pi throws, and again() would requeue forever)
     // J272 fix 6: a message that waited here (or in the daemon) for minutes says so, so the agent doesn't take a
     // stale question for an unanswered one and re-send what it already sent (Harbor, J262).
     const sentAt = Number(message?.details?.sent_at) || 0;
@@ -484,6 +485,8 @@ export default function hyprpi(pi: ExtensionAPI) {
   });
   pi.on("session_shutdown", async () => {
     stopped = true;
+    held.length = 0; // J591: nothing left to retry from this instance (the daemon re-delivers what wasn't acked)
+    if (restartTimer) { clearInterval(restartTimer); restartTimer = null; }
     try { stopInput?.(); } catch { /* gone */ } stopInput = null;
     if (retry) clearTimeout(retry);
     for (const w of demands.values()) w.done();
@@ -779,6 +782,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     void tryRestart();
   }
   async function tryRestart() {
+    if (stopped && !restartBusy) { if (restartTimer) { clearInterval(restartTimer); restartTimer = null; } return; } // J591: not from an old instance
     if (!restartReq || restartBusy || !idle() || held.length) return;
     restartBusy = true;
     const ctx = ctxRef, req = restartReq;
@@ -789,18 +793,18 @@ export default function hyprpi(pi: ExtensionAPI) {
         if (tokens !== null && tokens < 20000) compacted = `no compaction needed (${Math.round(tokens / 1000)}k tokens)`;
         else compacted = await new Promise<string>((res) => {
           try {
-            ctx?.ui?.notify?.("🔄 restart: compacting first…", "info");
+            try { ctx?.ui?.notify?.("🔄 restart: compacting first…", "info"); } catch { /* stale */ }
             ctx.compact({ onComplete: () => res("compacted"), onError: (e: any) => res(`compaction failed: ${e?.message || e}; restarted anyway`) });
           } catch (e: any) { res(`compaction failed: ${e?.message || e}; restarted anyway`); }
         });
       }
       await call("agent.restartReady", { compacted });
       if (restartTimer) { clearInterval(restartTimer); restartTimer = null; }
-      ctx?.ui?.notify?.(`🔄 restarting (${compacted})…`, "info");
+      try { ctx?.ui?.notify?.(`🔄 restarting (${compacted})…`, "info"); } catch { /* stale */ }
       stopped = true; // don't reconnect from this process
       ctx.shutdown();
     } catch (e: any) {
-      ctx?.ui?.notify?.(`/restart: ${e?.message || e}`, "error");
+      try { ctx?.ui?.notify?.(`/restart: ${e?.message || e}`, "error"); } catch { /* stale ctx (J591) */ }
       restartReq = null; restartBusy = false;
       if (restartTimer) { clearInterval(restartTimer); restartTimer = null; }
     }
