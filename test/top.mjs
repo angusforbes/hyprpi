@@ -47,7 +47,7 @@ test("sampler limitations survive assembly", () => assert.ok(assembleSnapshot(me
 test("unknown CPU is not rendered as zero machine CPU", () => assert.match(renderTop({ ...snapshot, totals: { ...snapshot.totals, cpuPercent: null } }).join("\n"), /\?% CPU \(\?% machine\)/));
 test("one-shot includes world groups, load and all requested columns", () => {
   const text = renderTop(snapshot, { sort: "priority" }).join("\n");
-  for (const s of ["[A]", "[H]", "[Unattributed]", "load 2.0 / 1.0 / 0.5", "host CPU 40.0%", "RAM", "swap", "STATE", "UPTIME", "CPU%", "RSS", "MODEL", "PRI", "CTX", "CMP", "SESSION", "RST/RF", "DUE", "BUDGET", "150.0", "model-one", "50k/200k 25% [#----]", "remote: laptop clients/transport only"]) assert.ok(text.includes(s), s);
+  for (const s of ["[A]", "[H]", "[Other agents (not hyprpi", "load 2.0 / 1.0 / 0.5", "host CPU 40.0%", "RAM", "swap", "STATE", "UPTIME", "CPU%", "RSS", "MODEL", "PRI", "CTX", "CMP", "SESSION", "RST/RF", "DUE", "BUDGET", "150.0", "model-one", "50k/200k 25% [#----]", "remote: laptop clients/transport only"]) assert.ok(text.includes(s), s);
 });
 test("render strips controls from daemon text and warnings", () => {
   const text = renderTop({ ...snapshot, warnings: ["unsafe\x1b]52;c;SECRET\x07"], agents: [{ ...snapshot.agents[0], name: "Example\x1b[2J" }] }).join("\n");
