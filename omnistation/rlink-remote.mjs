@@ -46,7 +46,7 @@ function upload(f) {
     const p = path.join(CLIP, name);
     // J595: a byte-identical file of that name is kept (the laptop names uploads by content), not written again
     let same = false; try { const st = fs.statSync(p); same = st.isFile() && st.size === buf.length && fs.readFileSync(p).equals(buf); } catch { /* new */ }
-    if (!same) { const tmp = `${p}.${process.pid}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}.tmp`; fs.writeFileSync(tmp, buf, { mode: 0o600 }); fs.renameSync(tmp, p); }
+    if (!same) { const tmp = `${p}.${process.pid}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}.part`; fs.writeFileSync(tmp, buf, { mode: 0o600 }); fs.renameSync(tmp, p); }
     send({ t: "ur", c, id, path: p });
   } catch (e) { send({ t: "ur", c, id, error: e.message }); }
 }

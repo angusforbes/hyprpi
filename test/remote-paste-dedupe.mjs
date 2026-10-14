@@ -73,7 +73,7 @@ const RC = path.join(RW, "clipboard");
 const b1 = await up(L1), b2 = await up(L2);
 ok("B uploadImages: the image is uploaded and its path there replaces the laptop path", b1.images.length === 1 && /\/\.hyprpi-h\/clipboard\/pi-clipboard-[0-9a-f]{16}\.png$/.test(b1.images[0]) && b1.text === `see ${b1.images[0]}`, JSON.stringify(b1));
 ok("B W1 upload: the same image twice (even from two laptop files) -> the same path there", b1.images[0] && b1.images[0] === b2.images[0], `${b1.images[0]} / ${b2.images[0]}`);
-ok("B W1 upload: … and one file there, no .tmp left", files(RC).length === 1, JSON.stringify(files(RC)));
+ok("B W1 upload: … and one file there, no .part left", files(RC).length === 1, JSON.stringify(files(RC)));
 const fB = b1.images[0]; const mB = fs.statSync(fB).mtimeMs; await new Promise((r) => setTimeout(r, 30)); await up(L1);
 ok("B upload: a byte-identical file there is kept, not rewritten", fs.statSync(fB).mtimeMs === mB && fs.readFileSync(fB).equals(IMG1) && (fs.statSync(fB).mode & 0o777) === 0o600);
 const b3 = await up(L3);
