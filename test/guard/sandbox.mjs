@@ -67,7 +67,7 @@ export function liveSocketPaths() {
 }
 
 // The environment a guarded test gets (on top of the caller's)
-export function guardEnv(base = process.env, { log } = {}) {
+export function guardEnv(base = process.env, { log, net = false } = {}) {
   const e = { ...base, HYPRPI_TEST: base.HYPRPI_TEST || "1", HYPRPI_TEST_GUARD: "1", HYPRPI_TEST_SANDBOX: "1", HYPRPI_NO_ENSURE: "1" };
   try { e.HYPRPI_TEST_OUTER_PIDNS = fs.readlinkSync("/proc/self/ns/pid"); } catch { /* inSandbox then fails closed */ }
   delete e.HYPRPI_TEST_ROOT; // the test's own node process becomes the root
@@ -82,6 +82,16 @@ export function guardEnv(base = process.env, { log } = {}) {
     const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "testguard-live-")), "sockets.txt"); fs.writeFileSync(f, live.join("\n") + "\n");
     e.HYPRPI_TEST_LIVE_SOCKETS = f;
   } catch { /* then the preload refuses every missing path there */ }
+  // --net shares the host's network, so the host's own loopback services (the phone server, the MCP gateway…) would be reachable:
+  // the ports listening on the host now go to the preload, which refuses a connection to them on a local address
+  if (net) {
+    try {
+      const ports = new Set();
+      for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) { let t = ""; try { t = fs.readFileSync(f, "utf8"); } catch { continue; } for (const l of t.split("\n").slice(1)) { const c = l.trim().split(/\s+/); if (c[3] === "0A" && c[1]) ports.add(parseInt(c[1].split(":").pop(), 16)); } }
+      const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "testguard-ports-")), "ports.txt"); fs.writeFileSync(f, [...ports].join("\n") + "\n");
+      e.HYPRPI_TEST_HOST_PORTS = f;
+    } catch { /* then no port list: the preload refuses every loopback connection */ e.HYPRPI_TEST_HOST_PORTS = "-"; }
+  }
   if (!String(e.NODE_OPTIONS || "").includes(PRELOAD)) e.NODE_OPTIONS = `${e.NODE_OPTIONS ? e.NODE_OPTIONS + " " : ""}--import=${PRELOAD}`;
   return e;
 }
