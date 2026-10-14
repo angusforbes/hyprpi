@@ -8,6 +8,7 @@
 //   node test/run.mjs --all            the gate's unit set (Blink's selection): test/*.mjs, docker/*/test-*.mjs, docker/test-*.mjs and
 //                                      test/*.sh (run with bash), minus gateway-e2e, *-live*, model-check (paid/live) and run.mjs
 //   node test/run.mjs FILE -- ARGS…    pass ARGS to the test(s), e.g. test/gateway-e2e.mjs -- --require-complete --report /tmp/x.json
+//   node test/run.mjs --all --list     print what --all would run (after its skips), run nothing
 //   options: -j N (parallel, default 4) · --timeout S (per test, default 600) · --net (share the host network: for tests that
 //            need the internet; the pid namespace and masks stay) · --keep (keep the run folder) · --quiet (no output on pass)
 //   A test can ask for the network itself with a comment line `// test-guard: net` in its first 20 lines, and be left out of
@@ -23,9 +24,9 @@ const TEST = path.dirname(new URL(import.meta.url).pathname), ROOT = path.dirnam
 const dd = process.argv.indexOf("--"), argv = process.argv.slice(2, dd < 0 ? undefined : dd), testArgs = dd < 0 ? [] : process.argv.slice(dd + 1);
 const flag = (f) => { const i = argv.indexOf(f); if (i < 0) return false; argv.splice(i, 1); return true; };
 const opt = (f, d) => { const i = argv.indexOf(f); if (i < 0) return d; const v = argv[i + 1]; argv.splice(i, 2); return v; };
-const all = flag("--all"), netAll = flag("--net"), keep = flag("--keep"), quiet = flag("--quiet");
+const all = flag("--all"), listOnly = flag("--list"), netAll = flag("--net"), keep = flag("--keep"), quiet = flag("--quiet");
 const jobs = Math.max(1, Number(opt("-j", 4)) || 4), timeoutS = Math.max(5, Number(opt("--timeout", 600)) || 600);
-if (argv.some((a) => a.startsWith("-"))) { console.error("usage: node test/run.mjs [--all] [-j N] [--timeout S] [--net] [--keep] [--quiet] [FILE…]"); process.exit(2); }
+if (argv.some((a) => a.startsWith("-"))) { console.error("usage: node test/run.mjs [--all] [--list] [-j N] [--timeout S] [--net] [--keep] [--quiet] [FILE…]"); process.exit(2); }
 
 const resolve = (a) => {
   for (const c of [a, path.join(TEST, a), path.join(TEST, a + ".mjs"), path.join(ROOT, a)]) if (fs.existsSync(c) && fs.statSync(c).isFile()) return path.resolve(c);
@@ -39,12 +40,14 @@ const unitSet = () => {
 };
 const files = all ? unitSet() : argv.map(resolve);
 if (!files.length) { console.error("no tests given (FILE… or --all)"); process.exit(2); }
+
 const why = sandboxUnavailable();
 if (why) { console.error(`test guard: can't build the sandbox here: ${why}. Tests don't run unguarded.`); process.exit(87); }
 
 const skipOf = (f) => { try { return (/^\s*(?:\/\/|#)\s*test-guard:\s*skip\b\s*(.*)$/m.exec(fs.readFileSync(f, "utf8").split("\n").slice(0, 20).join("\n")) || [])[1]?.trim() ?? null; } catch { return null; } };
 const skipped = all ? files.filter((f) => skipOf(f) != null) : [];
 for (const f of skipped) { console.log(`skip ${path.relative(ROOT, f)} (${skipOf(f) || "marked test-guard: skip"})`); files.splice(files.indexOf(f), 1); }
+if (listOnly) { for (const f of files) console.log(path.relative(ROOT, f)); process.exit(0); } // (--list: the selection, nothing run)
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "hyprpi-testrun-"));
 const wantsNet = (f) => { try { return /^\s*(?:\/\/|#)\s*test-guard:\s*net\b/m.test(fs.readFileSync(f, "utf8").split("\n").slice(0, 20).join("\n")); } catch { return false; } };
 const runOne = (file) => new Promise((done) => {

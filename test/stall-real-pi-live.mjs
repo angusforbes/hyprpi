@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // test-guard: net (a real pi talks to its model)
+// J596 (Angus, 30a): NOT in the daily gate (-live: `node test/run.mjs --all` skips it): it makes two paid model calls and its timings
+// are flaky under a loaded parallel run. Run it by hand, alone, whenever the stuck-agent (stall) code changes (the daemon's stall
+// watch, the hyprpi extension's pulses): node test/run.mjs --net test/stall-real-pi-live.mjs
 // J452 W3, manual (makes two small model calls): the REAL pi with this checkout's hyprpi extension, against an isolated daemon
 // (stall limit 8 s, above a model's first-token delay; checks every 0.5 s, pulses every 0.5 s). Agent Sleeper runs `sleep 20` (a tool with no output): it must be
 // reported stalled, waiting on "bash: sleep 9". Agent Printer runs a 20-second loop that prints every second: never reported.
-//   node test/stall-real-pi.mjs   (exit 0 = pass)
+//   node test/run.mjs --net test/stall-real-pi-live.mjs   (exit 0 = pass)
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
