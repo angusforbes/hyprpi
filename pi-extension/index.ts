@@ -35,7 +35,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   // J537l (Angus: "i still see the Pi icon for a split second after I press SUPER+A"): pi draws its own logo header when its
   // TUI starts, and the hypi header (setHeader below) can only replace it at session_start, a moment later. In an agent window
   // pi skips drawing its own (as with quietStartup: true, an empty placeholder), so the hypi header is the first thing shown.
-  // Extensions load before pi's TUI starts, so this lands in time; any problem leaves pi's header as it was.
+  // Extensions load before pi's TUI starts, so this lands in time; if patching fails, pi draws its own header as before; if the hypi header then fails, the window simply has no header (MarkCheck9).
   try { const IM: any = (PiAgent as any).InteractiveMode; if (IM?.prototype?.shouldShowStartupHeader) IM.prototype.shouldShowStartupHeader = function () { return false; }; } catch { /* pi's own header */ }
   laterModes(pi); // /notnow and /discuss (J46): hyprpi agent windows only (they file on the board)
 
@@ -422,7 +422,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
   // J537 (Angus: "make that appear in eevry hyprpi agent window when it starts up, they way the pi logo appears for
   // pi"): the hypi mark (lib/hypi-mark.mjs, from make-final.py's grid, the same as π's icon) in pi's logo spot, with pi's version and short key
-  // hints beside it as pi lays them out. Only in a hyprpi agent window's TUI; any problem leaves pi's own header.
+  // hints beside it as pi lays them out. Only in a hyprpi agent window's TUI; since J537l a failure here leaves no header (pi's own is skipped).
   pi.on("session_start", async (_e: any, ctx: any) => {
     if (ctx?.mode !== "tui" || !process.env.HYPRPI_AGENT_ID || typeof ctx.ui?.setHeader !== "function") return;
     try {
@@ -478,7 +478,7 @@ export default function hyprpi(pi: ExtensionAPI) {
         },
         invalidate() {},
       }));
-    } catch { /* pi's own header stays */ }
+    } catch { /* no header (J537l) */ }
   });
   pi.on("session_shutdown", async () => {
     stopped = true;
