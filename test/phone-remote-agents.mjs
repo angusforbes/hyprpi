@@ -52,6 +52,13 @@ try {
   await ev(`window.__rc.openSession("sbx:nope:x")`);
   const back2 = await until(`(()=>{ const a = document.querySelector("#agents"); return a && !a.hidden && document.querySelector("#session").hidden ? "list" : ""; })()`, 20000);
   ok("… also for a malformed / unknown-world id", back2 === "list");
+  // an open session whose agent goes away (closed while he reads it): the polls answer "no such agent" → back to the list
+  await ev(agentsText("I"));
+  await ev(`window.__rc.openSession(${JSON.stringify(await idOf("I", "hub-alpha"))})`);
+  await until(sessionLoaded, 45000);
+  await ev(`(() => { window.__rc.sess.agent = "rmt:world-i:i-closed-while-open-j562"; })()`);
+  const back3 = await until(`(()=>{ const a = document.querySelector("#agents"), n = document.querySelector("#note"); return a && !a.hidden && document.querySelector("#session").hidden && n && !n.hidden && /is gone/.test(n.textContent) ? n.textContent : ""; })()`, 30000);
+  ok("an agent closed while its session is open: after a few polls, back to the list with a note", !!back3, String(back3 || ""));
   ws.close();
 } finally { cleanup(); }
 console.log(fails ? `${fails} FAILED` : "all passed");

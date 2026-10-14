@@ -1069,7 +1069,7 @@ const sess = { agent: null, items: [], before: 0, more: false, end: 0, loading: 
 const sessAgent = () => { for (const l of agentLists.values()) { const a = l.agents.find((x) => x.id === sess.agent); if (a) return a; } return null; };
 const sessNearEnd = () => sessEl.scrollHeight - sessEl.scrollTop - sessEl.clientHeight < 80;
 async function openSession(id) {
-  sess.agent = id; sess.items = []; sess.results = new Map(); sess.before = 0; sess.more = false; sess.end = 0;
+  sess.agent = id; sess.items = []; sess.results = new Map(); sess.before = 0; sess.more = false; sess.end = 0; sess.gone = 0;
   splace.pinned = true; splace.el = null;
   loadSessDraft(id); // J194: this agent's own unsent draft (or an empty box)
   setView("session");
@@ -1103,7 +1103,11 @@ async function pollSession() {
     sess.items.push(...r.items); sess.end = r.end;
     addSession(r.items, "end"); // J230: added in place (was: the whole page redrawn every poll, images and all)
     if (!splace.pinned && r.items.some((it) => it.k !== "result")) $("#snew").hidden = false; // he's reading further up: don't move him
-  } catch { /* the next poll tries again */ }
+    sess.gone = 0;
+  } catch (e) { // the next poll tries again; J562 (PhoneCheck562): an agent that's gone while open (closed) answers "no such agent"
+    // on every poll: after 3 in a row, back to the world's list with a note (one miss can be a remote world's slow listing)
+    if (sess.agent === id && /no such agent|not a session/i.test(e?.message || "") && ++sess.gone >= 3) { const nm = sessAgent()?.name || "that agent"; sess.gone = 0; openAgent.delete(world); setView("agents"); note(`✗ ${nm} is gone (its session can't be read any more); here is world ${world}'s list`); }
+  }
   finally { sessPolling = false; }
 }
 async function loadOlder() {
