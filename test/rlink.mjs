@@ -78,7 +78,9 @@ try {
   for (let i = 0; i < 20; i++) { try { const x = await connect({ timeout: 500 }); await x.call("list", {}, { timeoutMs: 500 }).catch(() => {}); x.close(); } catch { fails7++; } await sleep(200); }
   ok("7 while the daemon is gone, panel connects fail (the panel socket is closed), not half-open channels", fails7 >= 15 && /daemon down/.test(fs.readFileSync(LOG, "utf8")), `fails ${fails7}/20; ${fs.readFileSync(LOG, "utf8").slice(-300)}`);
   d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env: denv, stdio: "ignore" });
-  const c7 = await (async () => { for (let i = 0; i < 60; i++) { try { const x = await connect({ timeout: 1000 }); await x.call("list", {}, { timeoutMs: 2000 }); return x; } catch { await sleep(250); } } return null; })();
+  // (J575: a deadline, not 60 quick tries: a refused connect fails at once, so 60 tries were only ~15 s, and under a loaded gate
+  // (node test/run.mjs --all -j 6) the restarted daemon plus the link's 2 s probe could take longer)
+  const c7 = await (async () => { const until = Date.now() + 45000; while (Date.now() < until) { try { const x = await connect({ timeout: 1000 }); await x.call("list", {}, { timeoutMs: 2000 }); return x; } catch { await sleep(250); } } return null; })();
   ok("7 … and the panels connect again once the daemon is back", !!c7 && /daemon back/.test(fs.readFileSync(LOG, "utf8")), fs.readFileSync(LOG, "utf8").slice(-300));
   c7?.close?.();
   // 6 idle: no panel for 4 s → it ends and removes its socket
