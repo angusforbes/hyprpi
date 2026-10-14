@@ -9,7 +9,7 @@
 import { UserMessageComponent, getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { connect } from "../lib/client.mjs";
 import { ROOT } from "../lib/paths.mjs";
@@ -408,6 +408,8 @@ export default function hyprpi(pi: ExtensionAPI) {
     if (ctx?.mode !== "tui" || !process.env.HYPRPI_AGENT_ID || typeof ctx.ui?.setHeader !== "function") return;
     try {
       const P: any = PiAgent;
+      // J537g (Angus: 'at the top it can say "Pi v1.0.2" · the "hyprpi v…"'; no version number exists, so the commit this agent loaded)
+      let hyVer = ""; try { hyVer = execFileSync("git", ["-C", ROOT, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { /* not a checkout */ }
       const marks: any = { truecolor: markLines("truecolor", undefined, HEADER_STYLE), "256color": markLines("256color", undefined, HEADER_STYLE) }; // loaded once: a missing or bad file leaves pi's header
       // a header line cut to the window's width (escape codes kept, colour reset at the cut)
       const fit = (line: string, width: number) => {
@@ -425,6 +427,7 @@ export default function hyprpi(pi: ExtensionAPI) {
       ctx.ui.setHeader((_tui: any, theme: any) => ({
         render(width: number): string[] {
           const mode = theme.getColorMode?.() === "256color" ? "256color" : "truecolor";
+          const top = theme.fg("dim", `Pi v${P.VERSION || ""}${hyVer ? ` · hyprpi ${hyVer}` : ""}`);
           const M: string[] = marks[mode], mw = [...M[0].replace(/\x1b\[[0-9;]*m/g, "")].length, pad = " ".repeat(mw);
           // text beside the mark, line by line; mark lines without text stand alone, text past the mark is indented to it (J537c: 3 or 6 lines)
           const beside = (T: string[]) => Array.from({ length: Math.max(M.length, T.length) }, (_, i) => (T[i] === undefined ? (M[i] ?? "") : `${M[i] ?? pad} ${T[i]}`));
@@ -443,11 +446,11 @@ export default function hyprpi(pi: ExtensionAPI) {
               hint("app.tools.expand", "to expand tools"), hint("app.thinking.toggle", "to expand thinking"), hint("app.editor.external", "for external editor"),
               raw("/", "for commands"), raw("!", "to run bash"), raw("!!", "to run bash (no context)"), hint("app.message.followUp", "to queue follow-up"),
               hint("app.message.dequeue", "to edit all queued messages"), hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"), raw("drop files", "to attach")].filter(Boolean);
-            return beside([theme.fg("dim", `v${P.VERSION || ""}`), ...full]).map((l) => fit(l, width));
+            return beside([top, ...full]).map((l) => fit(l, width));
           }
           const hints = [hint("app.interrupt", "interrupt"), bound("app.clear") ? raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit") : hint("app.exit", "exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].filter(Boolean).join(theme.fg("muted", " · "));
           return [
-            ...beside([theme.fg("dim", `v${P.VERSION || ""}`), hints, theme.fg("dim", `Press ${key("app.tools.expand", "ctrl+o")} to show full startup help · hyprpi agent`)]),
+            ...beside([top, hints, theme.fg("dim", `Press ${key("app.tools.expand", "ctrl+o")} to show full startup help`)]),
           ].map((l) => fit(l, width));
         },
         invalidate() {},
