@@ -185,7 +185,7 @@ async function main() {
       const { connect } = await import(path.join(HERE, "../lib/client.mjs"));
       const { socketPath } = await import(path.join(HERE, "../lib/paths.mjs"));
       const req = async (m, p) => { if (!c || c.closed) c = await connect({ path: socketPath() }); return c.call(m, p, { timeoutMs: 15000 }); };
-      if (f.kind === "deliver") { const r = await req("relay.deliver", { origin: f.origin || {}, from: String(f.from || ""), text: String(f.text || "") }); log("deliver", f.id, "→", r.to); return back({ result: r }); }
+      if (f.kind === "deliver") { const r = await req("relay.deliver", { origin: f.origin || {}, from: String(f.from || ""), text: String(f.text || ""), fromWorld: WL }); log("deliver", f.id, "→", r.to); return back({ result: r }); }
       const r = await req("relay.toAgent", { to: String(f.to || ""), world: String(f.world || ""), from: String(f.from || ""), fromWorld: WL, text: String(f.text || ""), mode: f.mode === "demand" ? "demand" : "talk" });
       log("agent", f.id, "→", r.to);
       if (!r.request_id) return back({ result: { to: r.to, note: r.note || `delivered to ${r.to}` } });

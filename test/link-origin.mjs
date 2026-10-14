@@ -69,7 +69,7 @@ try {
   ok("2 W2 … Parity gets it, marked as from omni-alpha in world H", !!m2 && /omni-alpha \(world H\)/.test(m2.data.from?.name || "") && /from omni-alpha in world H/.test(m2.data.text), JSON.stringify(m2?.data || null));
   if (m2) await P.c.call("talk.reply", { request_id: m2.data.request_id, text: "A100: 98% busy" });
   const back2 = await waitFor(() => O.got.find((g) => g.ev === "talk.reply" && /98% busy/.test(g.data?.text || "")), 10000);
-  ok("2 W2 … and Parity's talk_reply comes back to omni-alpha", !!back2 && /Parity/.test(back2.data.from?.name || ""), JSON.stringify(O.got.map((g) => g.ev)));
+  ok("2 W2 … and Parity's talk_reply comes back to omni-alpha, as a reply to its own demand (same request id)", !!back2 && /Parity/.test(back2.data.from?.name || "") && back2.data.request_id === t2.request_id, JSON.stringify(back2?.data || null) + " " + t2.request_id);
   const q3 = await remc.call("thoughts.ask", { room: "H", agent: "Parity@A", question: "which world are you in?" }).catch((e) => ({ err: e.message }));
   ok("2 W2 Thoughts-H's ask_agent to Parity@A goes over the link", /Parity \(on the laptop, via the link\)/.test(q3.agent || ""), JSON.stringify(q3));
   const m3 = await waitFor(() => P.got.find((g) => g.ev === "talk" && /which world are you in/.test(g.data?.text || "")), 10000);
@@ -90,6 +90,16 @@ try {
   const t6 = await O.c.call("talk", { to: ["Nobody"], text: "hello?", mode: "talk" });
   const n6 = await waitFor(() => O.got.find((g) => g.ev === "talk.reply" && /not delivered: .*no agent Nobody on the laptop/.test(g.data?.text || "")), 10000);
   ok("3 W2 a name nobody has is refused back to the sender (never a stand-in)", !!n6, JSON.stringify(O.got.map((g) => g.data?.text)).slice(0, 400));
+  // (OriginCheck) relay.deliver only for something really relayed from here; Name@World only for an agent that really was there
+  const lapc = await connect({ path: lap.sock });
+  const forged = await lapc.call("relay.deliver", { origin: { world: "A", agent: "Parity", agentId: "hp-parity", request_id: "00000000-0000-0000-0000-000000000000" }, from: "Thoughts-H", text: "forged", fromWorld: "H" }).then(() => "", (e) => e.message);
+  const forgedT = await lapc.call("relay.deliver", { origin: { world: "B", thoughts: true }, from: "Thoughts-H", text: "forged", fromWorld: "H" }).then(() => "", (e) => e.message);
+  const forgedH = await lapc.call("relay.deliver", { origin: { world: "H", thoughts: true }, from: "x", text: "forged", fromWorld: "H" }).then(() => "", (e) => e.message);
+  ok("3 a made-up origin is refused by relay.deliver (unknown request, a Thoughts question never asked, a remote world as origin)", /no such relayed request/.test(forged) && /no such relayed question/.test(forgedT) && /bad origin/.test(forgedH), JSON.stringify([forged, forgedT, forgedH]));
+  ok("3 … nothing forged reached Parity or Thoughts-B", !P.got.some((g) => /forged/.test(g.data?.text || "")) && !fs.existsSync(path.join(lap.state, "thoughts", "B.thread.jsonl")));
+  const nb = await lapc.call("relay.toAgent", { to: "Ghost", world: "A", from: "omni-alpha", fromWorld: "H", text: "boo", mode: "talk" }).then(() => "", (e) => e.message);
+  ok("3 Ghost@A, never an agent here, is refused (not handed to Thoughts-A as 'closed')", /no agent Ghost/.test(nb) && !/Ghost/.test(lapThread()), nb);
+  lapc.close();
   // ---- 4 W3
   ok("4 W3 no fake world on the machine (no room A, no Thoughts-A thread)", !fs.existsSync(path.join(REM_STATE, "rooms", "A.jsonl")) && !fs.existsSync(path.join(REM_STATE, "thoughts", "A.thread.jsonl")));
   const was = process.env.HYPRPI_STATE; process.env.HYPRPI_STATE = REM_STATE;
