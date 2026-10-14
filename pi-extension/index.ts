@@ -431,7 +431,7 @@ export default function hyprpi(pi: ExtensionAPI) {
           const hint = (k: string, d: string) => (typeof P.keyHint === "function" ? P.keyHint(k, d) : theme.fg("dim", d));
           const raw = (k: string, d: string) => (typeof P.rawKeyHint === "function" ? P.rawKeyHint(k, d) : `${k} ${theme.fg("dim", d)}`);
           const key = (k: string, f: string) => (typeof P.keyText === "function" ? P.keyText(k) : f);
-          const onboarding = theme.fg("dim", "Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.");
+          // J537d (Angus: "can we get rid of the line that says 'Pi can explain ... Ask it how...'"): no onboarding line
           // Ctrl+O (app.tools.expand) expands pi's header to the full key list; this one follows the same state
           let expanded = false; try { expanded = !!ctx.ui.getToolsExpanded?.(); } catch { /* compact */ }
           if (expanded) {
@@ -441,12 +441,11 @@ export default function hyprpi(pi: ExtensionAPI) {
               hint("app.tools.expand", "to expand tools"), hint("app.thinking.toggle", "to expand thinking"), hint("app.editor.external", "for external editor"),
               raw("/", "for commands"), raw("!", "to run bash"), raw("!!", "to run bash (no context)"), hint("app.message.followUp", "to queue follow-up"),
               hint("app.message.dequeue", "to edit all queued messages"), hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"), raw("drop files", "to attach")];
-            return [...beside([theme.fg("dim", `v${P.VERSION || ""}`), ...full]), onboarding].map((l) => fit(l, width));
+            return beside([theme.fg("dim", `v${P.VERSION || ""}`), ...full]).map((l) => fit(l, width));
           }
           const hints = [hint("app.interrupt", "interrupt"), raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].join(theme.fg("muted", " · "));
           return [
             ...beside([theme.fg("dim", `v${P.VERSION || ""}`), hints, theme.fg("dim", `Press ${key("app.tools.expand", "ctrl+o")} to show full startup help · hyprpi agent`)]),
-            onboarding,
           ].map((l) => fit(l, width));
         },
         invalidate() {},
