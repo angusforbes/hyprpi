@@ -428,22 +428,24 @@ export default function hyprpi(pi: ExtensionAPI) {
           const M: string[] = marks[mode], mw = [...M[0].replace(/\x1b\[[0-9;]*m/g, "")].length, pad = " ".repeat(mw);
           // text beside the mark, line by line; mark lines without text stand alone, text past the mark is indented to it (J537c: 3 or 6 lines)
           const beside = (T: string[]) => Array.from({ length: Math.max(M.length, T.length) }, (_, i) => (T[i] === undefined ? (M[i] ?? "") : `${M[i] ?? pad} ${T[i]}`));
-          const hint = (k: string, d: string) => (typeof P.keyHint === "function" ? P.keyHint(k, d) : theme.fg("dim", d));
+          // J537f (Angus: "(empty) to suspend"?): a hint whose key is unbound (keybindings.json "app.clear": [] etc.) is left out, not shown keyless
+          const bound = (k: string) => typeof P.keyText !== "function" || P.keyText(k) !== "";
+          const hint = (k: string, d: string) => (!bound(k) ? "" : typeof P.keyHint === "function" ? P.keyHint(k, d) : theme.fg("dim", d));
           const raw = (k: string, d: string) => (typeof P.rawKeyHint === "function" ? P.rawKeyHint(k, d) : `${k} ${theme.fg("dim", d)}`);
           const key = (k: string, f: string) => (typeof P.keyText === "function" ? P.keyText(k) : f);
           // J537d (Angus: "can we get rid of the line that says 'Pi can explain ... Ask it how...'"): no onboarding line
           // Ctrl+O (app.tools.expand) expands pi's header to the full key list; this one follows the same state
           let expanded = false; try { expanded = !!ctx.ui.getToolsExpanded?.(); } catch { /* compact */ }
           if (expanded) {
-            const full = [hint("app.interrupt", "to interrupt"), hint("app.clear", "to clear"), raw(`${key("app.clear", "ctrl+c")} twice`, "to exit"), hint("app.exit", "to exit (empty)"),
-              hint("app.suspend", "to suspend"), hint("tui.editor.deleteToLineEnd", "to delete to end"), hint("app.thinking.cycle", "to cycle thinking level"),
+            const full = [hint("app.interrupt", "to interrupt"), hint("app.clear", "to clear"), bound("app.clear") ? raw(`${key("app.clear", "ctrl+c")} twice`, "to exit") : "", hint("app.exit", "to exit (empty)"),
+              hint("tui.editor.deleteToLineEnd", "to delete to end"), hint("app.thinking.cycle", "to cycle thinking level"),
               raw(`${key("app.model.cycleForward", "ctrl+p")}/${key("app.model.cycleBackward", "shift+ctrl+p")}`, "to cycle models"), hint("app.model.select", "to select model"),
               hint("app.tools.expand", "to expand tools"), hint("app.thinking.toggle", "to expand thinking"), hint("app.editor.external", "for external editor"),
               raw("/", "for commands"), raw("!", "to run bash"), raw("!!", "to run bash (no context)"), hint("app.message.followUp", "to queue follow-up"),
-              hint("app.message.dequeue", "to edit all queued messages"), hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"), raw("drop files", "to attach")];
+              hint("app.message.dequeue", "to edit all queued messages"), hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"), raw("drop files", "to attach")].filter(Boolean);
             return beside([theme.fg("dim", `v${P.VERSION || ""}`), ...full]).map((l) => fit(l, width));
           }
-          const hints = [hint("app.interrupt", "interrupt"), raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].join(theme.fg("muted", " · "));
+          const hints = [hint("app.interrupt", "interrupt"), bound("app.clear") ? raw(`${key("app.clear", "ctrl+c")}/${key("app.exit", "ctrl+d")}`, "clear/exit") : hint("app.exit", "exit"), raw("/", "commands"), raw("!", "bash"), hint("app.tools.expand", "more")].filter(Boolean).join(theme.fg("muted", " · "));
           return [
             ...beside([theme.fg("dim", `v${P.VERSION || ""}`), hints, theme.fg("dim", `Press ${key("app.tools.expand", "ctrl+o")} to show full startup help · hyprpi agent`)]),
           ].map((l) => fit(l, width));
