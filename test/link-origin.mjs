@@ -35,7 +35,7 @@ const remEnv = `HYPRPI_STATE=${REM_STATE} HYPRPI_SOCKET=${F("rem.sock")}`;
 fs.writeFileSync(SSH, `#!/bin/sh\necho $$ >> ${PIDS}\ncase "$*" in\n  *thoughts-relay*) exec env ${remEnv} HYPRPI_RELAY_WAIT_MS=3000 ${process.execPath} ${path.join(ROOT, "lib/remote-thoughts.mjs")} H ;;\n  *) exec env ${remEnv} ${process.execPath} ${path.join(ROOT, "omnistation/rlink-remote.mjs")} ;;\nesac\n`, { mode: 0o755 });
 fs.mkdirSync(path.join(F("cfg-lap"), "hyprpi", "remote"), { recursive: true, mode: 0o700 });
 fs.writeFileSync(path.join(F("cfg-lap"), "hyprpi", "remote", "h.json"), JSON.stringify({ ssh: [SSH, "host"] }), { mode: 0o600 });
-const rem = daemon("rem", REM_STATE, { HYPRPI_RELAY_IDLE_MS: "1500" }), lap = daemon("lap", F("lapstate"), { XDG_RUNTIME_DIR: RUN });
+const rem = daemon("rem", REM_STATE), /* (OriginCheck) the production idle time: the relay lets go explicitly */ lap = daemon("lap", F("lapstate"), { XDG_RUNTIME_DIR: RUN });
 fs.mkdirSync(path.join(lap.state, "rooms"), { recursive: true }); fs.writeFileSync(path.join(lap.state, "rooms", "A.jsonl"), "");
 const lenv = { ...process.env, XDG_RUNTIME_DIR: RUN, XDG_CONFIG_HOME: F("cfg-lap"), HYPRPI_SOCKET: lap.sock, HYPRPI_LINK_LOG: F("link.log"), HYPRPI_LINK_PING_MS: "1000" };
 delete lenv.HYPRPI_REMOTE_LINK; delete lenv.HYPRPI_AGENT_ID; delete lenv.HYPRPI_REMOTE_DIR;
@@ -56,11 +56,15 @@ try {
   ok("1 W1 on the machine the request carries its origin: Parity, world A (and the laptop request it answers)", r1?.origin?.world === "A" && r1.origin.agent === "Parity" && r1.origin.agentId === "hp-parity" && /^[0-9a-f-]{36}$/.test(r1.origin.request_id || ""), JSON.stringify(r1?.origin || null));
   const told = await waitFor(() => P.got.find((g) => g.ev === "talk.reply" && /no answer from Thoughts-H yet/.test(g.data?.text || "")), 15000);
   ok("1 W1 when the wait runs out (30 min; 3 s here), Parity is told it stays answerable for 12 h", !!told && /answerable for 12 h/.test(told.data.text), JSON.stringify(P.got.map((g) => g.data?.text)).slice(0, 300));
-  await sleep(2000); // the ssh relay has stopped waiting (its poller is gone)
+  // (OriginCheck) answered right after the relay let go (well inside any idle time): still goes over the link
   const a1 = await remc.call("thoughts.answer", { room: "H", request_id: r1.id, text: "J10 is done: see brev-newer-gpus.md" }).catch((e) => ({ err: e.message }));
   ok("1 W1 Thoughts-H's late answer_agent is accepted and goes to Parity over the link", /Parity \(world A/.test(a1.agent || ""), JSON.stringify(a1));
   const late = await waitFor(() => P.got.find((g) => g.ev === "talk.reply" && /J10 is done/.test(g.data?.text || "")), 10000);
   ok("1 W1 … and reaches Parity as a reply to its own request", !!late && late.data.request_id === r1.origin.request_id && /late answer/.test(late.data.from?.name || ""), JSON.stringify(late?.data || null));
+  { const lc = await connect({ path: lap.sock });
+    const dup = await lc.call("relay.deliver", { origin: r1.origin, from: "Thoughts-H", text: "J10 is done: see brev-newer-gpus.md", fromWorld: "H" }).catch((e) => ({ err: e.message }));
+    await sleep(500); lc.close();
+    ok("1 a re-sent late answer is delivered once", dup.duplicate === true && P.got.filter((g) => /J10 is done/.test(g.data?.text || "")).length === 1, JSON.stringify(dup)); }
   // ---- 2 W2
   const O = await agentOn(rem.sock, "h-omni", "omni-alpha", 71);
   const t2 = await O.c.call("talk", { to: ["Parity"], text: "need the A100 numbers", mode: "demand" });
@@ -70,12 +74,14 @@ try {
   if (m2) await P.c.call("talk.reply", { request_id: m2.data.request_id, text: "A100: 98% busy" });
   const back2 = await waitFor(() => O.got.find((g) => g.ev === "talk.reply" && /98% busy/.test(g.data?.text || "")), 10000);
   ok("2 W2 … and Parity's talk_reply comes back to omni-alpha, as a reply to its own demand (same request id)", !!back2 && /Parity/.test(back2.data.from?.name || "") && back2.data.request_id === t2.request_id, JSON.stringify(back2?.data || null) + " " + t2.request_id);
+  const shadow = await agentOn(rem.sock, "h-parity", "Parity", 72); // (OriginCheck) a same-named agent on the machine must not take Parity@A's
   const q3 = await remc.call("thoughts.ask", { room: "H", agent: "Parity@A", question: "which world are you in?" }).catch((e) => ({ err: e.message }));
   ok("2 W2 Thoughts-H's ask_agent to Parity@A goes over the link", /Parity \(on the laptop, via the link\)/.test(q3.agent || ""), JSON.stringify(q3));
   const m3 = await waitFor(() => P.got.find((g) => g.ev === "talk" && /which world are you in/.test(g.data?.text || "")), 10000);
   if (m3) await P.c.call("talk.reply", { request_id: m3.data.request_id, text: "world A, on the laptop" });
   const th3 = await waitFor(async () => ((await remc.call("thoughts.get", { room: "H" })).entries || []).find((e) => /world A, on the laptop/.test(e.text || "")), 10000);
-  ok("2 W2 … Parity's answer lands in Thoughts-H's thread", !!m3 && !!th3);
+  ok("2 W2 … Parity's answer lands in Thoughts-H's thread (not the machine's own Parity)", !!m3 && !!th3 && !shadow.got.some((g) => /which world are you in/.test(g.data?.text || "")));
+  shadow.c.close();
   // ---- 3 W2 closed agents
   const sl = spawn("sleep", ["300"]); sleepers.push(sl);
   const E = await agentOn(lap.sock, "hp-echo", "Echo", 3, sl.pid);
