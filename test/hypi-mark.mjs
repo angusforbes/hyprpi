@@ -11,8 +11,8 @@ ok("the shapes", JSON.stringify(t.map(plain)) === JSON.stringify(["█▄▄   �
 ok("true colour uses the grid's colours", t.join("").includes("38;2;230;140;124") && t.join("").includes("48;2;82;144;181") && t.join("").includes("38;2;234;184;96"));
 ok("256 colours: the same palette entries pi picks for its own logo (174, 67, 179)", JSON.stringify([m.colors.C, m.colors.B, m.colors.Y].map(to256)) === "[174,67,179]" && !e.join("").includes(";2;"));
 // J537c: agent windows draw it at double size with a half-pixel gap between the y and the p (grid column 5 stays one cell)
-const big = markLines("truecolor", m, HEADER_STYLE).map(plain);
-ok("J537c header style: double size, column 5 (the y-p gap) half width", HEADER_STYLE.scale === 2 && JSON.stringify(HEADER_STYLE.halfCols) === "[5]");
+const big = markLines("truecolor", m, { scale: 2, halfCols: [5] }).map(plain);
+ok("J537e header style: the small mark again (Angus: too big)", HEADER_STYLE.scale === 1 && JSON.stringify(markLines("truecolor", m, HEADER_STYLE)) === JSON.stringify(markLines("truecolor", m)));
 ok("J537c 6 lines, 19 cells each (9 pixels x 2 + the 1-cell gap)", big.length === 6 && big.every((l) => [...l].length === 19), JSON.stringify(big));
 ok("J537c the shapes", JSON.stringify(big) === JSON.stringify(["██         ██████  ", "██████     ██  ██  ", "██  ██  ██ ████  ██", "██  ██████ ██    ██", "        ██         ", "    ████           "]), JSON.stringify(big));
 ok("J537c the gap between the y and the p is exactly one cell on every line", big.every((l) => l[10] === " ") && big.some((l) => l[9] === "█" && l[11] === "█"));
