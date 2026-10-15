@@ -29,13 +29,17 @@ export async function loadBlob(url, { onProgress = () => {}, max = MAX, signal }
   if (!r.ok) throw new Error(r.status === 404 ? "not found, or not allowed" : r.statusText);
   const total = +r.headers.get("content-length") || 0;
   if (total > max) { r.body?.cancel?.(); return null; }
-  if (!r.body?.getReader) { const b = await r.blob(); onProgress(b.size, b.size); return b; }
+  // J663 (no silent success): a body that ends short of its Content-Length (a dropped connection) is a failure, never a shorter
+  // file handed to the share sheet as the real one. (Only when not content-encoded: then the length counts the encoded bytes.)
+  const short = (n) => total && !r.headers.get("content-encoding") && n !== total ? new Error(`download cut off (${n} of ${total} bytes): try again`) : null;
+  if (!r.body?.getReader) { const b = await r.blob(); const e = short(b.size); if (e) throw e; onProgress(b.size, b.size); return b; }
   const rd = r.body.getReader(), parts = []; let got = 0;
   for (;;) {
     const { done, value } = await rd.read(); if (done) break;
     parts.push(value); got += value.length; onProgress(got, total);
     if (got > max) { rd.cancel(); return null; }
   }
+  { const e = short(got); if (e) throw e; }
   return new Blob(parts, { type: r.headers.get("content-type") || "" });
 }
 

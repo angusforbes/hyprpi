@@ -781,7 +781,7 @@ const server = http.createServer(async (req, res) => {
       // J219 (a): photos from the phone (already uploaded to ~/Phone by /api/upload) go with the message;
       // each must be a readable image under the allowed folders (fileAllowed, the J47 guard).
       // J417: 📎 now uploads to ~/Phone/.pending and takes any file: each pending one is checked here,
-      // moved into ~/Phone only once the message is going (below), and an image goes as an image while any
+      // linked into ~/Phone only once the message is going (below; J663: the pending copy goes once the send is confirmed), and an image goes as an image while any
       // other file is named in the text ("📎 PDF saved: ~/Phone/…"), as a Shortcut share is.
       const asked = Array.isArray(b.images) ? b.images.slice(0, 8) : [], images = [], pend = [];
       for (const p of asked) if (typeof p === "string" && filesHandle.isPending(p)) { try { if (fs.statSync(p).isFile()) { pend.push(p); continue; } } catch { /* gone */ } return json(res, 404, { error: "a photo is not found or not allowed", bad: p }); }
@@ -793,22 +793,33 @@ const server = http.createServer(async (req, res) => {
       }
       if (!r || (!text && !images.length && !pend.length)) return json(res, 400, { error: "world and text needed" });
       if (!api) return json(res, 503, { error: "hyprpi daemon not reachable" });
+      // J663: "/ignore …" goes to Thoughts with no photos or files (thoughts.ignore takes text only): refused rather than dropped
+      if (/^\/ignore(?:\s|$)/.test(text) && (images.length || pend.length)) return json(res, 400, { error: "an /ignore line can't carry photos or files: send them without /ignore" });
+      // J663 (no silent success): a pending 📎 is linked into ~/Phone but its pending copy stays until the send is CONFIRMED (the
+      // daemon's or the remote world's answer), so a send that fails leaves the tile retryable instead of "no longer on the laptop"
       const lines = [];
       for (const p of pend) {
-        const fin = filesHandle.adoptPending(p); if (!fin) return json(res, 404, { error: "a photo is not found or not allowed", bad: p });
+        const fin = filesHandle.adoptPending(p, { keep: true }); if (!fin) return json(res, 404, { error: "a photo is not found or not allowed", bad: p });
         let size = 0; try { size = fs.statSync(fin).size; } catch { /* gone */ }
         if (/\.(png|jpe?g|gif|webp)$/i.test(fin) && size <= 10e6) images.push(fin);
         else lines.push(`📎 ${/\.pdf$/i.test(fin) ? "PDF" : /\.(mov|mp4|m4v|3gp|avi|mkv)$/i.test(fin) ? "video" : /\.(m4a|mp3|wav|aac)$/i.test(fin) ? "audio" : "file"} saved: ~/${path.relative(HOME, fin)} (${size >= 1e6 ? (size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(size / 1024)) + " KB"}).`);
       }
       if (lines.length) text = text ? `${text}\n\n${lines.join("\n")}` : lines.join("\n");
       log("send", r, JSON.stringify(text.slice(0, 80))); shots.sawWorld(r); // J250: a Shortcut screenshot with no world goes here
+      const sent = (out) => { for (const p of pend) filesHandle.dropPending(p); return json(res, 200, out); };
+      // J663: a send that wasn't confirmed is an error the page shows ("✗ not sent: …"; the text and photos stay in the box). A
+      // sandboxed or remote world's failure used to come back as 200 { error }, which the page took as sent: it cleared the text.
+      const unconfirmed = (e) => { log("send", r, "NOT confirmed:", e.message); return json(res, 502, { error: `Thoughts-${r} didn't confirm it: ${e.message}` }); };
       // "/ignore …": a signpost in the thread, given to Thoughts with his next message; no reply now (N52).
       if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 200, { ...(await api.call("thoughts.ignore", { room: r, text })), ignored: true });
       { const be = backendOf(r), sb = be?.key; if (be) { // J433: Thoughts-G itself, inside its sandbox (host photos aren't visible there); J472: a remote world's Thoughts
-        if (images.length) return json(res, 400, { error: `world ${r} is sandboxed: photos can't go in from the phone yet (text only)` });
+        if (images.length) return json(res, 400, { error: `world ${r} is ${be.remote ? "remote" : "sandboxed"}: photos can't go in from the phone yet (text only)` });
         if (/^\/ignore(?:\s|$)/.test(text)) return json(res, 400, { error: "/ignore isn't supported for a sandboxed world yet" });
-        return json(res, 200, await be.call("thoughts.send", { room: r, text, via: "phone" }).catch((e) => ({ error: e.message }))); } }
-      return json(res, 200, await api.call("thoughts.send", { room: r, text, via: "phone", ...(images.length ? { images } : {}) }));
+        let out; try { out = await be.call("thoughts.send", { room: r, text, via: "phone" }); } catch (e) { return unconfirmed(e); }
+        if (out?.error) return unconfirmed(new Error(String(out.error)));
+        return sent(out); } }
+      let out; try { out = await api.call("thoughts.send", { room: r, text, via: "phone", ...(images.length ? { images } : {}) }); } catch (e) { return unconfirmed(e); }
+      return sent(out);
     }
     // J219 (b): answer a decide item from the phone, as the desktop panel does (board.item decide; this
     // connection isn't an agent, so the daemon records Angus as the one who decided).

@@ -31,7 +31,7 @@ J70 viewer, search names everywhere (J142: typing filters the folder at once, an
 photos/files into **`~/Phone`** (the app's only write: `POST /api/upload`, files-routes.mjs), and
 **→ Thoughts**: a note plus the files to a world's Thoughts (📱; images reach the model as images).
 
-π's 📎 (J417) takes any file and uploads it with `X-Pending: 1` into `~/Phone/.pending/<id>/` (hidden, so never listed or served); `/api/send` moves it into ~/Phone when the message goes (an image as an image, any other file named in the text), ✕ deletes it at once (`POST /api/upload/discard`), and one left unsent is deleted after 24 h (checked at start and hourly). A reload keeps waiting ones, like the draft.
+π's 📎 (J417) takes any file and uploads it with `X-Pending: 1` into `~/Phone/.pending/<id>/` (hidden, so never listed or served); `/api/send` links it into ~/Phone when the message goes (an image as an image, any other file named in the text) and drops the pending copy only once the daemon or the remote world confirmed the send (J663: a send that isn't confirmed is a 502 the page shows as "✗ not sent", text and tiles kept and retryable; it used to answer a remote world's failure with 200 and the page cleared it as sent; an "/ignore" line with files is refused, not stripped; test: `node test/run.mjs test/phone-send-confirm.mjs`), ✕ deletes it at once (`POST /api/upload/discard`), and one left unsent is deleted after 24 h (checked at start and hourly). A reload keeps waiting ones, like the draft.
 
 Upload rules: one plain name (no folders, not hidden, not key-like), never overwrites ("name (2).ext"),
 250 MB a file, 1000 MB / 50 files per Upload tap, 5 GB always left free, at most 4 at once, a

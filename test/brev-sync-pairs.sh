@@ -44,7 +44,7 @@ mkdir -p "$T/home/Brev/Hub"
 
 echo laptop-hub > "$T/home/Brev/Hub/to-hub.txt"; echo hub-side > "$T/boxes/hub/workspace/shared/from-hub.txt"
 echo laptop-gpu > "$T/home/Brev/to-gpu.txt"; echo gpu-side > "$T/boxes/gpu/workspace/shared/from-gpu.txt"
-echo png > "$T/boxes/gpu/workspace/outputs/img-1.png"
+echo png > "$T/boxes/gpu/workspace/outputs/img-1.png"; touch -d '1 minute ago' "$T/boxes/gpu/workspace/outputs/img-1.png" # (J663: a PNG written in the last 10 s waits a run)
 run; rc=$?
 ok "both pairs run in one go, exit 0" "[[ $rc -eq 0 ]] && grep -q '^gpu ' $T/unison-calls.log && grep -q '^hub ' $T/unison-calls.log"
 ok "W2 a file dropped in ~/Brev/Hub reaches the hub" "[[ -f $T/boxes/hub/workspace/shared/to-hub.txt ]]"
