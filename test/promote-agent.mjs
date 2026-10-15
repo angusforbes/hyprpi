@@ -103,7 +103,6 @@ try {
   // (PromoteCheck F2) a refusal leaves the agent unchanged
   const before = await anon.call("whoami", {});
   ok("B W3 a one-letter project is refused …", /project name/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibe", project: "v" }))));
-  ok("B W3 … the same name for agent and project is refused …", /share a name/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibez", project: "vibez" }))));
   ok("B W3 … a bad project icon is refused …", /icon/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibe", project: "vibez", project_icon: "abc" }))));
   ok("B W3 … a name over 60 characters is refused …", /1-60/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "L".repeat(63), project: "longproj" }))));
   const after = await anon.call("whoami", {}), b0 = await api.call("board.get", { room: "D" });
@@ -126,6 +125,31 @@ try {
   const r3 = await api.call("thoughts.promote", { room: "D", agent: "Atlas", name: "Atlas2", project: "oldproj" });
   const po = (await api.call("board.get", { room: "D" })).projects.find((x) => x.name === "oldproj");
   ok("B W3 an archived project is reopened, with it as member and owner", r3.made === "reopened" && po.status === "active" && po.members.includes("hp-named") && po.writer === "hp-named", JSON.stringify(r3));
+  // ---- J638 (Angus: "the agent is the same name as the project"): agent Flow owns @flow
+  const flowA = await fake("hp-flowa", "", 35);
+  ok("J638 W1 a name equal to ANOTHER project is still refused", /is a project on the board/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·lowa", name: "Vibez", project: "flow" }))));
+  ok("J638 W1 … and the agent is unchanged", !(await flowA.call("whoami", {})).name);
+  const rf = await api.call("thoughts.promote", { room: "D", agent: "pi·lowa", name: "Flow", icon: "🌊", project: "flow", title: "the project-agent pilot" });
+  const pf = (await api.call("board.get", { room: "D" })).projects.find((x) => x.name === "flow");
+  ok("J638 W1 promoting to name Flow owning a new @flow succeeds", rf.agent === "Flow" && rf.made === "created" && pf?.writer === "hp-flowa" && (await flowA.call("whoami", {})).name === "Flow", JSON.stringify(rf));
+  ok("J638 W1 Flow can re-assert its own name (rename_self → agent.update), the project's name", !(await err(() => flowA.call("agent.update", { name: "Flow" }))));
+  ok("J638 W1 another agent can't take the name Flow, nor the name of a project it doesn't own", /taken|is a project on the board/.test(await err(() => named.call("agent.update", { name: "Flow" }))) && /is a project on the board/.test(await err(() => named.call("agent.update", { name: "vibez" }))));
+  ok("J638 W1 a project can't be renamed to an agent's name (a second @flow can't be created)", /already a project|agent's name/.test(await err(() => api.call("board.project", { action: "create", room: "D", name: "flow" }))));
+  // an existing project of that name, owned by someone else, taken over by promotion
+  const flowB = await fake("hp-flowb", "", 36);
+  const rk = await api.call("thoughts.promote", { room: "D", agent: "pi·lowb", name: "Memberproj", project: "memberproj" });
+  ok("J638 W1 promoting to the name of an EXISTING project it is made owner of works too", rk.agent === "Memberproj" && rk.made === "joined" && (await api.call("board.get", { room: "D" })).projects.find((x) => x.name === "memberproj").writer === "hp-flowb", JSON.stringify(rk));
+  // W2: routing
+  got["hp-flowa"].length = 0;
+  const ask = await api.call("thoughts.ask", { room: "D", agent: "Flow", question: "how is the pilot going?" }); await sleep(300);
+  ok("J638 W2 ask_agent to 'Flow' reaches the agent", got["hp-flowa"].some((g) => /how is the pilot going/.test(JSON.stringify(g.data))), JSON.stringify(ask));
+  got["hp-flowa"].length = 0;
+  const req = await api.call("board.request", { room: "D", project: "flow", text: "status please", where: "room", via: "room-tui" }); await sleep(300);
+  ok("J638 W2 an @flow room message reaches Flow, the project's owner", got["hp-flowa"].some((g) => g.ev === "prompt" && /Angus → @flow/.test(g.data.text) && /status please/.test(g.data.text)) && /Flow/.test(JSON.stringify(req)), JSON.stringify(req).slice(0, 200));
+  got["hp-flowa"].length = 0;
+  await api.call("agent.prompt", { agent: "Flow", text: "direct hello", via: "room-tui" }); await sleep(300);
+  ok("J638 W2 an @Flow agent message (agent.prompt by name) reaches Flow", got["hp-flowa"].some((g) => g.ev === "prompt" && /direct hello/.test(g.data.text)));
+  flowA.close?.(); flowB.close?.();
   api.close?.(); anon.close?.(); named.close?.(); member.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill(); }
