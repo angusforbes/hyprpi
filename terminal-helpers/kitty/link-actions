@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+# hyprpi (@hyprpi N133 / J522): what to do with a link, from Ctrl+right-click in a pi agent window (linkmenu.py).
+#   link-actions URL [CWD]              the menu (omarchy-menu-select), then the chosen action
+#   link-actions --do ACTION URL [CWD]  one action without the menu (tests, scripts)
+# A local file (file:// URL or a path): Show in folder · Copy path · Copy file · Open.
+#   Show in folder  the file manager opens its folder with the file selected (org.freedesktop.FileManager1
+#                   ShowItems; nautilus here), else the folder opens with the default app
+#   Copy path       the plain path as text (/home/agf/x.pdf)
+#   Copy file       the file itself: text/uri-list on the clipboard (file:///…), what file managers put there;
+#                   paste it where files can be pasted
+#   Open            as Ctrl+click does (gio open)
+# A web link: Copy link · Open.
+import os
+import subprocess
+import sys
+from urllib.parse import quote, unquote, urlparse
+
+MENU = "omarchy-menu-select"
+
+
+def note(msg):
+    subprocess.Popen(["notify-send", "-a", "hyprpi", "-t", "2500", "Link", msg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def local_path(url, cwd=""):
+    """The local file a link names, or None (a web link)."""
+    if url.startswith("/") or url.startswith("~"):
+        p = os.path.expanduser(url)
+    else:
+        u = urlparse(url)
+        if u.scheme != "file" or u.netloc not in ("", "localhost", os.uname().nodename):
+            return None
+        p = unquote(u.path)
+    if not os.path.isabs(p) and cwd:
+        p = os.path.join(cwd, p)
+    return os.path.normpath(p)
+
+
+def file_uri(p):
+    return "file://" + quote(p)
+
+
+def copy(data, mime=None):
+    cmd = ["wl-copy"] + (["--type", mime] if mime else [])
+    subprocess.run(cmd, input=data.encode(), check=True)
+
+
+def show_in_folder(p):
+    try:
+        subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.FileManager1", "--object-path",
+                        "/org/freedesktop/FileManager1", "--method", "org.freedesktop.FileManager1.ShowItems",
+                        "['%s']" % file_uri(p).replace("'", "%27"), ""], check=True, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        subprocess.Popen(["gio", "open", os.path.dirname(p)], start_new_session=True)
+
+
+def do(action, url, cwd=""):
+    p = local_path(url, cwd)
+    if action == "open":
+        subprocess.Popen(["gio", "open", p or url], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return 0
+    if action == "copy-link":
+        copy(url)
+        note("Copied the link")
+        return 0
+    if p is None:
+        print(f"link-actions: {action} needs a local file, not {url}", file=sys.stderr)
+        return 2
+    if not os.path.exists(p):
+        note(f"✗ {p} doesn't exist")
+        return 1
+    if action == "show":
+        show_in_folder(p)
+    elif action == "copy-path":
+        copy(p)
+        note(f"Copied the path: {p}")
+    elif action == "copy-file":
+        copy(file_uri(p) + "\r\n", "text/uri-list")
+        note(f"Copied the file: {os.path.basename(p)} (paste it as a file)")
+    else:
+        print(f"link-actions: unknown action {action}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def main(argv):
+    if len(argv) >= 3 and argv[0] == "--do":
+        return do(argv[1], argv[2], argv[3] if len(argv) > 3 else "")
+    if not argv:
+        print("usage: link-actions URL [CWD] | link-actions --do show|copy-path|copy-file|copy-link|open URL [CWD]", file=sys.stderr)
+        return 2
+    url, cwd = argv[0], (argv[1] if len(argv) > 1 else "")
+    p = local_path(url, cwd)
+    if p is not None:
+        name = os.path.basename(p) or p
+        rows = [("📂", "Show in folder", "show"), ("📋", "Copy path", "copy-path"), ("📎", "Copy file", "copy-file"), ("↗", "Open", "open")]
+        prompt = name if len(name) <= 40 else name[:39] + "…"
+    else:
+        rows = [("📋", "Copy link", "copy-link"), ("↗", "Open", "open")]
+        prompt = "Link"
+    r = subprocess.run([MENU, prompt] + [f"{i}\t{l}" for i, l, _ in rows], capture_output=True, text=True)
+    pick = r.stdout.strip()
+    for _, label, action in rows:
+        if pick == label:
+            return do(action, url, cwd)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
