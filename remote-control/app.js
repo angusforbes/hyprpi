@@ -293,8 +293,12 @@ function refreshAll() {
   const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
   for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) fetchNote(e); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {}), fetchStream(w).catch(() => {});
 }
+// Angus: "I wanna make sure we remember the agent window when I leave and come back": the session open in each
+// world, reopened when he comes back to that world's Agnt tab; cleared when he leaves it with ‹ or Agnt.
+const sessByWorld = new Map(); // world -> agent id
 function setWorld(w) {
   if (!w || w === world) return;
+  if (world && view === "session" && sess.agent) sessByWorld.set(world, sess.agent);
   if (world && view === "stream") keepStreamPlace(world);
   world = w;
   const c = cached(w);
@@ -307,8 +311,10 @@ function setWorld(w) {
   if (filsWin) filsPost({ world: w });
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
   newestBtn.hidden = true;
+  const back = sessByWorld.get(w);
   if (view === "session") { clearInterval(sess.timer); setView("agents"); } // J562 (PhoneCheck562): another world: its agent list, not the old world's open session (a jump to an agent elsewhere opens its session after this)
   else if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
+  if (back && view === "agents") openSession(back); // this world's agent window, as he left it
   fetchWorld(w).catch(fetchNote); // then fresh, in the background
   fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); fetchStream(w).catch(() => {});
 }
@@ -596,7 +602,7 @@ function renderProjects({ keepScroll = false } = {}) {
 }
 function setView(v) {
   if (v === "stream" && !showStrm) v = "thoughts"; // J448 v2 (StrmCheck): Strm is off: no way back into it (e.g. Fils' remembered return)
-  if (v === "agents" && view === "session") { view = "agents"; sessEl.hidden = true; $("#scomp").hidden = true; sess.agent = null; agentsEl.hidden = false; renderTop(); renderAgents(); return; } // J161: Agnt from a session → its summary
+  if (v === "agents" && view === "session") { sessByWorld.delete(world); view = "agents"; sessEl.hidden = true; $("#scomp").hidden = true; sess.agent = null; agentsEl.hidden = false; renderTop(); renderAgents(); return; } // J161: Agnt from a session → its summary
   if (v === view) { // Proj / Agnt again: back to the list
     if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); }
     if (v === "agents" && openAgent.get(world)) { openAgent.delete(world); renderAgents(); }
