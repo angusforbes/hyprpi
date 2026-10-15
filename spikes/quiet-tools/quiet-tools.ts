@@ -11,8 +11,8 @@
  * How: pi.registerToolRenderer((toolName, next) => renderers) (pi 1.0.2, docs/extensions.md "Tool rendering"):
  * a resolver that returns its own renderers takes precedence over the registered tool's, built-ins included;
  * next() is the renderer we would otherwise get, used here to show a failure exactly as pi would.
- * Thinking blocks are NOT reachable from the extension API: they follow the hideThinkingBlock setting (see
- * README.md next to this file).
+ * Thinking: there is no supported extension API to hide it; it follows the hideThinkingBlock setting (see
+ * README.md next to this file). This extension only changes the label shown in place of hidden thinking.
  *
  * Try:  PI_QUIET_TOOLS=1 pi -e ./quiet-tools.ts
  */
@@ -28,11 +28,12 @@ function oneLine(name: string, args: Record<string, unknown>): string {
 	if (name === "bash") what = "$ " + s(a.command).split("\n")[0];
 	else if (name === "read" || name === "edit" || name === "write") what = `${name} ${s(a.path) || s(a.file_path)}`;
 	else what = `${name} ${s(a.pattern) || s(a.path)}`.trim();
+	what = what.replace(/[\r\n\t]+/g, " "); // one line, whatever the arguments hold
 	return what.length > 100 ? what.slice(0, 97) + "…" : what;
 }
 
 function textOf(result: { content?: Array<{ type: string; text?: string }> }): string {
-	return (result.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n").trim();
+	return (result.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n").replace(/\n+$/, ""); // every line, only trailing newlines dropped
 }
 
 // Per-agent switch: PI_QUIET_TOOLS=1 in the agent's environment, or its hyprpi agent id listed in
