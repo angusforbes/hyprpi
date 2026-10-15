@@ -22,12 +22,14 @@ import { upkeepAgent } from "./upkeep.ts";
 import { codeVersion } from "../lib/codever.mjs";
 import { loadPolicy } from "../lib/policy.mjs";
 import { orchAgent } from "./orch.ts";
+import { quietMode, quietIncoming } from "./quiet.ts";
 import { draftStore, clipboardPaste } from "../lib/tui/input-box.mjs";
 import { statusPrompt } from "../lib/status.mjs";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
 export default function hyprpi(pi: ExtensionAPI) {
+  const quiet = quietMode(pi); // J637: this agent's transcript is quiet (only when switched on for it; quiet.ts)
   const ignoreNote = ignoreNotes(pi); // /ignore works in any window that loads this extension
   agentDrafts(pi); // J194: the editor's unsent text survives a closed / crashed / restarted window
   const AGENT_ID = process.env.HYPRPI_AGENT_ID;
@@ -680,7 +682,8 @@ export default function hyprpi(pi: ExtensionAPI) {
     if (n && !/^\?/.test(n) && !/\s/.test(n) && !/^["']/.test(n)) update({ name: n });
   });
 
-  const render = (label: string) => (message: any, { outputPad }: any, theme: any) => {
+  const render = (label: string) => (message: any, { outputPad, expanded }: any, theme: any) => {
+    if (quiet && (label === "talk" || label === "reply")) { const q = quietIncoming(message, !!expanded, theme); if (q) return q; } // J637
     const box = new Box(outputPad, 1, (t: string) => theme.bg("userMessageBg", t));
     box.addChild(new Text(theme.fg("userMessageText", String(message.content ?? "")), 0, 0));
     return box;
