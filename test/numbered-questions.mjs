@@ -12,7 +12,7 @@ const agentJ252 = JSON.parse(agreement.match(/^\s*("Number what Angus answers \(
 const boardRead = agentSource.match(/pi\.registerTool\(\{\n\s*name: "board_read",([\s\S]*?)\n  \}\);/)?.[1] || "";
 check("agent: J252 guideline is present in AGREEMENT", agentJ252.startsWith("Number what Angus answers (J252"));
 check("agent: board_read attaches AGREEMENT to promptGuidelines", /promptGuidelines:\s*AGREEMENT\b/.test(boardRead));
-check("agent: full option labels and inline recommendation", agentJ252.includes("(8a, 8b;") && agentJ252.includes('"8b. Ship it now (recommended)"'));
+check("agent: stacked options with full letters and the recommendation on its option (rule 11)", agentJ252.includes('"  - a. …"') && agentJ252.includes('"  - a. Ship it now (recommended)"') && /never inline/.test(agentJ252));
 check("agent: no old bare-letter or numbered-option example", !/lettered a, b, c|"2\. Ship it now/.test(agentJ252));
 const render = async (home) => {
   const old = process.env.HOME; if (home) process.env.HOME = home;
@@ -21,7 +21,7 @@ const render = async (home) => {
 for (const [label, home] of [["live skill", null], ["no skill (fallback)", fs.mkdtempSync(path.join(os.tmpdir(), "nq-"))]]) {
   const p = await render(home);
   check(`${label}: agent J252 matches the rendered Thoughts guideline exactly`, agentJ252 === p.split("\n").find((line) => line.startsWith("Number what Angus answers (J252")));
-  check(`${label}: options carry the question's number (8a)`, /8a\. …|"8a\. …"|\\"8a\. …\\"|8a/.test(p) && /never a bare/i.test(p));
+  check(`${label}: options stacked as "- a." bullets with full letters, never inline`, /- a\./.test(p) && /never inline|Never put options inline/i.test(p));
   check(`${label}: a single question too`, /single question/i.test(p));
   check(`${label}: reminders write the options out again`, /remind/i.test(p) && /(options out again|write the options out|write its options out|options in full)/i.test(p));
   check(`${label}: an ambiguous reply → ask first`, /more than one open question/i.test(p) && /ask/i.test(p));
