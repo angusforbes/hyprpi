@@ -78,6 +78,12 @@ const fB = b1.images[0]; const mB = fs.statSync(fB).mtimeMs; await new Promise((
 ok("B upload: a byte-identical file there is kept, not rewritten", fs.statSync(fB).mtimeMs === mB && fs.readFileSync(fB).equals(IMG1) && (fs.statSync(fB).mode & 0o777) === 0o600);
 const b3 = await up(L3);
 ok("B W1 upload: a different image -> a new path and a second file there", b3.images[0] && b3.images[0] !== fB && files(RC).length === 2, JSON.stringify(files(RC)));
+// J663 (no silent success): every image that couldn't go is named (the note used to keep only the last failure)
+const failApi = { call: async (m, p) => { throw new Error(`link down (${p.name.slice(0, 13)})`); } };
+const bf = await uploadImages(failApi, `see ${L1} and ${L3}`, [L1, L3], { to: true });
+ok("B J663 two uploads failing: both named in why, none claimed uploaded, the laptop paths stay", /local1\.png: link down/.test(bf.why || "") && /other\.png: link down/.test(bf.why || "") && bf.images.length === 0 && bf.text === `see ${L1} and ${L3}`, JSON.stringify(bf));
+const bm = await uploadImages({ call: (m, p) => (p.data.length === Buffer.from(IMG1).toString("base64").length ? api.call(m, p) : Promise.reject(new Error("timed out"))) }, `see ${L1} and ${L3}`, [L1, L3], { to: true });
+ok("B J663 one of two failing: the other is uploaded, the failed one named", bm.images.length === 1 && /other\.png: timed out/.test(bm.why || "") && !/local1/.test(bm.why || ""), JSON.stringify(bm));
 remoteProc.stdin.end(); remoteProc.kill();
 
 // ---- C) g_paste.py (host side of world G's kitty paste); kittens.tui.handler stubbed (kitty's own module)
