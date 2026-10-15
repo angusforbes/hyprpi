@@ -157,8 +157,10 @@ export function bashKind(command: string): "change" | "lookup" {
   let cmd = "", last = 0;
   for (const m of raw.matchAll(/'[^']*'|"(?:[^"\\]|\\.)*"/g)) {
     const before = raw.slice(0, m.index).trimEnd();
-    const code = /(\b(bash|sh|zsh)\s+(-\w+\s+)*-c|\bsqlite3(\s+\S+)?|\bawk(\s+-\w+(\s+\S+)?)*)$/.test(before); // a script or query: its text counts
-    cmd += raw.slice(last, m.index) + (code ? " ; " + m[0].slice(1, -1) + " ; " : "''");
+    const code = /(\b(bash|sh|zsh)\s+(-\w+\s+)*-c|\bawk(\s+-\w+(\s+\S+)?)*)$/.test(before); // a script: its text counts
+    const query = /\bsqlite3(\s+\S+)?$/.test(before); // a query: stays an argument of sqlite3
+    const subst = m[0][0] === '"' ? [...m[0].matchAll(/\$\(([^)]*)\)|`([^`]*)`/g)].map((x) => x[1] ?? x[2]) : []; // "$(…)" runs
+    cmd += raw.slice(last, m.index) + (code ? " ; " + m[0].slice(1, -1) + " ; " : query ? m[0].replace(/[;|&]/g, " ") : "''") + subst.map((x) => " ; " + x + " ; ").join("");
     last = m.index! + m[0].length;
   }
   cmd += raw.slice(last);
