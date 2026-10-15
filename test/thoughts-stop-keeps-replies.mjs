@@ -64,7 +64,8 @@ try {
   ok("2 the stop cleared pi's queue (with the reply in it)", !!(await waitFor(() => pilog().some((x) => Array.isArray(x.cleared) && x.cleared.some((c) => /SLACK COMPARISON/.test(c))), 5000)));
   const again = await waitFor(() => pilog().filter((x) => /\[reply from omni-alpha\][\s\S]*SLACK COMPARISON/.test(x.turn || "")).length >= 1, 8000);
   ok("2 once the stop has settled, the reply is given to Thoughts-H again (never lost)", !!again, JSON.stringify(pilog().slice(-6)));
-  ok("3 Angus's own queued 'hi' is not re-sent by the stop (as before)", !pilog().some((x) => x.turn === "hi"));
+  const hiQ = pilog().find((x) => typeof x.queued === "string" && !/\[reply from/.test(x.queued) && /(^|\W)hi(\W|$)/.test(x.queued));
+  ok("3 Angus's own queued 'hi' (it was queued) is not re-sent by the stop (as before)", !!hiQ && !pilog().some((x) => x.turn === hiQ.queued), JSON.stringify(hiQ || null));
   // an agent-to-agent demand on the box: delivered locally
   const g2 = []; const b = await connect({ path: sock, onEvent: (ev, data) => g2.push({ ev, data }) });
   await b.call("agent.hello", { agent_id: "h-mailwise", pid: process.pid, name: "Mailwise", want_workspace: 72, cwd: T });
