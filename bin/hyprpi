@@ -57,6 +57,9 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
   hyprpi ensure               start the daemon if it is not running
   hyprpi daemon restart [--reason R] [--ttl MIN]   restart the daemon once everyone is idle (returns at once; never poll for idle) · --status · --cancel
   hyprpi auth [--json]        the login watch (J136): a lapsed model login, who stopped on it, the credentials file it watches
+  hyprpi world kind|stop|start X [--dry-run] [--yes] [--detach] [--keep-daemon] [--power-off] [--delete-sandboxes]
+                              switch ONE world off safely (local, sandboxed or remote; /quit, systemctl, sbx stop,
+                              never a kill), check it's off and the other worlds unchanged; start X undoes the last stop
   hyprpi stop                 stop the daemon (it saves what is open first: hyprpi restore brings it back)
   hyprpi restore [all|X] [--list] [--no]   reopen the agents and panels that were open when hyprpi
                               last went down (own workspaces, model and thinking; panels silently);
@@ -66,6 +69,8 @@ Config: ~/.config/hyprpi/config.json   Socket: ${socketPath()}`;
 
 const args = process.argv.slice(2);
 const cmd = args.shift() || "help";
+// J625: `hyprpi world …` is bin/hyprpi-world (a safe stop / start of one world: local, sandboxed or remote)
+if (cmd === "world" && !process.env.HYPRPI_TEST_GUARD) { const r = spawnSync(path.join(ROOT, "bin", "hyprpi-world"), args, { stdio: "inherit" }); process.exit(r.status ?? 1); }
 const directTerminal = !!(process.stdin.isTTY && process.stdout.isTTY && !process.env.HYPRPI_ROUTER);
 
 function die(msg, code = 1) { console.error(`hyprpi: ${msg}`); process.exit(code); }
