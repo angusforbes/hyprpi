@@ -40,3 +40,32 @@ for (const [cmd, want] of [
   ["cd /tmp/j230 && python3 - <<'EOF'\ns=s.replace('fs.writeFile(window.__shl', 'x')\nEOF", "ran a script that changed files"],
 ]) assert.equal(scriptLabel(cmd), want, cmd);
 console.log("script-label: extra ok");
+// LabelCheck660's first-round repros (F-series)
+for (const [cmd, want] of [
+  ["bash -lc 'echo hi > /home/x/a.log'", "changed /home/x/a.log"],
+  ["node --eval \"require('fs').writeFileSync('/home/x/b.json','{}')\"", "changed /home/x/b.json"],
+  ["/usr/bin/python3 -c \"open('/home/x/c.txt','w').write('x')\"", "changed /home/x/c.txt"],
+  ['git commit -m "handle <<EOF heredocs and node -e"', null],
+  ["git commit -m 'python3 - is a script'", null],
+  ["cd /a && python3 - <<'E'\nopen('f.txt','w')\nE\ncd /b", "changed /a/f.txt"],
+  ["cd /a; python3 - <<'E'\nimport os\np = os.path.join('/etc', 'x.conf')\nopen(p,'w')\nE", "changed /etc/x.conf"],
+  ["python3 - <<'E'\nimport os\np = os.path.join(base, 'x.conf')\nopen(p,'w')\nE", "ran a script that changed files"],
+  ["bash -c 'echo \"a;b\" > /home/x/semi.txt'", "changed /home/x/semi.txt"],
+  ["echo 'x; y' > /home/x/q.txt; python3 - <<'E'\nprint(1)\nE", "changed /home/x/q.txt"],
+  ["python3 -c \"\nimport json\nopen('/home/x/m.json','w').write('{}')\n\"", "changed /home/x/m.json"],
+  ["python3 - <<'E' > /home/x/out.txt 2>&1\nprint(1)\nE", "changed /home/x/out.txt"],
+  ["", null],
+  ["python3 -c \"unbalanced", "ran a script that changed files"],
+]) assert.equal(scriptLabel(cmd), want, JSON.stringify(cmd));
+{ const big = "python3 - <<'E'\n" + "x = 1\n".repeat(40000) + "open('/home/x/big.txt','w')\nE"; const t0 = performance.now(); for (let i = 0; i < 5; i++) scriptLabel(big); const ms = (performance.now() - t0) / 5; assert.ok(ms < 50, `slow: ${ms} ms`); console.log(`script-label: 240 KB command in ${ms.toFixed(1)} ms`); }
+console.log("script-label: repros ok");
+for (const [cmd, want] of [
+  ["python3 - <<'E'\np='a.json'\nopen(p,'w')\np='b.json'\nopen(p,'w')\nE", "changed a.json, b.json"],
+  ["node -e \"const p=path.join('/home/x', 'cfg.json'); fs.writeFileSync(p, '{}')\"", "changed /home/x/cfg.json"],
+  ["bash -c 'echo hi > \"my;notes.txt\"'", "ran a script that changed files"],
+  ["python3 -c 'from pathlib import Path\nPath(\"cfg.json\").write_text(\"{}\")'", "changed cfg.json"],
+  ["cd /home/x/first; bash -c 'echo hi > a.txt'; cd /home/x/second; bash -c 'echo hi > b.txt'", "changed /home/x/first/a.txt, /home/x/second/b.txt"],
+]) assert.equal(scriptLabel(cmd), want, JSON.stringify(cmd));
+{ const c = "python3 - <<EOF\n# " + "open(".repeat(40000) + "\nEOF"; const t0 = performance.now(); scriptLabel(c); const ms = performance.now() - t0; assert.ok(ms < 100, `open( x40000: ${ms} ms`); console.log(`script-label: open( x40000 in ${ms.toFixed(1)} ms`); }
+assert.equal(scriptLabel(`python3 -c"open('out.txt','w')"`), "changed out.txt");
+console.log("script-label: round 2 ok");
