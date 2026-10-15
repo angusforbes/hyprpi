@@ -179,6 +179,8 @@ mark { background: color-mix(in srgb, var(--world) 30%, transparent); color: inh
 /* the Fils tab (J141): the Files app in a frame, full height under the top bar */
 #files { flex: 1; min-height: 0; padding: 0; overflow: hidden; }
 #files iframe { display: block; width: 100%; height: 100%; border: 0; }
+.filsfail { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; height: 100%; color: var(--fg, #555); font-size: 17px; }
+.filsfail button { font: inherit; padding: 10px 26px; border-radius: 999px; border: 2px solid currentColor; background: none; color: inherit; }
 
 /* ---- an agent's session (J161) ---- */
 #session { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 calc(env(safe-area-inset-right) + 10px) 14px calc(env(safe-area-inset-left) + 10px); position: relative; }

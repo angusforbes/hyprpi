@@ -1030,14 +1030,34 @@ sq.addEventListener("focus", () => { fitViewport(); requestAnimationFrame(fitVie
 // world's Thoughts or any live agent. π tells it the current world and which file to open.
 const filsEl = $("#files");
 let filsWin = null, filsReady = false, filsQueue = [];
+// J654: a Fils page that never says filsReady (a tailnet drop, a stale in-memory page) is retried once by
+// itself; if that fails too, "couldn't load files" with a Retry button shows instead of a blank page.
+let filsTries = 0, filsTimer = 0;
+const FILS_WAIT = window.__filsWait || 8000; // (tests shorten it)
+function filsLoad() {
+  filsEl.querySelector("iframe")?.remove(); filsEl.querySelector(".filsfail")?.remove();
+  filsReady = false; filsTries++;
+  const f = document.createElement("iframe");
+  f.src = `/files/?embed=1&world=${world || ""}${filsTries > 1 ? "&r=" + filsTries : ""}`; f.title = "Files"; f.allow = "web-share; clipboard-write";
+  filsEl.append(f); filsWin = f.contentWindow;
+  clearTimeout(filsTimer);
+  filsTimer = setTimeout(() => {
+    if (filsReady) return;
+    if (filsTries < 2) return filsLoad(); // one automatic retry
+    filsEl.querySelector("iframe")?.remove(); filsWin = null;
+    const d = document.createElement("div"); d.className = "filsfail";
+    d.innerHTML = `<p>Couldn't load files</p><button type="button">Retry</button>`;
+    d.querySelector("button").onclick = () => { filsTries = 0; filsLoad(); };
+    filsEl.append(d);
+  }, FILS_WAIT);
+}
 function filsFrame() {
   if (filsEl.firstElementChild) return;
-  const f = document.createElement("iframe");
-  f.src = `/files/?embed=1&world=${world || ""}`; f.title = "Files"; f.allow = "web-share; clipboard-write";
-  filsEl.append(f); filsWin = f.contentWindow;
+  filsTries = 0; filsLoad();
 }
 addEventListener("message", (e) => {
   if (e.origin !== location.origin || !e.data?.filsReady) return;
+  clearTimeout(filsTimer);
   filsReady = true; filsPost({ world });
   for (const m of filsQueue.splice(0)) filsPost(m);
 });

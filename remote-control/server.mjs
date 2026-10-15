@@ -228,7 +228,7 @@ function directory() {
 // J417 follow-up (Angus's 📎 still showed only images at 13:26): the Home Screen app keeps its page in
 // memory for days, so a new app.js never reaches it. build = the page files' mtimes; the page reloads
 // itself when it changes (app.js applyState).
-const BUILD_FILES = ["index.html", "app.js", "style.css", "md.mjs", "share.mjs", "fileview.mjs"];
+const BUILD_FILES = ["index.html", "app.js", "style.css", "md.mjs", "share.mjs", "fileview.mjs", "files.js", "files.css", "files.html"];
 const build = () => BUILD_FILES.map((f) => { try { return Math.round(fs.statSync(path.join(HERE, f)).mtimeMs).toString(36); } catch { return "-"; } }).join(".");
 function state() {
   return {
