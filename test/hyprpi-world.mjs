@@ -34,8 +34,10 @@ w(path.join(BIN, "systemctl"), `#!/usr/bin/env bash
 [[ "$1" == --user ]] && shift
 v="$1"; shift; q=0; [[ "$1" == --quiet ]] && { q=1; shift; }
 case "$v" in
-  is-enabled) e=$(jq -r --arg u "$1" '.[$u].enabled // false' ${UNITS}); [[ $e == true ]] && echo enabled || echo disabled; [[ $e == true ]] ;;
-  is-active) a=$(jq -r --arg u "$1" '.[$u].active // false' ${UNITS}); (( q )) || { [[ $a == true ]] && echo active || echo inactive; }; [[ $a == true ]] ;;
+  is-enabled) [[ "\${FAKE_SYSTEMCTL:-}" == broken ]] && { echo "Failed to connect to bus" >&2; exit 1; }
+    e=$(jq -r --arg u "$1" '.[$u].enabled // false' ${UNITS}); [[ $e == true ]] && echo enabled || echo disabled; [[ $e == true ]] ;;
+  is-active) [[ "\${FAKE_SYSTEMCTL:-}" == broken ]] && { echo "Failed to connect to bus" >&2; exit 1; }
+    a=$(jq -r --arg u "$1" '.[$u].active // false' ${UNITS}); (( q )) || { [[ $a == true ]] && echo active || echo inactive; }; [[ $a == true ]] ;;
   list-unit-files) [[ $(jq -r --arg u "$1" '.[$u].file // false' ${UNITS}) == true ]] && echo "$1 enabled enabled"; true ;;
   *) echo "systemctl $v $*" >> ${LOG}; now=0; [[ "$1" == --now ]] && { now=1; shift; }; t=$(mktemp)
      case "$v" in enable) jq --arg u "$1" '.[$u].enabled = true' ${UNITS} ;; disable) jq --arg u "$1" --argjson n $now '.[$u].enabled = false | if $n == 1 then .[$u].active = false else . end' ${UNITS} ;;
@@ -45,6 +47,7 @@ w(path.join(BIN, "hyprctl"), `#!/usr/bin/env bash
 if [[ "$1" == -j && "$2" == clients ]]; then cat ${CLIENTS}; exit 0; fi
 echo "hyprctl $*" >> ${LOG}`, 1);
 for (const c of ["brev", "tsh"]) w(path.join(BIN, c), `#!/usr/bin/env bash\necho "${c} $*" >> ${LOG}; exit 1`, 1);
+const RWF = path.join(T, "fake-world"); w(RWF, `#!/usr/bin/env bash\necho "rworld $*" >> ${LOG}`, 1);
 w(path.join(BIN, "ssh"), `#!/usr/bin/env bash\necho "ssh $*" >> ${LOG}; exit 255`, 1); // an unreachable machine
 const HPF = path.join(T, "fake-hp.mjs"); // a fake hyprpi: "list --json" returns lists/<n>.json in turn (the last one repeats); the rest is logged
 w(HPF, `import fs from "node:fs"; const a = process.argv.slice(2); fs.appendFileSync(${JSON.stringify(LOG)}, "hp " + a.join(" ") + "\\n");
@@ -55,13 +58,15 @@ fs.mkdirSync(LISTS);
 const SOCK = path.join(STATE, "sandboxes/sandboxes/sandboxd/sandboxd.sock");
 const srv = http.createServer((req, res) => {
   fs.appendFileSync(LOG, `sandboxd GET ${req.url}\n`);
-  if (req.url === "/daemon/health") return res.end("ok");
+  // sbx's daemon "stopped" through the fake systemctl: it no longer answers (curl sees no reply, as with a real stopped daemon)
+  try { if (JSON.parse(fs.readFileSync(UNITS, "utf8"))["hyprpi-sandboxd.service"]?.active === false) return req.socket.destroy(); } catch { /* */ }
+  if (req.url === "/daemon/health") { res.statusCode = HEALTH; return res.end("ok"); }
   const m = /^\/sandbox\/([\w.-]+)$/.exec(req.url || ""), st = m ? JSON.parse(fs.readFileSync(SBSTATE, "utf8"))[m[1]] : undefined;
   if (!m || st === undefined) { res.statusCode = 404; return res.end("{}"); }
   if (st === "unknown") { res.statusCode = 500; return res.end("{}"); }
   res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ name: m[1], status: st }));
 });
-let sandboxdUp = false;
+let sandboxdUp = false, HEALTH = 200;
 const startSandboxd = () => new Promise((r) => { if (sandboxdUp) return r(); srv.listen(SOCK, () => { sandboxdUp = true; r(); }); });
 const stopSandboxd = () => new Promise((r) => { if (!sandboxdUp) return r(); srv.close(() => { sandboxdUp = false; try { fs.unlinkSync(SOCK); } catch {} r(); }); });
 
@@ -81,7 +86,7 @@ function setup({ sandboxes = {}, units = {}, clients = [], lists = [{ agents: [a
 function run(args, env = {}) {
   return new Promise((resolve) => {
     const p = spawn(SCRIPT, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, PATH: `${BIN}:${process.env.PATH}`, XDG_CONFIG_HOME: CFG, XDG_STATE_HOME: STATE,
-      HYPRPI_WORLD_HPBIN: HPF, HYPRPI_AGENT_ID: "", ...env } });
+      HYPRPI_WORLD_HPBIN: HPF, HYPRPI_WORLD_REMOTE_BIN: RWF, HYPRPI_AGENT_ID: "", ...env } });
     let out = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (out += d)); p.stdin.end();
     const t = setTimeout(() => p.kill(), 120000); // (a process this test spawned, by its own handle)
     p.on("close", (code) => { clearTimeout(t); resolve({ code, out, calls: fs.readFileSync(LOG, "utf8") }); });
@@ -135,9 +140,10 @@ try {
   assert.equal(r.code, 0, r.out);
   const rec = JSON.parse(fs.readFileSync(path.join(STATE, "hyprpi/world-off/G.json"), "utf8"));
   const u = Object.fromEntries(rec.units.map((x) => [x.unit, x]));
-  assert.deepEqual([u["hyprpi-sandbox-restore.service"].enabled, u["hyprpi-sandbox-restore.service"].active], [true, false]);
-  assert.deepEqual([u["hyprpi-sandboxd.service"].enabled, u["hyprpi-sandboxd.service"].active], [true, true]);
-  assert.deepEqual(rec.sandboxes.find((s) => s.name === "reader-g").state, "stopped");
+  assert.deepEqual([u["hyprpi-sandbox-restore.service"].enabled, u["hyprpi-sandbox-restore.service"].active], ["enabled", "inactive"]);
+  assert.deepEqual([u["hyprpi-sandboxd.service"].enabled, u["hyprpi-sandboxd.service"].active], ["enabled", "active"]);
+  assert.equal(rec.sandboxes.find((s) => s.name === "reader-g"), undefined, "reader-g was already stopped: the stop didn't change it, so it isn't recorded");
+  assert.deepEqual(rec.sandboxes.find((s) => s.name === "world-q").state, "running");
   // a repeat stop keeps the first stop's "before"
   r = await run(["stop", "G", "--yes"], { FAKE_SBX: "ok" });
   const rec2 = JSON.parse(fs.readFileSync(path.join(STATE, "hyprpi/world-off/G.json"), "utf8"));
@@ -153,9 +159,9 @@ try {
   await stopSandboxd();
   setup({ files: { "remote/i.json": { ssh: ["ssh", "nohost.invalid"] } } });
   fs.mkdirSync(path.join(STATE, "hyprpi/world-off"), { recursive: true });
-  fs.writeFileSync(path.join(STATE, "hyprpi/world-off/I.json"), JSON.stringify({ version: 2, world: "I", kind: "remote", at: "t", units: [], sandboxes: [], moved_from: "", autostart_was: "", agents: [{ id: "i-hub-alpha", name: "hub-alpha" }], remote_daemon_was: "1" }));
+  fs.writeFileSync(path.join(STATE, "hyprpi/world-off/I.json"), JSON.stringify({ version: 3, world: "I", kind: "remote", at: "t", units: [], sandboxes: [], moved_from: "", autostart_was: "", agents: [{ id: "i-hub-alpha", name: "hub-alpha" }], remote_daemon_was: "1" }));
   r = await run(["start", "I", "--dry-run"]);
-  assert.match(r.out, /would run: .*omnistation\/world I start hub-alpha/); assert.match(r.out, /would run: .*omnistation\/world I open hub-alpha/);
+  assert.match(r.out, /would run: .*fake-world I start hub-alpha/); assert.match(r.out, /would run: .*fake-world I open hub-alpha/);
   assert.doesNotMatch(r.out, /recover/);
   ok("F4: remote start reopens only the recorded agents (world I start/open hub-alpha), not recover");
 
@@ -177,7 +183,7 @@ try {
   ok("the same stop with nothing changing elsewhere: off, exit 0");
 
   // F2 (start): start checks too and only says "started" when the world is back; an agent that doesn't come back -> exit 4
-  const recB = { version: 2, world: "B", kind: "local", at: "t", units: [], sandboxes: [], moved_from: "", autostart_was: "", agents: [agent("b1", "B", { name: "b1" })], remote_daemon_was: "" };
+  const recB = { version: 3, world: "B", kind: "local", at: "t", units: [], sandboxes: [], moved_from: "", autostart_was: "", agents: [agent("b1", "B", { name: "b1" })], remote_daemon_was: "" };
   setup({ lists: [{ agents: [agent("a1", "A")] }] }); fs.mkdirSync(path.join(STATE, "hyprpi/world-off"), { recursive: true });
   fs.writeFileSync(path.join(STATE, "hyprpi/world-off/B.json"), JSON.stringify(recB));
   r = await run(["start", "B", "--yes"]);
@@ -187,6 +193,97 @@ try {
   r = await run(["start", "B", "--yes"]);
   assert.match(r.out, /ok: its agents are back/); assert.match(r.out, /NOT BACK: the other rooms changed|=> world B started/);
   ok("F2: start verifies (an agent that doesn't come back: NOT fully back, exit 4; back: ok)");
+
+  // G3c: a successful start retires the record (<X>.json.done-*), so a later stop records the fresh state
+  {
+    const dir = path.join(STATE, "hyprpi/world-off");
+    assert.equal(fs.existsSync(path.join(dir, "B.json")), false, "the record wasn't retired after a successful start");
+    assert.ok(fs.readdirSync(dir).some((f) => f.startsWith("B.json.done-")));
+    const cnt = path.join(T, "list-count"); fs.writeFileSync(cnt, "0"); for (const f of fs.readdirSync(LISTS)) fs.unlinkSync(path.join(LISTS, f));
+    fs.writeFileSync(path.join(LISTS, "00.json"), JSON.stringify({ agents: [agent("a1", "A")] }));
+    r = await run(["stop", "B", "--yes"]); assert.equal(r.code, 0, r.out);
+    const fresh = JSON.parse(fs.readFileSync(path.join(dir, "B.json"), "utf8"));
+    assert.deepEqual(fresh.agents, []); assert.equal(fresh.first_stop, undefined, "a fresh stop merged with a retired record");
+  }
+  ok("G3: a successful start retires the record; the next stop records afresh");
+
+  // G1 + G2: sandboxd's health check fails (it answers 500): every sandbox state is UNKNOWN (not stopped), the result is NOT off,
+  // and the shared pieces stay on
+  await startSandboxd(); HEALTH = 500;
+  setup({ sandboxes: { "world-q": "running" }, units: gUnits, files: { "worlds/world-q.json.off-T": G, "sbx-relay.json": { sandboxes: [{ name: "world-q" }] } } });
+  r = await run(["stop", "G", "--yes"], { FAKE_SBX: "ok" });
+  HEALTH = 200;
+  assert.equal(r.code, 4, r.out); assert.match(r.out, /NOT DONE: sandbox world-q is unknown/);
+  assert.match(r.out, /left on: can't tell whether other sandboxes run \(sbx's daemon: unknown/);
+  assert.doesNotMatch(r.calls, /systemctl (disable|stop).*(hyprpi-sandboxd|hyprpi-sbx-relay|doorman-bridge|hyprpi-research)/, r.calls);
+  ok("G1/G2: a failing sandboxd health check reads as unknown: NOT off (exit 4) and the shared pieces stay on");
+
+  // G1: systemctl not answering (bus errors): every unit is UNKNOWN, never "inactive": NOT off, exit 4
+  await stopSandboxd();
+  setup({ units: gUnits, files: { "worlds/world-q.json.off-T": G, "sbx-relay.json": { sandboxes: [{ name: "world-q" }] } } });
+  r = await run(["stop", "G", "--yes"], { FAKE_SYSTEMCTL: "broken" });
+  assert.equal(r.code, 4, r.out); assert.match(r.out, /NOT DONE: hyprpi-world-q-helper is unknown/); assert.match(r.out, /NOT DONE: hyprpi-sandboxd\.service is unknown/);
+  ok("G1: systemctl errors read as unknown, not inactive: NOT off (exit 4)");
+
+  // G1: a start without a record of a remote world checks on the machine too: unreachable -> NOT BACK, exit 4
+  setup({ files: { "remote/i.json": { ssh: ["ssh", "nohost.invalid"] } } });
+  r = await run(["start", "I", "--yes"]);
+  assert.equal(r.code, 4, r.out); assert.match(r.calls, /^rworld I recover$/m); assert.match(r.out, /NOT BACK: the machine or world I's daemon there doesn't answer/);
+  ok("G1: a recordless remote start (recover) is verified on the machine; unreachable gives NOT BACK (exit 4)");
+
+  // G3: start restarts sandboxes recorded as running, restores the remote daemon, and never stops or disables anything
+  setup({ units: gUnits, files: { "worlds/world-q.json.off-T": G, "sbx-relay.json": relay } });
+  fs.mkdirSync(path.join(STATE, "hyprpi/world-off"), { recursive: true });
+  fs.writeFileSync(path.join(STATE, "hyprpi/world-off/G.json"), JSON.stringify({ version: 3, world: "G", kind: "sandboxed", at: "t", units: [{ unit: "hyprpi-sandboxd.service", enabled: "enabled", active: "active", file: true }],
+    sandboxes: [{ name: "world-q", state: "running" }, { name: "doorman-q", state: "running" }], moved_from: "", autostart_was: "", agents: [], remote_daemon_was: "" }));
+  r = await run(["start", "G", "--dry-run"]);
+  assert.match(r.out, /would run: sbx exec doorman-q true/); assert.match(r.out, /would run: .*restore\.sh world-q/);
+  assert.doesNotMatch(r.out, /systemctl --user (stop|disable)/); assert.doesNotMatch(r.calls, /^sbx /m);
+  setup({ files: { "remote/i.json": { ssh: ["ssh", "nohost.invalid"] } } });
+  fs.mkdirSync(path.join(STATE, "hyprpi/world-off"), { recursive: true });
+  fs.writeFileSync(path.join(STATE, "hyprpi/world-off/I.json"), JSON.stringify({ version: 3, world: "I", kind: "remote", at: "t", units: [], sandboxes: [], moved_from: "", autostart_was: "", agents: [], remote_daemon_was: "1" }));
+  r = await run(["start", "I", "--dry-run"]); assert.match(r.out, /would run there: hyprpi ensure/);
+  ok("G3: start restarts the sandboxes recorded as running (sbx exec NAME true), restores the remote daemon, never stops or disables");
+
+  // G3: the record holds only what the stop changed (a unit already off, a sandbox already stopped: not recorded)
+  await startSandboxd();
+  const offBefore = { ...gUnits, "hyprpi-sandbox-restore.service": { file: true, enabled: false, active: false }, "hyprpi-research-daily.timer": { file: true, enabled: false, active: false } };
+  setup({ sandboxes: { "world-q": "running", "doorman-q": "stopped", "reader-g": "stopped" }, units: offBefore, files: { "worlds/world-q.json.off-T": G, "sbx-relay.json": relay } });
+  r = await run(["stop", "G", "--yes"], { FAKE_SBX: "ok" }); assert.equal(r.code, 0, r.out);
+  { const rec3 = JSON.parse(fs.readFileSync(path.join(STATE, "hyprpi/world-off/G.json"), "utf8")), names = rec3.units.map((x) => x.unit);
+    assert.ok(!names.includes("hyprpi-sandbox-restore.service") && !names.includes("hyprpi-research-daily.timer"), names.join(" "));
+    assert.ok(names.includes("hyprpi-sandboxd.service") && names.includes("hyprpi-research-digest.timer"));
+    assert.deepEqual(rec3.sandboxes.map((x) => x.name), ["world-q"]); }
+  ok("G3: the record holds only what this stop changed");
+
+  // G4: no kill / pkill on the stop or start path, including what start calls (restore.sh, world.sh, doorman.sh start, sbx-daemon.sh,
+  // remote.sh start); comments don't count
+  {
+    const R = fileURLToPath(new URL("..", import.meta.url));
+    const code = (f) => fs.readFileSync(path.join(R, f), "utf8").split("\n").map((l, i) => [i + 1, l]).filter(([, l]) => !/^\s*#/.test(l));
+    const killy = /(^|[\s;|&(])(pkill|killall|kill)(\s|$)/;
+    for (const f of ["bin/hyprpi-world", "docker/world/restore.sh", "docker/world/world.sh", "docker/sbx-daemon.sh"]) {
+      const hits = code(f).filter(([, l]) => killy.test(l.replace(/#.*$/, "")));
+      assert.deepEqual(hits, [], `${f} kills: ${JSON.stringify(hits)}`);
+    }
+    const branch = (f, name) => { const t = fs.readFileSync(path.join(R, f), "utf8"), i = t.indexOf(`\n${name})`), j = t.indexOf(";;\n", i); assert.ok(i >= 0 && j > i, `no ${name}) branch in ${f}`); return t.slice(i, j); };
+    for (const [f, b] of [["docker/doorman/doorman.sh", "start"], ["omnistation/remote.sh", "  start"]]) {
+      const body = branch(f, b).split("\n").filter((l) => !/^\s*#/.test(l)).map((l) => l.replace(/#.*$/, "")).join("\n");
+      assert.ok(body.length > 200, `couldn't find ${f}'s ${b} branch`); assert.doesNotMatch(body, killy, `${f} ${b} kills`);
+    }
+  }
+  ok("G4: no kill / pkill in hyprpi-world, restore.sh, world.sh, sbx-daemon.sh, doorman.sh start or remote.sh start");
+
+  // G5: a record for another world / kind is refused (exit 2); names from config are checked and escaped in window patterns
+  setup({ files: { "worlds/world-q.json.off-T": G, "sbx-relay.json": relay } });
+  fs.mkdirSync(path.join(STATE, "hyprpi/world-off"), { recursive: true });
+  fs.writeFileSync(path.join(STATE, "hyprpi/world-off/G.json"), JSON.stringify({ version: 3, world: "H", kind: "remote", at: "t", units: [], sandboxes: [], moved_from: "", autostart_was: "", agents: [], remote_daemon_was: "" }));
+  r = await run(["start", "G", "--yes"]); assert.equal(r.code, 2, r.out); assert.match(r.out, /is for world H \(remote\), but world G is sandboxed/); assert.deepEqual(mutating(r.calls), []);
+  setup({ sandboxes: { "world-q": "stopped" }, files: { "worlds/world-q.json.off-T": G, "sbx-relay.json": { sandboxes: [{ name: "world-q" }, { name: "doorman.q", doorman_for: "world-q" }, { name: "x;y", doorman_for: "world-q" }] } },
+    clients: [{ address: "0x1", class: "hyprpi-doorman-doorman.q", title: "d" }, { address: "0x2", class: "hyprpi-doorman-doormanXq", title: "not ours" }] });
+  r = await run(["stop", "G", "--dry-run"]);
+  assert.match(r.out, /would close window 0x1 /); assert.doesNotMatch(r.out, /window 0x2 /); assert.match(r.out, /skipping a Doorman entry with an unexpected name: x;y/);
+  ok("G5: a record for another world is refused; config names are validated and escaped (doorman.q doesn't match doormanXq)");
 
   // no terminal and no --yes: refused before anything
   setup({}); r = await run(["stop", "B"]); assert.equal(r.code, 3, r.out); assert.deepEqual(mutating(r.calls), []);

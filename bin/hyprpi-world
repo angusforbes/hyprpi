@@ -13,8 +13,9 @@
 #              its Doorman(s): unit stopped, sandbox stopped (`sbx stop`), window closed; its research reader sandbox stopped;
 #              "autostart" set to false in the worlds file. The shared pieces (the sbx relay, the host job runner
 #              doorman-bridge-runner.path, the login restore hyprpi-sandbox-restore.service, the two research digest timers and
-#              sbx's daemon hyprpi-sandboxd.service) only when nothing else uses them: no other worlds/*.json and no other sandbox
-#              running (checked with `sbx ls` in a real run; unknown counts as in use, and they are left on).
+#              sbx's daemon hyprpi-sandboxd.service) only when nothing else uses them: no other worlds/*.json, sbx's daemon either
+#              provably down or answering, and no other sandbox running (checked with `sbx ls` in a real run). Anything unknown
+#              (sandboxd not answering its health check, sbx ls failing) leaves them ON.
 #   remote     (~/.config/hyprpi/remote/<x>.json) on the machine: each agent `/quit` through that world's own daemon, then the
 #              daemon itself stopped the way `hyprpi stop` does (unless --keep-daemon); on the laptop: the world's windows
 #              (class hyprpi.<x>-*) closed and its jot relay unit (hyprpi-jot-relay@<x>) stopped and disabled. A Teleport
@@ -25,15 +26,18 @@
 #   --delete-sandboxes  sandboxed only, DESTROYS data: `sbx rm` of the world's sandboxes (their disks, inner sessions, board,
 #              keys). Needs a terminal and the typed answer "delete <w>"; never with --yes alone.
 #
-# Rules (J566 / J624): no kill, pkill or signals anywhere: agents close with /quit, services with systemctl --user, sandboxes
-# with sbx stop, windows like clicking X. Nothing is deleted unless --delete-sandboxes. A dry run changes nothing and never calls
-# sbx (any sbx command starts sbx's daemon): sandbox states come from sandboxd's own socket, read-only. Config files are copied to
-# <file>.bak-world-off-<stamp> before an edit. A record of the state BEFORE the stop (each unit touched: enabled and active;
-# each sandbox: running or not; the agents closed) goes to ~/.local/state/hyprpi/world-off/<X>.json; `start` restores exactly
-# that and then checks it. Without --yes a real run asks y/N on the terminal (and refuses without one).
+# Rules (J566 / J624): no kill, pkill or signals anywhere, also not on the start path (restore.sh, world.sh start and doorman.sh
+# start have no pkill since J625): agents close with /quit, services with systemctl --user, sandboxes with sbx stop, windows like
+# clicking X. Nothing is deleted unless --delete-sandboxes. A dry run changes nothing and never calls sbx (any sbx command starts
+# sbx's daemon): sandbox states come from sandboxd's own socket, read-only. Fail closed: a state that can't be read (sandboxd's
+# health check failing, systemctl not answering, a machine that can't be reached) is UNKNOWN, never "off". Config files are copied
+# to <file>.bak-world-off-<stamp> before an edit. The record ~/.local/state/hyprpi/world-off/<X>.json holds what this stop
+# CHANGED, with each thing's state before (units: enabled / active; sandboxes: running; the agents it closed; the remote daemon).
+# `start` restores exactly that, never turns anything off, checks it, and on success retires the record (<X>.json.done-<stamp>), so
+# a later stop records the fresh state. Without --yes a real run asks y/N on the terminal (and refuses without one).
 # Exit: 0 = done and checked; 4 = NOT fully off / not fully back (or couldn't be checked: unknown counts as not done, and so does a
-# change in another room while it ran); 3 = refused (no terminal); 2 = usage; 1 = cancelled.
-# Tests: test/hyprpi-world-test.sh (tripwires: fake sbx / systemctl / hyprctl / brev / hyprpi; never the live session).
+# change in another room while it ran); 3 = refused (no terminal); 2 = usage, or a record / config that doesn't fit; 1 = cancelled.
+# Tests: node test/run.mjs test/hyprpi-world.mjs (fakes only: sbx / systemctl / hyprctl / ssh / hyprpi and a fake sandboxd).
 set -uo pipefail
 H="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 CFG="${XDG_CONFIG_HOME:-$HOME/.config}/hyprpi"
@@ -41,6 +45,8 @@ REC_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/hyprpi/world-off"
 SBX_SOCK="${XDG_STATE_HOME:-$HOME/.local/state}/sandboxes/sandboxes/sandboxd/sandboxd.sock"
 STAMP="$(date +%Y%m%d%H%M%S)"
 HP() { node "${HYPRPI_WORLD_HPBIN:-$H/bin/hyprpi}" "$@"; }   # (tests point HYPRPI_WORLD_HPBIN at a fake)
+RWORLD="${HYPRPI_WORLD_REMOTE_BIN:-$H/omnistation/world}"      # the laptop side of a remote world (tests: a fake)
+NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
 
 usage() { sed -n '4,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 CMD="${1:-}"; X="${2:-}"; shift 2 2>/dev/null || usage
@@ -55,6 +61,7 @@ esac; done
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
+die2() { echo "hyprpi world: $*" >&2; exit 2; }
 # run CMD...: print it; in a dry run only print it
 run()  { local shown; shown="$(printf '%q ' "$@")"; [[ "$1" == HP ]] && shown="hyprpi ${shown#HP }"
   if (( DRY )); then printf '  would run: %s%s\n' "$shown" "${RUN_NOTE:-}"; return 0; fi; printf '  running: %s%s\n' "$shown" "${RUN_NOTE:-}"; "$@"; }
@@ -62,13 +69,25 @@ close_win() { # $1 address, $2 what: closed like clicking its X (the app ends it
   [[ "$1" =~ ^0x[0-9a-fA-F]+$ ]] || return 0
   if (( DRY )); then say "  would close window $1 ($2)"; else say "  closing window $1 ($2)"; hyprctl dispatch "hl.dsp.window.close({ window = \"address:$1\" })" >/dev/null; fi
 }
-unit_enabled() { [[ "$(systemctl --user is-enabled "$1" 2>/dev/null)" == enabled ]]; }
-unit_active()  { systemctl --user is-active --quiet "$1" 2>/dev/null; }
-unit_file()    { [[ -n "$(systemctl --user list-unit-files "$1" --no-legend 2>/dev/null)" ]]; }   # false for a transient (systemd-run) unit
-sandboxd_up()  { [[ "$(curl -s -m 3 --unix-socket "$SBX_SOCK" -o /dev/null -w '%{http_code}' http://sandboxd/daemon/health 2>/dev/null)" == 200 ]]; }
+# ---- states, fail closed: anything that can't be read is "unknown" ------------------------------------------------------------
+unit_state() { # active | inactive | unknown
+  local o; o="$(systemctl --user is-active "$1" 2>/dev/null)"
+  case "$o" in active|activating|reloading|deactivating|refreshing) echo active ;; inactive|failed) echo inactive ;; *) echo unknown ;; esac
+}
+unit_en() { # enabled | disabled | unknown (static, transient, not-found… count as disabled: nothing to re-enable)
+  local o; o="$(systemctl --user is-enabled "$1" 2>/dev/null)"
+  case "$o" in enabled|enabled-runtime) echo enabled ;; disabled|static|indirect|masked|masked-runtime|linked|linked-runtime|generated|transient|alias|not-found) echo disabled ;; *) echo unknown ;; esac
+}
+unit_file() { [[ -n "$(systemctl --user list-unit-files "$1" --no-legend 2>/dev/null)" ]]; }   # false for a transient (systemd-run) unit
+sandboxd_status() { # up | down (provably: no answer on its socket and no `sbx daemon` process) | unknown
+  local c; c="$(curl -s -m 3 --unix-socket "$SBX_SOCK" -o /dev/null -w '%{http_code}' http://sandboxd/daemon/health 2>/dev/null)"
+  [[ "$c" == 200 ]] && { echo up; return; }
+  [[ "$c" == 000 || -z "$c" ]] && ! pgrep -u "$(id -u)" -f '(^|/)sbx daemon start$' >/dev/null && { echo down; return; }
+  echo unknown
+}
 # a sandbox's state WITHOUT any sbx command (it would start sandboxd): running / stopped / absent / unknown, from sandboxd's socket
 sb_state() {
-  sandboxd_up || { echo stopped; return; }   # sandboxd off: no sandbox can run
+  case "$(sandboxd_status)" in down) echo stopped; return ;; unknown) echo unknown; return ;; esac
   local out code; out="$(curl -s -m 5 --unix-socket "$SBX_SOCK" -w '\n%{http_code}' "http://sandboxd/sandbox/$1" 2>/dev/null)"; code="${out##*$'\n'}"
   [[ "$code" == 404 ]] && { echo absent; return; }
   [[ "$code" == 200 ]] && { jq -r '.status // "unknown"' <<<"${out%$'\n'*}" 2>/dev/null || echo unknown; return; }
@@ -94,21 +113,27 @@ if [[ "$CMD" == kind ]]; then
   say "world $X: $KIND (workspaces $LO-$HI)$( ((DETACHED)) && echo ", detached: ${SB_FILE:-$RM_FILE}")$([[ $KIND != local && $DETACHED == 0 ]] && echo ", config ${SB_FILE:-$RM_FILE}")"
   exit 0
 fi
-(( DELSB )) && [[ "$KIND" != sandboxed ]] && { echo "hyprpi world: --delete-sandboxes is only for a sandboxed world" >&2; exit 2; }
-(( POWER )) && [[ "$KIND" != remote ]] && { echo "hyprpi world: --power-off is only for a remote world" >&2; exit 2; }
+(( DELSB )) && [[ "$KIND" != sandboxed ]] && die2 "--delete-sandboxes is only for a sandboxed world"
+(( POWER )) && [[ "$KIND" != remote ]] && die2 "--power-off is only for a remote world"
 
-# ---- the world's parts --------------------------------------------------------------------------------------------------------
+# ---- the world's parts (every name from config is checked before it is used in a command or a pattern) ----------------------------
 if [[ "$KIND" == sandboxed ]]; then
   W="$(basename "${SB_FILE%%.off-*}" .json)"; SB="$(jq -r '.sandbox // empty' "$SB_FILE")"; SB="${SB:-$W}"
-  DOORMEN="$(jq -r --arg s "$SB" '.sandboxes[]? | select(.doorman_for == $s) | .name' "$CFG/sbx-relay.json" 2>/dev/null | tr '\n' ' ')"
+  DOORMEN=""; for d in $(jq -r --arg s "$SB" '.sandboxes[]? | select(.doorman_for == $s) | .name' "$CFG/sbx-relay.json" 2>/dev/null); do
+    [[ "$d" =~ $NAME_RE ]] && DOORMEN+="$d " || say "(skipping a Doorman entry with an unexpected name: $d)"; done
   READER="$(jq -r --arg s "$SB" '.sandboxes[$s].reader // empty' "$CFG/research.json" 2>/dev/null)"; READER="${READER:-reader-$x}"
-  OWN_SB="$SB $DOORMEN $READER"
+  for n in "$W" "$SB" "$READER"; do [[ "$n" =~ $NAME_RE ]] || die2 "unexpected name in the config of world $X: '$n'"; done
+  OWN_SB="$SB $DOORMEN$READER"
   OWN_UNITS="hyprpi-$W-helper hyprpi-$W-shares $(for D in $DOORMEN; do printf 'hyprpi-doorman-%s ' "$D"; done)"
   SHARED_UNITS="hyprpi-sbx-relay doorman-bridge-runner.path hyprpi-sandbox-restore.service hyprpi-research-digest.timer hyprpi-research-daily.timer hyprpi-sandboxd.service"
   OTHER_SB="$(for f in "$CFG"/worlds/*.json; do [[ -f "$f" && "$f" != "$SB_FILE" ]] && basename "$f" .json; done | tr '\n' ' ')"
+  # the Doorman windows' classes, as an anchored pattern with every name's dots escaped
+  DRE="^$"; [[ -n "${DOORMEN// /}" ]] && DRE="^hyprpi-doorman-($(for D in $DOORMEN; do printf '%s|' "${D//./\\.}"; done | sed 's/|$//'))$"
 fi
 if [[ "$KIND" == remote ]]; then
   mapfile -t SSH < <(jq -r '.ssh[]' "$RM_FILE" | grep -vxE -- '-tt?'); BOX="$(jq -r '.brev // empty' "$RM_FILE")"; DESK="$(jq -r '.desktop // empty' "$RM_FILE")"
+  (( ${#SSH[@]} )) || die2 "\"ssh\" is empty in $RM_FILE"
+  [[ -z "$BOX" || "$BOX" =~ $NAME_RE ]] || die2 "unexpected \"brev\" name in $RM_FILE"
   REACH=1 REACH_WHY=""
   if [[ "$(basename "${SSH[0]}")" == tsh ]]; then
     vu="$(tsh status --format=json 2>/dev/null | jq -r '.active.valid_until // empty')"; vs="$(date -d "$vu" +%s 2>/dev/null || echo 0)"
@@ -120,12 +145,19 @@ if [[ "$KIND" == remote ]]; then
   rlook() { (( REACH )) || return 1; local o; o="$(rsh "printf 'TMUX %s %s\n' \"\$(tmux ls -F '#S' 2>/dev/null | grep '^hyprpi-$x-' | grep -vxc 'hyprpi-$x-daemon')\" \"\$(tmux ls -F '#S' 2>/dev/null | grep -xc 'hyprpi-$x-daemon')\"; \$HP list --json 2>/dev/null")"
     [[ "$o" == TMUX* ]] || return 1; RTMUX="$(head -1 <<<"$o" | awk '{print $2}')"; RDAEMON="$(head -1 <<<"$o" | awk '{print $3}')"; RLIST="$(tail -n +2 <<<"$o")"
     jq -e .agents <<<"$RLIST" >/dev/null 2>&1 || RLIST=""; return 0; }
+  RTMUX="" RDAEMON="" RLIST=""
 fi
 
 # ---- the other rooms, before and after (unchanged, else the result is NOT done) ------------------------------------------------
 others() { local js; js="$(HP list --json 2>/dev/null)" && jq -e .agents <<<"$js" >/dev/null 2>&1 || { echo "UNREADABLE"; return 1; }
   jq -r --arg x "$X" '[.agents[] | select(.room != $x) | "\(.room) \(.id) \(.display)"] | sort | .[]' <<<"$js"; }
 BEFORE="$(others)"
+others_check() { # $1 the "not done" function
+  local AFTER; AFTER="$(others)"
+  if [[ "$BEFORE" == UNREADABLE* || "$AFTER" == UNREADABLE* ]]; then "$1" "the other rooms couldn't be read before/after: unverified"
+  elif [[ "$BEFORE" == "$AFTER" ]]; then say "  ok: the other rooms' agents are unchanged ($(grep -c . <<<"$BEFORE") agents)"
+  else "$1" "the other rooms changed while this ran; check them (this script only touches room $X):"; diff <(echo "$BEFORE") <(echo "$AFTER") | sed 's/^/    /'; fi
+}
 
 confirm() {
   (( DRY || YES )) && return 0
@@ -133,72 +165,51 @@ confirm() {
   read -r -p "$1 [y/N] " ans; [[ "$ans" =~ ^[yY]$ ]] || { echo "nothing done"; exit 1; }
 }
 backup() { if (( DRY )); then say "  would copy $1 to $1.bak-world-off-$STAMP"; else cp -p "$1" "$1.bak-world-off-$STAMP" && say "  backup: $1.bak-world-off-$STAMP"; fi; }
-
-# ---- the record: the state BEFORE this stop ------------------------------------------------------------------------------------
-REC_UNITS="[]" REC_SB="[]" REC_AGENTS="[]" REC_MOVED="" REC_AUTOSTART="" REC_RDAEMON=""
-note_unit() { # $1 unit: remember its state before we touch it (the first time only)
-  jq -e --arg u "$1" 'any(.[]; .unit == $u)' <<<"$REC_UNITS" >/dev/null && return 0
-  local e=false a=false f=false; unit_enabled "$1" && e=true; unit_active "$1" && a=true; unit_file "$1" && f=true
-  REC_UNITS="$(jq -c --arg u "$1" --argjson e $e --argjson a $a --argjson f $f '. + [{unit:$u, enabled:$e, active:$a, file:$f}]' <<<"$REC_UNITS")"
-}
-note_sb() { REC_SB="$(jq -c --arg s "$1" --arg st "$2" 'if any(.[]; .name == $s) then . else . + [{name:$s, state:$st}] end' <<<"$REC_SB")"; }
-write_record() {
-  (( DRY )) && return 0
-  mkdir -p "$REC_DIR"
-  local new; new="$(jq -n --arg world "$X" --arg kind "$KIND" --arg at "$(date -Is)" --arg moved "$REC_MOVED" --arg autostart "$REC_AUTOSTART" --arg rd "$REC_RDAEMON" \
-    --argjson units "$REC_UNITS" --argjson sb "$REC_SB" --argjson agents "$REC_AGENTS" \
-    '{version:2, world:$world, kind:$kind, at:$at, units:$units, sandboxes:$sb, moved_from:$moved, autostart_was:$autostart, agents:$agents, remote_daemon_was:$rd}')"
-  # a repeat stop (of a world already off) must not forget the first stop's "before": what's already recorded wins
-  if [[ -f "$REC_DIR/$X.json" && "$(jq -r '.version // 1' "$REC_DIR/$X.json")" == 2 ]]; then
-    new="$(jq -n --argjson o "$(cat "$REC_DIR/$X.json")" --argjson n "$new" '$o + {at:$n.at, first_stop:($o.first_stop // $o.at),
-      units: ($o.units + [$n.units[] | select(.unit as $u | $o.units | any(.unit == $u) | not)]),
-      sandboxes: ($o.sandboxes + [$n.sandboxes[] | select(.name as $s | $o.sandboxes | any(.name == $s) | not)]),
-      moved_from: (if $o.moved_from != "" then $o.moved_from else $n.moved_from end), autostart_was: (if $o.autostart_was != "" then $o.autostart_was else $n.autostart_was end),
-      agents: (if ($o.agents|length) > 0 then $o.agents else $n.agents end), remote_daemon_was: (if $o.remote_daemon_was != "" then $o.remote_daemon_was else $n.remote_daemon_was end)}')"
-  fi
-  printf '%s\n' "$new" > "$REC_DIR/$X.json.tmp" && mv "$REC_DIR/$X.json.tmp" "$REC_DIR/$X.json" && say "record (the state before the stop): $REC_DIR/$X.json"
-}
-stop_unit()    { note_unit "$1"; if unit_active "$1"; then run systemctl --user stop "$1"; else say "  $1: not running"; fi; }
-disable_unit() { note_unit "$1"; local now="${2:-}"
-  if unit_enabled "$1"; then if [[ "$now" == now ]]; then run systemctl --user disable --now "$1"; else run systemctl --user disable "$1"; fi
-  elif [[ "$now" == now ]] && unit_active "$1"; then run systemctl --user stop "$1"
-  else say "  $1: already off"; fi
-}
-detach_file() { local to="$1.off-$STAMP"
-  if (( DRY )); then say "  would move $1 to $to (room $X then looks like an empty local world)"; else mv "$1" "$to" && say "  moved $1 to $to"; REC_MOVED="$1"; fi
-}
-# the world's own windows: class hyprpi.<x>-* (a sandboxed or remote world's windows), plus extra classes given
 world_windows() { hyprctl -j clients 2>/dev/null | jq -r --arg p "hyprpi.$x-" --arg extra "${1:-^$}" '.[] | select((.class|startswith($p)) or (.class|test($extra))) | "\(.address)\t\(.class)\t\(.title)"'; }
 SELF="${HYPRPI_AGENT_ID:-}"
 
-quit_room_agents() { # local agents of room X: /quit each (sessions stay)
-  local js; js="$(HP list --json 2>/dev/null)" || { say "  can't reach the hyprpi daemon: no agents quit"; return; }
-  # relay pseudo-agents of a sandboxed world (sbx-*, model "sandboxed") go away with their relay; never quit those here
-  REC_AGENTS="$(jq -c --arg x "$X" --arg self "$SELF" '[.agents[] | select(.room == $x and .id != $self and (.id|startswith("sbx-")|not) and .model != "sandboxed") | {id, name: .display, icon, workspace, cwd, session}]' <<<"$js")"
-  local n; n="$(jq length <<<"$REC_AGENTS")"
-  [[ -n "$SELF" ]] && jq -e --arg x "$X" --arg self "$SELF" '.agents[] | select(.id == $self and .room == $x)' <<<"$js" >/dev/null && say "  (you, $SELF, are in room $X: you are left open; close yourself last)"
-  (( n )) || { say "  no agents open in room $X"; return; }
-  while IFS=$'\t' read -r id nm; do RUN_NOTE="  ($nm)" run HP send "$id" /quit; done < <(jq -r '.[] | "\(.id)\t\(.icon // "" | if . == "" then "" else . + " " end)\(.name)"' <<<"$REC_AGENTS")
-  (( DRY )) && return
-  local left=""; for _ in $(seq 30); do sleep 2; left="$(HP list --json 2>/dev/null | jq -r --argjson q "$REC_AGENTS" '[.agents[].id] as $ids | [$q[].id | select(. as $i | $ids | index($i))] | join(" ")')"; [[ -z "$left" ]] && break; done
-  [[ -n "$left" ]] && say "  still open after 60 s (busy? they quit when their turn ends): $left" || say "  all $n agents of room $X quit"
-}
-# other sandboxes running (not this world's)? sets OTHERS_RUNNING ("" = none) or returns 1 when it can't be known
-other_sandboxes_running() {
-  OTHERS_RUNNING=""
-  sandboxd_up || return 0                       # sbx's daemon off: no sandbox runs
-  local names
-  if (( DRY )); then return 1; fi               # a dry run never calls sbx; a real run checks with sbx ls
-  names="$(sbx ls 2>/dev/null | awk 'NR > 1 && $4 == "running" {print $1}')" || return 1   # (pipefail: a failed sbx ls fails this)
-  for n in $names; do [[ " $OWN_SB " == *" $n "* ]] || OTHERS_RUNNING+="$n "; done
-  return 0
-}
-
 # =========================================================================================================================
 if [[ "$CMD" == stop ]]; then
+  # ---- before: the state of everything this stop may change (only what it actually changes goes into the record) ------------------
+  PRE_UNITS="[]" PRE_SB="[]" REC_AGENTS="[]" REC_MOVED="" REC_AUTOSTART="" REC_RDAEMON=""
+  snap_unit() { PRE_UNITS="$(jq -c --arg u "$1" --arg e "$(unit_en "$1")" --arg a "$(unit_state "$1")" --argjson f "$(unit_file "$1" && echo true || echo false)" \
+    'if any(.[]; .unit == $u) then . else . + [{unit:$u, enabled:$e, active:$a, file:$f}] end' <<<"$PRE_UNITS")"; }
+  case "$KIND" in
+    sandboxed) for u in $OWN_UNITS $SHARED_UNITS; do snap_unit "$u"; done
+               for s in $OWN_SB; do PRE_SB="$(jq -c --arg s "$s" --arg st "$(sb_state "$s")" '. + [{name:$s, state:$st}]' <<<"$PRE_SB")"; done ;;
+    remote) snap_unit "hyprpi-jot-relay@$x.service" ;;
+  esac
+  pre() { jq -r --arg u "$1" --arg k "$2" '.[] | select(.unit == $u) | .[$k]' <<<"$PRE_UNITS"; }
+
   say "hyprpi world stop $X: a $KIND world (workspaces $LO-$HI)$( ((DRY)) && echo ' -- DRY RUN, nothing changes')"
   (( DETACHED )) && say "(already detached: ${SB_FILE:-$RM_FILE}; checking that nothing of it runs)"
   confirm "Switch world $X ($KIND) off now?"
+  stop_unit()    { if [[ "$(unit_state "$1")" != inactive ]]; then run systemctl --user stop "$1"; else say "  $1: not running"; fi; }
+  disable_unit() { local e a; e="$(unit_en "$1")"; a="$(unit_state "$1")"   # unknown counts as on: try to switch it off
+    if [[ "$e" != disabled ]]; then if [[ "${2:-}" == now ]]; then run systemctl --user disable --now "$1"; else run systemctl --user disable "$1"; fi
+    elif [[ "${2:-}" == now && "$a" != inactive ]]; then run systemctl --user stop "$1"
+    else say "  $1: already off"; fi; }
+  quit_room_agents() { # local agents of room X: /quit each (sessions stay)
+    local js; js="$(HP list --json 2>/dev/null)" || { say "  can't reach the hyprpi daemon: no agents quit"; return; }
+    # relay pseudo-agents of a sandboxed world (sbx-*, model "sandboxed") go away with their relay; never quit those here
+    REC_AGENTS="$(jq -c --arg x "$X" --arg self "$SELF" '[.agents[] | select(.room == $x and .id != $self and (.id|startswith("sbx-")|not) and .model != "sandboxed") | {id, name: .display, icon, workspace, cwd, session}]' <<<"$js")"
+    local n; n="$(jq length <<<"$REC_AGENTS")"
+    [[ -n "$SELF" ]] && jq -e --arg x "$X" --arg self "$SELF" '.agents[] | select(.id == $self and .room == $x)' <<<"$js" >/dev/null && say "  (you, $SELF, are in room $X: you are left open; close yourself last)"
+    (( n )) || { say "  no agents open in room $X"; return; }
+    while IFS=$'\t' read -r id nm; do RUN_NOTE="  ($nm)" run HP send "$id" /quit; done < <(jq -r '.[] | "\(.id)\t\(.icon // "" | if . == "" then "" else . + " " end)\(.name)"' <<<"$REC_AGENTS")
+    (( DRY )) && return
+    local left=""; for _ in $(seq 30); do sleep 2; left="$(HP list --json 2>/dev/null | jq -r --argjson q "$REC_AGENTS" '[.agents[].id] as $ids | [$q[].id | select(. as $i | $ids | index($i))] | join(" ")')"; [[ -z "$left" ]] && break; done
+    [[ -n "$left" ]] && say "  still open after 60 s (busy? they quit when their turn ends): $left" || say "  all $n agents of room $X quit"
+  }
+  # other sandboxes running (not this world's)? 0 with OTHERS_RUNNING set ("" = none), 1 when it can't be known (then: leave shared ON)
+  other_sandboxes_running() {
+    OTHERS_RUNNING=""
+    case "$(sandboxd_status)" in down) return 0 ;; unknown) return 1 ;; esac   # down: no sandbox can run; unknown: can't tell
+    (( DRY )) && return 1                   # a dry run never calls sbx; a real run checks with sbx ls
+    local names; names="$(sbx ls 2>/dev/null | awk 'NR > 1 && $4 == "running" {print $1}')" || return 1   # (pipefail: a failed sbx ls fails this)
+    for n in $names; do [[ " $OWN_SB " == *" $n "* ]] || OTHERS_RUNNING+="$n "; done
+    return 0
+  }
 
   case "$KIND" in
   local)
@@ -209,9 +220,7 @@ if [[ "$CMD" == stop ]]; then
     ;;
   sandboxed)
     say "sandbox $SB · doormen: ${DOORMEN:-none} · reader: $READER · other sandboxed worlds configured: ${OTHER_SB:-none}"
-    for s in $OWN_SB; do note_sb "$s" "$(sb_state "$s")"; done
-    for u in $OWN_UNITS $SHARED_UNITS; do note_unit "$u"; done
-    say "states now: $(jq -r 'map("\(.name) \(.state)") | join(", ")' <<<"$REC_SB")"
+    say "states now: $(jq -r 'map("\(.name) \(.state)") | join(", ")' <<<"$PRE_SB") · sbx's daemon: $(sandboxd_status)"
     step "S1 back up the worlds file it edits"
     if (( DETACHED )); then say "  detached: nothing to edit"; else backup "$SB_FILE"; fi
     step "S2 host-side agents in room $X (normally none: its agents live inside the sandbox)"; quit_room_agents
@@ -219,32 +228,31 @@ if [[ "$CMD" == stop ]]; then
     if (( DETACHED )); then say "  detached: world.sh needs its worlds file; stopping the pieces directly"
       stop_unit "hyprpi-$W-shares"; stop_unit "hyprpi-$W-helper"
       st="$(sb_state "$SB")"; sb_off "$st" && say "  sandbox $SB: $st" || run sbx stop "$SB"
-    elif ! sb_off "$(sb_state "$SB")" || unit_active "hyprpi-$W-helper" || unit_active "hyprpi-$W-shares"; then run "$H/docker/world/world.sh" stop "$W"
+    elif ! sb_off "$(sb_state "$SB")" || [[ "$(unit_state "hyprpi-$W-helper")" != inactive || "$(unit_state "hyprpi-$W-shares")" != inactive ]]; then run "$H/docker/world/world.sh" stop "$W"
     else say "  sandbox $SB: $(sb_state "$SB"); helper and shares watcher not running: nothing to stop"; fi
-    step "S4 Doorman(s): unit stopped, sandbox stopped (not doorman.sh stop: it runs a pkill inside the sandbox)"
+    step "S4 Doorman(s): unit stopped, sandbox stopped (not doorman.sh stop: no need to start the sandbox to stop it)"
     for D in $DOORMEN; do stop_unit "hyprpi-doorman-$D"; st="$(sb_state "$D")"; sb_off "$st" && say "  sandbox $D: $st" || run sbx stop "$D"; done
     step "S5 research reader sandbox"; st="$(sb_state "$READER")"; sb_off "$st" && say "  sandbox $READER: $st" || run sbx stop "$READER"
     step "S6 its windows (class hyprpi.$x-*, its Doorman windows): close like clicking X"
-    dre="^$"; [[ -n "${DOORMEN// /}" ]] && dre="^hyprpi-doorman-($(tr ' ' '|' <<<"${DOORMEN% }"))$"
-    while IFS=$'\t' read -r a c t; do [[ -n "$a" ]] && close_win "$a" "$c: $t"; done < <(world_windows "$dre")
+    while IFS=$'\t' read -r a c t; do [[ -n "$a" ]] && close_win "$a" "$c: $t"; done < <(world_windows "$DRE")
     step "S7 autostart off"
     if (( DETACHED )); then say "  detached already: no worlds file, so nothing restores it"
     else REC_AUTOSTART="$(jq -r '.autostart // false' "$SB_FILE")"
       if [[ "$REC_AUTOSTART" == true ]]; then
         if (( DRY )); then say "  would set \"autostart\": false in $SB_FILE (hyprpi's restore-all starts the restore unit for any world with it on)"
         else t="$(mktemp)"; jq '.autostart = false' "$SB_FILE" > "$t" && cat "$t" > "$SB_FILE" && rm -f "$t" && say "  set \"autostart\": false in $SB_FILE"; fi
-      else say "  \"autostart\" is already off"; fi
+      else REC_AUTOSTART=""; say "  \"autostart\" is already off"; fi
     fi
     step "S8 shared sandbox pieces (relay, job runner, login restore, research timers, sbx's daemon): only if nothing else uses them"
     SHARED_OFF=0
     if [[ -n "$OTHER_SB" ]]; then say "  left on: other sandboxed worlds are configured ($OTHER_SB)"
     elif ! other_sandboxes_running; then
-      if (( DRY )); then say "  sbx's daemon is up, so a real run first checks \`sbx ls\` for other running sandboxes (a dry run never calls sbx); only if there are none:"; SHARED_OFF=1
-      else say "  left on: can't tell whether other sandboxes run (sbx ls failed)"; fi
+      if (( DRY )) && [[ "$(sandboxd_status)" == up ]]; then say "  sbx's daemon is up, so a real run first checks \`sbx ls\` for other running sandboxes (a dry run never calls sbx); only if there are none:"; SHARED_OFF=1
+      else say "  left on: can't tell whether other sandboxes run (sbx's daemon: $(sandboxd_status); or sbx ls failed)"; fi
     elif [[ -n "$OTHERS_RUNNING" ]]; then say "  left on: other sandboxes are running ($OTHERS_RUNNING)"
     else SHARED_OFF=1; fi
     if (( SHARED_OFF )); then
-      note_unit hyprpi-sbx-relay; if unit_active hyprpi-sbx-relay; then run systemctl --user stop hyprpi-sbx-relay; else say "  sbx relay: not running"; fi   # (= docker/sbx-relay.mjs stop)
+      stop_unit hyprpi-sbx-relay   # (= docker/sbx-relay.mjs stop)
       disable_unit doorman-bridge-runner.path now
       disable_unit hyprpi-sandbox-restore.service
       disable_unit hyprpi-research-digest.timer now; disable_unit hyprpi-research-daily.timer now
@@ -254,29 +262,28 @@ if [[ "$CMD" == stop ]]; then
       if (( DRY )); then say "  would ask for the typed answer 'delete $W', then run: sbx rm $OWN_SB"
       else [[ -t 0 ]] || { echo "  refused: deleting needs a terminal to type the answer" >&2; exit 3; }
         read -r -p "  type 'delete $W' to delete them: " ans
-        if [[ "$ans" == "delete $W" ]]; then sandboxd_up || systemctl --user start hyprpi-sandboxd.service; for s in $OWN_SB; do [[ "$(sb_state "$s")" != absent ]] && run sbx rm "$s"; done
+        if [[ "$ans" == "delete $W" ]]; then [[ "$(sandboxd_status)" == up ]] || systemctl --user start hyprpi-sandboxd.service; for s in $OWN_SB; do [[ "$(sb_state "$s")" != absent ]] && run sbx rm "$s"; done
         else say "  not deleted (answer didn't match)"; fi
       fi
     fi
     (( SHARED_OFF )) && disable_unit hyprpi-sandboxd.service now   # last: any sbx call above would have started it again
-    (( DETACH && ! DETACHED )) && { step "S9 detach"; detach_file "$SB_FILE"; }
+    (( DETACH && ! DETACHED )) && { step "S9 detach"; if (( DRY )); then say "  would move $SB_FILE to $SB_FILE.off-$STAMP"; else mv "$SB_FILE" "$SB_FILE.off-$STAMP" && say "  moved $SB_FILE to $SB_FILE.off-$STAMP"; REC_MOVED="$SB_FILE"; fi; }
     ;;
   remote)
     say "binding $RM_FILE · reached with: ${SSH[*]}"
     (( REACH )) || say "  $REACH_WHY. The remote part is skipped."
-    RTMUX="" RDAEMON="" RLIST=""
-    if rlook; then REC_RDAEMON="$RDAEMON"; say "  on the machine: $( [[ -n "$RLIST" ]] && echo "daemon answers, $(jq '.agents|length' <<<"$RLIST") agent(s)" || echo "daemon not answering"); agent tmux sessions: $RTMUX"
+    if rlook; then REC_RDAEMON="$( [[ -n "$RLIST" ]] && echo 1 || echo 0)"; say "  on the machine: $( [[ -n "$RLIST" ]] && echo "daemon answers, $(jq '.agents|length' <<<"$RLIST") agent(s)" || echo "daemon not answering"); agent tmux sessions: $RTMUX"
     elif (( REACH )); then REACH=0; REACH_WHY="the machine doesn't answer over ssh"; say "  $REACH_WHY: the remote part is skipped"; fi
     step "R1 on the machine: each agent /quit through world $X's own daemon (sessions stay)"
     if [[ -n "$RLIST" ]]; then
       REC_AGENTS="$(jq -c '[.agents[] | {id, name, display, icon, cwd, session}]' <<<"$RLIST")"
-      for id in $(jq -r '.[].id' <<<"$REC_AGENTS"); do [[ "$id" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+      for id in $(jq -r '.[].id' <<<"$REC_AGENTS"); do [[ "$id" =~ $NAME_RE ]] || continue
         if (( DRY )); then say "  would run there: hyprpi send $id /quit"; else say "  running there: hyprpi send $id /quit"; rsh "\$HP send $id /quit" >/dev/null; fi; done
       [[ "$REC_AGENTS" == "[]" ]] && say "  no agents running there"
       if (( ! DRY )) && [[ "$REC_AGENTS" != "[]" ]]; then for _ in $(seq 20); do sleep 3; rlook && [[ -n "$RLIST" ]] && [[ "$(jq '.agents|length' <<<"$RLIST")" == 0 ]] && break; done; fi
     else say "  skipped (no daemon answering there)"; fi
     step "R2 on the machine: world $X's daemon (graceful, as hyprpi stop)"
-    if (( KEEPD )); then say "  kept (--keep-daemon)"
+    if (( KEEPD )); then say "  kept (--keep-daemon)"; REC_RDAEMON=""
     elif [[ -n "$RLIST" ]]; then if (( DRY )); then say "  would run there: hyprpi stop"; else say "  running there: hyprpi stop"; rsh '$HP stop' >/dev/null; fi
     else say "  skipped (no daemon answering there)"; fi
     step "R3 the laptop: world $X's windows (class hyprpi.$x-*) close like clicking X"
@@ -284,16 +291,40 @@ if [[ "$CMD" == stop ]]; then
     step "R4 the laptop: its jot relay"; disable_unit "hyprpi-jot-relay@$x.service" now
     if (( POWER )); then step "R5 power off the machine (its disk is kept)"
       if [[ -n "$BOX" ]]; then run brev stop "$BOX"; elif [[ -n "$DESK" ]]; then say "  not automated for this binding (desktop $DESK): stop it yourself in its own console"; else say "  not automated for this binding"; fi; fi
-    (( DETACH && ! DETACHED )) && { step "R6 detach"; detach_file "$RM_FILE"; }
+    (( DETACH && ! DETACHED )) && { step "R6 detach"; if (( DRY )); then say "  would move $RM_FILE to $RM_FILE.off-$STAMP"; else mv "$RM_FILE" "$RM_FILE.off-$STAMP" && say "  moved $RM_FILE to $RM_FILE.off-$STAMP"; REC_MOVED="$RM_FILE"; fi; }
     ;;
   esac
-  write_record
+
+  # ---- the record: only what this stop changed, with its state before ------------------------------------------------------------
+  if (( ! DRY )); then
+    CH_UNITS="[]"; while read -r u; do [[ -z "$u" ]] && continue
+      e0="$(pre "$u" enabled)" a0="$(pre "$u" active)" e1="$(unit_en "$u")" a1="$(unit_state "$u")"
+      [[ "$e0" != "$e1" || "$a0" != "$a1" ]] && CH_UNITS="$(jq -c --argjson p "$(jq -c --arg u "$u" '.[] | select(.unit == $u)' <<<"$PRE_UNITS")" '. + [$p]' <<<"$CH_UNITS")"
+    done < <(jq -r '.[].unit' <<<"$PRE_UNITS")
+    CH_SB="[]"; while read -r s st0; do [[ -z "$s" ]] && continue; st1="$(sb_state "$s")"; [[ "$st0" != "$st1" ]] && CH_SB="$(jq -c --arg s "$s" --arg st "$st0" '. + [{name:$s, state:$st}]' <<<"$CH_SB")"; done < <(jq -r '.[] | "\(.name) \(.state)"' <<<"$PRE_SB")
+    mkdir -p "$REC_DIR"
+    new="$(jq -n --arg world "$X" --arg kind "$KIND" --arg at "$(date -Is)" --arg moved "$REC_MOVED" --arg autostart "$REC_AUTOSTART" --arg rd "$REC_RDAEMON" \
+      --argjson units "$CH_UNITS" --argjson sb "$CH_SB" --argjson agents "$REC_AGENTS" \
+      '{version:3, world:$world, kind:$kind, at:$at, units:$units, sandboxes:$sb, moved_from:$moved, autostart_was:$autostart, agents:$agents, remote_daemon_was:$rd}')"
+    # a repeat stop (of a world already off) changes little or nothing: the earlier record's "before" wins, its new changes are added
+    if [[ -f "$REC_DIR/$X.json" && "$(jq -r '.version // 1' "$REC_DIR/$X.json")" == 3 ]]; then
+      new="$(jq -n --argjson o "$(cat "$REC_DIR/$X.json")" --argjson n "$new" '$o + {at:$n.at, first_stop:($o.first_stop // $o.at),
+        units: ($o.units + [$n.units[] | select(.unit as $u | $o.units | any(.unit == $u) | not)]),
+        sandboxes: ($o.sandboxes + [$n.sandboxes[] | select(.name as $s | $o.sandboxes | any(.name == $s) | not)]),
+        moved_from: (if $o.moved_from != "" then $o.moved_from else $n.moved_from end), autostart_was: (if $o.autostart_was != "" then $o.autostart_was else $n.autostart_was end),
+        agents: (if ($o.agents|length) > 0 then $o.agents else $n.agents end), remote_daemon_was: (if $o.remote_daemon_was != "" then $o.remote_daemon_was else $n.remote_daemon_was end)}')"
+    fi
+    printf '%s\n' "$new" > "$REC_DIR/$X.json.tmp" && mv "$REC_DIR/$X.json.tmp" "$REC_DIR/$X.json" && say "" && say "record (what this stop changed, with its state before): $REC_DIR/$X.json"
+  fi
 
   # ---- check: anything unknown or unreachable counts as NOT off -----------------------------------------------------------------
   step "check"
   if (( DRY )); then say "  (dry run: nothing changed, so nothing to check)"; step "undo"; say "  hyprpi world start $X"; exit 0; fi
   sleep 2; bad=0
   nd() { say "  NOT DONE: $*"; bad=1; }
+  off_unit() { local a e; a="$(unit_state "$1")"; e="$(unit_en "$1")"
+    [[ "$a" == inactive ]] && say "  ok: $1 stopped" || nd "$1 is $a"
+    [[ "${2:-}" == disabled ]] && { [[ "$e" == disabled ]] || nd "$1 is $e (should be disabled)"; }; }
   js="$(HP list --json 2>/dev/null)"
   if jq -e .agents <<<"$js" >/dev/null 2>&1; then
     left="$(jq -r --arg x "$X" --arg self "$SELF" '[.agents[] | select(.room == $x and .id != $self) | .display] | join(", ")' <<<"$js")"
@@ -304,39 +335,43 @@ if [[ "$CMD" == stop ]]; then
            [[ "$n" == 0 ]] && say "  ok: no panel of room $X open" || nd "${n:-unknown} panel window(s) of room $X" ;;
     sandboxed)
       for s in $OWN_SB; do st="$(sb_state "$s")"; sb_off "$st" && say "  ok: sandbox $s: $st" || nd "sandbox $s is $st"; done
-      for u in $OWN_UNITS; do unit_active "$u" && nd "$u is running" || say "  ok: $u stopped"; done
+      for u in $OWN_UNITS; do off_unit "$u"; done
       if (( SHARED_OFF )); then
-        for u in $SHARED_UNITS; do unit_active "$u" && nd "$u is running" || say "  ok: $u stopped"; unit_enabled "$u" && nd "$u is still enabled"; done
+        off_unit hyprpi-sbx-relay; for u in doorman-bridge-runner.path hyprpi-sandbox-restore.service hyprpi-research-digest.timer hyprpi-research-daily.timer hyprpi-sandboxd.service; do off_unit "$u" disabled; done
+        [[ "$(sandboxd_status)" == down ]] && say "  ok: sbx's daemon is down" || nd "sbx's daemon is $(sandboxd_status)"
         pgrep -u "$(id -u)" -f 'containerd-shim-nerdbox' >/dev/null && nd "a sandbox VM (containerd-shim-nerdbox) is still running" || say "  ok: no sandbox VM (containerd-shim-nerdbox) running"
       else say "  (shared pieces were left on, see S8)"; fi ;;
     remote)
-      unit_active "hyprpi-jot-relay@$x.service" && nd "hyprpi-jot-relay@$x is running" || say "  ok: hyprpi-jot-relay@$x stopped"
+      off_unit "hyprpi-jot-relay@$x.service"
       if (( ! REACH )); then nd "the machine can't be checked ($REACH_WHY)"
       elif ! rlook; then nd "the machine doesn't answer over ssh now: unverified"
       else
-        [[ "$RTMUX" == 0 ]] && say "  ok: no agent tmux session left there" || nd "$RTMUX agent tmux session(s) still there"
+        [[ "$RTMUX" == 0 ]] && say "  ok: no agent tmux session left there" || nd "${RTMUX:-unknown} agent tmux session(s) still there"
         if [[ -n "$RLIST" ]]; then k="$(jq '.agents|length' <<<"$RLIST")"; [[ "$k" == 0 ]] && say "  ok: its daemon lists no agents" || nd "its daemon still lists $k agent(s)"
           (( KEEPD )) || nd "its daemon still answers (hyprpi stop didn't take)"
         else say "  ok: its daemon is stopped"; fi
       fi ;;
   esac
-  n="$(world_windows | grep -c . || true)"; [[ "$n" == 0 ]] && say "  ok: no window of world $X open" || nd "$n window(s) of world $X still open"
-  AFTER="$(others)"
-  if [[ "$BEFORE" == UNREADABLE* || "$AFTER" == UNREADABLE* ]]; then nd "the other rooms couldn't be read before/after: unverified"
-  elif [[ "$BEFORE" == "$AFTER" ]]; then say "  ok: the other rooms' agents are unchanged ($(grep -c . <<<"$BEFORE") agents)"
-  else nd "the other rooms changed while this ran; check them (this script only touches room $X):"; diff <(echo "$BEFORE") <(echo "$AFTER") | sed 's/^/    /'; fi
-  step "undo"; say "  hyprpi world start $X     (puts back exactly the state recorded before this stop)"
+  n="$(world_windows "${DRE:-^$}" | grep -c . || true)"; [[ "$n" == 0 ]] && say "  ok: no window of world $X open" || nd "$n window(s) of world $X still open"
+  others_check nd
+  step "undo"; say "  hyprpi world start $X     (puts back exactly what this stop changed)"
   if (( bad )); then say ""; say "=> world $X is NOT fully off / check (see above)"; exit 4; fi
   say ""; say "=> world $X is off"; exit 0
 fi
 
 # =========================================================================================================================
-# start: the undo of the last stop. Re-attach, then the world's own start, then every recorded unit and sandbox back to exactly
-# its state before the stop (enabled / active / running, or not), then a check.
+# start: the undo of the last stop. Re-attach, the world's own start, then every recorded unit and sandbox back to its state before
+# the stop (start only turns things ON: the record holds only what the stop turned off, so it never turns a shared piece off), check,
+# and on success retire the record.
 REC="$REC_DIR/$X.json"
 say "hyprpi world start $X: a $KIND world$( ((DETACHED)) && echo ' (detached)')$( ((DRY)) && echo ' -- DRY RUN, nothing changes')"
-if [[ -f "$REC" && "$(jq -r '.version // 1' "$REC")" == 2 ]]; then say "restoring the state before the stop of $(jq -r '.first_stop // .at' "$REC") ($REC)"
-else REC=""; say "no (current) record of a stop of world $X: starting it as configured, nothing to restore exactly"; fi
+if [[ -f "$REC" ]]; then
+  [[ "$(jq -r '.version // 1' "$REC" 2>/dev/null)" == 3 ]] || die2 "$REC is an older or unreadable record: not used (move it aside to start world $X as configured)"
+  rw="$(jq -r .world "$REC")" rk="$(jq -r .kind "$REC")"
+  [[ "$rw" == "$X" && "$rk" == "$KIND" ]] || die2 "$REC is for world $rw ($rk), but world $X is $KIND here: not used (move it aside)"
+  jq -e '[.units[].unit, .sandboxes[].name] | all(test("^[A-Za-z0-9][A-Za-z0-9@._-]{0,80}$"))' "$REC" >/dev/null || die2 "$REC holds an unexpected unit or sandbox name: not used"
+  say "restoring what the stop of $(jq -r '.first_stop // .at' "$REC") changed ($REC)"
+else REC=""; say "no record of a stop of world $X: starting it as configured (nothing to restore exactly)"; fi
 confirm "Start world $X ($KIND) now?"
 if (( DETACHED )); then step "re-attach"; F="${SB_FILE:-$RM_FILE}"; T="${F%%.off-*}"
   [[ -e "$T" ]] && { echo "  $T exists already: not overwriting it" >&2; exit 1; }
@@ -346,74 +381,69 @@ fi
 if [[ -n "$REC" && "$KIND" == sandboxed && "$(jq -r '.autostart_was' "$REC")" == true ]]; then step "autostart back on"
   if (( DRY )); then say "  would set \"autostart\": true in $SB_FILE"; else backup "$SB_FILE"; t="$(mktemp)"; jq '.autostart = true' "$SB_FILE" > "$t" && cat "$t" > "$SB_FILE" && rm -f "$t" && say "  set \"autostart\": true"; fi
 fi
-rec_units() { [[ -n "$REC" ]] && jq -r '.units[] | "\(.unit) \(.enabled) \(.active) \(.file)"' "$REC"; }
-was_active() { [[ -n "$REC" ]] && jq -e --arg u "$1" 'any(.units[]; .unit == $u and .active)' "$REC" >/dev/null; }
+rec_units() { [[ -n "$REC" ]] && jq -r '.units[] | "\(.unit) \(.enabled) \(.active) \(.file)"' "$REC" | awk '$1 == "hyprpi-sandboxd.service" {print; next} {rest = rest $0 "\n"} END {printf "%s", rest}'; }
 
 step "start"
 case "$KIND" in
-  sandboxed) W="$(basename "${SB_FILE%%.off-*}" .json)"
+  sandboxed)
     if [[ -z "$REC" ]] || jq -e --arg s "$SB" 'any(.sandboxes[]; .name == $s and .state == "running")' "$REC" >/dev/null; then
-      run "$H/docker/world/restore.sh" "$W"   # sandboxd in its own unit, relay, helper, sandbox, inner daemon, panels, its agents, its Doorman
-    else say "  sandbox $SB wasn't running before the stop: not started (only the units below are put back)"; fi ;;
+      run "$H/docker/world/restore.sh" "$W"   # sandboxd in its own unit, relay, helper, sandbox, inner daemon, panels, its agents, its Doorman (no pkill on this path, J625)
+    else say "  sandbox $SB wasn't running before the stop: the world itself isn't started (only what the stop switched off comes back)"; fi ;;
   remote)
     if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" != 0 ]]; then
       # only the agents this stop closed (not every agent with a session there, as `world X recover` would)
       for n in $(jq -r '.agents[].name' "$REC"); do [[ "$n" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || { say "  skipped an agent with an unexpected name: $n"; continue; }
-        run "$H/omnistation/world" "$X" start "$n"; run "$H/omnistation/world" "$X" open "$n"; done
-    elif [[ -z "$REC" ]]; then run "$H/omnistation/world" "$X" recover
-    else say "  no agents were running there before the stop: nothing to start"; fi ;;
+        run "$RWORLD" "$X" start "$n"; run "$RWORLD" "$X" open "$n"; done
+    elif [[ -n "$REC" && "$(jq -r .remote_daemon_was "$REC")" == 1 ]]; then
+      if (( DRY )); then say "  would run there: hyprpi ensure (its daemon ran before the stop, with no agents)"; else say "  running there: hyprpi ensure"; rsh '$HP ensure' >/dev/null; fi
+    elif [[ -z "$REC" ]]; then run "$RWORLD" "$X" recover
+    else say "  neither agents nor the daemon ran there before the stop: nothing to start"; fi ;;
   local)
     if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" != 0 ]]; then
       while read -r a; do
         id="$(jq -r .id <<<"$a")"; ws="$(jq -r '.workspace // empty' <<<"$a")"; cwd="$(jq -r '.cwd // empty' <<<"$a")"; s="$(jq -r '.session // empty' <<<"$a")"
+        [[ "$id" =~ $NAME_RE ]] || { say "  skipped an agent with an unexpected id: $id"; continue; }
         args=(new --id "$id" --no-focus); [[ "$ws" =~ ^[0-9]+$ ]] && args+=(--workspace "$ws"); [[ -d "$cwd" ]] && args+=(--cwd "$cwd")
         [[ -f "$s" ]] && args+=(-- --session "$s"); run HP "${args[@]}"
       done < <(jq -c '.agents[]' "$REC")
     else say "  no agents recorded: open agents on world $X as usual (SUPER+A)"; fi ;;
 esac
-if [[ -n "$REC" ]]; then step "units and sandboxes back to their state before the stop"
-  # sandboxd first (an sbx stop below needs it), then the rest; a transient (systemd-run) unit can't be started by name: the world's
-  # own start above brings those back, and one it started that was off before is stopped again
-  while read -r u e a f; do
-    [[ -z "$u" ]] && continue
+if [[ -n "$REC" ]]; then step "what the stop switched off, back to its state before (sbx's daemon first)"
+  while read -r u e a f; do [[ -z "$u" ]] && continue
     if [[ "$f" == true ]]; then
-      if [[ "$e" == true ]] && ! unit_enabled "$u"; then run systemctl --user enable "$u"; elif [[ "$e" == false ]] && unit_enabled "$u"; then run systemctl --user disable "$u"; fi
-      if [[ "$a" == true ]] && ! unit_active "$u"; then run systemctl --user start "$u"; fi
-    fi
-    [[ "$a" == false ]] && unit_active "$u" && run systemctl --user stop "$u"
-  done < <(rec_units | sort -k1,1 | awk '$1 == "hyprpi-sandboxd.service" {print; next} {rest = rest $0 "\n"} END {printf "%s", rest}')
-  for s in $(jq -r '.sandboxes[]? | select(.state != "running") | .name' "$REC"); do
-    [[ "$(sb_state "$s")" == running ]] && run sbx stop "$s"; done
+      [[ "$e" == enabled && "$(unit_en "$u")" != enabled ]] && run systemctl --user enable "$u"
+      [[ "$a" == active && "$(unit_state "$u")" != active ]] && run systemctl --user start "$u"
+    else [[ "$a" == active && "$(unit_state "$u")" != active ]] && say "  $u (a transient unit) comes back with the world's own start above"; fi
+  done < <(rec_units)
+  for s in $(jq -r '.sandboxes[] | select(.state == "running") | .name' "$REC"); do
+    [[ "$(sb_state "$s")" == running ]] || RUN_NOTE="  (starts sandbox $s, as world.sh start does)" run sbx exec "$s" true; done
 fi
 (( DRY )) && { step "check"; say "  (dry run: nothing changed, so nothing to check)"; exit 0; }
 
 step "check"
 sleep 3; bad=0
-nd() { say "  NOT BACK: $*"; bad=1; }
+nb() { say "  NOT BACK: $*"; bad=1; }
 if [[ -n "$REC" ]]; then
-  while read -r u e a f; do
-    [[ -z "$u" ]] && continue
-    if [[ "$a" == true ]]; then unit_active "$u" && say "  ok: $u running" || nd "$u isn't running"; else unit_active "$u" && nd "$u runs but was off before" || say "  ok: $u off, as before"; fi
-    [[ "$f" == true ]] && { if [[ "$e" == true ]]; then unit_enabled "$u" || nd "$u isn't enabled"; else unit_enabled "$u" && nd "$u is enabled but wasn't before"; fi; }
+  while read -r u e a f; do [[ -z "$u" ]] && continue
+    if [[ "$a" == active ]]; then s1="$(unit_state "$u")"; [[ "$s1" == active ]] && say "  ok: $u running" || nb "$u is $s1"; fi
+    if [[ "$e" == enabled ]]; then e1="$(unit_en "$u")"; [[ "$e1" == enabled ]] && say "  ok: $u enabled" || nb "$u is $e1"; fi
   done < <(rec_units)
-  while read -r s st; do [[ -z "$s" ]] && continue; now="$(sb_state "$s")"
-    if [[ "$st" == running ]]; then [[ "$now" == running ]] && say "  ok: sandbox $s running" || nd "sandbox $s is $now"; else sb_off "$now" && say "  ok: sandbox $s $now, as before" || nd "sandbox $s is $now (was $st)"; fi
-  done < <(jq -r '.sandboxes[]? | "\(.name) \(.state)"' "$REC")
+  for s in $(jq -r '.sandboxes[] | select(.state == "running") | .name' "$REC"); do st="$(sb_state "$s")"; [[ "$st" == running ]] && say "  ok: sandbox $s running" || nb "sandbox $s is $st"; done
   if [[ "$KIND" == local && "$(jq '.agents|length' "$REC")" != 0 ]]; then
     for _ in $(seq 20); do js="$(HP list --json 2>/dev/null)"; miss="$(jq -r --argjson q "$(jq -c .agents "$REC")" '[.agents[].id] as $ids | [$q[] | select(.id as $i | $ids | index($i) | not) | .name] | join(", ")' <<<"$js" 2>/dev/null)" || miss="unknown (hyprpi list unreadable)"; [[ -z "$miss" ]] && break; sleep 3; done
-    [[ -z "$miss" ]] && say "  ok: its agents are back" || nd "agents not back: ${miss:-unknown (hyprpi list unreadable)}"
+    [[ -z "$miss" ]] && say "  ok: its agents are back" || nb "agents not back: $miss"
   fi
-  if [[ "$KIND" == remote && "$(jq '.agents|length' "$REC")" != 0 ]]; then
-    if rlook && [[ -n "$RLIST" ]]; then miss="$(jq -r --argjson q "$(jq -c .agents "$REC")" '[.agents[].id] as $ids | [$q[] | select(.id as $i | $ids | index($i) | not) | .name] | join(", ")' <<<"$RLIST")"
-      [[ -z "$miss" ]] && say "  ok: its agents run there again" || nd "agents not back there: $miss"
-    else nd "the machine or its daemon doesn't answer: unverified"; fi
-  fi
-else
-  case "$KIND" in sandboxed) [[ "$(sb_state "$SB")" == running ]] && say "  ok: sandbox $SB running" || nd "sandbox $SB isn't running" ;; *) say "  (no record: nothing exact to check)" ;; esac
 fi
-AFTER="$(others)"
-if [[ "$BEFORE" == UNREADABLE* || "$AFTER" == UNREADABLE* ]]; then nd "the other rooms couldn't be read before/after: unverified"
-elif [[ "$BEFORE" != "$AFTER" ]]; then nd "the other rooms changed while this ran; check them:"; diff <(echo "$BEFORE") <(echo "$AFTER") | sed 's/^/    /'
-else say "  ok: the other rooms' agents are unchanged"; fi
-if (( bad )); then say ""; say "=> world $X is NOT fully back / check (see above)"; exit 4; fi
+if [[ "$KIND" == remote ]]; then
+  if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" == 0 && "$(jq -r .remote_daemon_was "$REC")" != 1 ]]; then say "  (nothing ran on the machine before the stop)"
+  elif (( ! REACH )); then nb "the machine can't be checked ($REACH_WHY)"
+  elif ! rlook || [[ -z "$RLIST" ]]; then nb "the machine or world $X's daemon there doesn't answer: unverified"
+  elif [[ -n "$REC" ]]; then miss="$(jq -r --argjson q "$(jq -c .agents "$REC")" '[.agents[].id] as $ids | [$q[] | select(.id as $i | $ids | index($i) | not) | .name] | join(", ")' <<<"$RLIST")"
+    [[ -z "$miss" ]] && say "  ok: its daemon answers and the recorded agents run there" || nb "agents not back there: $miss"
+  else say "  ok: its daemon answers there ($(jq '.agents|length' <<<"$RLIST") agent(s))"; fi
+fi
+[[ "$KIND" == sandboxed && -z "$REC" ]] && { st="$(sb_state "$SB")"; [[ "$st" == running ]] && say "  ok: sandbox $SB running" || nb "sandbox $SB is $st"; }
+others_check nb
+if (( bad )); then say ""; say "=> world $X is NOT fully back / check (see above; the record stays: $REC_DIR/$X.json)"; exit 4; fi
+[[ -n "$REC" ]] && mv "$REC" "$REC.done-$STAMP" && say "  record retired: $REC.done-$STAMP (a later stop records afresh)"
 say ""; say "=> world $X started, as it was before the stop; to switch it off again: hyprpi world stop $X"

@@ -44,9 +44,10 @@ case "$CMD" in
     # the saved mounts no longer include it, and only the share plan puts it back.
     node "$H/docker/world/shares.mjs" apply "$WORLD" >/dev/null || echo "world.sh: shares apply failed" >&2
     in_sb 'pgrep -ax node | grep -q "/bin/hyprpi daemon" || { cd "$G_WORLD_DIR"; setsid -f sh -c "exec node $G_HOST_HYPRPI/bin/hyprpi daemon" >> $HOME/.hyprpi-g/daemon.log 2>&1 < /dev/null; sleep 3; }'
-    # J464: the gate "Outside" is retired (stop a running one, its restart loop first); Doorman-G's mailbox (doorman-notify.mjs) delivers
-    # what comes back to the agents, who send with the doorman MCP tools
-    in_sb 'pkill -f "while :; do node .*/g-gate[.]mjs" 2>/dev/null; pkill -f "/docker/world/g-gate[.]mjs" 2>/dev/null; true'
+    # J464: the gate "Outside" is retired; Doorman-G's mailbox (doorman-notify.mjs) delivers what comes back to the agents, who send with
+    # the doorman MCP tools. J625 (no kill on the start path): a gate left from before J464 is no longer pkilled here; any sandbox stop
+    # (world.sh stop, hyprpi world stop) ends it, so only a warning if one still runs
+    in_sb 'pgrep -f "/docker/world/g-gate[.]mjs" >/dev/null && echo "world.sh: the retired gate (g-gate.mjs) still runs in the sandbox; world.sh stop, then start, ends it" >&2; true'
     in_sb 'pgrep -ax node | grep -q "/doorman-notify[.]mjs" || setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/doorman-notify.mjs; sleep 3; done" >> $HOME/.hyprpi-g/doorman-notify.log 2>&1 < /dev/null'
     in_sb 'pgrep -ax node | grep -q "/g-status[.]mjs run" || setsid -f sh -c "while :; do node $G_HOST_HYPRPI/docker/world/g-status.mjs run; sleep 5; done" >> $HOME/.hyprpi-g/status.log 2>&1 < /dev/null'   # J401: the world's agents, reported to the host's agents panel
     in_sb 'for p in agents-tui room-tui board-tui search-tui; do pgrep -f "$p.mjs" >/dev/null || G_WS='"$HI"' setsid -f $G_HOST_HYPRPI/mockups/$p G >/dev/null 2>&1 < /dev/null; done'

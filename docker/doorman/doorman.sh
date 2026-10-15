@@ -6,7 +6,7 @@
 #
 #   docker/doorman/doorman.sh create NAME     make the Doorman's sandbox and install Pi + its config in it
 #   docker/doorman/doorman.sh start NAME      run it (systemd user unit hyprpi-doorman-NAME, headless Pi in RPC mode)
-#   docker/doorman/doorman.sh stop NAME | status NAME | rm NAME
+#   docker/doorman/doorman.sh stop NAME | status NAME | rm NAME   (J625: stop also stops its sandbox: sbx stop, no pkill)
 #   docker/doorman/doorman.sh window NAME     (J327) open its live window now (J453: every mode)
 #   docker/doorman/doorman.sh raise NAME      (J363, J427) take Angus to its window where it is (switch workspace, focus; the window doesn't move)
 #
@@ -80,7 +80,9 @@ start)
   "$H/docker/sbx-daemon.sh" ensure || echo "doorman: couldn't start sandboxd in its own unit (hyprpi-sandboxd.service)" >&2 # J403
   systemctl --user is-active --quiet hyprpi-sbx-relay || { echo "doorman: the relay isn't running" >&2; exit 3; }
   systemctl --user is-active --quiet "$UNIT" && { echo "doorman: $UNIT already runs"; exit 0; }
-  sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true # a Pi left from an earlier run would answer too (its process is named "pi")
+  # a Pi left from an earlier run would answer too (its process is named "pi"). J625 (no kill on the start path): instead of pkill, the
+  # Doorman's sandbox is stopped (sbx stop ends everything in it); mounts below starts it again and re-makes its mounts
+  if sbx exec "$NAME" pgrep -x pi >/dev/null 2>&1; then echo "doorman: a Pi from an earlier run still runs in $NAME: stopping its sandbox first"; sbx stop "$NAME" >/dev/null; fi
   mounts
   # Refresh the extension and prompt from this checkout (fixes reach it), then a headless Pi under doorman-rpc.mjs (J373: a fresh session per message).
   sbx cp "$H/docker/sbx-dropbox-ext.ts" "$NAME:/home/agent/.pi/agent/extensions/hyprpi-dropbox.ts" >/dev/null
@@ -131,7 +133,7 @@ raise)
   hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null
   echo "took you to $CLS on G workspace $ws"
   ;;
-stop) systemctl --user stop "$UNIT"; sbx exec "$NAME" pkill -x pi >/dev/null 2>&1 || true ;;
+stop) systemctl --user stop "$UNIT"; sbx stop "$NAME" >/dev/null 2>&1 || true ;; # J625: the sandbox stop ends its Pi (no pkill)
 status) systemctl --user --no-pager status "$UNIT" || true ;;
 rm) systemctl --user stop "$UNIT" 2>/dev/null || true; sbx rm -f "$NAME" ;;
 *) echo "usage: doorman.sh create|start|stop|status|rm|window|raise NAME" >&2; exit 2 ;;
