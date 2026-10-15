@@ -129,38 +129,54 @@ const RO_CMD = new Set(["ls", "cat", "head", "tail", "less", "grep", "rg", "egre
   "if", "do", "done", "then", "fi", "cd", "export", "local", "set"]);
 // a word that is read-only only with some subcommands / flags: (args) => true when it CHANGES something
 const SUB_CHANGE: Record<string, (rest: string) => boolean> = {
-  sed: (r) => /(^|\s)-i/.test(r),
-  git: (r) => !/^\s*(-C\s+\S+\s+)?(status|log|diff|show|branch(\s+-[avlr]+)*\s*$|rev-parse|ls-files|grep|blame|remote(\s+-v)?\s*$|describe|config\s+--get|worktree\s+list|stash\s+list|tag\s*$|fetch|merge-base|cat-file|check-ignore|shortlog|reflog)/.test(r),
+  sed: (r) => /(^|\s)(-i|--in-place)/.test(r),
+  git: (r) => !/^\s*((-C|-c)\s+\S+\s+|--no-pager\s+|--git-dir[= ]\S+\s+|--work-tree[= ]\S+\s+)*(status|log|diff|show|branch(\s+-[avlr]+)*\s*$|rev-parse|ls-files|grep|blame|remote(\s+-v)?\s*$|describe|config\s+--get|worktree\s+list|stash\s+list|tag\s*$|merge-base|cat-file|check-ignore|shortlog|reflog|count-objects|for-each-ref|name-rev|var)\b/.test(r),
   gh: (r) => !/^\s*(issue|pr|repo|run|api)\s+(view|list|status|diff|checks)\b|^\s*auth\s+status|^\s*search\b/.test(r) && !/^\s*api\s+[^-]*$/.test(r),
   systemctl: (r) => /\b(start|stop|restart|reload|enable|disable|mask|unmask|kill|daemon-reload|set-property|edit)\b/.test(r),
   hyprctl: (r) => /\b(dispatch|keyword|reload|setcursor|notify|kill|switchxkblayout)\b/.test(r),
-  docker: (r) => !/^\s*(ps|images|inspect|logs|version|info|stats)\b/.test(r) && !/zricethezav\/gitleaks/.test(r),
+  docker: (r) => !/^\s*(ps|images|inspect|logs|version|info|stats)\b/.test(r) && !(/zricethezav\/gitleaks/.test(r) && !/--report-path/.test(r)),
+  wpctl: (r) => /\bset-/.test(r),
   pacman: (r) => /(^|\s)-(S|R|U)/.test(r),
   npm: (r) => !/^\s*(test|run\s+(test|lint|check|build)|ls|view|outdated|audit)\b/.test(r),
   go: (r) => !/^\s*(test|vet|version|env|list|doc)\b/.test(r) && !/^\s*build\b(?!.*\s-o\s+\/(home|usr|etc))/.test(r),
   cargo: (r) => !/^\s*(test|check|build|clippy|tree)\b/.test(r),
   make: (r) => /\binstall\b/.test(r),
-  curl: (r) => /(^|\s)-(X\s*(POST|PUT|DELETE|PATCH)|d|F|T)\b|--data|--upload|(^|\s)-o\s|--output/.test(r),
+  curl: (r) => /(^|\s)-[a-zA-Z]*[dFTOo]|(^|\s)-X\s*(POST|PUT|DELETE|PATCH)|--request\s+(POST|PUT|DELETE|PATCH)|--data|--form|--upload|--output|--remote-name/.test(r),
   wget: () => true,
   hyprpi: (r) => !/^\s*(list|status|help|search|world\s+status)\b/.test(r),
   tmux: (r) => !/^\s*(-L\s+\S+\s+)?(ls|list-\w+|capture-pane|display|has-session|show)/.test(r),
   pactl: (r) => /\b(load-module|unload-module|set-|move-|suspend)/.test(r),
-  sqlite3: (r) => /\b(insert|update|delete|create|drop|alter)\b/i.test(r),
+  sqlite3: (r) => /\b(insert|update|delete|create|drop|alter|replace|vacuum)\b/i.test(r),
 };
 const CHANGE_CMD = /^(rm|rmdir|mv|cp|mkdir|touch|ln|chmod|chown|install|tee|kill|pkill|killall|truncate|shred|dd|patch|notify-send|sudo|su|systemd-run|setsid|nohup|wtype|ydotool|pip|pip3|uv|yay|paru|brev|ssh|scp|rsync|trash|unzip|tar|zip|grim|crontab|chsh|usermod|passwd|ding|bonk)$/;
 
 // one shell command line -> "change" | "lookup"
 export function bashKind(command: string): "change" | "lookup" {
-  const cmd = String(command ?? "");
+  const raw = String(command ?? "");
+  // quoted text can't redirect or run anything (unless it is a -c script: those are looked at below)
+  let cmd = "", last = 0;
+  for (const m of raw.matchAll(/'[^']*'|"(?:[^"\\]|\\.)*"/g)) {
+    const before = raw.slice(0, m.index).trimEnd();
+    const code = /(\b(bash|sh|zsh)\s+(-\w+\s+)*-c|\bsqlite3(\s+\S+)?|\bawk(\s+-\w+(\s+\S+)?)*)$/.test(before); // a script or query: its text counts
+    cmd += raw.slice(last, m.index) + (code ? " ; " + m[0].slice(1, -1) + " ; " : "''");
+    last = m.index! + m[0].length;
+  }
+  cmd += raw.slice(last);
   // writes through redirection (not to /dev/null, not a fd dup) or here-doc into a file
   if (/(^|[^0-9&<>])>>?\s*(?!&|\/dev\/null)[^\s|&;]/.test(cmd.replace(/2>&1|>&2|&>\s*\/dev\/null|\d?>\s*\/dev\/null/g, ""))) return "change";
   // python/node inline that writes files
-  if (/\b(open\([^)]*['"][wa]['"]|write_text|writeFileSync|appendFileSync|unlink|rmSync|os\.remove|shutil\.(move|copy|rmtree))/.test(cmd)) return "change";
+  if (/\b(open\([^)]*['"][wa]['"]|write_text|writeFileSync|appendFileSync|unlink|rmSync|os\.remove|shutil\.(move|copy|rmtree))/.test(raw)) return "change";
+  if (/(^|\s)find\s.*\s-(delete|exec(dir)?\s+(rm|mv|cp|chmod|sed\s+-i)|ok)\b/.test(cmd)) return "change";
   for (const seg of cmd.split(/\|\||&&|[;|\n]|\$\(|`/)) {
     const words = seg.trim().replace(/^(\w+=\S*\s+)+/, "").split(/\s+/).filter(Boolean);
-    while (words.length && /^(sudo|timeout|nice|env|xargs|command|exec|time|-n|-\d+|\d+[smh]?)$/.test(words[0])) {
-      if (words[0] === "sudo" || words[0] === "xargs") return words.length > 1 ? (CHANGE_CMD.test(words[1].split("/").pop()!) ? "change" : words[0] === "sudo" ? "change" : "lookup") : "change";
+    if (words[0] === "sudo") return "change";
+    // wrappers: skip them and their options / assignments, then look at the real command
+    while (words.length && /^(timeout|nice|env|xargs|command|exec|time|ionice|stdbuf)$/.test(words[0])) {
       words.shift();
+      while (words.length && (/^-/.test(words[0]) || /^\w+=/.test(words[0]) || /^\d+(\.\d+)?[smh]?$/.test(words[0]) || /^\{\}$/.test(words[0]))) {
+        const o = words.shift()!;
+        if (/^-(I|n|P|L|s|k|c)$/.test(o) && words.length && !/^-/.test(words[0])) words.shift(); // option with a value
+      }
     }
     if (!words.length) continue;
     const w = words[0].split("/").pop()!;
@@ -208,7 +224,8 @@ function lookupLine(tool: string, a: any, failed: boolean): string {
 export function quietMode(pi: any) {
   if (!quietOn()) return false;
   let ui: any = null;
-  pi.on("session_start", async (_e: any, ctx: any) => { ui = ctx?.ui; ui?.setHiddenThinkingLabel?.(""); });
+  // J642 v3: hidden thinking keeps pi's own dim "Thinking..." line (J641's empty label left blank rows instead)
+  pi.on("session_start", async (_e: any, ctx: any) => { ui = ctx?.ui; });
   // V2: the status line while working (pi's own working indicator; its message only)
   const turnArgs = new Map<string, { tool: string; args: any }>();
   let silent: string[] = [];
