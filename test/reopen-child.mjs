@@ -69,6 +69,11 @@ try {
   const sp3 = await mom.call("orch.spawn", { prompt: "third", name: "Kid3" });
   const kid3 = await fake(sp3.id, sp3.name, 36); await sleep(300); await mom.call("orch.close", { id: sp3.id }); kid3.close(); await sleep(11500);
   ok("W3 a closed child that isn't reopened stays closed", (await kidOf(sp3.id)).status === "closed");
+  // (ReopenCheck) a child that said hello and dropped before the 2 s timer, then was closed while offline: it stays closed
+  const sp4 = await mom.call("orch.spawn", { prompt: "fourth", name: "Kid4" });
+  const k4 = await connect({ path: sock, onEvent: () => {} }); await k4.call("agent.hello", { agent_id: sp4.id, pid: process.pid, name: sp4.name, want_workspace: 37, cwd: T });
+  k4.close(); await sleep(300); await mom.call("orch.close", { id: sp4.id }).catch(() => {}); await sleep(11500);
+  ok("W3 a child that dropped right after hello and was closed while offline is not reopened by the stale hello timer", (await kidOf(sp4.id)).status === "closed", (await kidOf(sp4.id)).status);
   const log = fs.readFileSync(path.join(T, "daemon.log"), "utf8");
   api.close(); mom.close(); kid.close(); kid2.close();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
