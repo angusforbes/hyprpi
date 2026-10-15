@@ -104,8 +104,10 @@ for W in "${worlds[@]}"; do
   # display names: J403Test), so the check below can see one gone again
   declare -g "BACK_${W//-/_}=$(sbx exec "$SB" sh -c ". $H/docker/world/g-env.sh; timeout 15 hyprpi list 2>/dev/null" 2>/dev/null | awk -F'\t' 'NF>=5 && $NF ~ /^[A-Za-z0-9_.-]{3,64}$/ && $NF !~ /^(g-|sbx-)/ {print $NF}' | tr '\n' ' ')"
   [[ "$out" == *"not restored"* ]] && { log "restore $W: some agents did not come back"; rc=1; }
-  # 4. its Doorman, if it has one
-  for D in $(jq -r --arg w "$SB" '.sandboxes[] | select(.doorman_for == $w) | .name' "$CFG/sbx-relay.json" 2>/dev/null); do
+  # 4. its Doorman, if it has one. J625: HYPRPI_RESTORE_NO_DOORMAN=1 (hyprpi world start, undoing a stop) leaves it out: it starts the
+  #    Doorman itself only if it ran before the stop
+  [[ -n "${HYPRPI_RESTORE_NO_DOORMAN:-}" ]] && log "restore $W: Doorman left as it is (HYPRPI_RESTORE_NO_DOORMAN)"
+  [[ -z "${HYPRPI_RESTORE_NO_DOORMAN:-}" ]] && for D in $(jq -r --arg w "$SB" '.sandboxes[] | select(.doorman_for == $w) | .name' "$CFG/sbx-relay.json" 2>/dev/null); do
     systemctl --user is-active --quiet "hyprpi-doorman-$D" || { "$H/docker/doorman/doorman.sh" start "$D" >>"$LOG" 2>&1 && log "restore $W: Doorman $D started" || { log "restore $W: Doorman $D failed"; rc=1; }; }
   done
   log "restore $W: done"

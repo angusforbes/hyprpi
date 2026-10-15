@@ -46,6 +46,8 @@ SBX_SOCK="${XDG_STATE_HOME:-$HOME/.local/state}/sandboxes/sandboxes/sandboxd/san
 STAMP="$(date +%Y%m%d%H%M%S)"
 HP() { node "${HYPRPI_WORLD_HPBIN:-$H/bin/hyprpi}" "$@"; }   # (tests point HYPRPI_WORLD_HPBIN at a fake)
 RWORLD="${HYPRPI_WORLD_REMOTE_BIN:-$H/omnistation/world}"      # the laptop side of a remote world (tests: a fake)
+RESTORE="${HYPRPI_WORLD_RESTORE_BIN:-$H/docker/world/restore.sh}"   # (tests: a copy with fake callees)
+DOORMAN="${HYPRPI_WORLD_DOORMAN_BIN:-$H/docker/doorman/doorman.sh}"
 NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
 
 usage() { sed -n '4,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -141,11 +143,20 @@ if [[ "$KIND" == remote ]]; then
   elif [[ "$(basename "${SSH[0]}")" == ssh ]]; then SSH=("${SSH[0]}" -o BatchMode=yes -o ConnectTimeout=10 "${SSH[@]:1}"); fi
   RENV="export PATH=\$HOME/.hyprpi-$x/pi/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:\$PATH HYPRPI_STATE=\$HOME/.hyprpi-$x/state HYPRPI_SOCKET=\$HOME/.hyprpi-$x/run/daemon.sock HYPRPI_NO_ADOPT=1; unset HYPRPI_AGENT_ID HYPRPI_NAME; HP=\"node \${HYPRPI_DIR:-\$HOME/hyprpi}/bin/hyprpi\""
   rsh() { timeout 60 "${SSH[@]}" "$RENV; $1" </dev/null 2>/dev/null | tr -d '\r'; }
-  # one read-only look: "TMUX <agent sessions> <daemon session 0/1>", then the daemon's list (or nothing when it doesn't answer)
-  rlook() { (( REACH )) || return 1; local o; o="$(rsh "printf 'TMUX %s %s\n' \"\$(tmux ls -F '#S' 2>/dev/null | grep '^hyprpi-$x-' | grep -vxc 'hyprpi-$x-daemon')\" \"\$(tmux ls -F '#S' 2>/dev/null | grep -xc 'hyprpi-$x-daemon')\"; \$HP list --json 2>/dev/null")"
-    [[ "$o" == TMUX* ]] || return 1; RTMUX="$(head -1 <<<"$o" | awk '{print $2}')"; RDAEMON="$(head -1 <<<"$o" | awk '{print $3}')"; RLIST="$(tail -n +2 <<<"$o")"
-    jq -e .agents <<<"$RLIST" >/dev/null 2>&1 || RLIST=""; return 0; }
-  RTMUX="" RDAEMON="" RLIST=""
+  # one read-only look at world X on the machine: "TMUX <agent sessions> <daemon session 0/1> <socket 0/1> <daemon processes of THIS
+  # world (its HYPRPI_STATE; the tmux server, whose command line can match, is skipped)>", then the daemon's list. RSTATE: answers (a
+  # valid list) | stopped (no list AND no daemon session, socket or process: provably down) | unknown (anything else: never "off")
+  RPROBE='a=$(tmux ls -F "#S" 2>/dev/null | grep "^hyprpi-$W-" | grep -vxc "hyprpi-$W-daemon"); d=$(tmux ls -F "#S" 2>/dev/null | grep -xc "hyprpi-$W-daemon"); s=0; [ -S "$HYPRPI_SOCKET" ] && s=1; n=0; for p in $(pgrep -u "$(id -u)" -f "bin/hyprpi daemon$"); do case "$(cat /proc/$p/comm 2>/dev/null)" in tmux*) continue ;; esac; tr "\0" "\n" < /proc/$p/environ 2>/dev/null | grep -qx "HYPRPI_STATE=$HYPRPI_STATE" && n=$((n+1)); done; echo "TMUX $a $d $s $n"; $HP list --json 2>/dev/null'
+  rlook() { (( REACH )) || return 1; local o h; o="$(rsh "W=$x; $RPROBE")"
+    [[ "$o" == TMUX* ]] || return 1; h="$(head -1 <<<"$o")"; RLIST="$(tail -n +2 <<<"$o")"
+    read -r _ RTMUX RDAEMON RSOCK RPROCS <<<"$h"
+    jq -e '.agents | type == "array"' <<<"$RLIST" >/dev/null 2>&1 || RLIST=""
+    if [[ -n "$RLIST" ]]; then RSTATE=answers
+    elif [[ "$RDAEMON" == 0 && "$RSOCK" == 0 && "$RPROCS" == 0 ]]; then RSTATE=stopped
+    else RSTATE=unknown; fi
+    [[ "$RTMUX" =~ ^[0-9]+$ ]] || RTMUX=unknown
+    return 0; }
+  RTMUX="" RDAEMON="" RSOCK="" RPROCS="" RLIST="" RSTATE=""
 fi
 
 # ---- the other rooms, before and after (unchanged, else the result is NOT done) ------------------------------------------------
@@ -272,7 +283,8 @@ if [[ "$CMD" == stop ]]; then
   remote)
     say "binding $RM_FILE · reached with: ${SSH[*]}"
     (( REACH )) || say "  $REACH_WHY. The remote part is skipped."
-    if rlook; then REC_RDAEMON="$( [[ -n "$RLIST" ]] && echo 1 || echo 0)"; say "  on the machine: $( [[ -n "$RLIST" ]] && echo "daemon answers, $(jq '.agents|length' <<<"$RLIST") agent(s)" || echo "daemon not answering"); agent tmux sessions: $RTMUX"
+    if rlook; then case "$RSTATE" in answers) REC_RDAEMON=1 ;; stopped) REC_RDAEMON=0 ;; *) REC_RDAEMON="" ;; esac
+      say "  on the machine: world $X's daemon $RSTATE$( [[ $RSTATE == answers ]] && echo ", $(jq '.agents|length' <<<"$RLIST") agent(s)")$( [[ $RSTATE == unknown ]] && echo " (no valid list, but daemon session $RDAEMON, socket $RSOCK, daemon processes $RPROCS)"); agent tmux sessions: $RTMUX"
     elif (( REACH )); then REACH=0; REACH_WHY="the machine doesn't answer over ssh"; say "  $REACH_WHY: the remote part is skipped"; fi
     step "R1 on the machine: each agent /quit through world $X's own daemon (sessions stay)"
     if [[ -n "$RLIST" ]]; then
@@ -281,11 +293,12 @@ if [[ "$CMD" == stop ]]; then
         if (( DRY )); then say "  would run there: hyprpi send $id /quit"; else say "  running there: hyprpi send $id /quit"; rsh "\$HP send $id /quit" >/dev/null; fi; done
       [[ "$REC_AGENTS" == "[]" ]] && say "  no agents running there"
       if (( ! DRY )) && [[ "$REC_AGENTS" != "[]" ]]; then for _ in $(seq 20); do sleep 3; rlook && [[ -n "$RLIST" ]] && [[ "$(jq '.agents|length' <<<"$RLIST")" == 0 ]] && break; done; fi
-    else say "  skipped (no daemon answering there)"; fi
+    else say "  skipped: world $X's daemon there is ${RSTATE:-unreachable} (the check reports anything but a provably stopped daemon)"; fi
     step "R2 on the machine: world $X's daemon (graceful, as hyprpi stop)"
     if (( KEEPD )); then say "  kept (--keep-daemon)"; REC_RDAEMON=""
-    elif [[ -n "$RLIST" ]]; then if (( DRY )); then say "  would run there: hyprpi stop"; else say "  running there: hyprpi stop"; rsh '$HP stop' >/dev/null; fi
-    else say "  skipped (no daemon answering there)"; fi
+    elif [[ "$RSTATE" == answers ]]; then if (( DRY )); then say "  would run there: hyprpi stop"; else say "  running there: hyprpi stop"; rsh '$HP stop' >/dev/null; fi
+    elif [[ "$RSTATE" == stopped ]]; then say "  already stopped (no daemon session, socket or process there)"
+    else say "  can't stop it: it doesn't answer (${RSTATE:-unreachable}); left as it is, and the check says NOT off"; fi
     step "R3 the laptop: world $X's windows (class hyprpi.$x-*) close like clicking X"
     while IFS=$'\t' read -r a c t; do [[ -n "$a" ]] && close_win "$a" "$c: $t"; done < <(world_windows)
     step "R4 the laptop: its jot relay"; disable_unit "hyprpi-jot-relay@$x.service" now
@@ -347,9 +360,12 @@ if [[ "$CMD" == stop ]]; then
       elif ! rlook; then nd "the machine doesn't answer over ssh now: unverified"
       else
         [[ "$RTMUX" == 0 ]] && say "  ok: no agent tmux session left there" || nd "${RTMUX:-unknown} agent tmux session(s) still there"
-        if [[ -n "$RLIST" ]]; then k="$(jq '.agents|length' <<<"$RLIST")"; [[ "$k" == 0 ]] && say "  ok: its daemon lists no agents" || nd "its daemon still lists $k agent(s)"
-          (( KEEPD )) || nd "its daemon still answers (hyprpi stop didn't take)"
-        else say "  ok: its daemon is stopped"; fi
+        case "$RSTATE" in
+          answers) k="$(jq '.agents|length' <<<"$RLIST")"; [[ "$k" == 0 ]] && say "  ok: its daemon lists no agents" || nd "its daemon still lists $k agent(s)"
+                   (( KEEPD )) && say "  ok: its daemon runs (--keep-daemon)" || nd "its daemon still answers (hyprpi stop didn't take)" ;;
+          stopped) say "  ok: its daemon is stopped (no session, socket or process of world $X there)" ;;
+          *) nd "its daemon's state can't be read (no valid list, but daemon session $RDAEMON, socket $RSOCK, daemon processes $RPROCS)" ;;
+        esac
       fi ;;
   esac
   n="$(world_windows "${DRE:-^$}" | grep -c . || true)"; [[ "$n" == 0 ]] && say "  ok: no window of world $X open" || nd "$n window(s) of world $X still open"
@@ -387,8 +403,14 @@ step "start"
 case "$KIND" in
   sandboxed)
     if [[ -z "$REC" ]] || jq -e --arg s "$SB" 'any(.sandboxes[]; .name == $s and .state == "running")' "$REC" >/dev/null; then
-      run "$H/docker/world/restore.sh" "$W"   # sandboxd in its own unit, relay, helper, sandbox, inner daemon, panels, its agents, its Doorman (no pkill on this path, J625)
-    else say "  sandbox $SB wasn't running before the stop: the world itself isn't started (only what the stop switched off comes back)"; fi ;;
+      # sandboxd in its own unit, relay, helper, sandbox, inner daemon, panels, its agents (no pkill on this path, J625). With a record,
+      # its Doorman is left out (HYPRPI_RESTORE_NO_DOORMAN) and started below only if it ran before the stop
+      if [[ -n "$REC" ]]; then HYPRPI_RESTORE_NO_DOORMAN=1 run "$RESTORE" "$W"; else run "$RESTORE" "$W"; fi
+    else say "  sandbox $SB wasn't running before the stop: the world itself isn't started (only what the stop switched off comes back)"; fi
+    if [[ -n "$REC" ]]; then for D in $DOORMEN; do
+      if jq -e --arg u "hyprpi-doorman-$D" 'any(.units[]; .unit == $u and .active == "active")' "$REC" >/dev/null; then
+        [[ "$(unit_state "hyprpi-doorman-$D")" == active ]] && say "  Doorman $D: already running" || run "$DOORMAN" start "$D"
+      else say "  Doorman $D: wasn't running before the stop, left stopped"; fi; done; fi ;;
   remote)
     if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" != 0 ]]; then
       # only the agents this stop closed (not every agent with a session there, as `world X recover` would)
@@ -429,6 +451,8 @@ if [[ -n "$REC" ]]; then
     if [[ "$e" == enabled ]]; then e1="$(unit_en "$u")"; [[ "$e1" == enabled ]] && say "  ok: $u enabled" || nb "$u is $e1"; fi
   done < <(rec_units)
   for s in $(jq -r '.sandboxes[] | select(.state == "running") | .name' "$REC"); do st="$(sb_state "$s")"; [[ "$st" == running ]] && say "  ok: sandbox $s running" || nb "sandbox $s is $st"; done
+  [[ "$KIND" == sandboxed ]] && for D in $DOORMEN; do jq -e --arg u "hyprpi-doorman-$D" 'any(.units[]; .unit == $u and .active == "active")' "$REC" >/dev/null && continue
+    st="$(unit_state "hyprpi-doorman-$D")"; [[ "$st" == inactive ]] && say "  ok: Doorman $D stopped, as before the stop" || nb "Doorman $D is $st, but it was stopped before the stop"; done
   if [[ "$KIND" == local && "$(jq '.agents|length' "$REC")" != 0 ]]; then
     for _ in $(seq 20); do js="$(HP list --json 2>/dev/null)"; miss="$(jq -r --argjson q "$(jq -c .agents "$REC")" '[.agents[].id] as $ids | [$q[] | select(.id as $i | $ids | index($i) | not) | .name] | join(", ")' <<<"$js" 2>/dev/null)" || miss="unknown (hyprpi list unreadable)"; [[ -z "$miss" ]] && break; sleep 3; done
     [[ -z "$miss" ]] && say "  ok: its agents are back" || nb "agents not back: $miss"
@@ -437,7 +461,7 @@ fi
 if [[ "$KIND" == remote ]]; then
   if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" == 0 && "$(jq -r .remote_daemon_was "$REC")" != 1 ]]; then say "  (nothing ran on the machine before the stop)"
   elif (( ! REACH )); then nb "the machine can't be checked ($REACH_WHY)"
-  elif ! rlook || [[ -z "$RLIST" ]]; then nb "the machine or world $X's daemon there doesn't answer: unverified"
+  elif ! rlook || [[ "$RSTATE" != answers ]]; then nb "the machine or world $X's daemon there doesn't answer (${RSTATE:-unreachable}): unverified"
   elif [[ -n "$REC" ]]; then miss="$(jq -r --argjson q "$(jq -c .agents "$REC")" '[.agents[].id] as $ids | [$q[] | select(.id as $i | $ids | index($i) | not) | .name] | join(", ")' <<<"$RLIST")"
     [[ -z "$miss" ]] && say "  ok: its daemon answers and the recorded agents run there" || nb "agents not back there: $miss"
   else say "  ok: its daemon answers there ($(jq '.agents|length' <<<"$RLIST") agent(s))"; fi
