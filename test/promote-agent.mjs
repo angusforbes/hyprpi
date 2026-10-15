@@ -105,6 +105,7 @@ try {
   ok("B W3 a one-letter project is refused …", /project name/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibe", project: "v" }))));
   ok("B W3 … the same name for agent and project is refused …", /share a name/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibez", project: "vibez" }))));
   ok("B W3 … a bad project icon is refused …", /icon/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibe", project: "vibez", project_icon: "abc" }))));
+  ok("B W3 … a name over 60 characters is refused …", /1-60/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "L".repeat(63), project: "longproj" }))));
   const after = await anon.call("whoami", {}), b0 = await api.call("board.get", { room: "D" });
   ok("B W3 … and none of them renamed the agent or made a project", after.name === before.name && !after.name && !b0.projects.some((x) => ["v", "vibez"].includes(x.name)), JSON.stringify({ name: after.name }));
   got["hp-anon"].length = 0;

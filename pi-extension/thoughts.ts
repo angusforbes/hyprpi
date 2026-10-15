@@ -152,7 +152,7 @@ export default function thoughts(pi: ExtensionAPI) {
     promptSnippet: "Promote an agent to a named project owner",
     parameters: Type.Object({
       agent: Type.String({ description: "the live agent, e.g. pi·41kn" }),
-      name: Type.String({ description: "its new name, e.g. Vibe" }),
+      name: Type.String({ minLength: 1, maxLength: 60, description: "its new name, e.g. Vibe" }),
       icon: Type.Optional(Type.String({ description: "one emoji for the agent" })),
       project: Type.String({ description: "@name of a new or existing project (short slug)" }),
       title: Type.Optional(Type.String({ description: "a new project's one-line description" })),
