@@ -72,12 +72,13 @@ export function md(src, { doc = false } = {}) {
     const li = /^\s*([-*•+]|\d+[a-z]?[.)])\s+/;
     if (li.test(l)) {
       const ordered = /^\s*\d/.test(l), items = [], labels = [];
-      while (i < lines.length && (li.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
-        if (li.test(lines[i])) { const m = lines[i].match(li); labels.push(/\d/.test(m[1]) ? m[1] : ""); items.push(lines[i].replace(li, "")); } else items[items.length - 1] += "\n" + lines[i].trim();
+      const same = (x) => { const m = x.match(li); return m && /\d/.test(m[1]) === ordered && (ordered || !/[a-z][.)]$/.test(m[1])); };
+      while (i < lines.length && (same(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
+        if (same(lines[i])) { const m = lines[i].match(li); labels.push(/\d/.test(m[1]) ? m[1] : ""); items.push(lines[i].replace(li, "")); } else items[items.length - 1] += "\n" + lines[i].trim();
         i++;
       }
       // - [ ] / - [x] task items (in documents)
-      const item = (x, k) => { if (ordered && labels[k]) return `<li class="lbl${/[a-z]/.test(labels[k]) ? " sub" : ""}"><span class="olbl">${esc(labels[k])}</span> ${inline(x).replace(/\n/g, "<br>")}</li>`; const t = doc && /^\[([ xX])\]\s+/.exec(x); return t ? `<li class="task"><input type="checkbox" disabled${t[1] !== " " ? " checked" : ""}> ${inline(x.slice(t[0].length)).replace(/\n/g, "<br>")}</li>` : `<li>${inline(x).replace(/\n/g, "<br>")}</li>`; };
+      const item = (x, k) => { if (ordered && labels[k] && !(doc && /^\[([ xX])\]\s+/.test(x))) return `<li class="lbl${/[a-z]/.test(labels[k]) ? " sub" : ""}"><span class="olbl">${esc(labels[k])}</span> ${inline(x).replace(/\n/g, "<br>")}</li>`; const t = doc && /^\[([ xX])\]\s+/.exec(x); return t ? `<li class="task"><input type="checkbox" disabled${t[1] !== " " ? " checked" : ""}> ${inline(x.slice(t[0].length)).replace(/\n/g, "<br>")}</li>` : `<li>${inline(x).replace(/\n/g, "<br>")}</li>`; };
       out.push(ordered ? `<ol class="lit">${items.map(item).join("")}</ol>` : `<ul>${items.map(item).join("")}</ul>`); continue;
     }
     const buf = [];
