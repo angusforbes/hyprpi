@@ -116,7 +116,7 @@ if (!globalThis.__hyprpiTestGuard) {
     net.Socket.prototype.connect = function connect(...a) {
       const first = Array.isArray(a[0]) ? a[0][0] : a[0];
       const p = typeof first === "string" && !/^\d+$/.test(first) ? first : first && typeof first === "object" ? first.path : null;
-      const port = typeof first === "number" || /^\d+$/.test(String(first ?? "")) ? Number(first) : first && typeof first === "object" ? Number(first.port) : NaN;
+      const port = typeof first === "number" || (typeof first === "string" && /^\d+$/.test(first)) ? Number(first) : first && typeof first === "object" ? Number(first.port) : NaN; // (J663: String() of a null-prototype options object threw)
       if (!p && Number.isInteger(port) && env.HYPRPI_TEST_HOST_PORTS && hostPort(port)) {
         // a port that was listening on the HOST when the run started: refused when the address (after name resolution) is this
         // machine's: loopback in any spelling (127.1, localhost.), the any-address, or one of its interfaces' addresses
