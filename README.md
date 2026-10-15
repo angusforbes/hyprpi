@@ -143,6 +143,7 @@ The MCP gateway keeps one shared, lazily started copy of each stdio MCP server f
 - Give a server `"perSession": true` when it keeps per-client state: each agent then gets its own copy, still lazy and stopped when idle.
 - List your servers in `~/.config/mcp-gateway/servers.json` (see `mcp-gateway/servers.example.json`).
 - Check it with `hyprpi mcp-gateway status`, which shows the unit, the service and which servers are running.
+- A remote MCP server (e.g. NVIDIA MaaS) that can't be reached when an agent starts, because of a network blip (socket closed, timeout, refused, 502–504), shows one dim line instead of pi's amber "MCP servers need attention" warning, and the agent reconnects it in the background (after 20 s, 1, 3, 10 and 30 min, and at each prompt) with pi's own `/mcp reconnect`. pi alone never retries a server that failed at startup. Sign-in, auth and config problems keep the warning (`pi-extension/mcp-calm.ts`, J653; test: `node test/mcp-calm.mjs`).
 
 ### Install / remove
 
