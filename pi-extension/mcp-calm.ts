@@ -14,7 +14,7 @@
 // How the warning is caught: the shared extension UI object (ctx.ui, one per runner, used by every extension
 // including the builtins) gets its notify wrapped once per session. Only "MCP servers need attention:" warnings and
 // the messages of our own reconnects are touched; everything else passes through as it was.
-const TRANSIENT = /socket connection was closed|socket hang up|other side closed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|getaddrinfo|fetch failed|timed? ?out|connection (refused|reset|closed|lost)|network|unreachable|\b50[234]\b|bad gateway|service unavailable|gateway time/i;
+const TRANSIENT = /socket connection was closed|unable to connect|socket hang up|other side closed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|getaddrinfo|fetch failed|timed? ?out|connection (refused|reset|closed|lost)|network|unreachable|\b50[234]\b|bad gateway|service unavailable|gateway time/i;
 const REAL = /needs? (sign-?in|auth)|unauthori[sz]ed|forbidden|\b40[13]\b|invalid|token|oauth|config|ENOENT|EACCES|spawn|not found: |command/i;
 const PROMPT_WAIT_MS = 10_000;
 const RETRY_MS = [20_000, 60_000, 180_000, 600_000, 1_800_000];
@@ -81,7 +81,7 @@ export function mcpCalm(pi: any, opts: { retryMs?: number[] } = {}) {
       const text = String(message ?? "");
       const ours = (/^(?:Reconnected to MCP server|MCP server) "([^"]+)"/.exec(text) || [])[1];
       const p = ours !== undefined ? pending.get(ours) : undefined;
-      if (ours && p?.sentAt && Date.now() - p.sentAt < OURS_MS) {
+      if (ours && p?.waiting && Date.now() - (p.sentAt ?? 0) < OURS_MS) { // only the answer to our own reconnect
         p.waiting = false;
         p.done?.();
         if (text.startsWith("Reconnected")) {
@@ -90,7 +90,8 @@ export function mcpCalm(pi: any, opts: { retryMs?: number[] } = {}) {
           return orig(`MCP: ${ours} connected`, "info");
         }
         if (type === "error") {
-          if (isTransient(text)) { schedule(ours); return; } // still down: stay quiet, try again later
+          const why = text.replace(/^MCP server "[^"]+"\s*/, ""); // the server's name is not evidence (token-api, config-x)
+          if (isTransient(why)) { schedule(ours); return; } // still down: stay quiet, try again later
           if (p.timer) clearTimeout(p.timer);
           pending.delete(ours); // now a real problem (sign-in, config): pi's own warning, in full
           return orig(warning([`${ours}: ${text}`]), "warning");

@@ -54,4 +54,23 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.deepEqual(h.shown, [["warning", "hello"], ["error", `MCP server "z" failed to connect: socket hang up`]]);
   await h.handlers.session_shutdown();
 }
+{ // F1: a server name with "token"/"config" in it is not evidence; F3: Bun's refused-connection text is transient
+  const h = harness(); await h.handlers.session_start({}, { ui: h.ui });
+  h.ui.notify(W(["token-api: failed: Unable to connect. Is the computer able to access the url?"]), "warning");
+  assert.equal(h.shown.length, 1); assert.equal(h.shown[0][0], "info");
+  await tick(20); assert.deepEqual(h.sent, ["/mcp reconnect token-api"]);
+  h.ui.notify(`MCP server "token-api" failed to connect: The socket connection was closed unexpectedly.`, "error");
+  assert.equal(h.shown.length, 1); // still quiet, still tracked
+  await tick(20); assert.equal(h.sent.length, 2);
+  await h.handlers.session_shutdown();
+}
+{ // F2: after our retry was answered, the user's own /mcp reconnect messages are shown as they are
+  const h = harness(); await h.handlers.session_start({}, { ui: h.ui });
+  h.ui.notify(W([`u: ${SOCK}`]), "warning"); await tick(8);
+  h.ui.notify(`MCP server "u" failed to connect: socket hang up`, "error"); // answer to ours: quiet
+  assert.equal(h.shown.length, 1);
+  h.ui.notify(`MCP server "u" failed to connect: socket hang up`, "error"); // the user's own: shown
+  assert.deepEqual(h.shown.at(-1), ["error", `MCP server "u" failed to connect: socket hang up`]);
+  await h.handlers.session_shutdown();
+}
 console.log("mcp-calm: ok");
