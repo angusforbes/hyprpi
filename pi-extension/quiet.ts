@@ -21,7 +21,8 @@ import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 // One terminal line, whatever the width: the text is cut to fit (with …), never wrapped (QuietCheck637b).
 class OneLine {
-  constructor(private text = "", private style: (t: string) => string = (t) => t, private pad = 0) {}
+  private text: string; private style: (t: string) => string; private pad: number;
+  constructor(text = "", style: (t: string) => string = (t) => t, pad = 0) { this.text = text; this.style = style; this.pad = pad; } // (no parameter properties: node's strip-only TS loader in the tests rejects them)
   setText(t: string, style?: (t: string) => string) { this.text = t; if (style) this.style = style; }
   invalidate() {}
   render(width: number): string[] {

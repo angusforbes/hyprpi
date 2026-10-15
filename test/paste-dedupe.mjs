@@ -59,7 +59,7 @@ ok("panel: text still pastes as text", t && t.p === "hello text" && !t.o?.image,
 
 // --- agent windows: the pi extension's Shift+Insert handler (stub pi packages; the handler only, no session_start, no daemon)
 for (const f of shots()) fs.unlinkSync(path.join(H, "Screenshots", f));
-const STUB = "data:text/javascript," + encodeURIComponent("export class UserMessageComponent{}; export const getMarkdownTheme=()=>({}); export const VERSION='1.0.2'; export class InteractiveMode{}; export class Box{}; export class Text{}; export const Type=new Proxy({}, {get:()=>()=>({})}); export default {};");
+const STUB = "data:text/javascript," + encodeURIComponent("export class UserMessageComponent{}; export const getMarkdownTheme=()=>({}); export const VERSION='1.0.2'; export class InteractiveMode{}; export class Box{}; export class Text{}; export class Container{}; export const truncateToWidth=(s)=>s; export const Type=new Proxy({}, {get:()=>()=>({})}); export default {};");
 const { register } = await import("node:module");
 register("data:text/javascript," + encodeURIComponent(`export async function resolve(s, c, n) { if (s === "@earendil-works/pi-coding-agent" || s === "@earendil-works/pi-tui" || s === "typebox") return { url: ${JSON.stringify(STUB)}, shortCircuit: true }; return n(s, c); }`));
 process.env.HYPRPI_AGENT_ID = "hp-j593test";
