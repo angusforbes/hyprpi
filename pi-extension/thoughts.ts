@@ -428,7 +428,7 @@ export default function thoughts(pi: ExtensionAPI) {
       complexity: Type.Optional(Type.String()), model: Type.Optional(Type.String()), thinking: Type.Optional(Type.String()),
       cwd: Type.Optional(Type.String()), project: Type.Optional(Type.String()),
     }, { additionalProperties: true }), // (J647: no budgets; a stray "budget" is ignored, not refused)
-    execute: async (_id: string, p: any) => { checkThinking(p.thinking); const { budget: _ignored, ...q } = p || {}; p = q; const r: any = await call("orch.spawn", { ...p, ...T }, p.model ? 120000 : 20000); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
+    execute: async (_id: string, p: any) => { checkThinking(p.thinking); const _ignored = p?.budget; p = Object.fromEntries(Object.entries(p || {}).filter(([k]) => ["prompt", "name", "icon", "complexity", "model", "thinking", "cwd", "project"].includes(k))); /* (NoBudgetCheck F2) declared fields only */ const r: any = await call("orch.spawn", { ...p, ...T }, p.model ? 120000 : 20000); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
   });
   pi.registerTool({
     name: "wait_report",

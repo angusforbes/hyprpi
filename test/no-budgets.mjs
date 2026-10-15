@@ -29,6 +29,8 @@ fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth
   budgets: { tokens: 4000000, minutes: 480, floor: { tokens: 1000000, minutes: 120 }, floorByKind: { hard: { tokens: 1500000, minutes: 180 } } }, routing: { escalate: { onBudget: true, onFailedCheck: true } } }));
 const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: state, XDG_CONFIG_HOME: cfg, HYPRPI_TEST: "1", HYPRPI_ORCH_LAUNCH: "/bin/true", HYPRLAND_INSTANCE_SIGNATURE: "j647-bogus", HYPRPI_NO_ENSURE: "1" };
 for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_ALLOW_HYPR", "HYPRPI_WORKSPACE"]) delete env[k];
+// a child the OLD code had stopped at its cap (status "budget", 25-min cap)
+fs.writeFileSync(path.join(state, "orch.json"), JSON.stringify({ children: { "hp-oldkid": { id: "hp-oldkid", name: "OldKid", parent: "thoughts:D", parentName: "Thoughts-D", room: "D", prompt: "x", model: "m", thinking: "", budget: { tokens: 150000, minutes: 25 }, used: { tokens: 160000 }, startedAt: Date.now() - 3600e3, status: "budget", reports: [], escalations: 0, depth: 1 } } }));
 const fd = fs.openSync(path.join(T, "daemon.log"), "w");
 const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fd, fd] });
 try {
@@ -56,20 +58,27 @@ try {
   ok("W1b an older extension's cap hit is ignored: the child stays running", hit.ignored === true && mine.status === "running" && !/budget/.test(mine.state || ""), JSON.stringify({ hit, status: mine.status, state: mine.state }));
   const tl = fs.readdirSync(tlog).map((f) => fs.readFileSync(path.join(tlog, f), "utf8")).join("\n") + fs.readFileSync(path.join(T, "daemon.log"), "utf8");
   ok("W1b … no ⛽ note to Thoughts, no escalation, no 'waits for extend_budget'", !/⛽|extend_budget|hit its|⤴/.test(tl), (tl.match(/.{0,60}(⛽|extend_budget|hit its).{0,60}/) || [""])[0]);
-  // a child stopped under an older daemon ("budget" status in orch.json) resumes when it says hello
-  const welcome = fs.readFileSync(path.join(state, "orch.json"), "utf8");
-  ok("W3 the child's welcome text has no budget wording", !/budget|a cap|at a cap/i.test(JSON.parse(welcome).children[r1.id]?.prompt || "") && !/Budget:/.test(welcome), "");
+  // a child stopped under an older daemon (seeded below, before the daemon started) resumes when it says hello
+  const old = await connect({ path: sock, onEvent: () => {} });
+  await old.call("agent.hello", { agent_id: "hp-oldkid", pid: process.pid, name: "OldKid", want_workspace: 33, cwd: T }); await sleep(2500);
+  const ok2 = (await c.call("orch.all", {})).children.find((x) => x.id === "hp-oldkid");
+  ok("W1b a child left 'over budget' by the old code (seeded orch.json) is running with no caps after it reconnects", ok2?.status === "running" && JSON.stringify(ok2?.budget) === JSON.stringify(none), JSON.stringify(ok2 && { s: ok2.status, b: ok2.budget }));
+  old.close();
   kid.close(); c.close();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill("SIGTERM"); await sleep(400); try { d.kill("SIGKILL"); } catch { /* gone */ } }
 
 // W1c / W3: the agent side and the instructions
+const orchSrc = fs.readFileSync(path.join(ROOT, "lib/orch.mjs"), "utf8"), wt = orchSrc.slice(orchSrc.indexOf("const welcome ="), orchSrc.indexOf("Never move Angus's focus"));
+ok("W3 the spawned child's welcome text (lib/orch.mjs) has no budget wording", wt.length > 50 && !/budget|a cap\b|no time cap|no token cap/i.test(wt), wt.slice(0, 120));
 const orchTs = fs.readFileSync(path.join(ROOT, "pi-extension/orch.ts"), "utf8"), thTs = fs.readFileSync(path.join(ROOT, "pi-extension/thoughts.ts"), "utf8");
 ok("W1c orch.ts: no cap check, no tool blocking, no budget steer", !/checkCap|budget reached|block: true, reason: "budget|orch\.budgetHit/.test(orchTs));
 ok("W1c no extend_budget tool for agents or Thoughts", !/name: "extend_budget"/.test(orchTs) && !/name: "extend_budget"/.test(thTs));
-ok("W1c spawn_agent (agents and Thoughts) has no budget parameter, and drops a stray one", !/budget: Type\./.test(orchTs) && !/budget: Type\./.test(thTs) && /budget: _ignored/.test(orchTs) && /budget: _ignored/.test(thTs));
+ok("W1c spawn_agent (agents and Thoughts) has no budget parameter, and passes on only its declared fields (a stray budget or thoughts is dropped)", !/budget: Type\./.test(orchTs) && !/budget: Type\./.test(thTs) && /_ignored = p\?\.budget/.test(orchTs) && /_ignored = p\?\.budget/.test(thTs) && /KEYS\.includes\(k\)/.test(orchTs) && !/"thoughts"\]\.includes/.test(thTs));
 const said = (src) => [...src.matchAll(/(?:description|promptSnippet|label): "((?:[^"\\]|\\.)*)"|"([^"\n]{40,})",?\n/g)].map((m) => m[1] || m[2] || "").join("\n");
-const words = said(orchTs) + said(thTs) + said(fs.readFileSync(path.join(ROOT, "pi-extension/index.ts"), "utf8"));
+const words = fs.readdirSync(path.join(ROOT, "pi-extension")).filter((f) => f.endsWith(".ts")).map((f) => said(fs.readFileSync(path.join(ROOT, "pi-extension", f), "utf8"))).join("\n") + said(fs.readFileSync(path.join(ROOT, "lib/thoughts.mjs"), "utf8"));
 const offending = words.split("\n").filter((l) => /budget/i.test(l) && !/no time or token (budget|limit)|never ask Angus about a helper's budget|no budgets/i.test(l));
+const policyTxt = fs.readFileSync(path.join(ROOT, "lib/policy.mjs"), "utf8");
+ok("W3 the generated policy file doesn't describe budgets as live", !/escalate automatically when a child hits its budget|kept HIGH for now|waits for extend_budget/.test(policyTxt));
 ok("W3 no tool description or guideline offers or explains budgets (only 'there are none')", offending.length === 0, offending.join(" | ").slice(0, 300));
 console.log(fails ? `no-budgets: ${fails} FAILED (state ${T})` : "no-budgets: all pass"); process.exit(fails ? 1 : 0);
