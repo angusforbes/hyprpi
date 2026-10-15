@@ -355,3 +355,8 @@ ol.opts li.opt:active { background: var(--faint); }
 .chip.sbx::before { content: "🐳"; position: absolute; left: -4px; bottom: -4px; font-size: calc(var(--s) * 11px); line-height: 1; }
 .sbxhead { margin: 4px 4px 8px; }
 .sbxm { font-size: .9em; }
+/* J616: ordered items show their own label as written (46., 46a.) */
+ol.lit { list-style: none; padding-left: 0; }
+ol.lit > li.lbl { padding-left: 2.2em; text-indent: -2.2em; }
+ol.lit .olbl { display: inline-block; min-width: 2em; text-indent: 0; font-variant-numeric: tabular-nums; }
+ol.lit > li.lbl.sub { margin-left: 1.6em; }
