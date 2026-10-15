@@ -13,7 +13,23 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
+
+// One terminal line, whatever the width: the text is cut to fit (with …), never wrapped (QuietCheck637b).
+class OneLine {
+  constructor(private text = "", private style: (t: string) => string = (t) => t, private pad = 0) {}
+  setText(t: string, style?: (t: string) => string) { this.text = t; if (style) this.style = style; }
+  invalidate() {}
+  render(width: number): string[] {
+    const w = Math.max(1, width - this.pad);
+    return [" ".repeat(this.pad) + this.style(truncateToWidth(this.text, w, "…"))];
+  }
+}
+const lines = (rows: Array<[string, (t: string) => string]>, pad = 0) => {
+  const c = new Container();
+  for (const [t, st] of rows) c.addChild(new OneLine(t, st, pad) as any);
+  return c;
+};
 
 export function quietOn(env: NodeJS.ProcessEnv = process.env, home = os.homedir()): boolean {
   if (env.PI_QUIET_TOOLS === "1") return true;
@@ -29,7 +45,7 @@ export function quietOn(env: NodeJS.ProcessEnv = process.env, home = os.homedir(
 }
 
 // one short line: first sentence (or line), headers and ids dropped
-export function brief(text: string, max = 70, who = ""): string {
+export function brief(text: string, max = 200, who = ""): string {
   let t = String(text ?? "").replace(/^\[hyprpi[^\]]*\]\s*/i, "").replace(/^\s*(Knock|Thoughts-[A-Z])\s*(→|->)[^:]*:\s*/, "");
   t = t.split(/\n\s*\n/)[0].replace(/\s+/g, " ").trim();
   if (who) t = t.replace(new RegExp("^" + who.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(→[^:]*)?:\\s*"), ""); // "Radio: …" from Radio
@@ -61,7 +77,7 @@ function callText(tool: string, a: any): string {
     : ["read", "edit", "write"].includes(tool) ? `${tool} ${s(a?.path) || s(a?.file_path)}`
     : `${tool} ${s(a?.pattern) || s(a?.path) || s(a?.project) || ""}`.trim();
   const one = x.replace(/[\r\n\t]+/g, " ");
-  return one.length > 60 ? one.slice(0, 59) + "…" : one;
+  return one.length > 200 ? one.slice(0, 199) + "…" : one;
 }
 
 function failLine(tool: string, a: any, r: any): string {
@@ -70,15 +86,30 @@ function failLine(tool: string, a: any, r: any): string {
   const lines = out.split("\n").map((l) => l.trim()).filter((l) => l && !/exited with code/i.test(l));
   // the line that says what went wrong: the first that mentions a failure, else the last one
   const first = lines.find((l) => /fail|error|exception|denied|not found|no such|cannot|can't|invalid|refused|timed? ?out/i.test(l)) || lines[lines.length - 1] || "error";
-  return `✗ ${callText(tool, a)} failed${code ? ` (exit ${code})` : ""}: ${first.length > 70 ? first.slice(0, 69) + "…" : first}`;
+  return `✗ ${callText(tool, a)} failed${code ? ` (exit ${code})` : ""}: ${first.length > 200 ? first.slice(0, 199) + "…" : first}`;
 }
 
 // demand / wait_report results: one "↩ from X · …" line per answer or report
-function trafficResult(tool: string, r: any): string[] {
+// returns [text, warn?] pairs: warn = something didn't arrive (amber), else dim (QuietCheck637b F3)
+function trafficResult(tool: string, r: any): Array<[string, boolean]> {
   const d = r?.details ?? {};
-  if (tool === "demand" && Array.isArray(d.replies)) return d.replies.map((x: any) => `↩ from ${x.name} · ${brief(x.text, 70, x.name)}`);
-  if (tool === "wait_report" && Array.isArray(d.reports)) return d.reports.map((x: any) => `↩ from ${x.name}${x.final ? " (final)" : ""} · ${brief(x.text, 70, x.name)}`);
-  return [];
+  const out: Array<[string, boolean]> = [];
+  const t = outText(r);
+  if (tool === "talk" || tool === "demand") {
+    if (Array.isArray(d.skipped) && d.skipped.length) out.push([`✗ not delivered: ${d.skipped.map((s: any) => `${s.name}${s.reason ? ` (${s.reason})` : ""}`).join(", ")}`, true]);
+    else if (/^Nobody received it/.test(t)) out.push([`✗ ${brief(t)}`, true]);
+  }
+  if (tool === "demand") {
+    for (const x of Array.isArray(d.replies) ? d.replies : []) out.push([`↩ from ${x.name} · ${brief(x.text, 200, x.name)}`, false]);
+    if (Array.isArray(d.missing) && d.missing.length) out.push([`✗ no answer from ${d.missing.join(", ")}`, true]);
+  }
+  if (tool === "wait_report") {
+    for (const x of Array.isArray(d.reports) ? d.reports : []) out.push([`↩ from ${x.name}${x.final ? " (final)" : ""} · ${brief(x.text, 200, x.name)}`, false]);
+    if (d.timed_out) out.push([`✗ time limit reached${Array.isArray(d.still_working) && d.still_working.length ? ` · no report yet from ${d.still_working.map((w: any) => w?.name || w).join(", ")}` : ""}`, true]);
+    else if (d.woken && !(d.reports || []).length) out.push([`· woken early, no report yet`, false]);
+  }
+  if (tool === "talk_reply" && d && d.delivered === false) out.push(["· saved; the sender isn't connected right now", false]);
+  return out;
 }
 
 export function quietMode(pi: any) {
@@ -92,21 +123,17 @@ export function quietMode(pi: any) {
       renderCall(args: any, theme: any, context: any) {
         if (context?.expanded && original?.renderCall) return original.renderCall(args, theme, context);
         if (!traffic) return new Container(); // ordinary call: nothing (a failure is drawn by renderResult)
-        const c = context?.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-        c.setText(theme.fg("dim", traffic(args ?? {})));
-        return c;
+        const c = context?.lastComponent instanceof OneLine ? context.lastComponent : new OneLine();
+        c.setText(traffic(args ?? {}), (t: string) => theme.fg("dim", t));
+        return c as any;
       },
       renderResult(result: any, options: any, theme: any, context: any) {
         if (options?.expanded && original?.renderResult) return original.renderResult(result, options, theme, context);
         const c = new Container();
         if (options?.isPartial) return c;
-        if (context?.isError || result?.isError) {
-          c.addChild(new Text(theme.fg("warning", failLine(toolName, context?.args ?? {}, result)) + theme.fg("dim", "  (ctrl+o: full output)"), 0, 0));
-          return c;
-        }
-        const lines = traffic ? trafficResult(toolName, result) : [];
-        if (lines.length) c.addChild(new Text(lines.map((l) => theme.fg("dim", l)).join("\n"), 0, 0));
-        return c;
+        if (context?.isError || result?.isError) return lines([[failLine(toolName, context?.args ?? {}, result) + " · ctrl+o: full output", (t) => theme.fg("warning", t)]]);
+        const rows = traffic ? trafficResult(toolName, result) : [];
+        return rows.length ? lines(rows.map(([t, warn]) => [t, (x: string) => theme.fg(warn ? "warning" : "dim", x)])) : c;
       },
     };
   });
@@ -120,5 +147,15 @@ export function quietIncoming(message: any, expanded: boolean, theme: any): any 
   const who = d?.from?.name || "an agent";
   const body = typeof d?.text === "string" ? d.text : String(message?.content ?? "");
   const kind = message?.customType === "hyprpi-talk-reply" ? "↩ reply from" : d?.mode === "demand" ? "↩ asked by" : "↩ from";
-  return new Text(theme.fg("dim", `${kind} ${who} · ${brief(body, 70, who)}`), 1, 0);
+  return lines([[`${kind} ${who} · ${brief(body, 200, who)}`, (t) => theme.fg("dim", t)]], 1);
+}
+
+// a child's report (orch.ts's hyprpi-orch messages with details.orch_child): one dim line; budget and other notices: null
+export function quietOrch(message: any, expanded: boolean, theme: any): any | null {
+  const d = message?.details ?? {};
+  if (expanded || !d.orch_child) return null;
+  const raw = String(message?.content ?? "");
+  const who = raw.match(/^\[report from ([^\s(]+)/)?.[1] || d.orch_child;
+  const body = raw.replace(/^\[report from[^\n]*\]\n/, "").replace(/\n\n\((Done|Not finished)[^)]*\)\s*$/, "");
+  return lines([[`↩ report from ${who}${d.orch_final ? " (final)" : ""} · ${brief(body, 200, who)}`, (t) => theme.fg("dim", t)]], 1);
 }

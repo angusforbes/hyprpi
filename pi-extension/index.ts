@@ -22,7 +22,7 @@ import { upkeepAgent } from "./upkeep.ts";
 import { codeVersion } from "../lib/codever.mjs";
 import { loadPolicy } from "../lib/policy.mjs";
 import { orchAgent } from "./orch.ts";
-import { quietMode, quietIncoming } from "./quiet.ts";
+import { quietMode, quietIncoming, quietOrch } from "./quiet.ts";
 import { draftStore, clipboardPaste } from "../lib/tui/input-box.mjs";
 import { statusPrompt } from "../lib/status.mjs";
 
@@ -691,6 +691,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.registerMessageRenderer("hyprpi-room", render("room"));
   pi.registerMessageRenderer("hyprpi-talk", render("talk"));
   pi.registerMessageRenderer("hyprpi-talk-reply", render("reply"));
+  if (quiet) pi.registerMessageRenderer("hyprpi-orch", (m: any, o: any, theme: any) => quietOrch(m, !!o?.expanded, theme) ?? undefined); // J637: a child's report as one line; other notices: pi's default
   pi.registerMessageRenderer("hyprpi-prompt", render("prompt")); // J133: a prompt held while the agent was busy
 
   const text = (t: string, details?: any) => ({ content: [{ type: "text" as const, text: t }], details });
