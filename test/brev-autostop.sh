@@ -18,7 +18,11 @@ case "$1" in
   ls) st="$(cat "$F/status")"; [[ "$st" == error ]] && { echo "api error" >&2; exit 1; }
       echo "You have 3 instances in Org test"; echo " NAME STATUS BUILD"; [[ "$st" != absent ]] && echo " hyprpi-l40s $st COMPLETED"; echo " keep-me-box $(cat "$F/nemo" 2>/dev/null || echo STOPPED) COMPLETED"; [[ -f "$F/more" ]] && sed 's/^/ /' "$F/more"; exit 0;;
   stop) echo "stop $2" >> "$F/calls"; echo "stop $2" >> "$F/allcalls"; [[ -f "$F/stophang" ]] && { trap "" TERM; sleep 30; }; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }
-        if [[ "$2" == hyprpi-l40s ]]; then if [[ -f "$F/stopresult" ]]; then cp "$F/stopresult" "$F/status"; else echo STOPPED > "$F/status"; fi; else sed -i "s/^$2 RUNNING/$2 STOPPED/" "$F/more"; fi; exit 0;;
+        # J633: like the real brev, more instance names may come on stdin (a pipe): each is looked up and fails if unknown
+        stdin_err=""; if [[ -f "$F/stopstdin" && ! -t 0 ]]; then while IFS= read -r extra; do [[ -n "$extra" ]] && { echo "stdin $extra" >> "$F/calls"; stdin_err="instance with id/name $extra not found"; }; done; fi
+        if [[ -f "$F/stopfailstops" ]]; then cp "${F}/stopresult" "$F/status" 2>/dev/null || echo STOPPED > "$F/status"; echo "2 errors occurred: boom" >&2; exit 1; fi
+        if [[ "$2" == hyprpi-l40s ]]; then if [[ -f "$F/stopresult" ]]; then cp "$F/stopresult" "$F/status"; else echo STOPPED > "$F/status"; fi; else sed -i "s/^$2 RUNNING/$2 STOPPED/" "$F/more"; fi
+        [[ -n "$stdin_err" ]] && { echo "1 error occurred: $stdin_err" >&2; exit 1; }; exit 0;;
 esac
 EOF
 cat > "$F/bin/ssh" <<'EOF'
@@ -45,6 +49,7 @@ printf '#!/usr/bin/env bash\necho "hyprpi $*" >> "%s/calls"\n' "$F" > "$F/bin/hy
 chmod +x "$F/bin/"*
 printf 'exclude keep-me-box\n' > "$F/base.conf"
 printf '#!/usr/bin/env bash\necho "ntfy $*" >> "%s/ntfy"; [[ -f "%s/ntfyfail" ]] && exit 7; exit 0\n' "$F" "$F" > "$F/bin/ntfycurl"; chmod +x "$F/bin/ntfycurl"
+export BREV_AUTOSTOP_RECHECK_SECS=0 # (J633: the re-checks after a failed stop, without the 30 s waits)
 export BREV_AUTOSTOP_CURL="$F/bin/ntfycurl" BREV_AUTOSTOP_NTFY_FILE="$F/ntfy-topic" BREV_AUTOSTOP_NTFY_SERVER="https://ntfy.example"
 export BREV_AUTOSTOP_ENV="$F/no-env" BREV_AUTOSTOP_CONFIG="$F/base.conf" BREV_AUTOSTOP_STATE="$F/state" BREV_AUTOSTOP_BREV="$F/bin/brev" BREV_AUTOSTOP_SSH="$F/bin/ssh" BREV_AUTOSTOP_NOTIFY="$F/bin/notify-send" BREV_AUTOSTOP_HYPRPI="$F/bin/hyprpi"
 H="$F/home"
@@ -494,6 +499,22 @@ rm -f "$F/creditfail"
 # 22. junk in brev ls (its "You have N instances" line) is never taken for an instance
 fresh; fixture 120; echo STOPPED > "$F/status"; run
 ok "brev ls's header lines are not instances" '[[ ! -d "$F/state/boxes/You" && ! -d "$F/state/boxes/NAME" ]]'
+
+# 16. J633 (2026-10-15 11:34 UTC: a false "'brev stop' failed … still billing" alert)
+# a. brev stop reads names from stdin too: inside the box loop it must not get the rest of the `brev ls` rows
+fresh; fixture 120; echo RUNNING > "$F/status"; printf 'zz-other STOPPED COMPLETED\n' > "$F/more"; touch "$F/stopstdin"; run; started_ago 120; run
+ok "J633 brev stop gets no names on stdin (the ls rows stay with the loop): one clean stop, no error" '[[ $(stops) == 1 && $(cnt "^stdin ") == 0 && $(crit) == 0 && $(cnt "^notify.*stopped hyprpi-l40s") == 1 ]]'
+ok "J633 … and the boxes listed after it are still seen (not 'not listed')" '! grep -q "zz-other is not listed" "$F/state/log" && grep -q "zz-other is STOPPED" "$F/state/log"'
+rm -f "$F/stopstdin" "$F/more"
+# b. brev stop errors but the box does stop (STOPPING, then STOPPED): no critical alert, one normal notice saying so
+fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stopfailstops"; echo STOPPING > "$F/stopresult"; run
+ok "J633 stop errors, box STOPPING → no critical alert; one normal 'stopped' notice that mentions the error" '[[ $(stops) == 1 && $(crit) == 0 && $(notices) == 1 && $(cnt "^notify.*reported an error, but Brev shows it STOPPING") == 1 ]]'
+ok "J633 … logged, not counted as a failed stop" 'grep -q "taken as stopped" "$F/state/log" && [[ ! -f "$F/state/boxes/hyprpi-l40s/stop_failed" ]]'
+rm -f "$F/stopfailstops" "$F/stopresult"
+# c. brev stop errors and the box stays RUNNING through the re-checks: one critical alert, after them
+fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stopfail"; run; run
+ok "J633 stop errors, box still RUNNING after the re-checks → one critical alert that says so" '[[ $(crit) == 1 && $(cnt "^notify.*still shows it RUNNING after 4 checks") == 1 ]]'
+rm -f "$F/stopfail"
 
 # 15. never touched the other instance (every stop of every case)
 ok "keep-me-box was never stopped (all cases)" '[[ $(grep -c . "$F/allcalls") -ge 8 ]] && ! grep -q keep-me-box "$F/allcalls"'

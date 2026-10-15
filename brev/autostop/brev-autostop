@@ -368,13 +368,29 @@ check_box() { # $1 = a RUNNING instance; never exits the script (each box on its
   if excluded "$BOX"; then return 0; fi # (re-read: the config may have changed during the probe)
   if [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]]; then log "DRY: would stop $BOX (idle $(mins "$idle") min, last: $ref)"; return 0; fi
   log "stopping $BOX: idle $(mins "$idle") min (last: $ref)"
-  if sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1)"; then
+  # J633: </dev/null: brev stop also takes instance names from stdin, and inside the box loop stdin used to be the rest of the
+  # `brev ls` rows ("hyprpi-l40s STOPPED"), so it failed on them (2026-10-15 11:34 UTC: a false "still billing" alert)
+  local stopped_note="" failed=0
+  if ! sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1 </dev/null)"; then
+    # J633: an error from `brev stop` isn't proof the box still bills: ask Brev again a few times before alerting
+    local after="" t
+    for (( t = 0; t < ${BREV_AUTOSTOP_RECHECK_TRIES:-4}; t++ )); do
+      sleep "${BREV_AUTOSTOP_RECHECK_SECS:-30}"
+      after="$(rows "$(timeout -k 10 60 "$BREV" ls </dev/null 2>/dev/null)" | awk -v b="$BOX" '$1==b{print $2}')"
+      [[ "${after^^}" =~ ^(STOPPED|STOPPING)$ ]] && break
+    done
+    if [[ "${after^^}" =~ ^(STOPPED|STOPPING)$ ]]; then
+      log "brev stop $BOX reported an error ($(tr '\n' ' ' <<<"$sout" | cut -c1-160)), but Brev shows it $after: taken as stopped"
+      stopped_note=" ('brev stop' reported an error, but Brev shows it $after)"
+    else failed=1; stopped_note="${after:-unknown}"; fi
+  fi
+  if [[ $failed == 0 ]]; then
     put state "stopped"; rm -f "$D/stop_failed" "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why"
-    alert "Brev auto-stop: stopped $BOX after $(mins "$idle") idle minutes. Its workspace is kept; ask an agent to start it again (brev start $BOX)." normal
+    alert "Brev auto-stop: stopped $BOX after $(mins "$idle") idle minutes$stopped_note. Its workspace is kept; ask an agent to start it again (brev start $BOX)." normal
   else
     put stop_failed "$T"; put state "stop-failed"
     [[ -n "$sf" ]] && { log "stop of $BOX failed again: $(tr '\n' ' ' <<<"$sout" | cut -c1-200)"; return 1; } # alerted once already
-    alert "Brev auto-stop: $BOX has been idle $(mins "$idle") min but 'brev stop' failed: $(tr '\n' ' ' <<<"$sout" | cut -c1-200). It is still billing; stop it by hand: brev stop $BOX" critical
+    alert "Brev auto-stop: $BOX has been idle $(mins "$idle") min but 'brev stop' failed, and Brev still shows it ${stopped_note:-unknown} after ${BREV_AUTOSTOP_RECHECK_TRIES:-4} checks: $(tr '\n' ' ' <<<"$sout" | cut -c1-160). It is still billing; stop it by hand: brev stop $BOX" critical
     return 1
   fi
 }
@@ -405,7 +421,7 @@ unhealthy_box() { # $1 = name, $2 = its status (UNHEALTHY or a failed state)
   if [[ -n "$tried" ]] && (( T - tried < 3600 )); then state "unhealthy-tried" "box $BOX still $st: retrying the stop at most hourly"; return 0; fi
   if [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]]; then log "DRY: would stop $BOX ($st for $(mins $(( T - since ))) min)"; return 0; fi
   log "stopping $BOX: $st for $(mins $(( T - since ))) min"; put unh_tried "$T"
-  local ok=1; sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1)" || ok=0
+  local ok=1; sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1 </dev/null)" || ok=0 # (J633: never the loop's stdin)
   out2="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)"; after="$(rows "$out2" | awk -v b="$BOX" '$1==b{print $2}')"; after="${after:-unknown}"
   if [[ -n "$tried" ]]; then # a retry: quiet unless it worked
     [[ "${after^^}" == STOPPED ]] && { alert "Brev auto-stop: $BOX is STOPPED now (it had been $st)." normal; rm -f "${UNH_FILES[@]/#/$D/}"; put state "stopped"; }
@@ -432,7 +448,7 @@ echo ok > "$ST/state"
 now > "$ST/heartbeat" # (J526) "this copy is working" (brev ls answered and there is a config): a backup copy elsewhere reads it
 credit_check # (J1) every few hours; after brev ls, which refreshes the login token; never stops anything
 declare -A seen=(); fail=0
-while read -r name status _; do
+while read -r name status _ <&3; do # (J633: the rows on fd 3, so nothing inside the loop (brev stop, ssh, alerts) can read them)
   [[ "$name" =~ $NAME_RE && -n "${status:-}" ]] || continue
   seen[$name]=1
   if excluded "$name"; then continue; fi                               # never touched, never even probed
@@ -446,7 +462,7 @@ while read -r name status _; do
   if [[ "$status" == RUNNING ]]; then check_box "$name" || fail=1; continue; fi
   rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed"
   state "not-running" "box $name is $status: nothing to do"
-done < <(rows "$out")
+done 3< <(rows "$out")
 for d in "$ST/boxes"/*/; do # a box that left the list (deleted): forget its watch state, quietly
   b="$(basename "$d")"; [[ -n "${seen[$b]:-}" || ! -d "$d" ]] && continue
   use "$b"; rm -f "$D/running_since" "$D/vllm_total" "$D/shared_sig" "$D/last_act" "$D/last_why" "$D/stop_failed" "${UNH_FILES[@]/#/$D/}"; state "not-listed" "box $b is not listed: nothing to do"
