@@ -114,7 +114,7 @@ function trafficResult(tool: string, r: any): Array<[string, boolean]> {
 
 export function quietMode(pi: any) {
   if (!quietOn()) return false;
-  pi.on("session_start", async (_e: any, ctx: any) => ctx?.ui?.setHiddenThinkingLabel?.("·"));
+  pi.on("session_start", async (_e: any, ctx: any) => ctx?.ui?.setHiddenThinkingLabel?.(""));
   pi.registerToolRenderer((toolName: string, next: () => any) => {
     const original = next(); // what pi (or the tool) would draw: used on ctrl+o
     const traffic = TRAFFIC[toolName];
