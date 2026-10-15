@@ -282,6 +282,24 @@ export default function thoughts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "decision_reminders",
+    label: "Decision reminders",
+    description: "J650: an open Decide item's reminders, on Angus's word. An IMPORTANT decision (its own level, else its project's default in hyprpi.jsonc decisions.projects) is pushed to his phone again every 10 min, as one reminder round listing all of them, until he answers it, the reminders are stopped or snoozed, or 12 rounds have passed. When Angus says to stop asking (\"stop reminding me about D6\", \"not now\"), call this: reminders stop | snooze (minutes, default 60) | resume; or importance important | normal | default to change its level. project: @name (omit, with an unfiled U handle, for an unfiled decision in your world).",
+    promptSnippet: "Stop, snooze or resume a decision's reminders, or set its level",
+    parameters: Type.Object({
+      project: Type.Optional(Type.String({ description: "@name; omit for an unfiled decision (U1…)" })),
+      handle: Type.String({ description: "the Decide item, e.g. D6" }),
+      reminders: Type.Optional(Type.String({ description: "stop | snooze | resume" })),
+      minutes: Type.Optional(Type.Number({ description: "snooze: how long (default 60)" })),
+      importance: Type.Optional(Type.String({ description: "important | normal | default (back to the project's default)" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.remind", { project: p.project, h: p.handle, reminders: p.reminders, minutes: p.minutes, importance: p.importance });
+      return out(`${r.project ? "@" + r.project : "unfiled"} ${r.h}: ${r.said}.`, { action: `${r.project ? "@" + r.project : "unfiled"} ${r.h}: ${r.said}` });
+    },
+  });
+
+  pi.registerTool({
     name: "friction_log",
     label: "Friction log",
     description: "Angus's complaints as cues (J488). action add: log one he just made (kind = a short tag, reusing an existing one when it fits; what happened; the agent involved; the fix); the answer says how often that kind came up and what to do (first time: just fix it; again: propose ONE small skill or hook in one line). list: the kinds with counts, their skills, and repeats since a skill. skill: link a skill (or hook) to a kind once it exists.",
