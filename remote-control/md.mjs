@@ -78,7 +78,8 @@ export function md(src, { doc = false } = {}) {
         i++;
       }
       // - [ ] / - [x] task items (in documents)
-      const item = (x, k) => { if (ordered && labels[k] && !(doc && /^\[([ xX])\]\s+/.test(x))) return `<li class="lbl${/[a-z]/.test(labels[k]) ? " sub" : ""}"><span class="olbl">${esc(labels[k])}</span> ${inline(x).replace(/\n/g, "<br>")}</li>`; const t = doc && /^\[([ xX])\]\s+/.exec(x); return t ? `<li class="task"><input type="checkbox" disabled${t[1] !== " " ? " checked" : ""}> ${inline(x.slice(t[0].length)).replace(/\n/g, "<br>")}</li>` : `<li>${inline(x).replace(/\n/g, "<br>")}</li>`; };
+      const lab = (k) => ordered && labels[k] ? `<span class="olbl">${esc(labels[k])}</span> ` : "";
+      const item = (x, k) => { const tk = doc && /^\[([ xX])\]\s+/.exec(x); if (ordered && labels[k] && tk) return `<li class="lbl task${/[a-z]/.test(labels[k]) ? " sub" : ""}">${lab(k)}<input type="checkbox" disabled${tk[1] !== " " ? " checked" : ""}> ${inline(x.slice(tk[0].length)).replace(/\n/g, "<br>")}</li>`; if (ordered && labels[k]) return `<li class="lbl${/[a-z]/.test(labels[k]) ? " sub" : ""}"><span class="olbl">${esc(labels[k])}</span> ${inline(x).replace(/\n/g, "<br>")}</li>`; const t = doc && /^\[([ xX])\]\s+/.exec(x); return t ? `<li class="task"><input type="checkbox" disabled${t[1] !== " " ? " checked" : ""}> ${inline(x.slice(t[0].length)).replace(/\n/g, "<br>")}</li>` : `<li>${inline(x).replace(/\n/g, "<br>")}</li>`; };
       out.push(ordered ? `<ol class="lit">${items.map(item).join("")}</ol>` : `<ul>${items.map(item).join("")}</ul>`); continue;
     }
     const buf = [];
