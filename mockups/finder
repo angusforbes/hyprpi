@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { request } from "../lib/client.mjs";
+import { PARKED_MARK, markParked } from "../lib/parked.mjs";
 import * as hypr from "../lib/hypr.mjs";
 // J333: an isolated hyprpi (test socket/state) opens no windows on the real desktop.
 { const why = hypr.hyprBlocked(); if (why) { console.error(`hypr actions disabled (isolated daemon: ${why}); HYPRPI_ALLOW_HYPR=1 allows them`); process.exit(1); } }
@@ -268,6 +269,7 @@ async function rows() {
   for (const room of WORLD_LETTERS) {
     if (SUMMON && room !== S.room) continue;
     let b; try { b = await request("board.get", { room }); } catch { continue; }
+    markParked(b, (l.agents || []).map((a) => a.id)); // J645: parked = no live owner (lib/parked.mjs)
     if (b?.room !== room) continue;
     boards[room] = b; // J196: the >Projects row's time and line
     for (const p of b.projects || []) {
@@ -276,8 +278,10 @@ async function rows() {
       const members = (p.members || []).map((id) => "@" + (b.names?.[id] || names[id] || id.slice(-4))).join(" ");
       const sub = [`world ${room}`, members, p.short || p.where?.text || p.title].map(clean).filter(Boolean).join(" · ");
       const pl = projLoc(p, room), pt = p.updated || p.created;
-      const rich = esc(p.icon || "📋") + " @" + esc(clean(p.name)) + font("dim", " · ") + font(worldColor(/^[A-Z]\d/.test(pl) ? pl[0] : room), pl) + (since(pt, projMark(p, byId)) ? font("dim", " · " + since(pt, projMark(p, byId))) : "");
-      out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: projMark(p, byId), glyph: projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + projLoc(p, room) + (since(pt, projMark(p, byId)) ? " · " + since(pt, projMark(p, byId)) : ""), sub: sub.slice(0, 160),
+      // J645 (D8/D9, 70a): a parked project (no live owner) is grey with the ⏸ mark, instead of its place in the world colour
+      const rich = p.parked ? esc(p.icon || "📋") + " " + font("dim", "@" + clean(p.name) + " · " + PARKED_MARK + " parked")
+        : esc(p.icon || "📋") + " @" + esc(clean(p.name)) + font("dim", " · ") + font(worldColor(/^[A-Z]\d/.test(pl) ? pl[0] : room), pl) + (since(pt, projMark(p, byId)) ? font("dim", " · " + since(pt, projMark(p, byId))) : "");
+      out.push({ kind: "project", id: p.id, room, name: p.name, rich, sort: p.name, recent: p.updated || p.created || 0, mark: p.parked ? PARKED_MARK : projMark(p, byId), glyph: p.parked ? PARKED_MARK : projMark(p, byId), label: (p.icon || "📋") + " @" + clean(p.name) + " · " + (p.parked ? PARKED_MARK + " parked" : projLoc(p, room)) + (since(pt, projMark(p, byId)) ? " · " + since(pt, projMark(p, byId)) : ""), sub: sub.slice(0, 160),
         // J17: a project is in its board's world and in the world of the workspace it shows (its writer's).
         worlds: [...new Set([room, /^[A-Z]\d/.test(pl) ? pl[0] : room])].join(""), ws: projWs(p, room),
         subtitle: clean(p.short || p.where?.text || p.title || "") }); // its "where" summarised (the agents panel's projects line), else where / title

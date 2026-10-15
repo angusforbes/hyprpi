@@ -34,6 +34,7 @@ import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, midFg, bold
 import { createInputBox, createHistory, boxHit } from "../lib/tui/input-box.mjs";
 import { createCommands, inputRows } from "../lib/tui/command-line.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { PARKED_MARK, markParked } from "../lib/parked.mjs";
 import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, linkPanel, NO_RELAY } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop
 let worldBar = null;
 
@@ -111,6 +112,7 @@ function projMark(p) {
 const openDecides = (p) => (p.items || []).filter((it) => it.sec === "decide").length;
 function hereProjects() {
   if (board.room !== room) return [];
+  markParked(board, agents.map((a) => a.id)); // J645: parked = no live owner (lib/parked.mjs), from this panel's live list
   const rank = (p) => p.status === "archived" ? 2 : p.status === "paused" ? 1 : 0;
   return (board.projects || []).filter((p) => p.status !== "archived" || showMode >= 1)
     .sort((a, b) => rank(a) - rank(b) || (openDecides(b) > 0) - (openDecides(a) > 0) || (b.updated || 0) - (a.updated || 0));
@@ -306,7 +308,7 @@ function draw() {
   // One project as its row text + the @member spans of its first line (for the clicks).
   const projRow = (p) => {
     const on = cursorId === "p:" + p.id;
-    let nm = bold("@" + p.name);
+    let nm = p.parked ? midFg(bold("@" + p.name)) : bold("@" + p.name); // J645 (D9): a parked project's name is grey
     if (on) nm = nameBg ? `${ESC}48;2;${rgb(nameBg)}m${nm}${ESC}49m` : `${ESC}4m${nm}${ESC}24m`;
     const dot = " · ";
     // Members as the projects panel writes them (lib/tui/board-view.mjs who()): "@Name" in the
@@ -326,7 +328,7 @@ function draw() {
     const short = p.short || (w0.length > 40 ? w0.slice(0, 39).replace(/\s+\S*$/, "") + "…" : w0);
     const text = `${nm}${members.length ? dot + members.join(" ") : dot + dim("nobody")}${short ? dot + `${ESC}3m${short}${ESC}23m` : ""}`;
     const badge = openDecides(p) ? fg(c, bold("D")) : " ";
-    const pm = projMark(p), pmark = pm === "◌" ? midFg(pm) : fg(c, bold(pm));
+    const pm = p.parked ? PARKED_MARK : projMark(p), pmark = p.parked || pm === "◌" ? midFg(pm) : fg(c, bold(pm)); // J645: ⏸ for a parked project
     // The project's icon in the agents' icon column (📋 until one is set), so @name lines up.
     const pic = p.icon || "📋", skip = pic + " ".repeat(Math.max(1, ICON_W - width(pic)));
     const paused = p.status === "paused" || p.status === "archived";

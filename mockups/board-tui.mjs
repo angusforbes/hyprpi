@@ -30,6 +30,7 @@ import { connect } from "../lib/client.mjs";
 import { completeAt } from "../lib/at-names.mjs";
 import { urlIn, agentIn, bareName } from "../lib/tui/agent-click.mjs";
 import { worldTabAt, stepTo } from "../lib/tui/world-tabs.mjs";
+import { markParked } from "../lib/parked.mjs";
 import { focusAgent, laptopNew, laptopOpen, laptopPanel, remotePanel, NO_RELAY, linkPanel, uploadImages } from "../lib/tui/laptop.mjs"; // J543: a remote world's panel acts on the laptop; J555: or runs on it (a link panel)
 let worldBar = null;
 import { ESC, out, theme, onThemeChange, rgb, worldFg, worldBg, dim, bold, fg, nameFg,
@@ -270,11 +271,12 @@ onThemeChange(() => render());
 async function loadBoard() {
   if (!api || !room) return;
   const r = room;
-  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = b; await bv.refresh(api, r, b); render(); } } catch { /* older daemon */ }
+  try { const b = await api.call("board.get", { room: r }); if (r === room) { board = markParked(b, agents.map((a) => a.id)); await bv.refresh(api, r, b); render(); } } catch { /* older daemon */ } // J645: parked from the live list
 }
 function applyList(r) {
   if (!process.env.HYPRPI_REMOTE_PANEL && !process.env.HYPRPI_SANDBOX_WORLD && (r.rooms || []).some((x) => x.id === room && x.remote)) return quit(); /* J530 (review): this world is remote now: its laptop panel closes (its own panels run on its machine) */
   agents = r.agents || []; rooms = (r.rooms || []).filter((x) => !x.remote); // J530: remote worlds have their own panels
+  if (board?.room) markParked(board, agents.map((a) => a.id)); // J645: an owner closing or coming back shows at once
   if (!room) room = r.active_room || rooms[0]?.id || "A";
   if (!rooms.find((x) => x.id === room)) rooms = [...rooms, { id: room }].sort((a, b) => a.id.localeCompare(b.id));
   render();
