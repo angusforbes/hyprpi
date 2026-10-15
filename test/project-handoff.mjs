@@ -74,7 +74,10 @@ try {
   const bp = spawn("script", ["-qfec", `stty cols 120 rows 40; exec ${process.execPath} ${path.join(ROOT, "mockups", "board-tui.mjs")} D`, out], { env: pe, stdio: ["pipe", "ignore", "ignore"] });
   await sleep(5000); try { bp.kill("SIGTERM"); } catch { /* gone */ } await sleep(300); try { bp.kill("SIGKILL"); } catch { /* gone */ }
   const txt = fs.readFileSync(out, "utf8").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
-  ok("W2 the board panel shows the card's Folder line: the folder and the latest handoff", /Folder\s+~\/Obsidian\/Projects\/vibez\/ · latest handoff ~\/Obsidian\/Projects\/vibez\/2026-10-15 16-05 handoff Helper\.md/.test(txt.replace(/\s*\n\s*/g, " ")), (txt.match(/Folder.{0,120}/) || [""])[0]);
+  const flat = txt.replace(/\s+/g, " ").replace("Folder ", "Folder  "), fu = `file://${H}/Obsidian/Projects/vibez`;
+  ok("W2 the board panel shows the card's Folder line: the folder and the latest handoff as file:/// links", flat.includes(`Folder  ${fu}/ · latest handoff ${fu}/2026-10-15%2016-05%20handoff%20Helper.md`), (txt.match(/Folder.{0,160}/) || [""])[0]);
+  const { urlIn } = await import(path.join(ROOT, "lib/tui/agent-click.mjs"));
+  ok("W2 … and each is one Ctrl+clickable word (agent-click urlIn) that names the real file", urlIn(`${fu}/2026-10-15%2016-05%20handoff%20Helper.md`) === `${fu}/2026-10-15%2016-05%20handoff%20Helper.md` && fs.existsSync(decodeURIComponent(`${fu}/2026-10-15%2016-05%20handoff%20Helper.md`.slice(7))));
   // W3
   ok("W3 a loose agent: project-of prints nothing", cli("hp-loose", "project-of", "--ensure") === "");
   ok("W3 … and resolveProject gives none", core.resolveProject(fcfg, runAs("hp-loose")) === null);
