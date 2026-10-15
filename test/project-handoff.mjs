@@ -62,7 +62,10 @@ try {
   const rep2 = path.join(folder, "2026-10-15 16-05 handoff Helper.md"); fs.writeFileSync(rep2, "# helper\n"); cli(sp.id, "project-handoff", rep2);
   ok("W2 a task agent's report is linked on its project's card too", (await owner.call("board.get", { room: "D" })).projects.find((p) => p.name === "vibez").handoff?.path.endsWith("handoff Helper.md"));
   const outside = path.join(H, "elsewhere.md"); fs.writeFileSync(outside, "x");
-  ok("W2 a report outside the project's folder is refused", /must be in ~\/Obsidian\/Projects\/vibez\//.test(cliErr("hp-owner", "project-handoff", outside)));
+  ok("W2 a report outside the project's folder is refused", /must be a file in ~\/Obsidian\/Projects\/vibez\//.test(cliErr("hp-owner", "project-handoff", outside)));
+  fs.symlinkSync(outside, path.join(folder, "sneaky.md"));
+  ok("W2 … also through a symlink in the folder, a ../ path, or a directory", /must be a file in/.test(cliErr("hp-owner", "project-handoff", path.join(folder, "sneaky.md"))) && /must be a file in/.test(cliErr("hp-owner", "project-handoff", path.join(folder, "..", "..", "..", "elsewhere.md"))) && /must be a file in/.test(cliErr("hp-owner", "project-handoff", folder)));
+  ok("W2 an agent's own connection can't link a handoff for another agent", /only link your own/.test(await owner.call("project.handoff", { agent_id: sp.id, report: rep }).then(() => "", (e) => e.message)));
   // the real board panel, in a pty, against this daemon (a fake hyprctl only)
   const B = path.join(T, "bin"); fs.mkdirSync(B, { recursive: true });
   fs.writeFileSync(path.join(B, "hyprctl"), `#!/bin/sh\ncase "$*" in *clients*) echo '[]';; *activeworkspace*) echo '{"id":31}';; *) echo '[]';; esac\n`, { mode: 0o755 });
