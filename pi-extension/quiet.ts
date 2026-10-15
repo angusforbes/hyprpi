@@ -3,9 +3,13 @@
 // other extension's and its message renderers are the ones pi uses). Off unless THIS agent is switched on:
 //   PI_QUIET_TOOLS=1 in its environment, or its hyprpi agent id in ~/.config/hyprpi/quiet-tools.json
 //   ({"agents": ["hp-…"]}); PI_QUIET_TOOLS=0 forces it off. Read at start / reload.
-// When on:
-//   - ordinary tool calls (bash, read, edit, write, grep, board_*, MCP …) draw NOTHING when they succeed;
-//   - a failed call is ONE amber line saying what failed; its full output (pi's own rendering) with ctrl+o;
+// When on (J642 refinement, Angus via Tangle: "nothing important is lost"):
+//   - lookups (read, grep, find, ls, read-only bash, *_read/list/search tools …) draw NOTHING, failed or not
+//     (a missing file, a grep with no match, a failing test run are harmless probes);
+//   - changes (edit, write, a changing bash command, other tools that act) are ONE dim line each: "edited
+//     Bar.qml", "wrote TODO.md", "ran git commit …"; a change that FAILED is ONE amber line (ctrl+o: full output);
+//   - while working, the status line says what it is doing ("reading NOTES.md…", "waiting on Sweep…");
+//   - after the turn, one dim line counts the silent lookups ("ran 12 checks"); ctrl+o lists them;
 //   - agent-to-agent traffic is ONE dim line each, Thoughts-style: "↪ to Sweep · test T2", "↩ from Radio · J581
 //     installed", kept in the scrollback (they are the transcript's own entries, only drawn differently);
 //   - the agent's own replies, and Angus's room posts and prompts, are unchanged (prominent).
@@ -112,9 +116,126 @@ function trafficResult(tool: string, r: any): Array<[string, boolean]> {
   return out;
 }
 
+// ---- change vs lookup (J642 W3). The rule, and its limits, are in spikes/quiet-tools/README.md. ----
+const LOOKUP_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const LOOKUP_NAME = /(^|_)(read|list|search|get|find|status|show|check|catalog|usage|children|world|history|screenshot|desktop|zoom|marks|binds|notes|ui)(_|$)/i;
+const RO_CMD = new Set(["ls", "cat", "head", "tail", "less", "grep", "rg", "egrep", "fgrep", "find", "fd", "wc", "stat", "file", "du", "df",
+  "echo", "printf", "pwd", "which", "type", "whereis", "date", "uptime", "free", "id", "whoami", "hostname", "uname", "env", "printenv",
+  "ps", "pgrep", "top", "lsof", "ss", "ip", "jq", "yq", "sort", "uniq", "cut", "tr", "awk", "sed", "diff", "cmp", "comm", "md5sum",
+  "sha256sum", "basename", "dirname", "realpath", "readlink", "tree", "column", "nl", "fold", "strings", "xxd", "od", "test", "[", "true",
+  "false", "sleep", "journalctl", "coredumpctl", "lsusb", "lspci", "lsblk", "pactl", "wpctl", "busctl", "nproc", "getent", "tesseract",
+  "identify", "ffprobe", "node", "python3", "python", "go", "npm", "cargo", "pytest", "make", "bash", "sh", "timeout", "curl", "wget",
+  "hyprctl", "systemctl", "git", "gh", "docker", "pacman", "hyprpi", "tmux", "pi", "sqlite3", "man", "xargs", "nice", "env", "for", "while",
+  "if", "do", "done", "then", "fi", "cd", "export", "local", "set"]);
+// a word that is read-only only with some subcommands / flags: (args) => true when it CHANGES something
+const SUB_CHANGE: Record<string, (rest: string) => boolean> = {
+  sed: (r) => /(^|\s)-i/.test(r),
+  git: (r) => !/^\s*(-C\s+\S+\s+)?(status|log|diff|show|branch(\s+-[avlr]+)*\s*$|rev-parse|ls-files|grep|blame|remote(\s+-v)?\s*$|describe|config\s+--get|worktree\s+list|stash\s+list|tag\s*$|fetch|merge-base|cat-file|check-ignore|shortlog|reflog)/.test(r),
+  gh: (r) => !/^\s*(issue|pr|repo|run|api)\s+(view|list|status|diff|checks)\b|^\s*auth\s+status|^\s*search\b/.test(r) && !/^\s*api\s+[^-]*$/.test(r),
+  systemctl: (r) => /\b(start|stop|restart|reload|enable|disable|mask|unmask|kill|daemon-reload|set-property|edit)\b/.test(r),
+  hyprctl: (r) => /\b(dispatch|keyword|reload|setcursor|notify|kill|switchxkblayout)\b/.test(r),
+  docker: (r) => !/^\s*(ps|images|inspect|logs|version|info|stats)\b/.test(r) && !/zricethezav\/gitleaks/.test(r),
+  pacman: (r) => /(^|\s)-(S|R|U)/.test(r),
+  npm: (r) => !/^\s*(test|run\s+(test|lint|check|build)|ls|view|outdated|audit)\b/.test(r),
+  go: (r) => !/^\s*(test|vet|version|env|list|doc)\b/.test(r) && !/^\s*build\b(?!.*\s-o\s+\/(home|usr|etc))/.test(r),
+  cargo: (r) => !/^\s*(test|check|build|clippy|tree)\b/.test(r),
+  make: (r) => /\binstall\b/.test(r),
+  curl: (r) => /(^|\s)-(X\s*(POST|PUT|DELETE|PATCH)|d|F|T)\b|--data|--upload|(^|\s)-o\s|--output/.test(r),
+  wget: () => true,
+  hyprpi: (r) => !/^\s*(list|status|help|search|world\s+status)\b/.test(r),
+  tmux: (r) => !/^\s*(-L\s+\S+\s+)?(ls|list-\w+|capture-pane|display|has-session|show)/.test(r),
+  pactl: (r) => /\b(load-module|unload-module|set-|move-|suspend)/.test(r),
+  sqlite3: (r) => /\b(insert|update|delete|create|drop|alter)\b/i.test(r),
+};
+const CHANGE_CMD = /^(rm|rmdir|mv|cp|mkdir|touch|ln|chmod|chown|install|tee|kill|pkill|killall|truncate|shred|dd|patch|notify-send|sudo|su|systemd-run|setsid|nohup|wtype|ydotool|pip|pip3|uv|yay|paru|brev|ssh|scp|rsync|trash|unzip|tar|zip|grim|crontab|chsh|usermod|passwd|ding|bonk)$/;
+
+// one shell command line -> "change" | "lookup"
+export function bashKind(command: string): "change" | "lookup" {
+  const cmd = String(command ?? "");
+  // writes through redirection (not to /dev/null, not a fd dup) or here-doc into a file
+  if (/(^|[^0-9&<>])>>?\s*(?!&|\/dev\/null)[^\s|&;]/.test(cmd.replace(/2>&1|>&2|&>\s*\/dev\/null|\d?>\s*\/dev\/null/g, ""))) return "change";
+  // python/node inline that writes files
+  if (/\b(open\([^)]*['"][wa]['"]|write_text|writeFileSync|appendFileSync|unlink|rmSync|os\.remove|shutil\.(move|copy|rmtree))/.test(cmd)) return "change";
+  for (const seg of cmd.split(/\|\||&&|[;|\n]|\$\(|`/)) {
+    const words = seg.trim().replace(/^(\w+=\S*\s+)+/, "").split(/\s+/).filter(Boolean);
+    while (words.length && /^(sudo|timeout|nice|env|xargs|command|exec|time|-n|-\d+|\d+[smh]?)$/.test(words[0])) {
+      if (words[0] === "sudo" || words[0] === "xargs") return words.length > 1 ? (CHANGE_CMD.test(words[1].split("/").pop()!) ? "change" : words[0] === "sudo" ? "change" : "lookup") : "change";
+      words.shift();
+    }
+    if (!words.length) continue;
+    const w = words[0].split("/").pop()!;
+    const rest = words.slice(1).join(" ");
+    if (CHANGE_CMD.test(w)) return "change";
+    if (SUB_CHANGE[w]?.(rest)) return "change";
+    if (!RO_CMD.has(w) && !/^\.?\.?\//.test(words[0]) && !SUB_CHANGE[w]) continue; // unknown word: neutral
+    if (/^\.?\.?\//.test(words[0]) && !/test|check|lint|verify|probe|status|list|show/i.test(w)) return "change"; // a local script: assume it acts
+  }
+  return "lookup";
+}
+
+export function toolKind(tool: string, args: any): "change" | "lookup" | "traffic" {
+  if (TRAFFIC[tool]) return "traffic";
+  if (LOOKUP_TOOLS.has(tool)) return "lookup";
+  if (tool === "bash") return bashKind(args?.command);
+  if (tool === "edit" || tool === "write") return "change";
+  return LOOKUP_NAME.test(tool.replace(/^mcp__[^_]+__/, "")) ? "lookup" : "change";
+}
+
+const base = (p: unknown) => String(p ?? "").split("/").filter(Boolean).pop() || String(p ?? "");
+function changeLine(tool: string, a: any): string {
+  if (tool === "edit") return `edited ${base(a?.path ?? a?.file_path)}`;
+  if (tool === "write") return `wrote ${base(a?.path ?? a?.file_path)}`;
+  if (tool === "bash") return `ran ${String(a?.command ?? "").split("\n")[0].replace(/\s+/g, " ")}`;
+  const what = a?.project || a?.action || a?.path || a?.name || a?.target || "";
+  return `${tool.replace(/^mcp__([^_]+)__/, "$1/")}${what ? ` ${String(what)}` : ""}`;
+}
+export function statusFor(tool: string, a: any): string {
+  const k = toolKind(tool, a);
+  if (tool === "read") return `reading ${base(a?.path)}…`;
+  if (tool === "grep" || tool === "find" || tool === "ls") return "searching…";
+  if (tool === "edit" || tool === "write") return `${tool === "edit" ? "editing" : "writing"} ${base(a?.path)}…`;
+  if (tool === "demand") return `waiting on ${names(a?.recipients)}…`;
+  if (tool === "wait_report") return "waiting for reports…";
+  if (tool === "talk" || tool === "talk_reply") return `messaging${a?.recipients ? " " + names(a.recipients) : ""}…`;
+  if (tool === "spawn_agent") return `starting ${a?.name || "a helper"}…`;
+  if (tool === "bash") return k === "change" ? `running ${String(a?.command ?? "").trim().split(/\s+/)[0].split("/").pop()}…` : "checking…";
+  return k === "lookup" ? "looking…" : `${tool.replace(/^mcp__([^_]+)__/, "$1/")}…`;
+}
+function lookupLine(tool: string, a: any, failed: boolean): string {
+  return `${callText(tool, a)}${failed ? "  (failed)" : ""}`;
+}
+
 export function quietMode(pi: any) {
   if (!quietOn()) return false;
-  pi.on("session_start", async (_e: any, ctx: any) => ctx?.ui?.setHiddenThinkingLabel?.(""));
+  let ui: any = null;
+  pi.on("session_start", async (_e: any, ctx: any) => { ui = ctx?.ui; ui?.setHiddenThinkingLabel?.(""); });
+  // V2: the status line while working (pi's own working indicator; its message only)
+  const turnArgs = new Map<string, { tool: string; args: any }>();
+  let silent: string[] = [];
+  pi.on("tool_execution_start", async (e: any, ctx: any) => {
+    if (e?.parentToolCallId) return; // nested (codemode) calls: the caller reports them
+    turnArgs.set(e.toolCallId, { tool: e.toolName, args: e.args });
+    try { (ctx?.ui ?? ui)?.setWorkingMessage?.(statusFor(e.toolName, e.args ?? {})); } catch { /* best effort */ }
+  });
+  pi.on("tool_execution_end", async (e: any) => {
+    const t = turnArgs.get(e?.toolCallId); turnArgs.delete(e?.toolCallId);
+    if (!t || toolKind(t.tool, t.args) !== "lookup") return;
+    silent.push(lookupLine(t.tool, t.args ?? {}, !!e?.isError));
+  });
+  // V3: one dim tail line per turn; the list on ctrl+o (a display-only entry: never sent to the model)
+  pi.on("agent_end", async (_e: any, ctx: any) => {
+    try { (ctx?.ui ?? ui)?.setWorkingMessage?.(undefined); } catch { /* best effort */ }
+    if (silent.length) { try { pi.appendEntry("hyprpi-quiet-tail", { checks: silent }); } catch { /* best effort */ } }
+    silent = [];
+  });
+  pi.registerEntryRenderer?.("hyprpi-quiet-tail", (entry: any, opts: any, theme: any) => {
+    const list: string[] = entry?.data?.checks ?? [];
+    if (!list.length) return undefined;
+    const head = `· ran ${list.length} check${list.length === 1 ? "" : "s"}${opts?.expanded ? "" : " · ctrl+o: list"}`;
+    const rows: Array<[string, (t: string) => string]> = [[head, (t) => theme.fg("dim", t)]];
+    if (opts?.expanded) for (const l of list) rows.push([`   ${l}`, (t) => theme.fg("dim", t)]);
+    return lines(rows, 1);
+  });
   pi.registerToolRenderer((toolName: string, next: () => any) => {
     const original = next(); // what pi (or the tool) would draw: used on ctrl+o
     const traffic = TRAFFIC[toolName];
@@ -122,15 +243,19 @@ export function quietMode(pi: any) {
       renderShell: "self",
       renderCall(args: any, theme: any, context: any) {
         if (context?.expanded && original?.renderCall) return original.renderCall(args, theme, context);
-        if (!traffic) return new Container(); // ordinary call: nothing (a failure is drawn by renderResult)
+        const kind = toolKind(toolName, args ?? {});
+        if (kind === "lookup") return new Container(); // lookups: nothing
         const c = context?.lastComponent instanceof OneLine ? context.lastComponent : new OneLine();
-        c.setText(traffic(args ?? {}), (t: string) => theme.fg("dim", t));
+        c.setText(traffic ? traffic(args ?? {}) : changeLine(toolName, args ?? {}), (t: string) => theme.fg("dim", t));
+        if (!traffic && context?.isError) return new Container(); // a change that failed: only the amber result line
         return c as any;
       },
       renderResult(result: any, options: any, theme: any, context: any) {
         if (options?.expanded && original?.renderResult) return original.renderResult(result, options, theme, context);
         const c = new Container();
         if (options?.isPartial) return c;
+        const kind = toolKind(toolName, context?.args ?? {});
+        if (kind === "lookup") return c; // a lookup, failed or not: nothing (harmless probe)
         if (context?.isError || result?.isError) return lines([[failLine(toolName, context?.args ?? {}, result) + " · ctrl+o: full output", (t) => theme.fg("warning", t)]]);
         const rows = traffic ? trafficResult(toolName, result) : [];
         return rows.length ? lines(rows.map(([t, warn]) => [t, (x: string) => theme.fg(warn ? "warning" : "dim", x)])) : c;
