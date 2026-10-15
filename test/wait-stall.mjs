@@ -53,9 +53,9 @@ ok("W2a … with a clear message naming the child and its state", /^no report fr
 // the limit is capped by waitMaxSec (3 s) even if the caller asks for 100
 ({ r, ms } = await timed(orch.wait("hp-mom", ["hp-f"], { timeoutSec: 100 })));
 ok("W2a a longer limit is cut to waitMaxSec (3 s)", r.timed_out && ms >= 2900 && ms < 3600, `${ms} ms`);
-// W2b: over budget
+// W2b (J647: no budgets): a child left in the old "budget" state is no longer reported as over budget
 ({ r } = await timed(orch.wait("hp-mom", ["hp-d"], {})));
-ok("W2b over budget: named with its state", r.timed_out && /no report from Delta after \d s; it is over budget/.test(r.note || ""), r.note);
+ok("W2b a legacy over-budget child: named with its live state, never \"over budget\"", r.timed_out && /no report from Delta after \d s; it is /.test(r.note || "") && !/budget/.test(r.note || ""), r.note);
 // W2c: idle a minute or more without a report: doesn't hold an "all" wait
 ({ r, ms } = await timed(orch.wait("hp-mom", ["hp-e"], {})));
 ok("W2c idle 2 min without a report: the all-wait ends at once, saying so", ms < 100 && r.still_working[0]?.name === "Echo" && /idle 2 min \(its turn ended without a report\)/.test(r.still_working[0].state), `${ms} ms ${JSON.stringify(r.still_working)}`);

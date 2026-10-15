@@ -65,7 +65,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     description: "Reload this window's pi runtime (hyprpi upkeep does this by itself when the agent-side code changed)",
     handler: async (_a: any, ctx: any) => { safeNotify("🧹 reloading: hyprpi code changed", "info"); await ctx.reload(); },
   });
-  // J130 orchestration primitives (spawn_agent, report_to_parent, wait_report, close_agent, …; budgets).
+  // J130 orchestration primitives (spawn_agent, report_to_parent, wait_report, close_agent, …; no budgets, J647).
   const orchEvent = orchAgent(pi, { call: (m: string, p: any = {}, o?: any) => call(m, p, o), inject: (m: any, steer = false) => inject(m, steer), idle, ctx: () => ctxRef, flushHeld: () => flushHeld(), dropHeld: (pred: (m: any) => boolean) => dropHeld(pred) });
   // steer: an agent mid-turn sees it at its next tool boundary instead of after the whole turn (peer
   // coordination; a "followUp" talk once arrived only after the work it asked about was done, @hyprpi N44).

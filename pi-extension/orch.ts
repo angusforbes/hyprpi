@@ -1,12 +1,8 @@
 /**
  * J130 orchestration primitives, the agent side (daemon: lib/orch.mjs). Tools: spawn_agent, report_to_parent,
- * wait_report, close_agent, extend_budget, escalate_agent, my_children. Events from the daemon:
+ * wait_report, close_agent, escalate_agent, my_children. Events from the daemon:
  * orch.report (a child's report, as a message), orch.close (close this agent at its next idle moment),
- * orch.budget (a new budget / resumed), orch.orphaned (its parent went away).
- * Budgets (spawned agents only): token use (input + output + cache writes of its own model calls; cache READS
- * aren't counted, so a cap counts fresh tokens, not the context re-read on every call) and wall
- * time since it was spawned. At a cap: one steer to stop, report and wait; tools other than report_to_parent
- * are blocked until extend_budget.
+ * orch.orphaned (its parent went away). J647 (Angus): no time or token budgets; a parent stops a helper with close_agent.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -17,50 +13,21 @@ type Deps = { call: (m: string, p?: any, o?: any) => Promise<any>; inject: (m: a
 export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld, dropHeld }: Deps) {
   let waits = 0; // J272: wait_report calls running now (index.ts wakes them when a message arrives)
   const text = (t: string, details: any = {}) => ({ content: [{ type: "text" as const, text: t }], details });
-  let me: any = null; // { budget, used, startedAt, status, parent } when this agent was spawned
-  let tokens = 0, stopped = false, closing: any = null, lastSent = 0, calls = 0, toolCalls = 0, lastErr = "";
-  const loadMe = async () => { try { me = await call("orch.me"); if (me?.used?.tokens) tokens = Math.max(tokens, me.used.tokens); if (me?.status === "budget") stopped = true; } catch { /* not spawned / offline */ } };
+  let me: any = null; // { used, startedAt, status, parent } when this agent was spawned
+  let tokens = 0, closing: any = null, lastSent = 0, calls = 0, lastErr = "";
+  const loadMe = async () => { try { me = await call("orch.me"); if (me?.used?.tokens) tokens = Math.max(tokens, me.used.tokens); } catch { /* not spawned / offline */ } };
   pi.on("session_start", async () => { setTimeout(loadMe, 1500); setTimeout(() => { if (!me) loadMe(); }, 10000); });
 
-  // --- budgets ---
-  const over = () => {
-    if (!me?.budget) return "";
-    if (me.budget.tokens && tokens >= me.budget.tokens) return `token budget (${Math.round(me.budget.tokens / 1000)}k)`;
-    if (me.budget.minutes && Date.now() - me.startedAt >= me.budget.minutes * 60000) return `time budget (${me.budget.minutes} min)`;
-    return "";
-  };
+  // --- usage (J647: no budgets; Angus: "you can stop them whenever you want … it just creates noise and extra decisions for
+  // me"). A spawned agent only reports its token use for the activity view (my_children, hyprpi top); nothing ever stops it,
+  // blocks its tools or waits on anyone. A parent stops a helper with close_agent.
   pi.on("message_end", async (e: any) => {
     const m = e?.message;
-    if (m?.role !== "assistant" || !me?.budget) return;
+    if (m?.role !== "assistant" || !me) return;
     const u = m.usage || {};
-    // J272 fix 5: the first call's input and cache write are the start-up context (system prompt, tools, skills,
-    // ~50k: ShellSources' 16k budget was gone before its first tool call); only its output counts.
+    // (J272 fix 5) the first call's input and cache write are the start-up context; only its output counts.
     tokens += calls++ === 0 ? (u.output || 0) : (u.input || 0) + (u.output || 0) + (u.cacheWrite || 0);
     if (Date.now() - lastSent > 15000) { lastSent = Date.now(); call("orch.usage", { tokens }).catch(() => {}); }
-    checkCap();
-  });
-  function checkCap() {
-    const what = over();
-    if (!what || stopped) return;
-    stopped = true;
-    call("orch.usage", { tokens }).catch(() => {});
-    call("orch.budgetHit", { what, early: toolCalls === 0 }).catch(() => {});
-    inject({ customType: "hyprpi-orch", display: true, content: `[hyprpi · budget reached: ${what}]\nStop now. Call report_to_parent with what you have so far, what's left and what you'd need to finish (not final unless it's done), then end your turn. Other tools are blocked until your parent extends your budget.`, details: { request_id: `orch-budget-${Date.now()}` } }, true);
-  }
-  // The time cap also while one long tool call runs (Knock's J130 finding 4): the steer lands at its end, and
-  // the tools after it are blocked.
-  // J591 (Angus's screenshot: "pi crashed … This extension ctx is stale after session replacement or reload", 5 times in
-  // crashes.json, all from here): the timer outlived a /reload or session switch and called the old pi; it now stops at
-  // session_shutdown, and a stale call is swallowed rather than crashing the window.
-  const capTimer = setInterval(() => { try { if (me?.budget?.minutes) checkCap(); } catch { /* old session's pi */ } }, 30000);
-  capTimer.unref?.();
-  pi.on("session_shutdown", async () => { clearInterval(capTimer); });
-  pi.on("tool_call", async (e: any) => {
-    toolCalls++;
-    if (!stopped) return;
-    const n = e?.toolName || e?.name || "";
-    if (n === "report_to_parent" || n === "my_children" || n === "wait_report" || n === "close_agent") return;
-    return { block: true, reason: "budget reached: call report_to_parent with your progress and what's left, then end your turn and wait for extend_budget" };
   });
 
   // --- closing at the next idle moment ---
@@ -101,11 +68,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     } else if (event === "orch.close") {
       closing = d || {}; tryClose();
     } else if (event === "orch.budget") {
-      me = { ...(me || {}), budget: d?.budget, startedAt: d?.startedAt ?? me?.startedAt };
-      if (d?.resumed && stopped) {
-        stopped = false;
-        inject({ customType: "hyprpi-orch", display: true, content: `[hyprpi · your budget was extended to ${Math.round((d.budget?.tokens || 0) / 1000)}k tokens / ${d.budget?.minutes || 0} min]\nCarry on with the job from where you stopped.`, details: { request_id: `orch-extend-${Date.now()}` } });
-      }
+      // J647: an older daemon's budget event: nothing to do (no caps)
     } else if (event === "orch.orphaned") {
       inject({ customType: "hyprpi-orch", display: true, content: `[hyprpi · your parent ${d?.parent || ""} went away]\nFinish the step you're on (don't start new work), then call report_to_parent with final: true (it now goes to ${d?.thoughts || "your world's Thoughts"}) and stop; you'll be closed after that.`, details: { request_id: `orch-orphan-${Date.now()}` } });
     }
@@ -115,7 +78,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   pi.registerTool({
     name: "spawn_agent",
     label: "Spawn an agent",
-    description: "Open a new hyprpi agent (your CHILD) in its own window for a bounded job, silently (Angus's focus never moves). Budget: tokens count fresh input + output + cache writes (cached context re-reads don't count) and minutes since spawn. Give it a complete prompt: goal, files it may touch, done-when, and to report_to_parent. Its model: an explicit model wins; else complexity picks one from the routing rules in ~/.config/hyprpi/hyprpi.jsonc (simple / ordinary / hard / review); else the default. fork: true starts it from YOUR conversation (a twin with your context). Returns its id; its reports come back to you as messages, or block on them with wait_report. Close it with close_agent when done. Your world's Thoughts is told automatically. One level only (J201 amended): a spawned child can't spawn its own helpers; at most 3–4 helpers per job.",
+    description: "Open a new hyprpi agent (your CHILD) in its own window for a bounded job, silently (Angus's focus never moves). It has no time or token limit; stop it with close_agent when you no longer need it. Give it a complete prompt: goal, files it may touch, done-when, and to report_to_parent. Its model: an explicit model wins; else complexity picks one from the routing rules in ~/.config/hyprpi/hyprpi.jsonc (simple / ordinary / hard / review); else the default. fork: true starts it from YOUR conversation (a twin with your context). Returns its id; its reports come back to you as messages, or block on them with wait_report. Close it with close_agent when done. Your world's Thoughts is told automatically. One level only (J201 amended): a spawned child can't spawn its own helpers; at most 3–4 helpers per job.",
     promptSnippet: "Open a child agent for a bounded job (silent; reports back to you)",
     // J201 (Angus: "agents should be encouraged to split subtasks into further subtasks and to spawn temporary agents
     // as needed or to commandeer existing agents … the power to change models and thinking levels on the fly").
@@ -124,7 +87,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     promptGuidelines: [
       "Parallel work (Angus, J201 amended 2026-10-11): break your task into independent parts and spawn temporary helper agents for them with spawn_agent (a complete brief each, done-when, report_to_parent), wait_report for their results, integrate, and close_agent each one when its result is in. ONE level only: helpers don't spawn helpers (spawn_agent refuses a child's spawn; orchestration.maxDepth in hyprpi.jsonc is Angus's override), and at most 3–4 helpers per job unless Angus says otherwise. When you split, write a split line in your plan and in each helper's brief: which parts are independent, which depend on which, and what passes between them. Don't split work whose parts depend on each other, or work too small to repay the coordination.",
       "You may also commandeer an EXISTING agent for a subtask, but only a free one (idle or done, never one mid-turn): ask it with talk/demand so the request is tracked, and say what to report back.",
-      "Pick the model and thinking level per helper: complexity simple (cheap, fast: look-ups, quick checks), ordinary or hard (building, diagnosis), review (another model family, for an independent test of work you or a helper built); an explicit model / thinking wins. Budgets, the orphan cleanup and the independent-tester rule still apply. A checker re-runs the proof itself (hashes and branches from git, the tests, the done-when commands) and checks the goal, rather than reading the report.",
+      "Pick the model and thinking level per helper: complexity simple (cheap, fast: look-ups, quick checks), ordinary or hard (building, diagnosis), review (another model family, for an independent test of work you or a helper built); an explicit model / thinking wins. The orphan cleanup and the independent-tester rule still apply. There are no time or token budgets: stop a helper with close_agent when you no longer need it, and never ask Angus about a helper's budget. A checker re-runs the proof itself (hashes and branches from git, the tests, the done-when commands) and checks the goal, rather than reading the report.",
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "the child's whole brief: goal, limits, done-when, how to report" }),
@@ -136,11 +99,11 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
       fork: Type.Optional(Type.Boolean({ description: "start from your own conversation (a twin) instead of empty" })),
       cwd: Type.Optional(Type.String()),
       project: Type.Optional(Type.String({ description: "@project it joins" })),
-      budget: Type.Optional(Type.Object({ tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) })),
-    }, { additionalProperties: false }),
+    }, { additionalProperties: true }), // (J647: a stray "budget" from an older habit is ignored, not refused)
     execute: async (_id: string, p: any) => {
+      const { budget: _ignored, ...q } = p || {}; p = q;
       const r = await call("orch.spawn", p, p.model ? { timeoutMs: 120000 } : undefined); // J383: an explicit model is test-called first
-      return text(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model || "default model"}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}; budget ${Math.round((r.budget?.tokens || 0) / 1000)}k tokens / ${r.budget?.minutes || 0} min. It reports back to you; wait_report blocks until it does.`, r);
+      return text(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model || "default model"}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}. It reports back to you; wait_report blocks until it does.`, r);
     },
   });
   pi.registerTool({
@@ -153,7 +116,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   pi.registerTool({
     name: "wait_report",
     label: "Wait for reports",
-    description: "Block until your children report (all of them, or any: true for the first), or the time limit. No polling needed: the daemon answers when a report arrives. Any report you haven't read yet (one that came before this call, or while you were busy) returns AT ONCE, whatever the mode: you never wait for a report that's already in. ids: child ids or names (default: all your live children). In \"all\" mode a child idle a minute or more without reporting no longer holds the wait. At the limit it says, per child, \"no report after N min\" and its state (working, idle, over budget, closed): act on that (talk to it, extend_budget, close_agent). since (ms epoch, optional) also returns reports you already read after that time.",
+    description: "Block until your children report (all of them, or any: true for the first), or the time limit. No polling needed: the daemon answers when a report arrives. Any report you haven't read yet (one that came before this call, or while you were busy) returns AT ONCE, whatever the mode: you never wait for a report that's already in. ids: child ids or names (default: all your live children). In \"all\" mode a child idle a minute or more without reporting no longer holds the wait. At the limit it says, per child, \"no report after N min\" and its state (working, idle, closed): act on that (talk to it, or close_agent). since (ms epoch, optional) also returns reports you already read after that time.",
     parameters: Type.Object({ ids: Type.Optional(Type.Array(Type.String())), timeout_sec: Type.Optional(Type.Number({ description: "seconds; default and maximum from hyprpi.jsonc orchestration.waitDefaultSec / waitMaxSec (600 / 3600)" })), any: Type.Optional(Type.Boolean()), since: Type.Optional(Type.Number()) }, { additionalProperties: false }),
     // J272 fix 2 (J269: an interrupt or Esc couldn't stop a 30-min wait, so Thoughts' messages sat stuck until it
     // returned): Esc / interrupt_agent (the tool's abort signal) ends the wait at once (daemon orch.unwait), and so
@@ -187,13 +150,6 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
     execute: async (_id: string, p: any) => { const r = await call("orch.close", p); dropStale([r.id]); return text(r.already ? `${r.name} was already closed.` : `Closing ${r.name}${r.closing ? " (at its next idle moment)" : " (it wasn't connected: closed now)"}.`, r); },
   });
   pi.registerTool({
-    name: "extend_budget",
-    label: "Extend a child's budget",
-    description: "Give a child that hit its budget more tokens and/or minutes (none given: the default amounts again); it carries on.",
-    parameters: Type.Object({ id: Type.String(), tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { const r = await call("orch.extend", p); return text(`${r.name}: budget now ${Math.round(r.budget.tokens / 1000)}k tokens / ${r.budget.minutes} min.`, r); },
-  });
-  pi.registerTool({
     name: "escalate_agent",
     label: "Escalate a child's model",
     description: "Move a child one step up the model ladder (hyprpi.jsonc routing), e.g. after its work failed your check. Once per job automatically; explicit: true goes past that and past the ceiling (only when Angus asked).",
@@ -212,9 +168,9 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
   pi.registerTool({
     name: "my_children",
     label: "My children",
-    description: "List the agents you spawned that are still open: their live state (working, idle N min, over budget, closing; from the daemon's view of their turn), model, budget use, last report.",
+    description: "List the agents you spawned that are still open: their live state (working, idle N min, closing; from the daemon's view of their turn), model, tokens used, last report.",
     parameters: Type.Object({}, { additionalProperties: false }),
-    execute: async () => { const r = await call("orch.children", {}); return text(r.children.length ? r.children.map((c: any) => `${c.name} (${c.id}) ${c.state || c.status} · ${c.model}/${c.thinking} · ${Math.round((c.used?.tokens || 0) / 1000)}k/${Math.round((c.budget?.tokens || 0) / 1000)}k tokens · ${c.reports} report(s)${c.last_report ? `: ${c.last_report.slice(0, 160)}` : ""}`).join("\n") : "No live children.", r); },
+    execute: async () => { const r = await call("orch.children", {}); return text(r.children.length ? r.children.map((c: any) => `${c.name} (${c.id}) ${c.state || c.status} · ${c.model}/${c.thinking} · ${Math.round((c.used?.tokens || 0) / 1000)}k tokens used · ${c.reports} report(s)${c.last_report ? `: ${c.last_report.slice(0, 160)}` : ""}`).join("\n") : "No live children.", r); },
   });
   return Object.assign(onEvent, { waiting: () => waits > 0 });
 }

@@ -427,9 +427,8 @@ export default function thoughts(pi: ExtensionAPI) {
       prompt: Type.String(), name: Type.Optional(Type.String()), icon: Type.Optional(Type.String()),
       complexity: Type.Optional(Type.String()), model: Type.Optional(Type.String()), thinking: Type.Optional(Type.String()),
       cwd: Type.Optional(Type.String()), project: Type.Optional(Type.String()),
-      budget: Type.Optional(Type.Object({ tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) })),
-    }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { checkThinking(p.thinking); const r: any = await call("orch.spawn", { ...p, ...T }, p.model ? 120000 : 20000); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
+    }, { additionalProperties: true }), // (J647: no budgets; a stray "budget" is ignored, not refused)
+    execute: async (_id: string, p: any) => { checkThinking(p.thinking); const { budget: _ignored, ...q } = p || {}; p = q; const r: any = await call("orch.spawn", { ...p, ...T }, p.model ? 120000 : 20000); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
   });
   pi.registerTool({
     name: "wait_report",
@@ -446,13 +445,6 @@ export default function thoughts(pi: ExtensionAPI) {
     description: "Close an agent spawned with spawn_agent (yours, or an orphan you adopted) at its next idle moment; its last report is kept.",
     parameters: Type.Object({ id: Type.String(), reason: Type.Optional(Type.String()) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => { const r: any = await call("orch.close", { ...p, ...T }); return out(`Closing ${r.name}.`, { action: `closed ${r.name}` }); },
-  });
-  pi.registerTool({
-    name: "extend_budget",
-    label: "Extend a budget",
-    description: "Give a spawned agent that hit its budget more tokens / minutes (none given: the default amounts again).",
-    parameters: Type.Object({ id: Type.String(), tokens: Type.Optional(Type.Number()), minutes: Type.Optional(Type.Number()) }, { additionalProperties: false }),
-    execute: async (_id: string, p: any) => { const r: any = await call("orch.extend", { ...p, ...T }); return out(`${r.name}: ${Math.round(r.budget.tokens / 1000)}k tokens / ${r.budget.minutes} min.`, { action: `extended ${r.name}'s budget` }); },
   });
   pi.registerTool({
     name: "escalate_agent",
