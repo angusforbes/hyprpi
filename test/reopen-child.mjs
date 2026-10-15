@@ -62,13 +62,19 @@ try {
   dad.close(); await sleep(11500); // Dad's window goes away too
   kid2 = await fake(sp2.id, sp2.name, 35); await sleep(2500);
   const k2 = await kidOf(sp2.id);
-  ok("W2 reopened with its parent gone: stays closed, no link, nothing noted", k2.status === "closed" && !/↩ Kid2 reopened/.test(fs.readFileSync(path.join(T, "daemon.log"), "utf8")), JSON.stringify({ s: k2.status }));
+  ok("W2 reopened with its parent gone: stays closed, no link", k2.status === "closed" && !(await api.call("orch.all", {})).children.some((c) => c.parent === "hp-dad" && c.status !== "closed"), JSON.stringify({ s: k2.status }));
   const rr = await kid2.call("orch.report", { text: "anyone?" }).then((r) => JSON.stringify(r), (e) => "error: " + e.message);
   ok("W2 … report_to_parent doesn't crash the daemon", typeof rr === "string" && (await api.call("ping", {})).ok !== false, rr);
   // W3 again: a child closed and never reopened stays closed
   const sp3 = await mom.call("orch.spawn", { prompt: "third", name: "Kid3" });
   const kid3 = await fake(sp3.id, sp3.name, 36); await sleep(300); await mom.call("orch.close", { id: sp3.id }); kid3.close(); await sleep(11500);
   ok("W3 a closed child that isn't reopened stays closed", (await kidOf(sp3.id)).status === "closed");
+  // (ReopenCheck F2) the daemon's own hello path, with no orch.me: closed, then reopened by hello alone
+  const sp5 = await mom.call("orch.spawn", { prompt: "fifth", name: "Kid5" });
+  let k5 = await fake(sp5.id, sp5.name, 38); await sleep(300); await mom.call("orch.close", { id: sp5.id }); k5.close(); await sleep(11500);
+  k5 = await connect({ path: sock, onEvent: () => {} }); await k5.call("agent.hello", { agent_id: sp5.id, pid: process.pid, name: sp5.name, want_workspace: 38, cwd: T }); await sleep(2800);
+  ok("W1 the daemon's hello alone (no orch.me) reopens it and relinks it to Mom", (await kidOf(sp5.id)).status === "running" && await linked(mom, sp5.id));
+  k5.close();
   // (ReopenCheck) a child that said hello and dropped before the 2 s timer, then was closed while offline: it stays closed
   const sp4 = await mom.call("orch.spawn", { prompt: "fourth", name: "Kid4" });
   const k4 = await connect({ path: sock, onEvent: () => {} }); await k4.call("agent.hello", { agent_id: sp4.id, pid: process.pid, name: sp4.name, want_workspace: 37, cwd: T });
