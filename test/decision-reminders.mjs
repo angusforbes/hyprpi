@@ -53,8 +53,8 @@ const M = 60e3;
   t += 5 * M; ok("A nothing between rounds", R.tick() === null && pushes.length === 1);
   t += 5 * M; R.tick(); ok("A the next round 10 min later", pushes.length === 2);
   // a new important item joins the round once its own first push is an interval old
-  t += 5 * M; mb.items.push(dec("D7")); // filed mid-interval (its own first push: now)
-  t -= 5 * M;
+  t += 7 * M; mb.items.push(dec("D7")); // filed 7 min after a round (its own first push: now)
+  t -= 7 * M;
   t += 10 * M; R.tick(); ok("A a brand-new item waits for its own interval (no double push)", pushes.length === 3 && !/D7/.test(pushes[2].text));
   t += 10 * M; R.tick(); ok("A then it joins the same round", pushes.length === 4 && /D7/.test(pushes[3].text) && /D6/.test(pushes[3].text));
   // stop (on Angus's word) and snooze
@@ -84,6 +84,25 @@ const M = 60e3;
   conf = { ...conf, toast: false }; boards[0].unfiled.push(dec("U1", { importance: "important", ts: t - 20 * M }));
   const tn = toasts.length; t += 10 * M; R.tick();
   ok("A toast: false → phone only; an unfiled important decision is in the round", toasts.length === tn && /@unfiled U1/.test(pushes[pushes.length - 1].text));
+  // J650check: items filed a minute apart fall into step (no rounds at +10 AND +11)
+  {
+    let t2 = 2_000_000_000_000; const P2 = [];
+    const p2 = { id: "p-x", name: "x", status: "active", items: [] };
+    const R3 = createReminders({ stateFile: path.join(T, "r3.json"), boards: () => [{ room: "C", projects: [p2] }], policy: () => ({ remindEveryMin: 10, remindRounds: 12, toast: false }), push: (k, i) => { P2.push(i); return { sent: true }; }, now: () => t2 });
+    p2.items.push({ h: "D1", sec: "decide", text: "x", ts: t2, importance: "important" });
+    t2 += 1 * M; p2.items.push({ h: "D2", sec: "decide", text: "y", ts: t2, importance: "important" });
+    for (let i = 0; i < 30; i++) { t2 += 1 * M; R3.tick(); } // 30 minutes, ticking every minute
+    ok("A staggered items share rounds: 3 rounds in 30 min, each with both, none a minute after another", P2.length === 3 && P2.every((x) => /D1/.test(x.text) && /D2/.test(x.text)), String(P2.length));
+    // the phone's hourly cap drops a round: nothing counted, retried next minute, the last push isn't lost
+    let limited = true; const P3 = [];
+    const R4 = createReminders({ stateFile: path.join(T, "r4.json"), boards: () => [{ room: "C", projects: [p2] }], policy: () => ({ remindEveryMin: 10, remindRounds: 2, toast: true }), push: (k, i) => limited ? { sent: false, why: "over maxPerHour (12)" } : (P3.push(i), { sent: true }), toast: () => P3.push({ toast: true }), now: () => t2 });
+    for (let i = 0; i < 30; i++) { t2 += 1 * M; R4.tick(); }
+    ok("A a round the hourly cap drops isn't counted (no toast either)", P3.length === 0 && !Object.keys(R4.state().items).length, JSON.stringify(R4.state()));
+    limited = false; t2 += 1 * M; R4.tick();
+    ok("A …and goes out at the next tick once the cap allows", P3.filter((x) => !x.toast).length === 1 && R4.state().items["C:p-x:D1"]?.rounds === 1);
+    for (let i = 0; i < 30; i++) { t2 += 1 * M; R4.tick(); }
+    ok("A the last 'no more reminders' push still arrives", P3.some((x) => /no more reminders/i.test(x.title || "")) && R4.state().items["C:p-x:D1"]?.capped);
+  }
   // state survives a restart of the engine
   const R2 = createReminders({ stateFile: path.join(T, "r.json"), boards: () => boards, policy: () => conf, push: (k, i) => { pushes.push({ k, ...i }); return { sent: true }; }, now: () => t });
   ok("A its counts survive a daemon restart", R2.state().items["C:p-mb:D8"]?.rounds >= 2);
