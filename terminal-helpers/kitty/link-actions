@@ -5,7 +5,7 @@
 # A local file (file:// URL or a path): Show in folder · Copy path · Copy file · Open.
 #   Show in folder  the file manager opens its folder with the file selected (org.freedesktop.FileManager1
 #                   ShowItems; nautilus here), else the folder opens with the default app
-#   Copy path       the plain path as text (/home/agf/x.pdf)
+#   Copy path       the plain path as text (/home/you/x.pdf)
 #   Copy file       the file itself: text/uri-list on the clipboard (file:///…), what file managers put there;
 #                   paste it where files can be pasted
 #   Open            as Ctrl+click does (gio open)

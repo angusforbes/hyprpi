@@ -36,7 +36,7 @@ fs.mkdirSync(path.join(S, "boards")); fs.mkdirSync(path.join(cfg, "hyprpi"), { r
 fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10 }));
 fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } }, phone: { ntfy: { enabled: true, topic: "j601-test", server: "https://ntfy.example", kinds: ["bonk", "decision"], maxPerHour: 100 } } }));
 const proj = (id, name) => ({ id, name, title: name, icon: "📋", status: "active", members: ["hp-dossier"], writer: "hp-dossier", created: now, updated: now, by: "x", where: null, next_step: null, seq: { D: 0, N: 0, H: 0 }, items: [] });
-fs.writeFileSync(path.join(S, "boards", "A.json"), JSON.stringify({ room: "A", projects: [proj("p-mb", "mathbac"), proj("p-old", "oldcard")] }));
+fs.writeFileSync(path.join(S, "boards", "A.json"), JSON.stringify({ room: "A", projects: [proj("p-mb", "demoproj"), proj("p-old", "oldcard")] }));
 const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, XDG_STATE_HOME: path.join(S, "xdg"), HYPRLAND_INSTANCE_SIGNATURE: "j601-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_TEST: "1", HYPRPI_PHONE_PUSH_LOG: PUSH, HYPRPI_BLOCKCHECK_MS: "300" };
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
 let d = null;
@@ -68,19 +68,19 @@ try {
   // ---- A) the repro
   await upd({ status: "working" });
   await watcher.call("wake.when", { event: "agent", agent: "Dossier", note: "brief it" });
-  const r = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "28. how to go on?", options: ["write it up", "train longer"], recommend: "a" });
+  const r = await dossier.call("board.item", { action: "add", project: "demoproj", section: "decide", text: "28. how to go on?", options: ["write it up", "train longer"], recommend: "a" });
   const D = r.item.h;
   let a = await me();
   ok("A a Decide item filed mid-turn leaves it working (its run is still going)", a.status === "working" && a.run === "working", `${a.status}/${a.run}`);
   await upd({ status: "done" }); await sleep(400);
   a = await me();
   ok("A at its turn's end the × shows, on top of its run state (done)", a.status === "blocked" && a.run === "done", `${a.status}/${a.run}`);
-  ok("A list says what the × waits on and that it takes work", JSON.stringify(a.blocked_on) === JSON.stringify([`decision @mathbac ${D}`]) && a.takes_work === true, JSON.stringify(a));
+  ok("A list says what the × waits on and that it takes work", JSON.stringify(a.blocked_on) === JSON.stringify([`decision @demoproj ${D}`]) && a.takes_work === true, JSON.stringify(a));
   const wk = JSON.parse(fs.readFileSync(path.join(S, "wakes.json"), "utf8"));
   const wl = (Array.isArray(wk) ? wk : wk.wakes || []).find((w) => w.target === "hp-dossier");
   ok("A the turn's end is seen: the wake on Dossier fired", /Dossier finished its turn/.test(wl?.why || ""), JSON.stringify(wk));
   const wline = await world();
-  ok("A Thoughts' world tool: blocked on the decision, turn over, give_work reaches it", new RegExp(`blocked: waiting on Angus \\(decision @mathbac ${D}\\); its turn is over, at its prompt: give_work / ask_agent still reach it`).test(wline), wline);
+  ok("A Thoughts' world tool: blocked on the decision, turn over, give_work reaches it", new RegExp(`blocked: waiting on Angus \\(decision @demoproj ${D}\\); its turn is over, at its prompt: give_work / ask_agent still reach it`).test(wline), wline);
   got.length = 0;
   const gw = await err(() => giveWork("write up the T5 round"));
   ok("A give_work without urgent is accepted (was: \"Dossier is blocked right now\")", gw === "", gw);
@@ -91,18 +91,18 @@ try {
   ok("A its next turn clears the ×", a.status === "working" && !a.blocked_on, JSON.stringify(a));
   await upd({ status: "done" }); await sleep(200);
   a = await me();
-  ok("A that turn ends with its decision still open: × again, run done, still takes work (Sentry note 1)", a.status === "blocked" && a.run === "done" && a.takes_work === true && /decision @mathbac/.test((a.blocked_on || []).join(" ")), JSON.stringify({ s: a.status, r: a.run, t: a.takes_work, b: a.blocked_on }));
+  ok("A that turn ends with its decision still open: × again, run done, still takes work (Sentry note 1)", a.status === "blocked" && a.run === "done" && a.takes_work === true && /decision @demoproj/.test((a.blocked_on || []).join(" ")), JSON.stringify({ s: a.status, r: a.run, t: a.takes_work, b: a.blocked_on }));
   const ask = await err(() => api.call("thoughts.ask", { room: "A", agent: "Dossier", question: "status?" }));
   ok("A ask_agent reaches a done agent", ask === "", ask);
 
   // independent checks: a decision-only overlay accepts ask, but a pending block never makes a live run free.
   await upd({ status: "working" });
-  const edge = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Edge decision", options: ["yes", "no"] });
+  const edge = await dossier.call("board.item", { action: "add", project: "demoproj", section: "decide", text: "Edge decision", options: ["yes", "no"] });
   ok("EDGE working agent with pending decision refuses work", /is working/.test(await err(() => giveWork("must not deliver"))));
   await upd({ status: "done" });
   ok("EDGE ask_agent reaches decision-blocked agent", (await err(() => api.call("thoughts.ask", { room: "A", agent: "Dossier", question: "a different question?" }))) === "");
   await upd({ status: "working" });
-  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: edge.item.h, answer: "a" });
+  await api.call("board.item", { room: "A", action: "decide", project: "demoproj", h: edge.item.h, answer: "a" });
   await upd({ status: "done" });
   { const m = await me(); ok("EDGE decision answered mid-turn never blocks its end (only the still-open earlier decision may show)", m.status === "done" || (m.status === "blocked" && !(m.blocked_on || []).some((x) => x.includes(edge.item.h)) && !(m.blocked_on || []).some((x) => /bonk/.test(x))), JSON.stringify({ s: m.status, b: m.blocked_on })); }
 
@@ -135,48 +135,48 @@ try {
   // independent check: a board decision layered over a bonk cannot erase the bonk.
   await upd({ status: "working" });
   await upd({ status: "blocked", quiet: true, note: "held bonk" });
-  const both = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Edge layered decision", options: ["yes", "no"] });
-  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: both.item.h, answer: "a" });
+  const both = await dossier.call("board.item", { action: "add", project: "demoproj", section: "decide", text: "Edge layered decision", options: ["yes", "no"] });
+  await api.call("board.item", { room: "A", action: "decide", project: "demoproj", h: both.item.h, answer: "a" });
   await upd({ status: "done" }); await sleep(500);
   ok("EDGE answering decision leaves bonk held", (await me()).status === "blocked" && (await me()).takes_work === false && /a bonk/.test((await me()).blocked_on.join(" ")));
   await upd({ status: "working" }); await upd({ status: "done" });
 
   // ---- D) Angus answers the Decide item on the board
   await upd({ status: "working" });
-  const r2 = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "29. which seed?", options: ["1", "2"] });
+  const r2 = await dossier.call("board.item", { action: "add", project: "demoproj", section: "decide", text: "29. which seed?", options: ["1", "2"] });
   await upd({ status: "done" }); await sleep(200);
   a = await me();
-  ok("D blocked on the new decision, and on D1 (still open on the board: Angus answered it in chat only)", a.status === "blocked" && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @mathbac ${D}`, `decision @mathbac ${r2.item.h}`]), JSON.stringify(a.blocked_on));
-  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: r2.item.h, answer: "a" });
+  ok("D blocked on the new decision, and on D1 (still open on the board: Angus answered it in chat only)", a.status === "blocked" && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @demoproj ${D}`, `decision @demoproj ${r2.item.h}`]), JSON.stringify(a.blocked_on));
+  await api.call("board.item", { room: "A", action: "decide", project: "demoproj", h: r2.item.h, answer: "a" });
   await sleep(200);
   a = await me();
-  ok("D answering the new one leaves the × on D1 alone", a.status === "blocked" && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @mathbac ${D}`]), JSON.stringify(a.blocked_on));
-  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: D, answer: "a" });
+  ok("D answering the new one leaves the × on D1 alone", a.status === "blocked" && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @demoproj ${D}`]), JSON.stringify(a.blocked_on));
+  await api.call("board.item", { room: "A", action: "decide", project: "demoproj", h: D, answer: "a" });
   await sleep(200);
   a = await me();
   ok("D answering D1 on the board clears the ×", a.status === "idle" && a.run === "done" && !a.blocked_on, `${a.status}/${a.run}`);
 
   // Independent delta check: another agent's exact open question must be linked, not silently dropped.
-  await watcher.call("board.project", { action: "join", project: "mathbac" });
+  await watcher.call("board.project", { action: "join", project: "demoproj" });
   const sharedQ = "Shared edge question: which GPU do we choose?";
-  const shared = await watcher.call("board.item", { action: "add", project: "mathbac", section: "decide", text: sharedQ, options: ["A100", "L40S"] });
+  const shared = await watcher.call("board.item", { action: "add", project: "demoproj", section: "decide", text: sharedQ, options: ["A100", "L40S"] });
   await upd({ status: "working" });
   await upd({ status: "blocked", quiet: true, decision: sharedQ + " a) A100 b) L40S" });
   await upd({ status: "done" }); await sleep(700);
   a = await me();
   ok("DELTA duplicate decision remains visible until the existing board question is answered", a.status === "blocked" && (a.blocked_on || []).some(x => x.includes(shared.item.h)), JSON.stringify({ status: a.status, run: a.run, blocked_on: a.blocked_on }));
-  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: shared.item.h, answer: "a" });
+  await api.call("board.item", { room: "A", action: "decide", project: "demoproj", h: shared.item.h, answer: "a" });
   await upd({ status: "working" }); await upd({ status: "done" });
 
   // Independent regression: a different ding after a recent board decision is not filed by autoDecide.
   await upd({ status: "working" });
-  const skipped = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Edge seed question", options: ["1", "2"] });
+  const skipped = await dossier.call("board.item", { action: "add", project: "demoproj", section: "decide", text: "Edge seed question", options: ["1", "2"] });
   await upd({ status: "blocked", quiet: true, decision: "Different window-only question: which GPU? a) A100 b) L40S" });
   await upd({ status: "done" }); await sleep(400);
   a = await me();
   ok("REGRESSION unfiled ding must hold despite an existing board question", a.status === "blocked" && a.takes_work === false, JSON.stringify(a.blocked_on) + " takes_work=" + a.takes_work);
   ok("REGRESSION work must refuse for the unfiled ding", /is blocked/.test(await err(() => giveWork("must not reach unfiled ding"))));
-  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: skipped.item.h, answer: "a" });
+  await api.call("board.item", { room: "A", action: "decide", project: "demoproj", h: skipped.item.h, answer: "a" });
   await sleep(400);
   ok("REGRESSION answering seed must not erase different window-only question", (await me()).status === "blocked", (await me()).status);
   await upd({ status: "working" }); await upd({ status: "done" });
@@ -199,15 +199,15 @@ try {
   ok("G a ding mid-turn leaves it working", a.status === "working", a.status);
   await upd({ status: "done" }); await sleep(300);
   a = await me();
-  const gh = (await api.call("board.get", { room: "A" })).projects.find((x) => x.name === "mathbac").items.find((it) => it.sec === "decide" && /which GPU/.test(it.text))?.h;
-  ok("G at the turn's end: × on the filed decision, takes work", a.status === "blocked" && !!gh && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @mathbac ${gh}`]) && a.takes_work === true, JSON.stringify(a.blocked_on) + " " + gh);
-  await api.call("board.item", { room: "A", action: "decide", project: "mathbac", h: gh, answer: "b" });
+  const gh = (await api.call("board.get", { room: "A" })).projects.find((x) => x.name === "demoproj").items.find((it) => it.sec === "decide" && /which GPU/.test(it.text))?.h;
+  ok("G at the turn's end: × on the filed decision, takes work", a.status === "blocked" && !!gh && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @demoproj ${gh}`]) && a.takes_work === true, JSON.stringify(a.blocked_on) + " " + gh);
+  await api.call("board.item", { room: "A", action: "decide", project: "demoproj", h: gh, answer: "b" });
   await sleep(200);
   ok("G answering it clears the ×", (await me()).status === "idle");
 
   // ---- F) a daemon restart keeps what the × waits on
   await upd({ status: "working" });
-  const r3 = await dossier.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "31. 8B?", options: ["yes", "no"] });
+  const r3 = await dossier.call("board.item", { action: "add", project: "demoproj", section: "decide", text: "31. 8B?", options: ["yes", "no"] });
   await upd({ status: "done" }); await sleep(300);
   ok("F blocked before the restart", (await me()).status === "blocked");
   api.close?.(); dossier.close?.(); watcher.close?.();
@@ -218,8 +218,8 @@ try {
   await dossier.call("agent.update", { agent_id: "hp-dossier", status: "done", resync: true }); // what its extension re-states
   await sleep(700);
   a = (await api2.call("list")).agents.find((x) => x.id === "hp-dossier");
-  ok("F after the restart: still ×, waiting on the same decision, run done", a.status === "blocked" && a.run === "done" && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @mathbac ${r3.item.h}`]), JSON.stringify(a));
-  await api2.call("board.item", { room: "A", action: "decide", project: "mathbac", h: r3.item.h, answer: "b" });
+  ok("F after the restart: still ×, waiting on the same decision, run done", a.status === "blocked" && a.run === "done" && JSON.stringify(a.blocked_on) === JSON.stringify([`decision @demoproj ${r3.item.h}`]), JSON.stringify(a));
+  await api2.call("board.item", { room: "A", action: "decide", project: "demoproj", h: r3.item.h, answer: "b" });
   await sleep(200);
   a = (await api2.call("list")).agents.find((x) => x.id === "hp-dossier");
   ok("F answering it after the restart clears the × (it couldn't: openDings was lost)", a.status === "idle", a.status);
