@@ -42,11 +42,16 @@ try {
   ok("W1a no budget given + the old policy budgets/floor: no caps", JSON.stringify(r2.budget) === JSON.stringify(none), JSON.stringify(r2.budget));
   ok("W1a a big budget is ignored too: no caps", JSON.stringify(r3.budget) === JSON.stringify(none), JSON.stringify(r3.budget));
   // the child itself, as an older extension would talk: hello, then a cap hit
-  const kid = await connect({ path: sock, onEvent: () => {} });
+  const kev = []; const kid = await connect({ path: sock, onEvent: (ev, data) => kev.push({ ev, data }) });
   await kid.call("agent.hello", { agent_id: r1.id, pid: process.pid, name: r1.name, want_workspace: 32, cwd: T });
+  await sleep(2500);
+  const lifts = () => kev.filter((e) => e.ev === "orch.budget" && e.data?.budget?.tokens === 0 && e.data?.budget?.minutes === 0 && e.data?.resumed === true);
+  ok("W1b on (re)connect the child is sent 'no caps' (orch.budget 0/0, resumed): an older extension's cached caps are lifted", lifts().length >= 1, JSON.stringify(kev.map((e) => e.ev)));
   const me = await kid.call("orch.me", {});
   ok("W1b orch.me gives the child no caps", JSON.stringify(me?.budget) === JSON.stringify(none) && me?.status === "running", JSON.stringify(me));
+  const n0 = lifts().length;
   const hit = await kid.call("orch.budgetHit", { what: "time budget (25 min)" }); await sleep(800);
+  ok("W1b … and again when an older extension reports a cap, so a self-stopped one unblocks", lifts().length > n0);
   const all = (await c.call("orch.all", {})).children, mine = all.find((x) => x.id === r1.id);
   ok("W1b an older extension's cap hit is ignored: the child stays running", hit.ignored === true && mine.status === "running" && !/budget/.test(mine.state || ""), JSON.stringify({ hit, status: mine.status, state: mine.state }));
   const tl = fs.readdirSync(tlog).map((f) => fs.readFileSync(path.join(tlog, f), "utf8")).join("\n") + fs.readFileSync(path.join(T, "daemon.log"), "utf8");
