@@ -28,7 +28,7 @@ for (const [label, home] of [["live skill", null], ["no skill (fallback)", fs.mk
   check(`${label}: the 'which?' line names both`, /naming both/i.test(p));
   check(`${label}: no cap on open questions`, /(no limit on how many questions|any number of questions may be open)/i.test(p));
   check(`${label}: J568 lists that aren't questions get C1/F1/S1 labels, never bare numbers`, /aren't questions/i.test(p) && /C1/.test(p) && /bare numbers/i.test(p));
-  check(`${label}: J568 a clarifying either/or is a numbered question with full labels`, /clarifying either\/or/i.test(p) && /16a/.test(p) && /did you mean X or Y/i.test(p));
+  check(`${label}: J568 a clarifying either/or is a numbered question with its options stacked`, /clarifying either\/or/i.test(p) && /did you mean X or Y|this or that/i.test(p) && (label.startsWith("live") || (/stacked/.test(p) && !/16a\. …/.test(p)))); // (the live skill's own wording is flow-mode's file)
   check(`${label}: no old bare-letter / "2. Ship it" rule left`, !/lettered a, b, c/.test(p) && !/"2\. Ship it now/.test(p) && !/options 1, 2, 3"? style\)?\s*$/m.test(p.replace(/there is no separate "options 1, 2, 3" style/, "")));
 }
 { const skill = fs.readFileSync(path.join(os.homedir(), ".pi/agent/skills/numbered-questions/SKILL.md"), "utf8").split(/^## Rules\s*$/m)[1].replace(/^## (.*)$/gm, "$1:").trim();
