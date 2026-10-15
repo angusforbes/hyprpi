@@ -46,6 +46,11 @@ let fails = 0; const ok = (n, c, x = "") => { if (!c) fails++; console.log(`${c 
   ok("A again after a day if still unpromoted", sent.length === 2);
   w.forget("hp-anon1"); t += 25 * 3600e3; w.check();
   ok("A forget (after a promotion) clears its work count", sent.length === 2);
+  // (PromoteCheck F1) undefined / 0 overrides keep the defaults: one short turn is not enough
+  const C = [{ id: "hp-one", conn: {}, room: "D" }], s3 = [];
+  const w3 = createPromoteWatch({ agents: () => C, inProject: () => false, now: () => t, opts: { turns: undefined, minutes: 0 }, alert: (room, text) => s3.push(text) });
+  w3.onTurnEnd(C[0], 1000); w3.check();
+  ok("A undefined / 0 overrides keep the defaults (6 turns, 30 min): one short turn proposes nothing", s3.length === 0);
   // minutes alone are enough
   const B = [{ id: "hp-long", conn: {}, room: "E" }], s2 = [];
   const w2 = createPromoteWatch({ agents: () => B, inProject: () => false, now: () => t, alert: (room, text) => s2.push(text) });
@@ -95,6 +100,13 @@ try {
   ok("B W3 another world's Thoughts can't promote it", /world/.test(await err(() => api.call("thoughts.promote", { room: "E", agent: "pi·anon", name: "Vibe", project: "vibez" }))));
   ok("B W3 a name that's a project is refused", /project/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "memberproj", project: "vibez" }))));
   ok("B W3 a taken name is refused", /taken/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Atlas", project: "vibez" }))));
+  // (PromoteCheck F2) a refusal leaves the agent unchanged
+  const before = await anon.call("whoami", {});
+  ok("B W3 a one-letter project is refused …", /project name/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibe", project: "v" }))));
+  ok("B W3 … the same name for agent and project is refused …", /share a name/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibez", project: "vibez" }))));
+  ok("B W3 … a bad project icon is refused …", /icon/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibe", project: "vibez", project_icon: "abc" }))));
+  const after = await anon.call("whoami", {}), b0 = await api.call("board.get", { room: "D" });
+  ok("B W3 … and none of them renamed the agent or made a project", after.name === before.name && !after.name && !b0.projects.some((x) => ["v", "vibez"].includes(x.name)), JSON.stringify({ name: after.name }));
   got["hp-anon"].length = 0;
   const r = await api.call("thoughts.promote", { room: "D", agent: "pi·anon", name: "Vibe", icon: "🎹", project: "vibez", title: "vibezAI: music toy" });
   await sleep(400);
