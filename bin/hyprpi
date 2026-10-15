@@ -50,6 +50,8 @@ const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrl
                               members (slots kept) unless they are also on another project
   hyprpi name NAME [--fg #rrggbb]   set this agent's name (herdr-name compatible)
   hyprpi whoami               this agent (inside a hyprpi agent)
+  hyprpi project-of [--ensure] the project this agent works for and its folder (~/Obsidian/Projects/<name>), or nothing
+  hyprpi project-handoff FILE  link a handoff report in that folder from the project's card
   hyprpi status STATE [--quiet]  set this agent's status (bonk sets blocked; raised mid-turn, the × shows when the turn ends (J601); its × clears like ✓, on a click or typing in the window)
   hyprpi status [FOCUS] [--world X] [--self] [--json]   the /status facts: running jobs, recently done, waiting on
                               you, restarts, unpushed commits (FOCUS: a project or agent; --self: this agent's own)
@@ -739,6 +741,20 @@ const commands = {
   // Called by the Hyprland click hook with the clicked window's address.
   seen: async () => { if (!args[0]) die("usage: hyprpi seen WINDOW_ADDRESS"); console.log(JSON.stringify(await request("agent.seen", { address: args[0] }))); },
   whoami: async () => console.log(JSON.stringify(await request("whoami", { agent_id: agentId() }), null, 1)),
+  // J651 (P12): the project this agent works for (owner, or task agent of a project agent): "name<TAB>folder<TAB>role", or
+  // nothing for a loose agent (exit 0 either way). --ensure creates the folder. Used by /handoff (pi-agent-forum's projectOf).
+  "project-of": async () => {
+    if (!process.env.HYPRPI_AGENT_ID) return; // not a hyprpi agent: no project
+    let r; try { r = await request("agent.project", { agent_id: agentId(), ensure: flag("--ensure") }, { timeout: 1500, timeoutMs: 3000 }); } catch { return; }
+    if (!r?.project) return;
+    console.log(flag("--json") ? JSON.stringify(r) : `${r.project}\t${r.folder}\t${r.role}`);
+  },
+  // J651: record a handoff report written into the project's folder: the card links the folder and the report
+  "project-handoff": async () => {
+    const f = args.filter((x) => !x.startsWith("--"))[0]; if (!f) die("usage: hyprpi project-handoff REPORT.md (a file in your project's folder)");
+    const r = await request("project.handoff", { agent_id: agentId(), report: path.resolve(f.replace(/^~(?=\/)/, os.homedir())) });
+    console.log(`@${r.project}: the card links ${r.folder}/ and the report ${r.handoff}`);
+  },
 };
 
 // J566 (Angus, 27a): inside a guarded test run (test/run.mjs or a test's requireSandbox: HYPRPI_TEST_GUARD=1) hyprpi never acts on
