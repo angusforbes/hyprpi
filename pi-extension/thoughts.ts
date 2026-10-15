@@ -144,6 +144,26 @@ export default function thoughts(pi: ExtensionAPI) {
     },
   });
 
+  // J622 (Angus: "a task agent can be promoted to become a project agent")
+  pi.registerTool({
+    name: "promote_agent",
+    label: "Promote an agent to a project",
+    description: "Promote an agent whose work has become project-level (often one Angus opened just to talk: no name, no project) to a project agent: give it a name and icon, put it in a project (a new one with this name, an archived one reopened, or an existing one) and make it the owner (writer). Its session and context are kept: no restart. Its running loose jobs move to the project. Use it when an agent tells you its work is project-level, or a [board care] message says an unnamed agent has done sustained work and its answer (ask_agent) confirms it. Pick a short unique name (not a project's name) and a fitting emoji; the project is a short slug.",
+    promptSnippet: "Promote an agent to a named project owner",
+    parameters: Type.Object({
+      agent: Type.String({ description: "the live agent, e.g. pi·41kn" }),
+      name: Type.String({ description: "its new name, e.g. Vibe" }),
+      icon: Type.Optional(Type.String({ description: "one emoji for the agent" })),
+      project: Type.String({ description: "@name of a new or existing project (short slug)" }),
+      title: Type.Optional(Type.String({ description: "a new project's one-line description" })),
+      project_icon: Type.Optional(Type.String({ description: "a new project's emoji (else one is picked)" })),
+    }, { additionalProperties: false }),
+    execute: async (_id: string, p: any) => {
+      const r: any = await call("thoughts.promote", p);
+      return out(`${r.was} is now ${r.icon ? r.icon + " " : ""}${r.agent}, owner of @${r.project} (${r.made})${r.moved?.length ? `; its jobs moved: ${r.moved.join(", ")}` : ""}. It was told in its window.`, { action: `promoted ${r.was} to ${r.agent} (@${r.project})` });
+    },
+  });
+
   pi.registerTool({
     name: "tidy_projects",
     label: "Tidy projects",
