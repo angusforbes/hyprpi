@@ -143,6 +143,7 @@ let d = null;
 const lines = (f) => { try { return fs.readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 const rounds = () => lines(PUSH).filter((p) => String(p.key).startsWith("decision:remind:"));
 const err = async (f) => { try { await f(); return ""; } catch (e) { return e.message; } };
+const waitFor = async (f, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if (f()) return true; await sleep(100); } return false; }; // (a loaded machine: poll, don't guess)
 try {
   d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(S, "d.log"), "a"), fs.openSync(path.join(S, "d.err"), "a")] });
   for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await sleep(200);
@@ -158,7 +159,7 @@ try {
   ok("B the item keeps its level", r1.item.importance === "important" && !r2.item.importance && !r3.item.importance);
   const first = lines(PUSH).filter((p) => String(p.key).startsWith("decision:decide:")).length;
   ok("B each decision got its usual one push", first === 3, String(first));
-  await sleep(EVERY_MIN * 60e3 + 900);
+  await waitFor(() => rounds().length >= 1);
   let R = rounds();
   ok("B a round arrives after the interval, one push with both important decisions, not the normal one", R.length === 1 && /@hyprpi D1/.test(R[0].message) && /@mathbac D1/.test(R[0].message) && !/A normal one/.test(R[0].message), JSON.stringify(R.map((x) => x.message)));
   ok("B the round's title", /Reminder: 2 important decisions waiting/.test(R[0].title), R[0]?.title);
@@ -166,7 +167,7 @@ try {
   // Thoughts stops one on Angus's word
   const s1 = await api.call("thoughts.remind", { room: "A", project: "mathbac", h: r2.item.h, reminders: "stop" });
   ok("B Thoughts stops a decision's reminders", /reminders stopped/.test(s1.said), JSON.stringify(s1));
-  const n1 = rounds().length; await sleep(EVERY_MIN * 60e3 + 600);
+  const n1 = rounds().length; await waitFor(() => rounds().length > n1);
   R = rounds().slice(n1);
   ok("B the next round leaves the stopped one out", R.length >= 1 && R.every((x) => !/@mathbac/.test(x.message)) && /@hyprpi D1/.test(R[0].message), JSON.stringify(R.map((x) => x.message)));
   // the agent snoozes, then resumes (board_update edit)
@@ -180,10 +181,10 @@ try {
   const txt = boardText(g, (id) => id);
   ok("B board_read marks the level and the state", /D1 Ship the box now\?.*\[important\].*\[reminders snoozed until/.test(txt) && /Next run\?.*\[reminders stopped\]/.test(txt), txt.split("\n").filter((l) => /Ship|Next run/.test(l)).join(" | "));
   await ag.call("board.item", { action: "edit", project: "hyprpi", h: r1.item.h, reminders: "resume" });
-  await sleep(EVERY_MIN * 60e3 + 600);
+  await waitFor(() => rounds().slice(n2).some((x) => /@hyprpi D1/.test(x.message)));
   ok("B resume brings it back", rounds().slice(n2).some((x) => /@hyprpi D1/.test(x.message)));
   // the cap (3 rounds here): the last one says no more reminders
-  await sleep(3 * (EVERY_MIN * 60e3) + 1200);
+  await waitFor(() => rounds().some((x) => /no more reminders/i.test(x.title)), 20000);
   const last = rounds().filter((x) => /@hyprpi D1/.test(x.message)).pop();
   ok("B after the cap: the last round says so, and no more come", /no more reminders/i.test(last.title + last.message), last.title);
   const n3 = rounds().length; await sleep(EVERY_MIN * 60e3 + 600);
@@ -191,7 +192,7 @@ try {
   // Angus raises the normal one on the card (the panel's /important = board.item edit as Angus), then answers it
   const s3 = await api.call("board.item", { room: "A", action: "edit", project: "hyprpi", h: r3.item.h, importance: "important" });
   ok("B Angus can make a decision important on the card", s3.item.importance === "important");
-  await sleep(EVERY_MIN * 60e3 + 600);
+  await waitFor(() => rounds().some((x) => /A normal one/.test(x.message)));
   const n4 = rounds().length;
   ok("B …and it's reminded", rounds().some((x) => /A normal one/.test(x.message)));
   await api.call("board.item", { room: "A", action: "decide", project: "hyprpi", h: r3.item.h, answer: "a" });
