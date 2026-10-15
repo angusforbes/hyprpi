@@ -155,7 +155,7 @@ export function quietOrch(message: any, expanded: boolean, theme: any): any | nu
   const d = message?.details ?? {};
   if (expanded || !d.orch_child) return null;
   const raw = String(message?.content ?? "");
-  const who = raw.match(/^\[report from ([^\s(]+)/)?.[1] || d.orch_child;
+  const who = raw.match(/^\[report from (.+?) \(/)?.[1] || d.orch_child;
   const body = raw.replace(/^\[report from[^\n]*\]\n/, "").replace(/\n\n\((Done|Not finished)[^)]*\)\s*$/, "");
   return lines([[`↩ report from ${who}${d.orch_final ? " (final)" : ""} · ${brief(body, 200, who)}`, (t) => theme.fg("dim", t)]], 1);
 }
