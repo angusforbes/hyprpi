@@ -74,8 +74,12 @@ try {
     if (SHOTS) fs.writeFileSync(path.join(SHOTS, `${file.replace(/\.mjs$/, "")}-${room}.ansi`), raw);
     return raw;
   };
-  // the last 24-bit foreground set before "@name" (the icon and bold codes may sit between): neutral grey = parked
-  const greyish = (raw, name) => { const i = raw.lastIndexOf("@" + name); if (i < 0) return null; const cs = [...raw.slice(Math.max(0, i - 200), i).matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g)]; if (!cs.length) return null; const [r, g, b] = cs.at(-1).slice(1).map(Number); return Math.max(r, g, b) - Math.min(r, g, b) < 40; };
+  // the foreground in force at "@name": replay the SGR codes before it (0 and 39 reset; 38;2;r;g;b sets): neutral grey = parked,
+  // null = the default colour (ParkedCheck: a bare "last 38;2 before" read the ◌ mark's grey instead of the name's)
+  const fgAt = (raw, name) => { const i = raw.lastIndexOf("@" + name); if (i < 0) return undefined; const from = raw.lastIndexOf("\n", i); let cur = null;
+    for (const m of raw.slice(Math.max(0, from), i).matchAll(/\x1b\[([0-9;]*)m/g)) { const ps = m[1].split(";"); for (let k = 0; k < ps.length; k++) { if (ps[k] === "" || ps[k] === "0" || ps[k] === "39") cur = null; else if (ps[k] === "38" && ps[k + 1] === "2") { cur = ps.slice(k + 2, k + 5).map(Number); k += 4; } } }
+    return cur; };
+  const greyish = (raw, name) => { const c = fgAt(raw, name); if (!c) return c === null ? false : null; return Math.max(...c) - Math.min(...c) < 40; };
   const bt = await panel("board-tui.mjs", "D");
   ok("B board panel D: @sleepy is drawn with ⏸ parked", /@sleepy[^\n]{0,40}⏸ parked/.test(bt.replace(/\x1b\[[0-9;]*m/g, "")), "");
   ok("B board panel D: @sleepy's name is grey (a neutral 24-bit colour)", greyish(bt, "sleepy") === true);
@@ -86,7 +90,7 @@ try {
   const atp = at.replace(/\x1b\[[0-9;]*m/g, "");
   ok("B agents panel D: @sleepy's row starts with ⏸", /⏸ +📦 +@sleepy/.test(atp), (atp.match(/.{0,10}@sleepy.{0,10}/) || [""])[0]);
   ok("B agents panel D: @sleepy's name is grey", greyish(at, "sleepy") === true);
-  ok("B agents panel D: @alive has no ⏸", !/⏸ +📦 +@alive/.test(atp));
+  ok("B agents panel D: @alive has no ⏸ and isn't grey (its name in the panel's normal colour, as before)", !/⏸ +📦 +@alive/.test(atp) && greyish(at, "alive") === false);
   api.close?.(); agent.close?.();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { for (const k of kids) { try { k.kill("SIGKILL"); } catch { /* gone */ } } d.kill(); }
