@@ -74,13 +74,22 @@ alert() { # $1 = text; both channels, each best effort; fails (1) when neither d
 }
 
 # New PNGs from the box's ~/workspace/outputs into $1 (plain names only, ones not already there). -> exit code; prints how many.
+# J663 (no silent success): they arrive in a staging folder in $1 (named *.unison.tmp, which the sync ignores) and are moved in
+# only when the whole copy succeeded: a copy cut off half way used to leave a truncated PNG that counted as "already there", was
+# never copied again and was synced on to the box. A PNG changed in the last 10 s (still being written) waits for the next run.
 pull_ssh() {
-  local dest="$1" box="$2" names n new=()
-  names=$(timeout 120 ssh $SSHARGS "$box" "cd ~/workspace/outputs 2>/dev/null && python3 -c 'import os,re; [print(f) for f in sorted(os.listdir(\".\")) if re.fullmatch(r\"[A-Za-z0-9][A-Za-z0-9._-]*[.]png\", f) and os.path.isfile(f)]' || true" 2>/dev/null) || return 3
+  local dest="$1" box="$2" names n new=() stage moved=0
+  find "$dest" -maxdepth 1 -name '.images-*.unison.tmp' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null # (a run killed mid-copy)
+  names=$(timeout 120 ssh $SSHARGS "$box" "cd ~/workspace/outputs 2>/dev/null && python3 -c 'import os,re,time; [print(f) for f in sorted(os.listdir(\".\")) if re.fullmatch(r\"[A-Za-z0-9][A-Za-z0-9._-]*[.]png\", f) and os.path.isfile(f) and time.time() - os.path.getmtime(f) > 10]' || true" 2>/dev/null) || return 3
   while IFS= read -r n; do n="${n%$'\r'}"; [[ "$n" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.png$ && ! -e "$dest/$n" ]] && new+=("$n"); done <<< "$names"
   (( ${#new[@]} )) || { echo 0; return 0; }
-  timeout 300 ssh $SSHARGS "$box" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$dest" || return 4
-  echo "${#new[@]}"
+  stage=$(mktemp -d "$dest/.images-XXXXXX.unison.tmp") || return 4
+  if ! timeout 300 ssh $SSHARGS "$box" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$stage"; then
+    rm -rf "$stage"; echo "copying ${#new[@]} new image(s) was cut off: none kept, the next run copies them again"; return 4
+  fi
+  for n in "${new[@]}"; do [[ -f "$stage/$n" && ! -e "$dest/$n" ]] && mv -n "$stage/$n" "$dest/$n" && moved=$((moved + 1)); done
+  rm -rf "$stage"
+  echo "$moved"
 }
 
 any_failed=0

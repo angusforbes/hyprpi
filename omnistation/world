@@ -228,12 +228,21 @@ case "$cmd" in
   images)
     # J483: copy the remote machine's new generated images (~/workspace/outputs: brev-image's PNGs) to ~/Brev and
     # print each as a file:// link. Only plain names (letters, digits, . _ -; brev-image makes no others) are copied.
+    # J663 (no silent success): a copy cut off half way (ssh drop, timeout) used to leave a truncated PNG in $dest, which then
+    # counted as "already there" and was never copied again; now the images arrive in a private staging folder in $dest (named
+    # *.unison.tmp, which brev-sync's Unison ignores) and are moved in only when the whole transfer succeeded; a failure says so
+    # and keeps nothing, so the next run copies them again. A PNG changed in the last 10 s (still being written) waits a run.
     dest="${HYPRPI_IMAGES_DIR:-$HOME/Brev}"; mkdir -p "$dest"
-    names=$("${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && python3 -c 'import os,re; [print(f) for f in sorted(os.listdir(\".\")) if re.fullmatch(r\"[A-Za-z0-9][A-Za-z0-9._-]*[.]png\", f) and os.path.isfile(f)]' || true" 2>/dev/null) || { echo "world: couldn't reach world $WL's machine (ssh failed)" >&2; exit 3; }  # (review) whole names only: one with a newline in it never matches
+    find "$dest" -maxdepth 1 -name '.images-*.unison.tmp' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true # (a run killed mid-copy)
+    names=$("${SSH[@]}" "cd ~/workspace/outputs 2>/dev/null && python3 -c 'import os,re,time; [print(f) for f in sorted(os.listdir(\".\")) if re.fullmatch(r\"[A-Za-z0-9][A-Za-z0-9._-]*[.]png\", f) and os.path.isfile(f) and time.time() - os.path.getmtime(f) > 10]' || true" 2>/dev/null) || { echo "world: couldn't reach world $WL's machine (ssh failed)" >&2; exit 3; }  # (review) whole names only: one with a newline in it never matches
     new=(); while IFS= read -r n; do n="${n%$'\r'}"; [[ "$n" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.png$ && ! -e "$dest/$n" ]] && new+=("$n"); done <<< "$names"
     (( ${#new[@]} )) || { echo "no new images on world $WL"; exit 0; }
-    "${SSH[@]}" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$dest"
-    for n in "${new[@]}"; do [[ -f "$dest/$n" ]] && echo "file://$dest/$n"; done ;;
+    stage=$(mktemp -d "$dest/.images-XXXXXX.unison.tmp")
+    if ! "${SSH[@]}" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$stage"; then
+      rm -rf "$stage"; echo "world: copying ${#new[@]} new image(s) from world $WL's machine failed (cut off?): none kept; the next run copies them again" >&2; exit 3
+    fi
+    for n in "${new[@]}"; do [[ -f "$stage/$n" && ! -e "$dest/$n" ]] && mv -n "$stage/$n" "$dest/$n" && [[ -f "$dest/$n" ]] && echo "file://$dest/$n"; done
+    rm -rf "$stage" ;;
   restart-daemon) "${SSH[@]}" "$R restart-daemon" ;; # J530: by its lock file's pid only (remote.sh), the agents keep running
   thoughts-relay)
     # J530: a message (JSON on stdin) for this world's Thoughts, which lives on the remote machine; prints its answer (JSON).
