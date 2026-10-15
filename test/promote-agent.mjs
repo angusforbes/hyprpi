@@ -139,6 +139,13 @@ try {
   const flowB = await fake("hp-flowb", "", 36);
   const rk = await api.call("thoughts.promote", { room: "D", agent: "pi·lowb", name: "Memberproj", project: "memberproj" });
   ok("J638 W1 promoting to the name of an EXISTING project it is made owner of works too", rk.agent === "Memberproj" && rk.made === "joined" && (await api.call("board.get", { room: "D" })).projects.find((x) => x.name === "memberproj").writer === "hp-flowb", JSON.stringify(rk));
+  // (SameNameCheck) an emoji-led name: the emoji is the icon, the rest the name; checked before anything changes
+  const flowC = await fake("hp-flowc", "", 37);
+  ok("J638 W1 '🌊 Vibez' (an emoji, then another project's name) is refused up front", /is a project on the board/.test(await err(() => api.call("thoughts.promote", { room: "D", agent: "pi·lowc", name: "🌊 Vibez", project: "ripple" }))) && !(await api.call("board.get", { room: "D" })).projects.some((x) => x.name === "ripple"));
+  const rc = await api.call("thoughts.promote", { room: "D", agent: "pi·lowc", name: "🌀 Ripple", project: "ripple" });
+  const wc = await flowC.call("whoami", {});
+  ok("J638 W1 '🌀 Ripple' owning @ripple: name Ripple, icon 🌀", wc.name === "Ripple" && wc.icon === "🌀" && rc.made === "created", JSON.stringify(wc));
+  flowC.close?.();
   // W2: routing
   got["hp-flowa"].length = 0;
   const ask = await api.call("thoughts.ask", { room: "D", agent: "Flow", question: "how is the pilot going?" }); await sleep(300);

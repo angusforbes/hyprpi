@@ -887,7 +887,9 @@ export default function hyprpi(pi: ExtensionAPI) {
       const n = raw.trim().replace(/[,;]+$/, "");
       if (!n) continue;
       const bare = n.replace(/^@/, ""), low = bare.toLowerCase();
-      const agent = n.startsWith("@") && n.length > 1 && !all.some((a) => (a.name || "").toLowerCase() === low) ? null
+      // J638: "@flow" is the project when one has that name (agent Flow may own @flow); a bare "Flow" is the agent
+      const atProject = n.startsWith("@") && n.length > 1 && (await getProjects()).some((x) => String(x.name).toLowerCase() === low);
+      const agent = atProject || (n.startsWith("@") && n.length > 1 && !all.some((a) => (a.name || "").toLowerCase() === low)) ? null
         : all.find((a) => a.id === bare || (a.name || "").toLowerCase() === low || (a.display || "").toLowerCase() === low);
       if (agent) { targets.push({ kind: "agent", label: agent.display || agent.name || agent.id, id: agent.id, address: agent.address || undefined, ws: agent.workspace }); continue; }
       const pm = n.startsWith("@") ? null : bare.match(PANEL_RE);
