@@ -12,14 +12,14 @@ const INLINE = new RegExp(String.raw`<<-?\s*['"]?[A-Za-z_]\w*|(?:^|[\s;&|(/])${I
 const BODY = new RegExp(String.raw`((?:^|[\s;&|(/])(${INTERP})${OPTS}\s+(?:-[A-Za-z]*[ceE]|--eval|--command)\s*)(?:'([^']*)'|"((?:[^"\\]|\\[\s\S])*)")`, "g");
 
 // Quoted text with spaces is data (a commit message that mentions "<<EOF" or "node -e"), unless it is a -c/-e body.
-const noData = (t: string) => t.replace(BODY, (_m, pre) => `${pre} X`).replace(/'[^'\n]*\s[^'\n]*'|"[^"\n]*\s[^"\n]*"/g, '""');
+const noData = (t: string) => t.replace(BODY, (_m, pre) => `${pre} X`).replace(/(<<-?\s*)?('[^'\n]{0,600}'|"[^"\n]{0,600}")/g, (m, doc) => (doc ? m : '""'));
 export function isInlineScript(command: string): boolean {
   const t = String(command ?? "");
   return t.length > 0 && INLINE.test(noData(t));
 }
 
 const isShell = (interp: string) => /^(?:bash|sh|zsh|dash)$/.test(interp);
-type Ev = { shell?: string; code?: string };
+type Ev = { shell?: string; code?: string; child?: boolean }; // child: bash -c / bash <<EOF (its cd stays inside)
 // The command as events in order: shell lines, and code (heredoc bodies fed to an interpreter, -c/-e strings).
 // Bodies of `cat > f <<EOF` are data: skipped. bash -c '…' and `bash <<EOF` bodies are more shell.
 function events(command: string): Ev[] {
@@ -34,7 +34,7 @@ function events(command: string): Ev[] {
       const m = /^\u0002(\d+)\u0002$/.exec(part);
       if (!m) { if (part.trim()) out.push({ shell: part }); continue; }
       const b = bodies[+m[1]];
-      out.push(isShell(b.interp) ? { shell: b.text.split("\n").join(" ; ") } : { code: b.text });
+      out.push(isShell(b.interp) ? { shell: b.text.split("\n").join(" ; "), child: true } : { code: b.text });
     }
     for (const d of [...row.matchAll(/<<(-?)\s*(['"]?)([A-Za-z_]\w*)\2/g)]) {
       const body: string[] = [];
@@ -45,7 +45,7 @@ function events(command: string): Ev[] {
       }
       const last = row.slice(0, d.index).split(/[;&|]/).pop() ?? "";
       const it = new RegExp(String.raw`(?:^|[\s/])(${INTERP})\b`).exec(last);
-      if (it) out.push(isShell(it[1]) ? { shell: body.join(" ; ") } : { code: body.join("\n") });
+      if (it) out.push(isShell(it[1]) ? { shell: body.join(" ; "), child: true } : { code: body.join("\n") });
     }
   }
   return out;
@@ -59,7 +59,8 @@ function codeWrites(code: string): string[] {
   const assigns = new Map<string, Array<[number, string | undefined]>>();
   const vars = { set: (k: string, v: string | undefined, at = 0) => { const l = assigns.get(k) ?? []; l.push([at, v]); assigns.set(k, l); }, delete: (k: string, at = 0) => vars.set(k, undefined, at) };
   let at = 0; // position of the match being resolved
-  const lookup = (k: string) => { let v: string | undefined; for (const [pos, val] of assigns.get(k) ?? []) if (pos <= at) v = val; return v; };
+  const lookup = (k: string) => { let v: string | undefined; for (const [pos, val] of [...(assigns.get(k) ?? [])].sort((a, b) => a[0] - b[0])) if (pos <= at) v = val; return v; };
+  for (const m of code.matchAll(/(?:^|[\s;(,])(?:const |let |var )?([A-Za-z_]\w*)\s*(?:[-+*/|&]?=)(?!=)/gm)) vars.delete(m[1], m.index); // p = compute(): unknown
   for (const m of code.matchAll(new RegExp(String.raw`(?:^|[\s;(,])(?:const |let |var )?([A-Za-z_]\w*)\s*=\s*(?:Path\(|os\.path\.expanduser\()?\s*` + STR + String.raw`\s*\)?\s*(?:$|[;\n,)])`, "gm"))) vars.set(m[1], s(m, 2), m.index);
   // x = path.join('a', 'b') / os.path.join(…) / Path('a') / 'b': only when every part is a literal
   for (const m of code.matchAll(/(?:^|[\s;(,])(?:const |let |var )?([A-Za-z_]\w*)\s*=\s*(?:path\.join|os\.path\.join|path\.resolve)\(([^)\n]{0,300})\)/gm)) {
@@ -82,7 +83,7 @@ function codeWrites(code: string): string[] {
   each(/\b(?:shutil\.(?:copy2?|copyfile|move|copytree)|os\.(?:replace|rename))\(([^,\n]{1,300}),([^)\n]{1,300})\)/g, (m) => { add(target(m[2])); });
   each(/\bos\.(?:remove|unlink)\(([^)\n]{1,300})\)/g, (m) => { add(target(m[1])); });
   // node: fs.writeFileSync / appendFileSync / writeFile / copyFileSync(src, dst) / renameSync(src, dst) / rmSync / mkdirSync
-  each(/\b(?:writeFileSync|appendFileSync|writeFile|appendFile|rmSync|unlinkSync|createWriteStream)\(([^\n]{0,300})/g, (m) => { add(target(m[1])); });
+  each(/\b(?:writeFileSync|appendFileSync|writeFile|appendFile|rmSync|unlinkSync|createWriteStream)\((?=([^\n]{0,300}))/g, (m) => { add(target(m[1])); });
   each(/\b(?:copyFileSync|renameSync|copyFile|rename|cpSync)\([^,\n]{1,300},([^)\n]{1,300})\)/g, (m) => { add(target(m[1])); });
   return found;
 }
@@ -98,11 +99,16 @@ function shellLineWrites(line: string, st: Shell): string[] {
   const paths: string[] = [];
   const sub = (w: string) => w.replace(/\$\{?([A-Za-z_]\w*)\}?/g, (m, v) => st.vars.get(v) ?? m);
   for (const seg of segments(line)) {
+    const start = paths.length;
+    try { shellSeg(seg); } finally { for (let k = start; k < paths.length; k++) paths[k] = pretty(paths[k].replace(/["']/g, ""), st.cwd); } // the cwd of this segment
+  }
+  return paths;
+  function shellSeg(seg: string) {
     const words = seg.trim().match(/(?:'[^']*'|"(?:[^"\\]|\\.)*"|\$\([^)]*\)|[^\s'"])+/g) ?? [];
-    if (!words.length) continue;
-    if (words[0] === "cd" && words[1]) { const d = sub(unquote(words[1])); st.cwd = /^[~/$]/.test(d) || !st.cwd ? d : `${st.cwd.replace(/\/$/, "")}/${d}`; continue; }
+    if (!words.length) return;
+    if (words[0] === "cd" && words[1]) { const d = sub(unquote(words[1])); st.cwd = /^[~/$]/.test(d) || !st.cwd ? d : `${st.cwd.replace(/\/$/, "")}/${d}`; return; }
     const asg = /^([A-Za-z_]\w*)=(.+)$/.exec(words[0]);
-    if (asg && words.length === 1) { st.vars.set(asg[1], sub(unquote(asg[2]))); continue; }
+    if (asg && words.length === 1) { st.vars.set(asg[1], sub(unquote(asg[2]))); return; }
     while (words.length && /^(sudo|env|command|nohup|timeout|nice|[A-Za-z_]\w*=\S*|-\S+|\d+[smh]?)$/.test(words[0]) && words.length > 1) words.shift();
     for (let i = 0; i < words.length; i++) words[i] = sub(words[i]);
     for (let i = 0; i < words.length; i++) {
@@ -116,7 +122,6 @@ function shellLineWrites(line: string, st: Shell): string[] {
     else if (cmd === "sed" && words.some((w) => /^-[a-zA-Z]*i/.test(w) || w === "--in-place") && args.length >= 2) paths.push(args[args.length - 1]);
     else if ((cmd === "touch" || cmd === "rm" || cmd === "truncate") && args.length) paths.push(...args);
   }
-  return paths;
 }
 
 const HOME = os.homedir();
@@ -142,8 +147,8 @@ export function scriptWrites(command: string): string[] {
   const st: Shell = { vars: new Map() };
   const all: string[] = [];
   for (const ev of events(String(command ?? ""))) {
-    const found = ev.shell !== undefined ? shellLineWrites(ev.shell, st) : codeWrites(ev.code ?? "");
-    for (const p of found.map(clean)) if (usable(p)) all.push(pretty(p, st.cwd)); // relative to the cwd at that point
+    const found = ev.shell !== undefined ? shellLineWrites(ev.shell, ev.child ? { cwd: st.cwd, vars: new Map(st.vars) } : st) : codeWrites(ev.code ?? "");
+    for (const p of found.map(clean)) if (usable(p)) all.push(ev.shell !== undefined ? p : pretty(p, st.cwd)); // shell paths come resolved
   }
   const out = [...new Set(all)];
   // backups and scratch files only when nothing else was written
@@ -153,10 +158,18 @@ export function scriptWrites(command: string): string[] {
 }
 
 const MAX = 64_000; // longer commands: label from the first 64 KB (it runs on every render of a bash change)
+const memo = new Map<string, string | null>(); // the same call is drawn again on every redraw
 export function scriptLabel(command: string): string | null {
   command = String(command ?? "");
-  if (command.length > MAX) command = command.slice(0, MAX);
+  if (memo.has(command)) return memo.get(command)!;
+  const label = computeLabel(command);
+  if (memo.size >= 200) memo.delete(memo.keys().next().value!);
+  memo.set(command, label);
+  return label;
+}
+function computeLabel(command: string): string | null {
   if (!isInlineScript(command)) return null;
+  if (command.length > MAX) command = command.slice(0, MAX);
   const paths = scriptWrites(command);
   if (!paths.length) return "ran a script that changed files";
   const shown = paths.slice(0, 2).join(", ");

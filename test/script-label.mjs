@@ -69,3 +69,14 @@ for (const [cmd, want] of [
 { const c = "python3 - <<EOF\n# " + "open(".repeat(40000) + "\nEOF"; const t0 = performance.now(); scriptLabel(c); const ms = performance.now() - t0; assert.ok(ms < 100, `open( x40000: ${ms} ms`); console.log(`script-label: open( x40000 in ${ms.toFixed(1)} ms`); }
 assert.equal(scriptLabel(`python3 -c"open('out.txt','w')"`), "changed out.txt");
 console.log("script-label: round 2 ok");
+for (const [cmd, want] of [ // LabelCheck660 round 2
+  ["git commit -m '<<EOF'", null],
+  ["bash -c 'cd /home/x/first; echo hi > a.txt; cd /home/x/second; echo hi > b.txt'", "changed /home/x/first/a.txt, /home/x/second/b.txt"],
+  ["cd /home/x/first; bash -c 'cd /home/x/second; echo hi > a.txt'; python3 - <<'EOF'\nopen('b.txt','w').write('x')\nEOF", "changed /home/x/second/a.txt, /home/x/first/b.txt"],
+  ["python3 - <<'EOF'\np='a.txt'\np=compute_path()\nopen(p,'w').write('x')\nEOF", "ran a script that changed files"],
+  ["python3 - <<'EOF'\np='a.txt'\nopen(p,'w')\np += '.x'\nEOF", "changed a.txt"],
+  ["#" + "x".repeat(65000) + "\nnode -e \"require('fs').writeFileSync('out.json','{}')\"", "ran a script that changed files"],
+  ["node -e \"fs.writeFileSync('a.txt','x');fs.writeFileSync('b.txt','y')\"", "changed a.txt, b.txt"],
+]) assert.equal(scriptLabel(cmd), want, JSON.stringify(cmd.slice(0, 120)));
+{ const c = "#" + "x".repeat(200000) + "\nnode -e x"; const t0 = performance.now(); scriptLabel(c); const ms = performance.now() - t0; assert.ok(ms < 100, `${ms}`); }
+console.log("script-label: round 3 ok");
