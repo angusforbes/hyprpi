@@ -92,7 +92,7 @@ const M = 60e3;
     p2.items.push({ h: "D1", sec: "decide", text: "x", ts: t2, importance: "important" });
     t2 += 1 * M; p2.items.push({ h: "D2", sec: "decide", text: "y", ts: t2, importance: "important" });
     for (let i = 0; i < 30; i++) { t2 += 1 * M; R3.tick(); } // 30 minutes, ticking every minute
-    ok("A staggered items share rounds: 3 rounds in 30 min, each with both, none a minute after another", P2.length === 3 && P2.every((x) => /D1/.test(x.text) && /D2/.test(x.text)), String(P2.length));
+    ok("A staggered items (filed a minute apart): rounds 10 min apart, D2 joins once its own push is 10 min old", P2.length === 3 && /D1/.test(P2[0].text) && !/D2/.test(P2[0].text) && P2.slice(1).every((x) => /D1/.test(x.text) && /D2/.test(x.text)), P2.map((x) => x.text.split("\n").filter((l) => /@x/.test(l)).map((l) => l.split(" ")[2]).join("+")).join(" | "));
     // the phone's hourly cap drops a round: nothing counted, retried next minute, the last push isn't lost
     let limited = true; const P3 = [];
     const R4 = createReminders({ stateFile: path.join(T, "r4.json"), boards: () => [{ room: "C", projects: [p2] }], policy: () => ({ remindEveryMin: 10, remindRounds: 2, toast: true }), push: (k, i) => limited ? { sent: false, why: "over maxPerHour (12)" } : (P3.push(i), { sent: true }), toast: () => P3.push({ toast: true }), now: () => t2 });
@@ -102,6 +102,25 @@ const M = 60e3;
     ok("A …and goes out at the next tick once the cap allows", P3.filter((x) => !x.toast).length === 1 && R4.state().items["C:p-x:D1"]?.rounds === 1);
     for (let i = 0; i < 30; i++) { t2 += 1 * M; R4.tick(); }
     ok("A the last 'no more reminders' push still arrives", P3.some((x) => /no more reminders/i.test(x.title || "")) && R4.state().items["C:p-x:D1"]?.capped);
+  }
+  // J650check property: whatever the filing times (and ticks every minute), no decision is pushed twice within 10 min,
+  // and rounds are at least 10 min apart
+  {
+    let bad = [], checked = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      let t3 = 3_000_000_000_000, rnd = seed; const r = () => (rnd = (rnd * 16807) % 2147483647) / 2147483647;
+      const p3 = { id: "p-y", name: "y", status: "active", items: [] }, last = {}, roundsAt = [];
+      const R5 = createReminders({ stateFile: path.join(T, `p${seed}.json`), boards: () => [{ room: "C", projects: [p3] }], policy: () => ({ remindEveryMin: 10, remindRounds: 50, toast: false }), push: (k, i) => { roundsAt.push(t3); for (const l of i.text.split("\n")) { const m = /@y (D\d+):/.exec(l); if (m) { if (last[m[1]] != null && t3 - last[m[1]] < 10 * M) bad.push(`seed ${seed} ${m[1]} after ${(t3 - last[m[1]]) / M} min`); last[m[1]] = t3; } } return { sent: true }; }, now: () => t3 });
+      for (let minute = 0; minute < 120; minute++) {
+        t3 += 1 * M;
+        if (r() < 0.06) { const h = `D${p3.items.length + 1}`; p3.items.push({ h, sec: "decide", text: h, ts: t3, importance: "important" }); last[h] = t3; } // its own first push
+        if (r() < 0.02 && p3.items.length) p3.items[Math.floor(r() * p3.items.length)].sec = "next"; // answered
+        R5.tick();
+      }
+      for (let i = 1; i < roundsAt.length; i++) if (roundsAt[i] - roundsAt[i - 1] < 10 * M) bad.push(`seed ${seed} rounds ${(roundsAt[i] - roundsAt[i - 1]) / M} min apart`);
+      checked += roundsAt.length;
+    }
+    ok("A property (40 random runs, 2 h each): no decision pushed twice within 10 min, rounds ≥10 min apart", !bad.length && checked > 50, bad.slice(0, 3).join("; ") + ` (${checked} rounds)`);
   }
   // state survives a restart of the engine
   const R2 = createReminders({ stateFile: path.join(T, "r.json"), boards: () => boards, policy: () => conf, push: (k, i) => { pushes.push({ k, ...i }); return { sent: true }; }, now: () => t });
