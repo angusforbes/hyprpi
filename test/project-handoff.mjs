@@ -100,5 +100,5 @@ finally { d.kill("SIGTERM"); await sleep(300); try { d.kill("SIGKILL"); } catch 
 const { PROJECT_AGENT_SECTION } = await import(path.join(ROOT, "lib/project-agent.mjs"));
 const th = fs.readFileSync(path.join(ROOT, "lib/thoughts.mjs"), "utf8");
 ok("W7 owners' section: one line with the exact one-line format", PROJECT_AGENT_SECTION.split("\n").filter((l) => l.includes("`rc1: question? (y/n)` or `rc1: question? a. one, b. two`") && /short lowercase code plus a number/.test(l)).length === 1);
-ok("W7 Thoughts' prompt: one line with the format, its number as the label", th.split("\n").filter((l) => l.includes("`81: question? (y/n)` or `81: question? a. one, b. two`")).length === 1);
+ok("W7 Thoughts' prompt: one line with the format, its number as the label, and a relayed question keeps the agent's label", th.split("\n").filter((l) => l.includes("`81: question? (y/n)` or `81: question? a. one, b. two`") && /relay a project agent's question, keep its own label/.test(l)).length === 1);
 console.log(fails ? `project-handoff: ${fails} FAILED (state ${T})` : "project-handoff: all pass"); process.exit(fails ? 1 : 0);
