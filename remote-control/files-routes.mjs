@@ -324,16 +324,25 @@ export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refused
   if (process.env.HYPRPI_THUMB_PRUNE_TEST) Object.assign(globalThis, { __pruneThumbs: pruneThumbs, __THUMBS: THUMBS });
 
   // J417: a pending upload into ~/Phone under a free name (never overwriting); its path, or null.
-  function adoptPending(p) {
+  // J663 (no silent success): keep: true leaves the pending copy in place (a hard link: no second copy on disk) until the send is
+  // confirmed (dropPending), so a send that fails can be retried with the same tile; the retry finds its own earlier link in
+  // ~/Phone (same inode) and reuses that name instead of making "name (2)".
+  function adoptPending(p, { keep = false } = {}) {
     const real = isPending(p); if (!real || !phoneDirOk()) return null;
-    try { if (!fs.lstatSync(real).isFile()) return null; } catch { return null; }
+    let st; try { st = fs.lstatSync(real); if (!st.isFile()) return null; } catch { return null; }
     const name = path.basename(real), ext = path.extname(name), stem = name.slice(0, name.length - ext.length);
     for (let i = 1; i <= 999; i++) {
       const cand = path.join(PHONE, i === 1 ? name : `${stem} (${i})${ext}`);
-      try { fs.linkSync(real, cand); fs.rmSync(path.dirname(real), { recursive: true, force: true }); uploadLog({ name: path.basename(cand), adopted: true }); return cand; } catch (e) { if (e.code !== "EEXIST") return null; }
+      try { fs.linkSync(real, cand); if (!keep) dropPending(real); uploadLog({ name: path.basename(cand), adopted: true }); return cand; }
+      catch (e) {
+        if (e.code !== "EEXIST") return null;
+        try { const c = fs.lstatSync(cand); if (c.isFile() && c.ino === st.ino && c.dev === st.dev) { if (!keep) dropPending(real); return cand; } } catch { /* gone meanwhile */ }
+      }
     }
     return null;
   }
+  // J663: the pending copy goes once the message carrying it was confirmed sent
+  function dropPending(p) { const real = isPending(p); if (real) fs.rmSync(path.dirname(real), { recursive: true, force: true }); }
 
   // Returns true when it handled the request.
   async function handle(req, res, url) {
@@ -361,5 +370,5 @@ export function filesRoutes({ HOME, UPLOAD_DIR, FILE_ROOTS, fileAllowed, refused
     if (req.method === "POST" && url.pathname === "/api/files/agent") { await toAgent(req, res); return true; }
     return false;
   }
-  return Object.assign(handle, { adoptPending, isPending, prunePending });
+  return Object.assign(handle, { adoptPending, dropPending, isPending, prunePending });
 }
