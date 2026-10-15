@@ -78,7 +78,9 @@ try {
   // (ReopenCheck) a child that said hello and dropped before the 2 s timer, then was closed while offline: it stays closed
   const sp4 = await mom.call("orch.spawn", { prompt: "fourth", name: "Kid4" });
   const k4 = await connect({ path: sock, onEvent: () => {} }); await k4.call("agent.hello", { agent_id: sp4.id, pid: process.pid, name: sp4.name, want_workspace: 37, cwd: T });
-  k4.close(); await sleep(300); await mom.call("orch.close", { id: sp4.id }).catch(() => {}); await sleep(11500);
+  k4.close(); await sleep(300); await mom.call("orch.close", { id: sp4.id }).catch(() => {}); await sleep(2500);
+  ok("W3 … checked at ~3 s, inside the old code's resurrection window: still closed", (await kidOf(sp4.id)).status === "closed", (await kidOf(sp4.id)).status);
+  await sleep(9000);
   ok("W3 a child that dropped right after hello and was closed while offline is not reopened by the stale hello timer", (await kidOf(sp4.id)).status === "closed", (await kidOf(sp4.id)).status);
   const log = fs.readFileSync(path.join(T, "daemon.log"), "utf8");
   api.close(); mom.close(); kid.close(); kid2.close();
