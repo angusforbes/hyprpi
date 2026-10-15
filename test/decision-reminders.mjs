@@ -133,7 +133,7 @@ const now = Date.now();
 const S = fs.mkdtempSync(path.join(os.tmpdir(), "j650-")), cfg = path.join(S, "cfg"), sock = path.join(S, "d.sock"), PUSH = path.join(S, "pushes.jsonl"), NOTE = path.join(S, "notify.jsonl");
 fs.mkdirSync(path.join(S, "boards")); fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
 fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10 }));
-const EVERY_MIN = 0.02; // 1.2 s
+const EVERY_MIN = 0.05; // 3 s (slack for a loaded machine: Blink saw 1.2 s flake beside other tests)
 fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } }, phone: { ntfy: { enabled: true, topic: "j650-test", server: "https://ntfy.example", kinds: ["bonk", "decision"], maxPerHour: 0 } }, decisions: { remindEveryMin: EVERY_MIN, remindRounds: 3, toast: true, projects: { mathbac: "important" } } }));
 const proj = (id, name) => ({ id, name, title: name, icon: "📋", status: "active", members: ["hp-dossier"], writer: "hp-dossier", created: now, updated: now, by: "x", where: null, next_step: null, seq: { D: 0, N: 0, H: 0 }, items: [] });
 fs.writeFileSync(path.join(S, "boards", "A.json"), JSON.stringify({ room: "A", projects: [proj("p-mb", "mathbac"), proj("p-hp", "hyprpi")] }));
@@ -143,7 +143,7 @@ let d = null;
 const lines = (f) => { try { return fs.readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 const rounds = () => lines(PUSH).filter((p) => String(p.key).startsWith("decision:remind:"));
 const err = async (f) => { try { await f(); return ""; } catch (e) { return e.message; } };
-const waitFor = async (f, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if (f()) return true; await sleep(100); } return false; }; // (a loaded machine: poll, don't guess)
+const waitFor = async (f, ms = 45000) => { const end = Date.now() + ms; while (Date.now() < end) { if (f()) return true; await sleep(100); } return false; }; // (a loaded machine: poll, don't guess)
 try {
   d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(S, "d.log"), "a"), fs.openSync(path.join(S, "d.err"), "a")] });
   for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await sleep(200);
@@ -173,7 +173,7 @@ try {
   // the agent snoozes, then resumes (board_update edit)
   const s2 = await ag.call("board.item", { action: "edit", project: "hyprpi", h: r1.item.h, reminders: "snooze", minutes: 60 });
   ok("B the asking agent can snooze it", /snoozed 60 min/.test(s2.said || "") && s2.item.snoozeUntil > Date.now(), JSON.stringify(s2.said));
-  const n2 = rounds().length; await sleep(EVERY_MIN * 60e3 + 600);
+  const n2 = rounds().length; await sleep(EVERY_MIN * 60e3 + 1500);
   ok("B nothing while every important decision is stopped or snoozed", rounds().length === n2);
   const g = await api.call("board.get", { room: "A" });
   ok("B the card shows it to agents (board_read)", true); // (boardText below)
@@ -184,10 +184,10 @@ try {
   await waitFor(() => rounds().slice(n2).some((x) => /@hyprpi D1/.test(x.message)));
   ok("B resume brings it back", rounds().slice(n2).some((x) => /@hyprpi D1/.test(x.message)));
   // the cap (3 rounds here): the last one says no more reminders
-  await waitFor(() => rounds().some((x) => /no more reminders/i.test(x.title)), 20000);
+  await waitFor(() => rounds().some((x) => /no more reminders/i.test(x.title)), 60000);
   const last = rounds().filter((x) => /@hyprpi D1/.test(x.message)).pop();
   ok("B after the cap: the last round says so, and no more come", /no more reminders/i.test(last.title + last.message), last.title);
-  const n3 = rounds().length; await sleep(EVERY_MIN * 60e3 + 600);
+  const n3 = rounds().length; await sleep(EVERY_MIN * 60e3 + 1500);
   ok("B …and nothing after it", rounds().length === n3);
   // Angus raises the normal one on the card (the panel's /important = board.item edit as Angus), then answers it
   const s3 = await api.call("board.item", { room: "A", action: "edit", project: "hyprpi", h: r3.item.h, importance: "important" });
@@ -196,7 +196,7 @@ try {
   const n4 = rounds().length;
   ok("B …and it's reminded", rounds().some((x) => /A normal one/.test(x.message)));
   await api.call("board.item", { room: "A", action: "decide", project: "hyprpi", h: r3.item.h, answer: "a" });
-  await sleep(EVERY_MIN * 60e3 + 600);
+  await sleep(EVERY_MIN * 60e3 + 1500);
   ok("B answering it ends its reminders", rounds().slice(n4).every((x) => !/A normal one/.test(x.message)));
   // wrong values are refused
   ok("B a bad level is refused", /important or normal/.test(await err(() => ag.call("board.item", { action: "edit", project: "hyprpi", h: r1.item.h, importance: "urgent" }))));
