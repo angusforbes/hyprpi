@@ -25,6 +25,8 @@ import { orchAgent } from "./orch.ts";
 import { quietMode, quietIncoming, quietOrch } from "./quiet.ts";
 import { draftStore, clipboardPaste } from "../lib/tui/input-box.mjs";
 import { statusPrompt } from "../lib/status.mjs";
+import { sectionFor } from "../lib/project-agent.mjs";
+import { isCatchAll } from "../lib/decisions.mjs";
 
 type Conn = Awaited<ReturnType<typeof connect>>;
 
@@ -695,6 +697,24 @@ export default function hyprpi(pi: ExtensionAPI) {
   pi.registerMessageRenderer("hyprpi-prompt", render("prompt")); // J133: a prompt held while the agent was busy
 
   const text = (t: string, details?: any) => ({ content: [{ type: "text" as const, text: t }], details });
+
+  // J644: project owners (the writer of a non-catch-all project) get the project agent handbook's essentials in their system
+  // prompt (lib/project-agent.mjs; the full note is ~/Obsidian/Notes/Project agent handbook.md). Others don't. Checked at most
+  // once a minute; any failure leaves the prompt as it was.
+  let ownerCheck = { at: 0, section: "" };
+  async function ownerSection(): Promise<string> {
+    if (Date.now() - ownerCheck.at < 60000) return ownerCheck.section;
+    try { ownerCheck = { at: Date.now(), section: sectionFor(AGENT_ID, (await call("board.get", {})).projects || [], isCatchAll) }; } catch { /* keep the last */ }
+    return ownerCheck.section;
+  }
+  pi.on("before_agent_start", async (e: any) => {
+    try {
+      const section = await ownerSection(), sec = e?.systemPromptOptions?.sections;
+      if (!sec) return;
+      if (section) sec.hyprpi_project_agent = section;
+      else delete sec.hyprpi_project_agent;
+    } catch { /* the prompt stays as it was */ }
+  });
 
   // ---- the project board (docs/board-plan.md): one per world, several projects (cards) ----
   const AGREEMENT = [

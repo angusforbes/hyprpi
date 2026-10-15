@@ -117,6 +117,7 @@ try {
   ok("B W3 its running loose job moved to the project", JSON.stringify(r.moved) === '["J1"]' && (await api.call("thoughts.briefs", { id: "J1" })).project === "vibez", JSON.stringify(r.moved));
   const msgs = got["hp-anon"].filter((g) => g.ev === "prompt").map((g) => g.data.text).join("\n");
   ok("B W3 it is told in its window: who it is now, the project it owns, carry on", /promoted you: you are now 🎹 Vibe, the owner \(writer\) of @vibez/.test(msgs) && /carry on where you were/.test(msgs) && /rename_self once with name "Vibe"/.test(msgs), msgs.slice(0, 300));
+  ok("J644 W2 the promotion message points the new project agent at the handbook", /read the project agent handbook in full once \(~\/Obsidian\/Notes\/Project agent handbook\.md\)/.test(msgs), (msgs.match(/You are now a project agent[^.]*\./) || [""])[0]);
   ok("B W3 no restart: the same connection still answers and the daemon sent it no restart or reload", (await anon.call("whoami", {})).name === "Vibe" && !got["hp-anon"].some((g) => g.ev === "restart" || g.ev === "reload"));
   // attach to an existing project, reopen an archived one
   const r2 = await api.call("thoughts.promote", { room: "D", agent: "pi·mber", name: "Keeper", project: "memberproj" });
