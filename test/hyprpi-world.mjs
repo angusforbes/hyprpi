@@ -335,6 +335,20 @@ try {
   }
   ok("R2: through the real restore.sh, start keeps a Doorman that was stopped before the stop stopped (and starts one that ran)");
 
+  // J632 (Warden): a remote stop that couldn't read the machine records an unknown state (agents [], remote_daemon_was ""); the start
+  // after it must verify on the machine: still unreachable -> NOT BACK, exit 4, no "started", the record kept. A recorded "0"
+  // (provably stopped before) needs no check.
+  await stopSandboxd();
+  setup({ files: { "remote/i.json": { ssh: ["ssh", "nohost.invalid"] } } });
+  r = await run(["stop", "I", "--yes"]); assert.equal(r.code, 4, r.out);
+  { const recU = JSON.parse(fs.readFileSync(path.join(STATE, "hyprpi/world-off/I.json"), "utf8")); assert.deepEqual([recU.agents, recU.remote_daemon_was], [[], ""]); }
+  r = await run(["start", "I", "--yes"]);
+  assert.equal(r.code, 4, r.out); assert.match(r.out, /state before the stop is unknown/); assert.match(r.out, /NOT BACK: the machine or world I's daemon there doesn't answer/);
+  assert.doesNotMatch(r.out, /=> world I started/); assert.ok(fs.existsSync(path.join(STATE, "hyprpi/world-off/I.json")), "the record was retired after an unverified start");
+  fs.writeFileSync(path.join(STATE, "hyprpi/world-off/I.json"), JSON.stringify({ version: 3, world: "I", kind: "remote", at: "t", units: [], sandboxes: [], moved_from: "", autostart_was: "", agents: [], remote_daemon_was: "0" }));
+  r = await run(["start", "I", "--yes"]); assert.equal(r.code, 0, r.out); assert.match(r.out, /nothing ran on the machine before the stop/);
+  ok("J632: an unknown remote state at stop, then start: verified on the machine, unreachable -> exit 4, record kept, no 'started' (a recorded 0 needs no check)");
+
   // no terminal and no --yes: refused before anything
   setup({}); r = await run(["stop", "B"]); assert.equal(r.code, 3, r.out); assert.deepEqual(mutating(r.calls), []);
   ok("a real run without a terminal or --yes is refused (exit 3)");

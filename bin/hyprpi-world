@@ -419,7 +419,8 @@ case "$KIND" in
     elif [[ -n "$REC" && "$(jq -r .remote_daemon_was "$REC")" == 1 ]]; then
       if (( DRY )); then say "  would run there: hyprpi ensure (its daemon ran before the stop, with no agents)"; else say "  running there: hyprpi ensure"; rsh '$HP ensure' >/dev/null; fi
     elif [[ -z "$REC" ]]; then run "$RWORLD" "$X" recover
-    else say "  neither agents nor the daemon ran there before the stop: nothing to start"; fi ;;
+    elif [[ "$(jq -r .remote_daemon_was "$REC")" == 0 ]]; then say "  neither agents nor the daemon ran there before the stop: nothing to start"
+    else say "  the machine's state before the stop is unknown (it couldn't be read then): nothing to restore exactly; checking it below"; fi ;;
   local)
     if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" != 0 ]]; then
       while read -r a; do
@@ -459,7 +460,8 @@ if [[ -n "$REC" ]]; then
   fi
 fi
 if [[ "$KIND" == remote ]]; then
-  if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" == 0 && "$(jq -r .remote_daemon_was "$REC")" != 1 ]]; then say "  (nothing ran on the machine before the stop)"
+  # J632: only a recorded "0" (provably stopped before the stop) means nothing to check; "" (unknown then) is verified on the machine
+  if [[ -n "$REC" && "$(jq '.agents|length' "$REC")" == 0 && "$(jq -r .remote_daemon_was "$REC")" == 0 ]]; then say "  (nothing ran on the machine before the stop)"
   elif (( ! REACH )); then nb "the machine can't be checked ($REACH_WHY)"
   elif ! rlook || [[ "$RSTATE" != answers ]]; then nb "the machine or world $X's daemon there doesn't answer (${RSTATE:-unreachable}): unverified"
   elif [[ -n "$REC" ]]; then miss="$(jq -r --argjson q "$(jq -c .agents "$REC")" '[.agents[].id] as $ids | [$q[] | select(.id as $i | $ids | index($i) | not) | .name] | join(", ")' <<<"$RLIST")"
