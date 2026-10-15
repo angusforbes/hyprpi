@@ -374,14 +374,17 @@ check_box() { # $1 = a RUNNING instance; never exits the script (each box on its
   if ! sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1 </dev/null)"; then
     # J633: an error from `brev stop` isn't proof the box still bills: ask Brev again a few times before alerting
     local after="" t
-    for (( t = 0; t < ${BREV_AUTOSTOP_RECHECK_TRIES:-4}; t++ )); do
-      sleep "${BREV_AUTOSTOP_RECHECK_SECS:-30}"
-      after="$(rows "$(timeout -k 10 60 "$BREV" ls </dev/null 2>/dev/null)" | awk -v b="$BOX" '$1==b{print $2}')"
+    local lsout
+    for (( t = 0; t < ${BREV_AUTOSTOP_RECHECK_TRIES:-3}; t++ )); do # (StopCheck633: at most 3 × (20 s + 30 s + 5 s): well inside the 5-min timer)
+      sleep "${BREV_AUTOSTOP_RECHECK_SECS:-20}"
+      lsout="$(timeout -k 5 30 "$BREV" ls </dev/null 2>/dev/null)" || lsout="" # (only a brev ls that succeeded counts)
+      after="$(rows "$lsout" | awk -v b="$BOX" '$1==b{print $2}')"
       [[ "${after^^}" =~ ^(STOPPED|STOPPING)$ ]] && break
     done
     if [[ "${after^^}" =~ ^(STOPPED|STOPPING)$ ]]; then
       log "brev stop $BOX reported an error ($(tr '\n' ' ' <<<"$sout" | cut -c1-160)), but Brev shows it $after: taken as stopped"
       stopped_note=" ('brev stop' reported an error, but Brev shows it $after)"
+      [[ "${after^^}" == STOPPING ]] && put unh_tried "$T" # (StopCheck633) followed like a tried stop: a later STOPPING_FAILED alerts at once
     else failed=1; stopped_note="${after:-unknown}"; fi
   fi
   if [[ $failed == 0 ]]; then
@@ -390,7 +393,11 @@ check_box() { # $1 = a RUNNING instance; never exits the script (each box on its
   else
     put stop_failed "$T"; put state "stop-failed"
     [[ -n "$sf" ]] && { log "stop of $BOX failed again: $(tr '\n' ' ' <<<"$sout" | cut -c1-200)"; return 1; } # alerted once already
-    alert "Brev auto-stop: $BOX has been idle $(mins "$idle") min but 'brev stop' failed, and Brev still shows it ${stopped_note:-unknown} after ${BREV_AUTOSTOP_RECHECK_TRIES:-4} checks: $(tr '\n' ' ' <<<"$sout" | cut -c1-160). It is still billing; stop it by hand: brev stop $BOX" critical
+    if [[ "$stopped_note" == unknown ]]; then # (StopCheck633) brev ls never answered: not proof either way
+      alert "Brev auto-stop: $BOX has been idle $(mins "$idle") min but 'brev stop' failed, and brev ls couldn't confirm its status in ${BREV_AUTOSTOP_RECHECK_TRIES:-3} checks: $(tr '\n' ' ' <<<"$sout" | cut -c1-160). It may still be billing; check it (brev ls) and stop it by hand if needed: brev stop $BOX" critical
+    else
+      alert "Brev auto-stop: $BOX has been idle $(mins "$idle") min but 'brev stop' failed, and Brev still shows it $stopped_note after ${BREV_AUTOSTOP_RECHECK_TRIES:-3} checks: $(tr '\n' ' ' <<<"$sout" | cut -c1-160). It is still billing; stop it by hand: brev stop $BOX" critical
+    fi
     return 1
   fi
 }
@@ -422,13 +429,13 @@ unhealthy_box() { # $1 = name, $2 = its status (UNHEALTHY or a failed state)
   if [[ "${BREV_AUTOSTOP_DRY:-}" == 1 ]]; then log "DRY: would stop $BOX ($st for $(mins $(( T - since ))) min)"; return 0; fi
   log "stopping $BOX: $st for $(mins $(( T - since ))) min"; put unh_tried "$T"
   local ok=1; sout="$(timeout -k 15 "${BREV_AUTOSTOP_STOP_TIMEOUT:-300}" "$BREV" stop "$BOX" 2>&1 </dev/null)" || ok=0 # (J633: never the loop's stdin)
-  out2="$(timeout -k 10 60 "$BREV" ls 2>/dev/null)"; after="$(rows "$out2" | awk -v b="$BOX" '$1==b{print $2}')"; after="${after:-unknown}"
+  out2="$(timeout -k 10 60 "$BREV" ls </dev/null 2>/dev/null)" || out2=""; after="$(rows "$out2" | awk -v b="$BOX" '$1==b{print $2}')"; after="${after:-unknown}"
   if [[ -n "$tried" ]]; then # a retry: quiet unless it worked
     [[ "${after^^}" == STOPPED ]] && { alert "Brev auto-stop: $BOX is STOPPED now (it had been $st)." normal; rm -f "${UNH_FILES[@]/#/$D/}"; put state "stopped"; }
     log "retried the stop of $BOX: $([[ $ok == 1 ]] && echo ok || echo failed), status now $after"; return 0
   fi
-  if [[ $ok == 1 && "${after^^}" =~ ^(STOPPED|STOPPING)$ ]]; then
-    alert "Brev auto-stop: $BOX had been $st for $(mins $(( T - since ))) min, so it ran 'brev stop $BOX'. Status now: $after." normal
+  if [[ "${after^^}" =~ ^(STOPPED|STOPPING)$ ]]; then # (J633/StopCheck633: an errored stop that still stopped it isn't a failure)
+    alert "Brev auto-stop: $BOX had been $st for $(mins $(( T - since ))) min, so it ran 'brev stop $BOX'$([[ $ok == 1 ]] || echo " (it reported an error)"). Status now: $after." normal
   else
     put unh_failed_alerted "$T"
     alert "Brev auto-stop: $BOX had been $st for $(mins $(( T - since ))) min; 'brev stop $BOX' $([[ $ok == 1 ]] && echo "ran" || echo "failed ($(tr '\n' ' ' <<<"$sout" | cut -c1-160))"), status now: $after. It may still bill; check the Brev console. Retrying at most hourly, no more alerts." critical

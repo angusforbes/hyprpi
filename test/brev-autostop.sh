@@ -16,6 +16,7 @@ cat > "$F/bin/brev" <<'EOF'
 F="$(dirname "$0")/.."
 case "$1" in
   ls) st="$(cat "$F/status")"; [[ "$st" == error ]] && { echo "api error" >&2; exit 1; }
+      [[ -f "$F/lsfailafterstop" ]] && grep -q "^stop " "$F/calls" 2>/dev/null && { echo "api error" >&2; exit 1; }
       echo "You have 3 instances in Org test"; echo " NAME STATUS BUILD"; [[ "$st" != absent ]] && echo " hyprpi-l40s $st COMPLETED"; echo " keep-me-box $(cat "$F/nemo" 2>/dev/null || echo STOPPED) COMPLETED"; [[ -f "$F/more" ]] && sed 's/^/ /' "$F/more"; exit 0;;
   stop) echo "stop $2" >> "$F/calls"; echo "stop $2" >> "$F/allcalls"; [[ -f "$F/stophang" ]] && { trap "" TERM; sleep 30; }; [[ -f "$F/stopfail" ]] && { echo "boom" >&2; exit 1; }
         # J633: like the real brev, more instance names may come on stdin (a pipe): each is looked up and fails if unknown
@@ -510,10 +511,21 @@ rm -f "$F/stopstdin" "$F/more"
 fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stopfailstops"; echo STOPPING > "$F/stopresult"; run
 ok "J633 stop errors, box STOPPING → no critical alert; one normal 'stopped' notice that mentions the error" '[[ $(stops) == 1 && $(crit) == 0 && $(notices) == 1 && $(cnt "^notify.*reported an error, but Brev shows it STOPPING") == 1 ]]'
 ok "J633 … logged, not counted as a failed stop" 'grep -q "taken as stopped" "$F/state/log" && [[ ! -f "$F/state/boxes/hyprpi-l40s/stop_failed" ]]'
+# b2. … and if that STOPPING later turns STOPPING_FAILED: one critical alert at once (it was a tried stop), not after a new 45-min spell
+echo STOPPING_FAILED > "$F/status"; run
+ok "J633 STOPPING after an errored stop, then STOPPING_FAILED → one critical alert right away" '[[ $(crit) == 1 && $(cnt "^notify.*STOPPING_FAILED") -ge 1 ]]'
 rm -f "$F/stopfailstops" "$F/stopresult"
+# b3. brev stop errors and brev ls never answers during the re-checks: a critical alert that says the status is unconfirmed
+fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stopfail" "$F/lsfailafterstop"; run
+ok "J633 stop errors, brev ls never answers → one critical alert saying it couldn't confirm (not 'still shows it')" '[[ $(crit) == 1 && $(cnt "^notify.*couldn.t confirm its status") == 1 && $(cnt "^notify.*still shows it") == 0 ]]'
+rm -f "$F/stopfail" "$F/lsfailafterstop"
+# b4. the unhealthy path: brev stop errors but brev ls then shows STOPPED → a normal notice, not a critical alert
+fresh; echo UNHEALTHY > "$F/status"; run; unh_ago 50; touch "$F/stopfailstops"; run
+ok "J633 unhealthy box: stop errors but it's STOPPED → normal notice (mentions the error), no critical" '[[ $(crit) == 0 && $(cnt "^notify.*it reported an error).*Status now: STOPPED") == 1 ]]'
+rm -f "$F/stopfailstops"
 # c. brev stop errors and the box stays RUNNING through the re-checks: one critical alert, after them
 fresh; fixture 120; echo RUNNING > "$F/status"; run; started_ago 120; touch "$F/stopfail"; run; run
-ok "J633 stop errors, box still RUNNING after the re-checks → one critical alert that says so" '[[ $(crit) == 1 && $(cnt "^notify.*still shows it RUNNING after 4 checks") == 1 ]]'
+ok "J633 stop errors, box still RUNNING after the re-checks → one critical alert that says so" '[[ $(crit) == 1 && $(cnt "^notify.*still shows it RUNNING after 3 checks") == 1 ]]'
 rm -f "$F/stopfail"
 
 # 15. never touched the other instance (every stop of every case)
