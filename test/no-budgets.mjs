@@ -30,7 +30,9 @@ fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth
 const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: state, XDG_CONFIG_HOME: cfg, HYPRPI_TEST: "1", HYPRPI_ORCH_LAUNCH: "/bin/true", HYPRLAND_INSTANCE_SIGNATURE: "j647-bogus", HYPRPI_NO_ENSURE: "1" };
 for (const k of ["HYPRPI_AGENT_ID", "HYPRPI_ALLOW_HYPR", "HYPRPI_WORKSPACE"]) delete env[k];
 // a child the OLD code had stopped at its cap (status "budget", 25-min cap)
-fs.writeFileSync(path.join(state, "orch.json"), JSON.stringify({ children: { "hp-oldkid": { id: "hp-oldkid", name: "OldKid", parent: "thoughts:D", parentName: "Thoughts-D", room: "D", prompt: "x", model: "m", thinking: "", budget: { tokens: 150000, minutes: 25 }, used: { tokens: 160000 }, startedAt: Date.now() - 3600e3, status: "budget", reports: [], escalations: 0, depth: 1 } } }));
+fs.writeFileSync(path.join(state, "orch.json"), JSON.stringify({ children: { "hp-orphan": { id: "hp-orphan", name: "OrphanKid", parent: "hp-gonemom", parentName: "GoneMom", room: "D", prompt: "x", model: "m", thinking: "", budget: { tokens: 150000, minutes: 25 }, used: { tokens: 10 }, startedAt: Date.now() - 600e3, status: "orphaned", reports: [], escalations: 0, depth: 1 },
+  "hp-donekid": { id: "hp-donekid", name: "DoneKid", parent: "thoughts:D", parentName: "Thoughts-D", room: "D", prompt: "x", model: "m", thinking: "", budget: { tokens: 150000, minutes: 25 }, used: { tokens: 10 }, startedAt: Date.now() - 600e3, status: "running", reports: [{ text: "done", final: true, at: Date.now() }], escalations: 0, depth: 1 },
+  "hp-oldkid": { id: "hp-oldkid", name: "OldKid", parent: "thoughts:D", parentName: "Thoughts-D", room: "D", prompt: "x", model: "m", thinking: "", budget: { tokens: 150000, minutes: 25 }, used: { tokens: 160000 }, startedAt: Date.now() - 3600e3, status: "budget", reports: [], escalations: 0, depth: 1 } } }));
 const fd = fs.openSync(path.join(T, "daemon.log"), "w");
 const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fd, fd] });
 try {
@@ -64,6 +66,12 @@ try {
   const ok2 = (await c.call("orch.all", {})).children.find((x) => x.id === "hp-oldkid");
   ok("W1b a child left 'over budget' by the old code (seeded orch.json) is running with no caps after it reconnects", ok2?.status === "running" && JSON.stringify(ok2?.budget) === JSON.stringify(none), JSON.stringify(ok2 && { s: ok2.status, b: ok2.budget }));
   old.close();
+  const evs = {}; const hi = async (id, name, ws) => { evs[id] = []; const k = await connect({ path: sock, onEvent: (ev, d) => evs[id].push({ ev, d }) }); await k.call("agent.hello", { agent_id: id, pid: process.pid, name, want_workspace: ws, cwd: T }); return k; };
+  const ko = await hi("hp-orphan", "OrphanKid", 34), kd = await hi("hp-donekid", "DoneKid", 35); await sleep(2500);
+  const kids2 = (await c.call("orch.all", {})).children, orp = kids2.find((x) => x.id === "hp-orphan");
+  ok("W1b an orphan (finishing its step) gets 'no caps' too and stays orphaned", evs["hp-orphan"].some((e) => e.ev === "orch.budget" && e.d?.budget?.tokens === 0) && orp?.status === "orphaned" && JSON.stringify(orp?.budget) === JSON.stringify(none), JSON.stringify(orp && { s: orp.status, b: orp.budget }));
+  ok("W1b a child that already gave its final report gets no late budget event", !evs["hp-donekid"].some((e) => e.ev === "orch.budget"));
+  ko.close(); kd.close();
   kid.close(); c.close();
 } catch (e) { fails++; console.log("FAIL", e.stack); }
 finally { d.kill("SIGTERM"); await sleep(400); try { d.kill("SIGKILL"); } catch { /* gone */ } }
