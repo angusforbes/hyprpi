@@ -11,7 +11,9 @@ for (const [label, t] of [["preamble", line], ["AGENTS.md", sec]]) {
   check(`${label}: present`, t.length > 0);
   check(`${label}: Angus's 40a words`, t.includes("asking before it takes focus") && t.includes("click-by-click steps only if you ask"));
   check(`${label}: points at hyprcu and the browser notes`, /hyprcu/.test(t) && t.includes("notes/apps/_general.md") && t.includes("chromium.md"));
-  check(`${label}: asks before taking focus or windows`, /Ask (him )?first|ask (Angus|him) first/i.test(t) && /focus/.test(t));
+  check(`${label}: v2 Angus's words`, t.includes("just toast me before you take over"));
+  check(`${label}: W3 toast before taking focus/windows, naming who and how long, then ~10 s wait`, /notify-send -a "<your name>" "<your name> is taking over your browser" "for about <N> min/.test(t.replace(/\\"/g, '"')) && /wait ~10 s/.test(t) && /focus/.test(t));
+  check(`${label}: W3 toast again when handing back`, /hand control back, toast again/.test(t) && /is done with your browser/.test(t));
   check(`${label}: never on the phone`, /phone/.test(t));
   check(`${label}: never types passwords, MFA codes or payment details`, /never type a password, MFA code or payment details/i.test(t));
   check(`${label}: sending on his behalf still needs his OK`, /exact text/.test(t));
