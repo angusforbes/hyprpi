@@ -86,7 +86,9 @@ try {
   const rr1 = await r1.c.call("talk.reply", { request_id: got1?.data?.request_id, text: "ANSWER-1" });
   ok("R1 talk_reply: sent (handed to the window), kept until confirmed", rr1.sent === true && rr1.kept === true && rr1.to === "Asker1", JSON.stringify(rr1));
   ok("R1 … the asker's window got it", !!(await waitFor(() => a1.replies(t1.request_id).length === 1)));
+  r1.drop(); // independent check: sender is briefly disconnected when delayed failure is reported
   a1.drop(); await sleep(300); await a1.connect(); // its window reloads without having confirmed (it never landed)
+  await sleep(3500); await r1.connect();
   ok("R1 not confirmed: re-sent when the asker reconnects", !!(await waitFor(() => a1.replies(t1.request_id).length >= 2, 5000)), String(a1.replies(t1.request_id).length));
   const note1 = await waitFor(() => r1.talks(/\[hyprpi delivery note\] your reply to Asker1/)[0], 5000);
   ok("R1 not confirmed after the wait: the replier gets a delivery note saying so", !!note1 && /hasn't landed/.test(note1.data.text) && /re-sent when Asker1 finishes or reconnects/.test(note1.data.text), note1?.data?.text);
@@ -115,6 +117,12 @@ try {
   const rr3 = await r3.c.call("talk.reply", { request_id: got3.data.request_id, text: "ANSWER-3" });
   ok("R3 older asker, not connected: not sent, not kept", rr3.sent === false && rr3.kept === false && !rr3.delivered, JSON.stringify(rr3));
   await a3.connect();
+  const t3live = await talk(a3, "Rep3", "Q3-LIVE");
+  await waitFor(() => r3.talks(/Q3-LIVE/)[0]);
+  const rr3live = await r3.c.call("talk.reply", { request_id: t3live.request_id, text: "OLD-WINDOW-ANSWER" });
+  ok("C old extension (no reply ack) connected still gets reply once", rr3live.sent && !rr3live.kept && !!await waitFor(() => a3.replies(t3live.request_id).length === 1));
+  a3.drop(); await sleep(300); await a3.connect(); await sleep(2500);
+  ok("C old extension without acks does not get repeated live reply", a3.replies(t3live.request_id).length === 1);
 
   // ---- R4: the asker has closed
   const a4 = await agent("hp-asker4", "Asker4", { pid: deadPid }), r4 = await agent("hp-rep4", "Rep4");
