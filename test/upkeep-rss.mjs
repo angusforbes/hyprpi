@@ -14,6 +14,7 @@
 // 3. restartReady -> the daemon relaunches it with --session <its same file> (HYPRPI_NEW_ARGV_LOG: isolated hyprpi only, no window)
 //    -> the new pi connects -> its 🔄 note says "restarted on its same session for memory" with RSS before -> after (lower);
 // 4. Big grows again at once: no second restart within the cooldown (one per cooldownHours).
+// 6. a memory restart whose relaunch never comes back: a ⚠ alert to its world's Thoughts (not only the log).
 // 5. an agent whose world is bound to a remote machine (cfg/hyprpi/remote/d.json): never restarted from here.
 // Only processes this test spawned are signalled, by their own pid.
 import fs from "node:fs";
@@ -115,6 +116,15 @@ try {
   ok("4 over the limit again within the cooldown: no second restart", !restartsOf("hp-big").length, `${rssMb(regrown.pid)} MB, ${restartsOf("hp-big").length} restart(s)`);
   const st = await (await connect({ path: sock, onEvent: () => {} })).call("thoughts.upkeep", { room: "D", action: "status" }).catch((e) => ({ text: "ERR " + e.message }));
   ok("4 Thoughts' upkeep status still shows it over the limit", /Big: [^\n]*due \(pi \d+ MB\)/.test(st?.text || ""), (st?.text || "").slice(0, 300));
+  // 6. a memory restart whose relaunch never comes back: its world's Thoughts is told (no silent success)
+  const lost = child("hp-lost", 260); for (let i = 0; i < 50 && rssMb(lost.pid) < 240; i++) await sleep(100);
+  await hello("hp-lost", "Lost", lost.pid, 39);
+  for (let i = 0; i < 40 && !restartsOf("hp-lost").length; i++) await sleep(200);
+  ok("6 Lost (over the limit) gets its memory restart", restartsOf("hp-lost").length === 1);
+  await conns["hp-lost"].call("agent.restartReady", {}).catch(() => {});
+  lost.kill("SIGTERM"); conns["hp-lost"].close(); // its pi ends; no new window ever comes
+  let thread = ""; for (let i = 0; i < 90 && !/Lost's memory restart/.test(thread); i++) { await sleep(1000); try { thread = fs.readFileSync(path.join(S, "thoughts", "D.thread.jsonl"), "utf8"); } catch { /* none yet */ } }
+  ok("6 the failed relaunch reaches Thoughts as a ⚠ upkeep alert", /Lost's memory restart \(asked by upkeep \(Thoughts-D, memory\)\) failed: the new window didn't come up in 60 s/.test(thread), thread.split("\n").filter((l) => /Lost/.test(l)).join(" | ").slice(0, 300));
   // 5. a remote world's agent (its room bound to a remote machine): never restarted from here
   policy(0);
   const far = child("hp-far", 260); for (let i = 0; i < 50 && rssMb(far.pid) < 240; i++) await sleep(100);
