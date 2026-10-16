@@ -244,10 +244,11 @@ async function cmdNew() {
     // J536 (Angus: "remove all non-omnistation TUIs and agents from world H"): a laptop agent's resume / twin / --beside isn't placed there
     if (wl && (await import("../lib/remote-world.mjs")).isRemoteWorld(wl) && (wantId || twinOf || beside) && !process.env.HYPRPI_GATE_DRYRUN) die(`world ${wl.toUpperCase()} is a remote world: no laptop agent opens on its workspaces (resume or twin it on another world's workspace)`);
     if (bound && fs.existsSync(bound) && !wantId && !twinOf && !beside && !process.env.HYPRPI_GATE_DRYRUN) {
+      if (wantExtras !== undefined) die(`--extra isn't supported for a new agent on a remote world (${wl.toUpperCase()}) yet (J698): nothing opened; its new agents take a name only`); // never silently dropped
       { const why = hypr.hyprBlocked(); if (why) die(`hypr actions disabled (isolated daemon: ${why}): no remote agent started`); } // (review) J333 holds here too
       // (review) only a plain new (SUPER+A, or with --name) goes remote; pi arguments, a cwd, an icon or a session have no remote
       // meaning yet, so they are refused rather than silently dropped
-      if (piArgs.length || process.argv.includes("--cwd") || wantIcon || wantExtras !== undefined) die(`world ${wl.toUpperCase()} is a remote world: its new agents take a name only (omnistation/world ${wl.toUpperCase()} new NAME)`);
+      if (piArgs.length || process.argv.includes("--cwd") || wantIcon) die(`world ${wl.toUpperCase()} is a remote world: its new agents take a name only (omnistation/world ${wl.toUpperCase()} new NAME)`);
       const nm = /^[a-z][a-z0-9-]{0,30}$/.test(String(wantName).toLowerCase()) ? String(wantName).toLowerCase() : "";
       // J532 (Angus: "SUPER+A doesn't seem to work in world H, I tried on workspace 2 and 3"): the window opens on the workspace it was
       // pressed on (it always went to the world's first one)

@@ -12,6 +12,8 @@
 //    4. an upkeep refresh (upkeep.ready, fresh session) carries it too.
 //    5. open_agent (thoughts.open) subagents: true -> remembered, and its `hyprpi new` has -e.
 //    6. `hyprpi new --extra bogus` is refused, and so is a configured name whose folder is gone; nothing is remembered for them.
+//    6b. a remembered extra whose folder vanished: the relaunch starts without it and says so (stderr, a note to the agent, a ⚠ to Thoughts).
+//    6c. --extra on a remote world's workspace is refused, not dropped.
 // Every `hyprpi new` here only logs its pi argv (HYPRPI_NEW_ARGV_LOG, isolated hyprpi only): no window or pi ever starts.
 import fs from "node:fs";
 import os from "node:os";
@@ -113,6 +115,22 @@ try {
   for (let i = 0; i < 100 && !logged(gid).length; i++) await sleep(200);
   ok("5 its hyprpi new starts pi with -e <pi-subagents>", logged(gid).length === 1 && hasE(logged(gid)[0].piArgv), JSON.stringify(logged(gid)).slice(0, 300));
 
+  // 6b. a remembered extra whose folder vanished: the relaunched agent starts without it, and it and the log are told
+  fs.renameSync(subDir, subDir + ".moved");
+  const nm = newArgv(r1.id);
+  ok("6b a vanished extra: hyprpi new starts without it and says so on stderr", nm.code === 0 && !hasE(nm.piArgv) && /WITHOUT its extra extension\(s\) subagents/.test(nm.err), (nm.err || "").slice(0, 200));
+  const kid3 = spawn(process.execPath, ["-e", "setInterval(()=>{},1e6)"], { stdio: "ignore" }); kids.push(kid3);
+  await hello(r1.id, "Reader", 33, kid3.pid, sess);
+  const warn = () => got[r1.id].find((e) => e.ev === "note" && /started WITHOUT its extra extension\(s\) subagents/.test(e.data?.text || ""));
+  for (let i = 0; i < 40 && !warn(); i++) await sleep(100);
+  ok("6b …and the agent itself gets a visible note (no in-process Agent tool)", !!warn() && /no in-process Agent tool/.test(warn().data.text), JSON.stringify(got[r1.id].map((e) => e.ev)));
+  let thread = ""; for (let i = 0; i < 30 && !/Reader started WITHOUT/.test(thread); i++) { await sleep(100); try { thread = fs.readFileSync(path.join(S, "thoughts", "D.thread.jsonl"), "utf8"); } catch { /* not yet */ } }
+  ok("6b …and its world's Thoughts gets the ⚠ alert", /Reader started WITHOUT its extra extension\(s\) subagents/.test(thread));
+  fs.renameSync(subDir + ".moved", subDir);
+  // 6c. refused where it can't be kept: a remote world's workspace (bound in cfg/hyprpi/remote/h.json)
+  fs.mkdirSync(path.join(cfg, "hyprpi", "remote"), { recursive: true }); fs.writeFileSync(path.join(cfg, "hyprpi", "remote", "h.json"), "{}");
+  const nr = spawnSync(process.execPath, [path.join(ROOT, "bin/hyprpi"), "new", "--workspace", "72", "--extra", "subagents", "--no-focus"], { env: { ...env, HYPRPI_NEW_ARGV_LOG: "", HYPRPI_NEW_PRINT_ARGV: "1" }, encoding: "utf8", timeout: 30000 });
+  ok("6c --extra on a remote world's workspace is refused, not dropped", nr.status !== 0 && /--extra isn.t supported for a new agent on a remote world/.test(nr.stderr), nr.stderr.slice(0, 200));
   // 6. refusals
   const nb = newArgv("hp-bogus1", ["--extra", "bogus"]);
   ok("6 hyprpi new --extra bogus is refused", nb.code !== 0 && /no extra extension "bogus"/.test(nb.err), nb.err.slice(0, 200));
