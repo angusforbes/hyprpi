@@ -1,0 +1,80 @@
+#!/bin/bash
+# brave-copy (J676, Angus 53a): run CMD against a HEADLESS Brave on a temp COPY of Angus's Brave profile, carrying his
+# logins, so an agent can use his sessions without touching his screen; the copy is deleted on every exit path.
+#
+#   brave-copy [--port 9676] [--keep-session-cookies|--no-session-cookies] [--no-keyring] -- CMD [ARGS...]
+#
+# CMD gets BRAVE_COPY_PORT (DevTools port of the copy; use `agent-browser --cdp $BRAVE_COPY_PORT …` or
+# `fast-browse --cdp $BRAVE_COPY_PORT …`). Exit = CMD's exit (or 2 if the copy didn't start).
+#
+# Why the copy needs two things (J676 W1):
+#  - the keyring: his cookies are encrypted (v11) with the "Brave Safe Storage" key in the GNOME keyring (libsecret).
+#    His Brave runs with --password-store=gnome-libsecret (~/.config/brave-origin-flags.conf); Chromium only picks
+#    libsecret by itself on desktops it recognises (GNOME, KDE…), not Hyprland, so a Brave started without the flag
+#    falls back to the "basic" store and can't decrypt one cookie: every site looks logged out.
+#  - session cookies: many logins (cPanel, Outlook) are session cookies. Chromium deletes the saved ones at startup
+#    unless "continue where you left off" is set, which his profile doesn't set; the COPY's Preferences get it.
+# Rules: never write into his real profile (only read/copy from it; browser-guard enforces); never sign out, not even
+# in the copy (the site ends his session on its server); the copy holds his cookies, so it lives in a 700 folder under
+# $XDG_RUNTIME_DIR (RAM, his user only) and is removed on exit. Run under silent-test (headless browser rule, J630).
+set -u
+# A headless browser runs only inside silent-test (J630: its own null sink): wrap ourselves if needed.
+[[ -z "${SILENT_TEST:-}" && -z "${BRAVE_COPY_NO_SILENT:-}" ]] && exec silent-test --name brave-copy -- "$0" "$@"
+SRC="${BRAVE_COPY_SRC:-$HOME/.config/BraveSoftware/Brave-Origin}"
+BIN="${BRAVE_COPY_BIN:-/opt/brave-origin-bin/brave}"
+PORT=9676 KEYRING=1 SESSION=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --port) PORT="$2"; shift 2;;
+    --no-keyring) KEYRING=0; shift;;
+    --no-session-cookies) SESSION=0; shift;;
+    --keep-session-cookies) SESSION=1; shift;;
+    --) shift; break;;
+    -h|--help) sed -n 2,9p "$0"; exit 0;;
+    *) echo "brave-copy: unknown option $1" >&2; exit 2;;
+  esac
+done
+[[ $# -gt 0 ]] || { echo "brave-copy: no command (brave-copy [opts] -- CMD …)" >&2; exit 2; }
+[[ "$PORT" == 9222 ]] && { echo "brave-copy: 9222 is his own Brave; pick another port" >&2; exit 2; }
+[[ -d "$SRC/Default" ]] || { echo "brave-copy: no profile at $SRC" >&2; exit 2; }
+BASE="${XDG_RUNTIME_DIR:-/tmp}"
+COPY=$(mktemp -d "$BASE/brave-copy-XXXXXX") || exit 2
+chmod 700 "$COPY"
+BP=""
+cleanup() {
+  [[ -n "$BP" ]] && kill "$BP" 2>/dev/null && for _ in $(seq 1 50); do kill -0 "$BP" 2>/dev/null || break; sleep 0.1; done
+  [[ -n "$BP" ]] && kill -9 "$BP" 2>/dev/null
+  rm -rf -- "$COPY"
+  [[ -e "$COPY" ]] && echo "brave-copy: WARNING could not delete the copy $COPY (it holds his cookies)" >&2
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+# The login state only (not caches or service workers: 600+ MB): Local State, and from Default the cookies, prefs,
+# site storage. Copying from a running Brave is fine for SQLite/LevelDB files that are flushed (a few seconds' lag).
+mkdir -p "$COPY/Default"
+cp -a "$SRC/Local State" "$COPY/" 2>/dev/null
+for f in Cookies Cookies-journal Preferences "Secure Preferences" "Local Storage" "Session Storage" "IndexedDB" "WebStorage" "Extension Cookies" "Network Persistent State" "TransportSecurity" "Trust Tokens"; do
+  [[ -e "$SRC/Default/$f" ]] && cp -a "$SRC/Default/$f" "$COPY/Default/"
+done
+# (also any copied path under Network/, which newer Chromium uses for Cookies)
+[[ -d "$SRC/Default/Network" ]] && cp -a "$SRC/Default/Network" "$COPY/Default/"
+if [[ $SESSION == 1 ]]; then
+  python3 - "$COPY/Default/Preferences" <<'PY' || { echo "brave-copy: could not set the copy's restore pref" >&2; exit 2; }
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d.setdefault("session", {})["restore_on_startup"] = 1  # continue where you left off
+json.dump(d, open(p, "w"))
+PY
+fi
+FLAGS=(--headless=new --no-first-run --no-default-browser-check "--user-data-dir=$COPY" "--remote-debugging-port=$PORT" --remote-debugging-address=127.0.0.1 --disable-sync --mute-audio)
+[[ $KEYRING == 1 ]] && FLAGS+=(--password-store=gnome-libsecret)
+# Sites behind bot protection (GoDaddy's Akamai: "Access Denied") refuse the headless user agent ("HeadlessChrome").
+# Use the same user agent as his own Brave (Chrome/<ver> on Linux), read from Brave's own version string.
+UA=$(curl -s -m 2 "127.0.0.1:${BRAVE_COPY_UA_PORT:-9222}/json/version" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("User-Agent",""))' 2>/dev/null)
+[[ -z "$UA" ]] && UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+UA=${UA//HeadlessChrome/Chrome}
+FLAGS+=("--user-agent=$UA")
+"$BIN" "${FLAGS[@]}" about:blank >/dev/null 2>&1 &
+BP=$!
+for _ in $(seq 1 100); do curl -s -m 1 "127.0.0.1:$PORT/json/version" >/dev/null 2>&1 && break; kill -0 "$BP" 2>/dev/null || break; sleep 0.1; done
+curl -s -m 1 "127.0.0.1:$PORT/json/version" >/dev/null 2>&1 || { echo "brave-copy: the headless copy didn't start on port $PORT" >&2; exit 2; }
+BRAVE_COPY_PORT=$PORT "$@"

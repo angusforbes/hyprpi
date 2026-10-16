@@ -94,3 +94,18 @@ Cause (W1), with what is checked and what is inferred:
 Guard (W3): ~/.pi/agent/extensions/browser-guard blocks, for every pi agent, a bash command that would kill his Brave (by pid, pkill/killall, pgrep), `agent-browser close` / cookies clear|set / storage clear / state load / clearing eval / logout URLs / sign-out finds against 9222 or --auto-connect (also inside batch), CDP Browser.close / Network.clearBrowserCookies / Storage.clear* or /json/close aimed at 9222, deleting or moving his profile files; and a hyprcu close of one of his Brave windows. Throwaway Brave (another port, temp profile, HOME in /tmp) is never his. Override only when he asked: `# angus-asked: <his words>`. Tests: core.test.mjs (synthetic /proc). fast-browse never offers Sign out / Log out / Switch account / Clear data controls and refuses logout URLs.
 
 Not covered: a program that talks to 9222 from a file the guard doesn't read, Claude Code / Codex outside pi, and Angus's own actions.
+
+# J676: headless Brave on a copy of his profile (brave-copy)
+
+Angus (53): "YES" to making the headless profile copy carry his logins so uploads never touch his screen.
+
+Cause (W1), checked:
+- Not the keyring: his cookies are all v11 (encrypted with the "Brave Safe Storage" key in his GNOME keyring); 200 of 200 sampled decrypt with that key, none with the basic fallback key. A headless Brave on a copy decrypts them with or without --password-store=gnome-libsecret (tested both on a throwaway local login).
+- Not session cookies being dropped: his running profile's Preferences say exit_type "Crashed" (it's running), so a copy restores session cookies; brave-copy also sets the copy's restore_on_startup to "continue where you left off" to be sure.
+- The cause: GoDaddy's bot protection. A headless Brave sends the user agent "HeadlessChrome"; account.godaddy.com/products answered it with the page "Access Denied", which reads as "no session". With his Brave's normal user agent the same copy showed "Products", logged in. (portfolio's copyup.sh also started Brave through /usr/bin/brave-origin, which adds every line of ~/.config/brave-origin-flags.conf, including --remote-debugging-port=9222; brave-copy starts the binary directly.)
+
+Result (W2): throwaway local login (session and persistent cookies) seen logged in in the copy; then, in the copy: GoDaddy Products logged in, and cPanel File Manager on public_html/portfolio logged in (listing shows smudge.html), all headless. One mistake on the way: the throwaway login was seeded in his real Brave with `agent-browser tab new`, which made the tab active and took his focus; closed, and the skill now says never to do that.
+
+Tool (W3): bin/brave-copy (above; test/brave-copy.sh with a fake profile and browser: copy made, restore pref set, source untouched, copy deleted after success, failure, SIGTERM and a browser that never starts; 9222 refused).
+
+His real sessions afterwards (W4): read-only same-origin fetches in his existing tabs over their own DevTools websockets (no activation): cPanel API list_files HTTP 200 status=1, GoDaddy hosting page HTTP 200 without a sign-in redirect; his focus unchanged; no brave-copy folders left.
