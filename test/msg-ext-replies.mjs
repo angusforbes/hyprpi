@@ -91,6 +91,10 @@ try {
   ok("E2 a re-sent answer isn't counted twice (2/2, Beta's answer waited for)", /^2\/2 answered/.test(dt) && (dt.match(/--- Alpha ---/g) || []).length === 1 && /--- Beta ---\nB1/.test(dt), dt);
   await sleep(100);
   ok("E2 the answers in the result are confirmed", acks().includes("re:dq1:hp-a") && acks().includes("re:dq1:hp-b"));
+  const beforeReplay = sent.length;
+  push("talk.reply", { request_id: "dq1", mode: "demand", from: { id: "hp-a", name: "Alpha" }, text: "A1", remaining: 1 });
+  await sleep(200);
+  ok("C completed demand receipt replay is not injected a second time", sent.length === beforeReplay, JSON.stringify(sent.slice(beforeReplay)));
   const dem2 = tools.demand.execute("t2", { recipients: ["Alpha", "Beta"], message: "Q2?", timeout_seconds: 1 }, undefined);
   await sleep(100); push("talk.reply", { request_id: "dq2", mode: "demand", from: { id: "hp-a", name: "Alpha" }, text: "A2", remaining: 1 });
   const dt2 = (await dem2).content.map((c) => c.text).join("");
@@ -106,6 +110,10 @@ try {
   ok("E3 asker closed: NOT delivered", /^NOT delivered: Alpha has closed/.test(w3), w3);
   const w4 = await say({ delivered: false, sent: false, kept: false, to: "Alpha" });
   ok("E3 asker can't take a late reply: NOT delivered", /^Reply NOT delivered: Alpha isn't connected/.test(w4), w4);
+  const legacyOk = await say({ delivered: true });
+  ok("C old daemon successful reply is qualified, not claimed confirmed", /not confirmed/.test(legacyOk));
+  const legacyFail = await say({ delivered: false });
+  ok("C old daemon failure is visible", /NOT delivered/.test(legacyFail));
   const w5 = await say({ delivered: true, thoughts: true, to: "Thoughts-A" });
   ok("E3 to Thoughts: given to its thread, a refusal comes back as a note", /^Reply given to Thoughts-A \(it is in Thoughts-A's thread; if its model can't take it you get a \[hyprpi delivery note\]\)/.test(w5), w5);
   ok("E3 never the unqualified 'Reply delivered.'", ![w1, w2, w3, w4, w5].some((t) => /Reply delivered/.test(t)));

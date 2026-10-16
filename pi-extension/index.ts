@@ -1123,7 +1123,7 @@ export default function hyprpi(pi: ExtensionAPI) {
         signal?.addEventListener?.("abort", w.done);
         demands.set(r.request_id, w);
       });
-      for (const x of w.replies) if (x.key) ack(`re:${r.request_id}:${x.key}`); // J663: they're in this result: confirmed
+      for (const x of w.replies) if (x.key) { const k = `re:${r.request_id}:${x.key}`; landed.add(k); ack(k); } // J663: in this result: confirmed, and a later re-send is only re-acked (NssCheck B1)
       const missing = r.delivered.filter((n: string) => !w.replies.some((x) => x.name === n));
       const body = w.replies.map((x) => `--- ${x.name} ---\n${x.text}`).join("\n\n").slice(0, 32768);
       // J663 (rule 4): a wait that ends without every answer says what happens after
