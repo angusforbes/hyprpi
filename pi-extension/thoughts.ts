@@ -426,7 +426,7 @@ export default function thoughts(pi: ExtensionAPI) {
       thinking: Type.Optional(Type.String({ description: "its thinking level: off, minimal, low, medium, high, xhigh, max" })),
       name: Type.Optional(Type.String({ description: "its name, reflecting its purpose: short, usually one word (e.g. Namesmith); must not be taken" })),
       icon: Type.Optional(Type.String({ description: "one emoji reflecting its purpose (e.g. 🏷️)" })),
-      subagents: Type.Optional(Type.Boolean({ description: "J698: start it WITH pi-subagents (the in-process Agent tool), which agents don't load by default: only when the job clearly gains from parallel in-process helpers (e.g. reading a big file or many sources in parallel); kept across its restarts" })),
+      subagents: Type.Optional(Type.Boolean({ description: "J698: start it WITH pi-subagents (the in-process Agent tool), which agents don't load by default: only when the job clearly gains from parallel in-process helpers (e.g. reading a big file or many sources in parallel); kept across its restarts. Then say in its brief how to split the work (e.g. \"chapters 1–5 and 6–10 in parallel, then merge\"). Not a twin or fork: it starts clean with the extension" })),
     }, { additionalProperties: false }),
     execute: async (_id: string, p: any, _s: any, _u: any, ctx: any) => {
       let model = "";
@@ -448,7 +448,7 @@ export default function thoughts(pi: ExtensionAPI) {
       prompt: Type.String(), name: Type.Optional(Type.String()), icon: Type.Optional(Type.String()),
       complexity: Type.Optional(Type.String()), model: Type.Optional(Type.String()), thinking: Type.Optional(Type.String()),
       cwd: Type.Optional(Type.String()), project: Type.Optional(Type.String()),
-      subagents: Type.Optional(Type.Boolean({ description: "J698: start it with pi-subagents (in-process Agent helpers; off for agents by default), for parallel reading of big files or many sources" })),
+      subagents: Type.Optional(Type.Boolean({ description: "J698: start it with pi-subagents (in-process Agent helpers; off for agents by default), for parallel reading of big files or many sources. Then say in its brief how to split the work (e.g. \"chapters 1–5 and 6–10 in parallel, then merge\"). Not a twin or fork: it starts clean with the extension" })),
     }, { additionalProperties: true }), // (J647: no budgets; a stray "budget" is ignored, not refused)
     execute: async (_id: string, p: any) => { checkThinking(p.thinking); const _ignored = p?.budget; p = Object.fromEntries(Object.entries(p || {}).filter(([k]) => ["prompt", "name", "icon", "complexity", "model", "thinking", "cwd", "project", "subagents"].includes(k))); /* (NoBudgetCheck F2) declared fields only */ const r: any = await call("orch.spawn", { ...p, ...T }, p.model ? 120000 : 20000); return out(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}.`, { action: `spawned ${r.name} on ${r.model}` }); },
   });

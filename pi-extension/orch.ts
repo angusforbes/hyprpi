@@ -99,7 +99,7 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
       fork: Type.Optional(Type.Boolean({ description: "start from your own conversation (a twin) instead of empty" })),
       cwd: Type.Optional(Type.String()),
       project: Type.Optional(Type.String({ description: "@project it joins" })),
-      subagents: Type.Optional(Type.Boolean({ description: "J698: start it WITH pi-subagents (the in-process Agent tool), which agents don't load by default: only when its task clearly gains from parallel in-process helpers, e.g. reading a big file or many sources in parallel; kept across its restarts" })),
+      subagents: Type.Optional(Type.Boolean({ description: "J698: start it WITH pi-subagents (the in-process Agent tool), which agents don't load by default: only when its task clearly gains from parallel in-process helpers, e.g. reading a big file or many sources in parallel; kept across its restarts. Then say in its brief how to split the work (e.g. \"chapters 1–5 and 6–10 in parallel, then merge\"). Not a twin or fork: it starts clean with the extension" })),
     }, { additionalProperties: true }), // (J647: a stray "budget" from an older habit is ignored, not refused)
     execute: async (_id: string, p: any) => {
       // (NoBudgetCheck F2) only the declared fields go on: a stray "budget" (ignored) or anything else (e.g. "thoughts") is dropped
