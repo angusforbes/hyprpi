@@ -80,8 +80,8 @@ UA=${UA//HeadlessChrome/Chrome}
 FLAGS+=("--user-agent=$UA")
 "$BIN" "${FLAGS[@]}" about:blank >/dev/null 2>&1 &
 BP=$!
-# Ready = our browser is alive AND the DevTools port file in OUR copy names this port (the browser that wrote it is ours).
-ready() { kill -0 "$BP" 2>/dev/null && [[ "$(head -1 "$COPY/DevToolsActivePort" 2>/dev/null)" == "$PORT" ]] && curl -s -m 1 "127.0.0.1:$PORT/json/version" >/dev/null 2>&1; }
+# Ready = our browser is alive AND the process listening on the port is the one we started (ss shows its pid).
+ready() { kill -0 "$BP" 2>/dev/null && ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -q "pid=$BP," && curl -s -m 1 "127.0.0.1:$PORT/json/version" >/dev/null 2>&1; }
 for _ in $(seq 1 100); do ready && break; kill -0 "$BP" 2>/dev/null || break; sleep 0.1; done
 ready || { echo "brave-copy: the headless copy didn't start on port $PORT" >&2; exit 2; }
 BRAVE_COPY_PORT=$PORT "$@"

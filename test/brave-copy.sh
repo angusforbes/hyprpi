@@ -12,7 +12,6 @@ cat > "$T/fakebrave" <<'EOF'
 #!/bin/bash
 port=""; ud=""; for a in "$@"; do case "$a" in --remote-debugging-port=*) port=${a#*=};; --user-data-dir=*) ud=${a#*=};; esac; done
 echo "$*" > "$ud/.args"; [[ -f "$FAKE_NOSTART" ]] && { sleep 30; exit 1; }
-printf '%s\n/devtools/browser/x\n' "$port" > "$ud/DevToolsActivePort"
 exec python3 -c "
 import http.server
 class H(http.server.BaseHTTPRequestHandler):
