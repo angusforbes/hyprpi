@@ -14,6 +14,11 @@ for (const [label, t] of [["preamble", line], ["AGENTS.md", sec]]) {
   check(`${label}: v2 Angus's words`, t.includes("just toast me before you take over"));
   check(`${label}: W3 toast before taking focus/windows, naming who and how long, then ~10 s wait`, /notify-send -a "<your name>" "<your name> is taking over your browser" "for about <N> min/.test(t.replace(/\\"/g, '"')) && /wait ~10 s/.test(t) && /focus/.test(t));
   check(`${label}: W3 toast again when handing back`, /hand control back, toast again/.test(t) && /is done with your browser/.test(t));
+  check(`${label}: J667 Angus's words, marked very important`, t.includes("you have to tell them you're done.Very important.") && /VERY IMPORTANT/.test(t));
+  check(`${label}: J667 every exit path`, ["success", "failure", "giving up", "an error", "interrupted or stopped", "pausing to wait"].every((w) => t.includes(w)));
+  check(`${label}: J667 a done toast (done or stopped) AND a line to Thoughts`, t.includes("is done with your browser") && t.includes("your browser is yours again") && /AND a line in its reply to you|a line in your reply to Thoughts/.test(t));
+  check(`${label}: J667 the done toast always runs (try/finally)`, /try\/finally/.test(t));
+  check(`${label}: J667 an overrun toast`, t.includes("still needs your browser"));
   check(`${label}: never on the phone`, /phone/.test(t));
   check(`${label}: never types passwords, MFA codes or payment details`, /never type a password, MFA code or payment details/i.test(t));
   check(`${label}: sending on his behalf still needs his OK`, /exact text/.test(t));
