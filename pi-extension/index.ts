@@ -92,7 +92,8 @@ export default function hyprpi(pi: ExtensionAPI) {
       const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       message.details.lateNote = true; message.content = `[sent ${hm(sentAt)}, delivered ${hm(Date.now())}: it waited while you were busy, so it may be out of date; if you already answered this, say so in one line rather than re-sending]\n` + message.content;
     }
-    const again = () => { if (keyOf(message) && !landed.has(keyOf(message))) { held.unshift(message); setTimeout(releaseHeld, 1000); } };
+    const again = () => { inflight.delete(keyOf(message)); if (keyOf(message) && !landed.has(keyOf(message))) { held.unshift(message); setTimeout(releaseHeld, 1000); } };
+    { const k = keyOf(message); if (k) inflight.set(k, Date.now()); } // J722 (NssAnswersCheck): handed to pi, not landed yet: a re-send now is not a new message
     try {
       if (opts?.triggerTurn && !opts.deliverAs) { if (starting) clearTimeout(starting); starting = setTimeout(() => { starting = null; releaseHeld(); }, 5000); }
       const r: any = pi.sendMessage(message, opts);
@@ -111,7 +112,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   const inject = (message: any, steer = false) => {
     const k = keyOf(message);
     // A re-send from the daemon (J64 receipts) of something already here: just confirm it again.
-    if (k && (landed.has(k) || held.some((m) => keyOf(m) === k) || steered.has(k) || keyOf(afterAbort) === k)) {
+    if (k && (landed.has(k) || held.some((m) => keyOf(m) === k) || steered.has(k) || keyOf(afterAbort) === k || (Date.now() - (inflight.get(k) || 0) < 60000))) {
       if (landed.has(k)) ack(k);
       else if (held.some((m) => keyOf(m) === k) && idle()) setTimeout(releaseHeld, 0); // J272 fix 1: a re-send of a message stuck in `held` while idle starts it (it used to just return)
       return;
@@ -138,6 +139,7 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
   // Thoughts' work that landed in this session (ever) and in the current run (@hyprpi N57 cancel_work).
   const landed = new Set<string>(), inRun = new Set<string>();
+  const inflight = new Map<string, number>(); // J722: key -> when it was handed to pi.sendMessage, until its message_end (60 s at most)
   const userPending = new Map<string, string>(); // J722: prompt key -> its text, handed to pi.sendUserMessage, until its message_end
   // Delivery receipt (J64): the daemon keeps the request until this says it is in the session.
   const ack = (k: string) => { conn?.call("agent.delivered", { id: k }).catch(() => { /* re-sent and acked later */ }); };
@@ -145,7 +147,7 @@ export default function hyprpi(pi: ExtensionAPI) {
       const t = typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((x: any) => x?.text || "").join("") : "";
       for (const [k, v] of userPending) if (t.trim() === v.trim() || t.includes(v.trim())) { userPending.delete(k); landed.add(k); ack(k); break; }
     }
-    if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); if (k) { landed.add(k); inRun.add(k); ack(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
+    if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); inflight.delete(k); if (k) { landed.add(k); inRun.add(k); ack(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
   pi.on("agent_start", async () => { if (starting) { clearTimeout(starting); starting = null; } });
   // Sent when a run that cancel_work aborted has settled (the stop / the replacement starts a turn).
   let afterAbort: any = null, afterAbortTimer: ReturnType<typeof setTimeout> | null = null;
@@ -240,7 +242,7 @@ export default function hyprpi(pi: ExtensionAPI) {
       // J722 (nss7a): a prompt the daemon tracks (prompt_id) is confirmed once it is in the session (agent.delivered "p:<id>"), and a
       // re-send of one already here (landed, held, steered, or just handed to pi) is only confirmed again, never run twice.
       const pk = d?.prompt_id ? `p:${d.prompt_id}` : "";
-      if (pk && (landed.has(pk) || userPending.has(pk) || held.some((m) => keyOf(m) === pk) || steered.has(pk))) { if (landed.has(pk)) ack(pk); return; }
+      if (pk && (landed.has(pk) || userPending.has(pk) || held.some((m) => keyOf(m) === pk) || steered.has(pk) || (Date.now() - (inflight.get(pk) || 0) < 60000))) { if (landed.has(pk)) ack(pk); return; }
       const handled = () => { if (pk) { landed.add(pk); ack(pk); } }; // handled here without a session message (an /ignore note, a phone slash command)
       // An /ignore line sent from elsewhere (the phone's session page, J161 fix): a signpost note, as if
       // typed here; no turn (held until the run settles if it's working).
