@@ -1,0 +1,46 @@
+#!/bin/bash
+# site-put (J680, Angus: "you have full use of my browser, why is it taking so long? did you copare approaches?"):
+# publish files to angusforbes.com without a browser, and check each one byte for byte over HTTPS.
+#
+#   site-put [--via ssh|uapi] [--no-verify] LOCAL_FILE... REMOTE_DIR_OR_PATH
+#     REMOTE is relative to public_html (e.g. portfolio/ or portfolio/smudge.html); it must stay inside public_html.
+#     Several files: REMOTE must be a directory (ending in /). Prints one "ok <url>" line per file; exit 0 only if every
+#     file was uploaded AND read back identical.
+#
+# Routes (measured in J680, 136 KB file, upload + HTTPS read-back): rsync over SSH with a kept-open connection ~1.3 s
+# (the first ~2 s), cPanel UAPI Fileman::upload_files with an API token ~2.1 s, FTPS ~2.3 s, cPanel File Manager by
+# CDP ~26-36 s. Default: ssh; it falls back to uapi if ssh fails.
+# Credentials: SSH key ~/.ssh/godaddy_portfolio (Host godaddy in ~/.ssh/config); cPanel API token in
+# ~/.config/site-put/cpanel-token (600, never printed). Never deletes anything on the server.
+set -u
+HOST=p3plzcpnl457110.prod.phx3.secureserver.net; CPUSER=zuxabmjqiwhz; SITE=https://angusforbes.com
+TOKEN_FILE=${SITE_PUT_TOKEN:-$HOME/.config/site-put/cpanel-token}
+SSHOPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=auto -o "ControlPath=$HOME/.ssh/cm/%r@%h:%p" -o ControlPersist=10m)
+via=ssh verify=1
+while [[ $# -gt 0 ]]; do case "$1" in --via) via=$2; shift 2;; --no-verify) verify=0; shift;; -h|--help) sed -n 2,13p "$0"; exit 0;; --) shift; break;; -*) echo "site-put: unknown option $1" >&2; exit 2;; *) break;; esac; done
+[[ $# -ge 2 ]] || { echo "usage: site-put [--via ssh|uapi] LOCAL_FILE... REMOTE_DIR_OR_PATH" >&2; exit 2; }
+REMOTE=${!#}; FILES=("${@:1:$#-1}")
+REMOTE=${REMOTE#/}; REMOTE=${REMOTE#public_html/}
+[[ "/$REMOTE/" == *"/../"* || "/$REMOTE/" == *"/./"* || "$REMOTE" == *$'\n'* ]] && { echo "site-put: REMOTE must stay inside public_html (no . or ..)" >&2; exit 2; }
+[[ "$REMOTE" =~ ^[A-Za-z0-9._/@+-]*$ ]] || { echo "site-put: REMOTE has unusual characters; use letters, digits, . _ - / only" >&2; exit 2; }
+(( ${#FILES[@]} > 1 )) && [[ -n "$REMOTE" && "$REMOTE" != */ ]] && { echo "site-put: several files need a REMOTE directory ending in /" >&2; exit 2; }
+for f in "${FILES[@]}"; do [[ -f "$f" ]] || { echo "site-put: no such file: $f" >&2; exit 2; }; done
+mkdir -p "$HOME/.ssh/cm" && chmod 700 "$HOME/.ssh/cm"
+target() { [[ -z "$REMOTE" || "$REMOTE" == */ ]] && echo "$REMOTE$(basename "$1")" || echo "$REMOTE"; }
+put_ssh() { local dir; dir=$(dirname "public_html/$2"); ssh "${SSHOPTS[@]}" godaddy "mkdir -p '$dir'" 2>/dev/null && rsync -q --chmod=F644 -e "ssh ${SSHOPTS[*]}" "$1" "godaddy:public_html/$2" 2>/dev/null; }
+put_uapi() {
+  [[ -r "$TOKEN_FILE" ]] || { echo "site-put: no cPanel token at $TOKEN_FILE" >&2; return 1; }
+  local dir; dir=$(dirname "/home/$CPUSER/public_html/$2")
+  [[ "$(basename "$1")" == "$(basename "$2")" ]] || { echo "site-put: uapi keeps the local file name; rename locally first" >&2; return 1; }
+  curl -s -m 60 -H @<(printf 'Authorization: cpanel %s:%s\n' "$CPUSER" "$(cat "$TOKEN_FILE")") -F "dir=$dir" -F "overwrite=1" -F "file-1=@$1" "https://$HOST:2083/execute/Fileman/upload_files" | grep -q '"status":1'
+}
+rc=0
+for f in "${FILES[@]}"; do
+  t=$(target "$f")
+  if [[ $via == ssh ]]; then put_ssh "$f" "$t" || { echo "site-put: ssh failed for $f, trying uapi" >&2; put_uapi "$f" "$t"; }; else put_uapi "$f" "$t"; fi || { echo "FAIL upload $f -> public_html/$t" >&2; rc=1; continue; }
+  url="$SITE/$t"
+  if [[ $verify == 1 ]]; then
+    if [[ "$(curl -s -m 30 -H 'Cache-Control: no-cache' "$url?site-put=$RANDOM$RANDOM" | sha256sum | cut -c1-64)" == "$(sha256sum "$f" | cut -c1-64)" ]]; then echo "ok $url"; else echo "FAIL $url (read back differs)" >&2; rc=1; fi
+  else echo "uploaded $url (not verified)"; fi
+done
+exit $rc

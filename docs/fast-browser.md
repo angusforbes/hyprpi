@@ -109,3 +109,26 @@ Result (W2): throwaway local login (session and persistent cookies) seen logged 
 Tool (W3): bin/brave-copy (above; test/brave-copy.sh with a fake profile and browser: copy made, restore pref set, source untouched, copy deleted after success, failure, SIGTERM and a browser that never starts; 9222 refused).
 
 His real sessions afterwards (W4): read-only same-origin fetches in his existing tabs over their own DevTools websockets (no activation): cPanel API list_files HTTP 200 status=1, GoDaddy hosting page HTTP 200 without a sign-in redirect; his focus unchanged; no brave-copy folders left.
+
+# J680: publishing to angusforbes.com, and which browser library
+
+Angus: "you have full use of my browser, why is it taking so long? did you copare approaches? are there other browser librareis taht might be faster?"
+
+Upload one 136 KB file to public_html/portfolio and read it back over HTTPS (byte-identical), 5 runs each:
+
+| Route                      | Upload    | Total     |
+|----------------------------|-----------|-----------|
+| rsync, SSH kept open       | 0.54-0.61 | 1.33-2.37 |
+| rsync, new SSH each time   | 1.45-1.48 | 2.03-2.28 |
+| scp                        | 1.94-2.06 | 2.60-2.80 |
+| ssh cat >                  | 1.41-2.55 | 2.09-3.54 |
+| cPanel UAPI + API token    | 1.48-1.75 | 2.07-2.83 |
+| FTPS (curl)                | 1.55-2.44 | 2.13-3.24 |
+| File Manager by CDP        | 25.8-34.4 | 26.8-36.5 |
+
+- All correct except File Manager run 1 (read back differed). File Manager in a brave-copy also needs ~10 s to start the copy; it depends on a cPanel session and its page timing.
+- SSH (W2): rejected because ~/.ssh/authorized_keys on the server had a space inside the key ("…gpzMP 4Mue …"); rewritten from ~/.ssh/godaddy_portfolio.pub through the cPanel API; key login works (shell /bin/bash).
+- Default: bin/site-put (rsync over SSH with a 10-min kept-open connection, falls back to the UAPI token; verifies every file over HTTPS). bench/browser/site-put-routes.sh times the routes.
+- Created in cPanel: an API token "j680-bench" (full access, stored in ~/.config/site-put/cpanel-token, 600) kept as site-put's fallback; an FTP account j680bench@angusforbes.com (home public_html/portfolio) for the test, deleted afterwards.
+
+Browser libraries (bench/browser/libs; same form task, headless throwaway Brave, medians of 7, all correct): raw CDP 202 ms; chrome-remote-interface 220 ms; agent-browser 362 ms; puppeteer-core 776 ms; Playwright connectOverCDP 847 ms (+122 ms to connect). chromedp (Go) not tried: same protocol as raw CDP. Recommendation: keep agent-browser as the default; the slowness was model turns, fixed sleeps and the File Manager UI, not the library.
