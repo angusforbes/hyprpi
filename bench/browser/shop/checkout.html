@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Checkout</title></head><body style="font:18px sans-serif;margin:40px"><h1>Checkout</h1>
+<form onsubmit="event.preventDefault();const c=JSON.parse(localStorage.cart||'null');localStorage.order=JSON.stringify({...c,name:document.getElementById('n').value,address:document.getElementById('a').value,ship:(document.querySelector('input[name=ship]:checked')||{}).value||'none'});location='confirm.html'">
+<p><label>Full name <input id="n"></label></p><p><label>Address <input id="a"></label></p>
+<fieldset><legend>Shipping</legend><label><input type="radio" name="ship" value="Standard"> Standard</label> <label><input type="radio" name="ship" value="Express"> Express</label></fieldset>
+<p><button type="submit">Place order</button></p></form></body></html>

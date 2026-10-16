@@ -1,0 +1,206 @@
+#!/usr/bin/env node
+// fast-browse (J670, Angus 45a): a multi-step page task in a Brave over CDP, each step picked by TypeSafe's JEV (a cheap
+// typed-choice model) from the page's real elements; actions run through agent-browser. Low confidence hands the step back
+// to the calling agent (exit 3, with the top candidates). See ~/.pi/agent/skills/fast-browser/SKILL.md.
+//
+//   fast-browse [--cdp 9222] (--url URL | --tab N) [--input name=value]... [--file name=/path]... [--verify "..."]...
+//               [--max-steps 15] [--threshold 0.5] [--narrate NAME] [--keep-tab] [--json] "goal"
+//
+// Exit: 0 goal reached · 2 stopped (max steps / blocked / error) · 3 NEEDS_AGENT (low confidence: see "candidates").
+// The key comes from $TYPESAFE_API_KEY or the `export TYPESAFE_API_KEY=` line in ~/.bashrc; it is never printed or logged.
+import { execFile } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const USAGE = 'fast-browse [--cdp PORT] (--url URL | --tab N) [--input k=v]... [--file k=/path]... [--verify "…"]... [--max-steps N] [--threshold P] [--narrate NAME] [--keep-tab] [--json] "goal"';
+const PRICE_PER_TOKEN = 0.042 / 1e6; // jev-1.13/1.14 input price (docs.typesafe.ai/models); output is free
+
+function parseArgs(argv) {
+  const o = { cdp: "9222", inputs: {}, files: {}, verify: [], maxSteps: 15, threshold: 0.5, narrate: "", keepTab: false, json: false, url: "", tab: "", goal: "", model: process.env.TYPESAFE_MODEL || "jev-latest" };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i], v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
+    if (a === "--cdp") o.cdp = v();
+    else if (a === "--url") o.url = v();
+    else if (a === "--tab") o.tab = v();
+    else if (a === "--input" || a === "--file") { const s = v(), k = s.indexOf("="); if (k < 1) throw new Error(`${a} wants name=value`); (a === "--input" ? o.inputs : o.files)[s.slice(0, k)] = s.slice(k + 1); }
+    else if (a === "--verify") o.verify.push(v());
+    else if (a === "--max-steps") o.maxSteps = Number(v());
+    else if (a === "--threshold") o.threshold = Number(v());
+    else if (a === "--narrate") o.narrate = v();
+    else if (a === "--model") o.model = v();
+    else if (a === "--keep-tab") o.keepTab = true;
+    else if (a === "--json") o.json = true;
+    else if (a === "-h" || a === "--help") { console.log(USAGE); process.exit(0); }
+    else if (a.startsWith("--")) throw new Error(`unknown option ${a}`);
+    else o.goal = o.goal ? `${o.goal} ${a}` : a;
+  }
+  if (!o.goal) throw new Error("no goal given");
+  if (!o.url && !o.tab) throw new Error("give --url (opens its own tab) or --tab N");
+  for (const f of Object.values(o.files)) if (!fs.existsSync(f)) throw new Error(`file not found: ${f}`);
+  return o;
+}
+
+export function readKey(env = process.env, bashrc = path.join(os.homedir(), ".bashrc")) {
+  if (env.TYPESAFE_API_KEY) return env.TYPESAFE_API_KEY;
+  try { const m = fs.readFileSync(bashrc, "utf8").match(/^\s*export\s+TYPESAFE_API_KEY=(?:"([^"\n]+)"|'([^'\n]+)'|(\S+))/m); if (m) return m[1] || m[2] || m[3]; } catch {}
+  return "";
+}
+
+const run = (cmd, args, timeout = 30000) => new Promise((resolve) => {
+  execFile(cmd, args, { timeout, maxBuffer: 16 << 20 }, (err, stdout, stderr) => resolve({ code: err ? (err.code ?? 1) : 0, out: String(stdout), err: String(stderr) }));
+});
+
+// The snapshot's text form, parsed into elements (role, name, ref, state) with their option children.
+export function parseSnapshot(text) {
+  const els = [];
+  let lastCombo = null;
+  for (const line of String(text).split("\n")) {
+    const m = line.match(/^(\s*)- (\w+)(?: "((?:[^"\\]|\\.)*)")?(?: \[([^\]]*)\])?(?::\s*(.*))?$/);
+    if (!m) continue;
+    const [, indent, role, name = "", attrs = "", value = ""] = m;
+    const ref = attrs.match(/ref=(e\d+)/)?.[1];
+    if (!ref) continue;
+    const el = { ref, role, name, value: value.trim(), checked: /checked=true/.test(attrs), selected: /\bselected\b/.test(attrs), disabled: /disabled/.test(attrs), indent: indent.length };
+    if (role === "option" && lastCombo && el.indent > lastCombo.indent) { lastCombo.options.push(el); continue; }
+    if (role === "combobox" || role === "listbox") { el.options = []; lastCombo = el; } else if (el.indent <= (lastCombo?.indent ?? -1)) lastCombo = null;
+    els.push(el);
+  }
+  return els;
+}
+
+const SECRET = /password|passcode|\bpin\b|one-time|otp|2fa|mfa|security code|verification code|card number|cvv|cvc|expiry/i;
+
+// The legal actions on this page: each a key JEV can choose, with a plain description.
+export function buildActions(els, o) {
+  const acts = {};
+  const add = (key, desc, act) => { if (Object.keys(acts).length < 250) acts[key] = { desc, act }; };
+  for (const e of els) {
+    if (e.disabled) continue;
+    const label = `${e.role} "${e.name}"${e.value ? ` (now: ${e.value.slice(0, 60)})` : ""}`;
+    if (e.sensitive || SECRET.test(e.name)) continue; // never type into password / MFA / payment fields: that's Angus's step
+    if (["textbox", "searchbox", "spinbutton"].includes(e.role) || (e.role === "combobox" && !(e.options || []).length)) { // (an autocomplete box is a combobox with no options)
+      for (const k of Object.keys(o.inputs)) if (e.value !== String(o.inputs[k])) add(`fill ${e.ref} ${k}`, `Fill the ${label} with the input \`${k}\``, ["fill", `@${e.ref}`, o.inputs[k]]);
+      if (e.value) add(`enter ${e.ref}`, `Press Enter in the ${label} to submit it`, [["focus", `@${e.ref}`], ["press", "Enter"]]);
+    } else if (e.role === "combobox" || e.role === "listbox") {
+      for (const op of e.options || []) if (!op.selected) add(`select ${e.ref} ${op.ref}`, `In the ${label}, choose the option "${op.name}"`, ["select", `@${e.ref}`, op.name]);
+    } else if (e.role === "checkbox" || e.role === "switch") {
+      add(`${e.checked ? "uncheck" : "check"} ${e.ref}`, `${e.checked ? "Untick" : "Tick"} the ${label}`, [e.checked ? "uncheck" : "check", `@${e.ref}`]);
+    } else if (e.role === "radio") {
+      if (!e.checked) add(`click ${e.ref}`, `Select the radio button "${e.name}"`, ["click", `@${e.ref}`]);
+    } else if (["button", "link", "menuitem", "tab", "option"].includes(e.role)) {
+      const fileish = e.role === "button" && /no file chosen|files? selected|\.\w{2,4}$/i.test(e.value);
+      if (fileish) { for (const k of Object.keys(o.files)) add(`upload ${e.ref} ${k}`, `Attach the file input \`${k}\` (${path.basename(o.files[k])}) to the file field "${e.name}"`, ["upload", `@${e.ref}`, o.files[k]]); continue; }
+      add(`click ${e.ref}`, `Click the ${label}`, ["click", `@${e.ref}`]);
+    }
+  }
+  return acts;
+}
+
+// Fields that are secret by their HTML, whatever their label says (StopCheck: "Account secret", "Code", "Credit card"):
+// type=password, or an autocomplete token for passwords, one-time codes or card data. One batch for all text fields.
+const SECRET_AUTOCOMPLETE = /(current|new)-password|one-time-code|cc-|webauthn/i;
+export async function markSensitive(ab, els) {
+  const fields = els.filter((e) => ["textbox", "searchbox", "spinbutton", "combobox"].includes(e.role));
+  if (!fields.length) return;
+  const cmds = fields.flatMap((e) => [`get attr @${e.ref} type`, `get attr @${e.ref} autocomplete`, `get attr @${e.ref} inputmode`]);
+  const r = await ab("batch", ...cmds);
+  const parts = r.out.split("\n\n");
+  if (r.code || parts.length < cmds.length) { for (const e of fields) e.sensitive = true; return; } // can't tell: offer none of them
+  fields.forEach((e, i) => {
+    const vals = [parts[3 * i], parts[3 * i + 1], parts[3 * i + 2]].map((x) => (x || "").trim());
+    if (vals.some((v) => v.startsWith("✗"))) { e.sensitive = true; return; } // couldn't read it: fail closed
+    const [type, ac] = vals.map((v) => (v === "✓ Done" ? "" : v.toLowerCase())); // ("✓ Done" = attribute not set)
+    if (type === "password" || SECRET_AUTOCOMPLETE.test(ac)) e.sensitive = true;
+  });
+}
+
+async function jev(key, model, state, questions) {
+  const res = await fetch("https://api.typesafe.ai/v1/systemone", {
+    method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, state, questions }), signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) { const t = (await res.text()).slice(0, 300).split(key).join("<key>"); throw new Error(`JEV HTTP ${res.status}: ${t}`); }
+  return res.json();
+}
+
+async function main() {
+  let o;
+  try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(`fast-browse: ${e.message}\n${USAGE}`); process.exit(2); }
+  const key = readKey();
+  if (!key) { console.error("fast-browse: no TYPESAFE_API_KEY (environment or ~/.bashrc)"); process.exit(2); }
+  const session = `fast-browse-${process.pid}`;
+  const ab = (...a) => run("agent-browser", ["--cdp", String(o.cdp), "--session", session, ...a]);
+  let toastId = "";
+  const narrate = async (msg) => {
+    if (!o.narrate) return;
+    const r = await run("notify-send", ["-p", ...(toastId ? ["-r", toastId] : []), "-a", o.narrate, `${o.narrate}: ${msg}`]);
+    if (r.code === 0) toastId = r.out.trim() || toastId;
+  };
+  const t0 = Date.now(), steps = [], result = { status: "", goal: o.goal, steps, tokens: 0, cost_usd: 0, ms: 0 };
+  let opened = false;
+  emergencyClose = async () => { if (opened && !o.keepTab) { opened = false; const r = await ab("tab", "close"); if (r.code) console.error("fast-browse: WARNING could not close its tab"); } };
+  const finish = async (status, extra = {}) => {
+    Object.assign(result, { status, ...extra, ms: Date.now() - t0, cost_usd: +(result.tokens * PRICE_PER_TOKEN).toFixed(6) });
+    await emergencyClose();
+    if (o.json) console.log(JSON.stringify(result, null, 1));
+    else {
+      for (const s of steps) console.log(`step ${s.n}: ${s.action} (${s.desc}) conf ${s.confidence} ${s.ms} ms${s.error ? ` ERROR ${s.error}` : ""}`);
+      console.log(`${status}: ${steps.length} steps, ${result.ms} ms, ${result.tokens} JEV tokens ≈ $${result.cost_usd}${extra.reason ? ` — ${extra.reason}` : ""}`);
+      if (extra.candidates) for (const c of extra.candidates) console.log(`  candidate ${c.p}: ${c.action} (${c.desc})`);
+    }
+    process.exit(status === "DONE" ? 0 : status === "NEEDS_AGENT" ? 3 : 2);
+  };
+  if (o.url) { const r = await ab("tab", "new", o.url); if (r.code) await finish("ERROR", { reason: `could not open a tab: ${r.err.trim() || r.out.trim()}` }); opened = true; }
+  else { const r = await ab("tab", o.tab); if (r.code) await finish("ERROR", { reason: `no tab ${o.tab}: ${r.err.trim()}` }); }
+  await narrate(`working on: ${o.goal.slice(0, 80)}`);
+  const verification = o.verify.length ? o.verify : [`The goal is achieved: ${o.goal}`];
+  for (let n = 1; n <= o.maxSteps; n++) {
+    const ts = Date.now();
+    await ab("wait", "--load", "domcontentloaded"); // a navigation must have loaded
+    await ab("wait", "250"); // and the last action's page change settled
+    let snap = await ab("snapshot", "-i", "-c");
+    for (let k = 0; k < 6 && !snap.code && !/ref=e\d+/.test(snap.out); k++) { await ab("wait", "500"); snap = await ab("snapshot", "-i", "-c"); } // a page still building
+    if (snap.code) await finish("ERROR", { reason: `snapshot failed: ${snap.err.trim()}` });
+    const meta = await ab("batch", "get title", "get url", "get text body");
+    const [title = "", url = "", ...textParts] = meta.out.split("\n\n"); const textLines = [textParts.join("\n\n")]; // (batch separates outputs with a blank line)
+    const els = parseSnapshot(snap.out);
+    await markSensitive(ab, els);
+    const acts = buildActions(els, o);
+    const criteria = { DONE: "The goal is already achieved on the current page; nothing more to do.", BLOCKED: "No listed action moves toward the goal (e.g. it needs a login, a value not in `inputs`, or the page is wrong)." };
+    for (const [k, a] of Object.entries(acts)) criteria[k] = a.desc;
+    const state = {
+      goal: o.goal, verification,
+      inputs: Object.fromEntries([...Object.keys(o.inputs).map((k) => [k, o.inputs[k]]), ...Object.keys(o.files).map((k) => [k, `file ${path.basename(o.files[k])}`])]),
+      page: { title: title.trim(), url: url.trim(), elements: snap.out.slice(0, 12000), text: textLines.join("\n").slice(0, 4000) },
+      done_so_far: steps.map((s) => s.desc),
+    };
+    const questions = {
+      next: { type: "choice", instructions: "You are operating this web page toward `goal`. `done_so_far` lists the actions already taken, in order. Which ONE action should be taken next? Pick DONE only if `page` already shows `verification` is met. Never repeat an action already in `done_so_far` unless the page shows it didn't take effect.", criteria },
+      verified: { type: "noul", instructions: "Does the current `page` (its `text` and `elements`) show that every item of `verification` is met?" },
+    };
+    if (process.env.FAST_BROWSE_DEBUG) fs.appendFileSync(process.env.FAST_BROWSE_DEBUG, JSON.stringify({ n, state, criteria }) + "\n");
+    let ans;
+    try { ans = await jev(key, o.model, state, questions); } catch (e) { await finish("ERROR", { reason: e.message }); }
+    result.tokens += ans.usage?.input_tokens || 0;
+    const nx = ans.answers.next, ver = ans.answers.verified.noul;
+    const step = { n, action: nx.choice, desc: criteria[nx.choice] || nx.choice, confidence: +nx.confidence.toFixed(2), verified: +ver.toFixed(2), ms: 0 };
+    if (ver >= 0.8 || nx.choice === "DONE") { step.ms = Date.now() - ts; steps.push(step); if (ver >= 0.5) await finish("DONE"); await finish("NEEDS_AGENT", { reason: `JEV says done but the verification check is only ${ver.toFixed(2)}`, candidates: top(nx, criteria) }); }
+    if (nx.choice === "BLOCKED") { step.ms = Date.now() - ts; steps.push(step); await finish("NEEDS_AGENT", { reason: "JEV found no action toward the goal", candidates: top(nx, criteria) }); }
+    if (nx.confidence < o.threshold) { step.ms = Date.now() - ts; steps.push(step); await finish("NEEDS_AGENT", { reason: `low confidence ${nx.confidence.toFixed(2)} < ${o.threshold}`, candidates: top(nx, criteria) }); }
+    await narrate(`step ${n}: ${step.desc.slice(0, 90)}`);
+    const act = acts[nx.choice].act, cmds = Array.isArray(act[0]) ? act : [act];
+    let r = { code: 0 };
+    for (const c of cmds) { r = await ab(...c); if (r.code) break; }
+    step.ms = Date.now() - ts;
+    if (r.code) step.error = (r.err || r.out).trim().slice(0, 200);
+    steps.push(step);
+  }
+  await finish("STOPPED", { reason: `no result after ${o.maxSteps} steps` });
+}
+let emergencyClose = async () => {};
+const top = (nx, criteria) => Object.entries(nx.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, p]) => ({ action: k, desc: criteria[k] || k, p: +p.toFixed(2) }));
+
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/fast-browse")) {
+  main().catch(async (e) => { console.error(`fast-browse: ERROR ${String(e?.message || e)}`); await emergencyClose(); process.exit(2); });
+}

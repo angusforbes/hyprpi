@@ -1,4 +1,4 @@
-<!doctype html><html><head><title>J669 bench form</title></head><body style="font:18px sans-serif;margin:40px">
+<!doctype html><html><head><meta charset="utf-8"><title>J669 bench form</title></head><body style="font:18px sans-serif;margin:40px">
 <h1>Upload form</h1>
 <form id="f" onsubmit="event.preventDefault();const f=new FormData(this);document.getElementById('out').textContent='Submitted: '+f.get('name')+' / '+f.get('email')+' / plan='+f.get('plan')+' / agree='+(f.get('agree')?'yes':'no')+' / file='+(document.getElementById('file').files[0]?.name||'none');">
 <p><label>Name <input id="name" name="name"></label></p>
