@@ -31,6 +31,19 @@ check("never a password or card-number field", !keys.some((k) => / e1[12] /.test
 check("an autocomplete combobox (no options) is fillable", keys.includes("fill e13 name"));
 check("radio → click; button → click", keys.includes("click e14") && keys.includes("click e3"));
 check("Enter offered only on a field with a value", keys.includes("enter e5") && !keys.includes("enter e4"));
+{ // markSensitive: secret by HTML (type=password, autocomplete one-time-code / cc-* / *-password), fail closed on errors
+  const f = m.parseSnapshot('- textbox "Name" [ref=e2]\n- textbox "Account secret" [ref=e3]\n- textbox "Code" [ref=e4]\n- textbox "Credit card" [ref=e5]');
+  let asked = [];
+  const fakeAb = async (...a) => { asked = a; return { code: 0, out: ["✓ Done", "✓ Done", "✓ Done", "password", "✓ Done", "✓ Done", "✓ Done", "one-time-code", "✓ Done", "✓ Done", "cc-number", "✓ Done\n"].join("\n\n") }; };
+  await m.markSensitive(fakeAb, f);
+  check("markSensitive asks get attr @ref NAME for each field", asked[0] === "batch" && asked.includes("get attr @e3 type") && asked.includes("get attr @e5 autocomplete"));
+  check("markSensitive: password / one-time-code / cc-number flagged, Name not", f.map((e) => !!e.sensitive).join() === "false,true,true,true");
+  const g = m.parseSnapshot('- textbox "Name" [ref=e2]');
+  await m.markSensitive(async () => ({ code: 0, out: "✗ Unknown ref: e2\n\n✓ Done\n\n✓ Done" }), g);
+  check("markSensitive fails closed when an attribute can't be read", g[0].sensitive === true);
+  const acts2 = m.buildActions(f, { inputs: { x: "1" }, files: {} });
+  check("buildActions offers no fill for a flagged field", Object.keys(acts2).join() === "fill e2 x");
+}
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fb-")), rc = path.join(dir, "bashrc");
 fs.writeFileSync(rc, '[[ $- != *i* ]] && return\nexport TYPESAFE_API_KEY="ts_fake_123"\n');
 check("key: environment first", m.readKey({ TYPESAFE_API_KEY: "env_key" }, rc) === "env_key");

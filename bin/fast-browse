@@ -78,7 +78,7 @@ export function buildActions(els, o) {
   for (const e of els) {
     if (e.disabled) continue;
     const label = `${e.role} "${e.name}"${e.value ? ` (now: ${e.value.slice(0, 60)})` : ""}`;
-    if (SECRET.test(e.name)) continue; // never type into password / MFA / payment fields: that's Angus's step
+    if (e.sensitive || SECRET.test(e.name)) continue; // never type into password / MFA / payment fields: that's Angus's step
     if (["textbox", "searchbox", "spinbutton"].includes(e.role) || (e.role === "combobox" && !(e.options || []).length)) { // (an autocomplete box is a combobox with no options)
       for (const k of Object.keys(o.inputs)) if (e.value !== String(o.inputs[k])) add(`fill ${e.ref} ${k}`, `Fill the ${label} with the input \`${k}\``, ["fill", `@${e.ref}`, o.inputs[k]]);
       if (e.value) add(`enter ${e.ref}`, `Press Enter in the ${label} to submit it`, [["focus", `@${e.ref}`], ["press", "Enter"]]);
@@ -95,6 +95,24 @@ export function buildActions(els, o) {
     }
   }
   return acts;
+}
+
+// Fields that are secret by their HTML, whatever their label says (StopCheck: "Account secret", "Code", "Credit card"):
+// type=password, or an autocomplete token for passwords, one-time codes or card data. One batch for all text fields.
+const SECRET_AUTOCOMPLETE = /(current|new)-password|one-time-code|cc-|webauthn/i;
+export async function markSensitive(ab, els) {
+  const fields = els.filter((e) => ["textbox", "searchbox", "spinbutton", "combobox"].includes(e.role));
+  if (!fields.length) return;
+  const cmds = fields.flatMap((e) => [`get attr @${e.ref} type`, `get attr @${e.ref} autocomplete`, `get attr @${e.ref} inputmode`]);
+  const r = await ab("batch", ...cmds);
+  const parts = r.out.split("\n\n");
+  if (r.code || parts.length < cmds.length) { for (const e of fields) e.sensitive = true; return; } // can't tell: offer none of them
+  fields.forEach((e, i) => {
+    const vals = [parts[3 * i], parts[3 * i + 1], parts[3 * i + 2]].map((x) => (x || "").trim());
+    if (vals.some((v) => v.startsWith("✗"))) { e.sensitive = true; return; } // couldn't read it: fail closed
+    const [type, ac] = vals.map((v) => (v === "✓ Done" ? "" : v.toLowerCase())); // ("✓ Done" = attribute not set)
+    if (type === "password" || SECRET_AUTOCOMPLETE.test(ac)) e.sensitive = true;
+  });
 }
 
 async function jev(key, model, state, questions) {
@@ -121,9 +139,10 @@ async function main() {
   };
   const t0 = Date.now(), steps = [], result = { status: "", goal: o.goal, steps, tokens: 0, cost_usd: 0, ms: 0 };
   let opened = false;
+  emergencyClose = async () => { if (opened && !o.keepTab) { opened = false; const r = await ab("tab", "close"); if (r.code) console.error("fast-browse: WARNING could not close its tab"); } };
   const finish = async (status, extra = {}) => {
     Object.assign(result, { status, ...extra, ms: Date.now() - t0, cost_usd: +(result.tokens * PRICE_PER_TOKEN).toFixed(6) });
-    if (opened && !o.keepTab) await ab("tab", "close");
+    await emergencyClose();
     if (o.json) console.log(JSON.stringify(result, null, 1));
     else {
       for (const s of steps) console.log(`step ${s.n}: ${s.action} (${s.desc}) conf ${s.confidence} ${s.ms} ms${s.error ? ` ERROR ${s.error}` : ""}`);
@@ -146,6 +165,7 @@ async function main() {
     const meta = await ab("batch", "get title", "get url", "get text body");
     const [title = "", url = "", ...textParts] = meta.out.split("\n\n"); const textLines = [textParts.join("\n\n")]; // (batch separates outputs with a blank line)
     const els = parseSnapshot(snap.out);
+    await markSensitive(ab, els);
     const acts = buildActions(els, o);
     const criteria = { DONE: "The goal is already achieved on the current page; nothing more to do.", BLOCKED: "No listed action moves toward the goal (e.g. it needs a login, a value not in `inputs`, or the page is wrong)." };
     for (const [k, a] of Object.entries(acts)) criteria[k] = a.desc;
@@ -178,6 +198,9 @@ async function main() {
   }
   await finish("STOPPED", { reason: `no result after ${o.maxSteps} steps` });
 }
+let emergencyClose = async () => {};
 const top = (nx, criteria) => Object.entries(nx.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, p]) => ({ action: k, desc: criteria[k] || k, p: +p.toFixed(2) }));
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/fast-browse")) main();
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/fast-browse")) {
+  main().catch(async (e) => { console.error(`fast-browse: ERROR ${String(e?.message || e)}`); await emergencyClose(); process.exit(2); });
+}
