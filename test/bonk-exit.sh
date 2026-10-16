@@ -16,4 +16,7 @@ play pw-play 0; play paplay 0; run; ok "a sound that plays: exit 0" $?
 play pw-play 1; play paplay 0; run; ok "pw-play fails, paplay plays: exit 0" $?
 play pw-play 1; play paplay 3; run; rc=$?; [[ $rc != 0 ]]; ok "both players fail: bonk exits non-zero ($rc), not the toast's 0" $?
 grep -q "rc=3" "$T/home/.local/state/bonk.log"; ok "bonk.log records the player's rc" $?
+toast() { for c in notify-send omarchy-notification-send; do printf '#!/bin/sh\nexit %s\n' "$1" > "$T/bin/$c"; done; }
+play pw-play 0; toast 4; run; rc=$?; [[ $rc != 0 ]]; ok "the sound plays but the toast fails: bonk exits non-zero ($rc), the toast's failure isn't hidden" $?
+play pw-play 0; toast 0; run; ok "both fine again: exit 0" $?
 [[ $fails == 0 ]] && echo "all ok" || { echo "$fails FAILED"; exit 1; }
