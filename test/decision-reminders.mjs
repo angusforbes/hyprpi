@@ -33,9 +33,9 @@ const M = 60e3;
   let t = 1_000_000_000_000;
   const pushes = [], toasts = [];
   const dec = (h, extra = {}) => ({ h, sec: "decide", text: `question ${h}`, options: [{ key: "a", text: "yes" }, { key: "b", text: "no" }], recommend: "a", ts: t, ...extra });
-  const mb = { id: "p-mb", name: "mathbac", status: "active", items: [] }, hp = { id: "p-hp", name: "hyprpi", status: "active", items: [] };
+  const mb = { id: "p-mb", name: "demoproj", status: "active", items: [] }, hp = { id: "p-hp", name: "hyprpi", status: "active", items: [] };
   const boards = [{ room: "C", projects: [mb, hp], unfiled: [] }, { room: "G", projects: [{ id: "p-g", name: "gproj", status: "active", items: [dec("D1", { importance: "important" })] }] }];
-  let conf = { remindEveryMin: 10, remindRounds: 12, toast: true, projects: { mathbac: "important" } };
+  let conf = { remindEveryMin: 10, remindRounds: 12, toast: true, projects: { demoproj: "important" } };
   const R = createReminders({ stateFile: path.join(T, "r.json"), boards: () => boards, policy: () => conf, push: (k, i) => { pushes.push({ k, ...i }); return { sent: true }; }, toast: (x) => toasts.push(x), now: () => t, skipRoom: (r) => r === "G" });
   ok("A levelOf: own level wins, else project default, else normal", levelOf({ importance: "normal" }, mb, conf) === "normal" && levelOf({}, mb, conf) === "important" && levelOf({}, hp, conf) === "normal" && levelOf({ importance: "important" }, hp, conf) === "important");
   hp.items.push(dec("D1")); // normal: never reminded
@@ -43,13 +43,13 @@ const M = 60e3;
   hp.items.push(dec("D2", { importance: "important" }));
   t += 9 * M; ok("A nothing before the first interval", R.tick() === null && pushes.length === 0);
   t += 1 * M; let r = R.tick();
-  ok("A one round at 10 min, listing both important decisions (one push, not one per item)", pushes.length === 1 && r?.sent.length === 2 && /@mathbac D6/.test(pushes[0].text) && /@hyprpi D2/.test(pushes[0].text) && !/@hyprpi D1/.test(pushes[0].text), JSON.stringify(r));
+  ok("A one round at 10 min, listing both important decisions (one push, not one per item)", pushes.length === 1 && r?.sent.length === 2 && /@demoproj D6/.test(pushes[0].text) && /@hyprpi D2/.test(pushes[0].text) && !/@hyprpi D1/.test(pushes[0].text), JSON.stringify(r));
   ok("A the round carries the options and the recommendation", /a\. yes \(recommended\)/.test(pushes[0].text) && /b\. no/.test(pushes[0].text));
   ok("A its title says what it is", /Reminder: 2 important decisions waiting/.test(pushes[0].title), pushes[0].title);
   ok("A a desktop toast with the round", toasts.length === 1 && toasts[0].title === pushes[0].title);
   ok("A a skipped room (sandboxed world's host board) isn't reminded", !/gproj/.test(pushes[0].text));
   const m = phoneMessage("decision", pushes[0]);
-  ok("A the phone message keeps the round's title and lines", m.title === pushes[0].title && m.message.includes("@mathbac D6") && m.message.split("\n").length > 3, m.message.slice(0, 120));
+  ok("A the phone message keeps the round's title and lines", m.title === pushes[0].title && m.message.includes("@demoproj D6") && m.message.split("\n").length > 3, m.message.slice(0, 120));
   t += 5 * M; ok("A nothing between rounds", R.tick() === null && pushes.length === 1);
   t += 5 * M; R.tick(); ok("A the next round 10 min later", pushes.length === 2);
   // a new important item joins the round once its own first push is an interval old
@@ -134,9 +134,9 @@ const S = fs.mkdtempSync(path.join(os.tmpdir(), "j650-")), cfg = path.join(S, "c
 fs.mkdirSync(path.join(S, "boards")); fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
 fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10 }));
 const EVERY_MIN = 0.05; // 3 s (slack for a loaded machine: Blink saw 1.2 s flake beside other tests)
-fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } }, phone: { ntfy: { enabled: true, topic: "j650-test", server: "https://ntfy.example", kinds: ["bonk", "decision"], maxPerHour: 0 } }, decisions: { remindEveryMin: EVERY_MIN, remindRounds: 3, toast: true, projects: { mathbac: "important" } } }));
+fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false }, autoReload: { enabled: false } }, phone: { ntfy: { enabled: true, topic: "j650-test", server: "https://ntfy.example", kinds: ["bonk", "decision"], maxPerHour: 0 } }, decisions: { remindEveryMin: EVERY_MIN, remindRounds: 3, toast: true, projects: { demoproj: "important" } } }));
 const proj = (id, name) => ({ id, name, title: name, icon: "📋", status: "active", members: ["hp-dossier"], writer: "hp-dossier", created: now, updated: now, by: "x", where: null, next_step: null, seq: { D: 0, N: 0, H: 0 }, items: [] });
-fs.writeFileSync(path.join(S, "boards", "A.json"), JSON.stringify({ room: "A", projects: [proj("p-mb", "mathbac"), proj("p-hp", "hyprpi")] }));
+fs.writeFileSync(path.join(S, "boards", "A.json"), JSON.stringify({ room: "A", projects: [proj("p-mb", "demoproj"), proj("p-hp", "hyprpi")] }));
 const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, XDG_STATE_HOME: path.join(S, "xdg"), HYPRLAND_INSTANCE_SIGNATURE: "j650-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_TEST: "1", HYPRPI_PHONE_PUSH_LOG: PUSH, HYPRPI_NOTIFY_LOG: NOTE, HYPRPI_REMIND_TICK_MS: "200" };
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
 let d = null;
@@ -154,22 +154,22 @@ try {
   await ag.call("agent.update", { status: "idle" });
   // an agent files an important decision on a normal project, and a plain one on a project whose default is important
   const r1 = await ag.call("board.item", { action: "add", project: "hyprpi", section: "decide", text: "Ship the box now?", options: ["yes", "no"], recommend: "a", importance: "important" });
-  const r2 = await ag.call("board.item", { action: "add", project: "mathbac", section: "decide", text: "Next run?", options: ["T6", "stop"] });
+  const r2 = await ag.call("board.item", { action: "add", project: "demoproj", section: "decide", text: "Next run?", options: ["T6", "stop"] });
   const r3 = await ag.call("board.item", { action: "add", project: "hyprpi", section: "decide", text: "A normal one", options: ["x", "y"] });
   ok("B the item keeps its level", r1.item.importance === "important" && !r2.item.importance && !r3.item.importance);
   const first = lines(PUSH).filter((p) => String(p.key).startsWith("decision:decide:")).length;
   ok("B each decision got its usual one push", first === 3, String(first));
   await waitFor(() => rounds().length >= 1);
   let R = rounds();
-  ok("B a round arrives after the interval, one push with both important decisions, not the normal one", R.length === 1 && /@hyprpi D1/.test(R[0].message) && /@mathbac D1/.test(R[0].message) && !/A normal one/.test(R[0].message), JSON.stringify(R.map((x) => x.message)));
+  ok("B a round arrives after the interval, one push with both important decisions, not the normal one", R.length === 1 && /@hyprpi D1/.test(R[0].message) && /@demoproj D1/.test(R[0].message) && !/A normal one/.test(R[0].message), JSON.stringify(R.map((x) => x.message)));
   ok("B the round's title", /Reminder: 2 important decisions waiting/.test(R[0].title), R[0]?.title);
   ok("B a desktop toast with the round", lines(NOTE).some((n) => n.kind === "notify" && /Reminder: 2 important/.test(n.title || "")));
   // Thoughts stops one on Angus's word
-  const s1 = await api.call("thoughts.remind", { room: "A", project: "mathbac", h: r2.item.h, reminders: "stop" });
+  const s1 = await api.call("thoughts.remind", { room: "A", project: "demoproj", h: r2.item.h, reminders: "stop" });
   ok("B Thoughts stops a decision's reminders", /reminders stopped/.test(s1.said), JSON.stringify(s1));
   const n1 = rounds().length; await waitFor(() => rounds().length > n1);
   R = rounds().slice(n1);
-  ok("B the next round leaves the stopped one out", R.length >= 1 && R.every((x) => !/@mathbac/.test(x.message)) && /@hyprpi D1/.test(R[0].message), JSON.stringify(R.map((x) => x.message)));
+  ok("B the next round leaves the stopped one out", R.length >= 1 && R.every((x) => !/@demoproj/.test(x.message)) && /@hyprpi D1/.test(R[0].message), JSON.stringify(R.map((x) => x.message)));
   // the agent snoozes, then resumes (board_update edit)
   const s2 = await ag.call("board.item", { action: "edit", project: "hyprpi", h: r1.item.h, reminders: "snooze", minutes: 60 });
   ok("B the asking agent can snooze it", /snoozed 60 min/.test(s2.said || "") && s2.item.snoozeUntil > Date.now(), JSON.stringify(s2.said));
