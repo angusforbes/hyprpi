@@ -12,6 +12,7 @@ cat > "$T/fakebrave" <<'EOF'
 #!/bin/bash
 port=""; ud=""; for a in "$@"; do case "$a" in --remote-debugging-port=*) port=${a#*=};; --user-data-dir=*) ud=${a#*=};; esac; done
 echo "$*" > "$ud/.args"; [[ -f "$FAKE_NOSTART" ]] && { sleep 30; exit 1; }
+printf '%s\n/devtools/browser/x\n' "$port" > "$ud/DevToolsActivePort"
 exec python3 -c "
 import http.server
 class H(http.server.BaseHTTPRequestHandler):
@@ -39,5 +40,17 @@ touch "$T/nostart"; timeout 30 "$BC" --port 9874 -- true 2>/dev/null; rc=$?; rm 
 ok "browser never starts: exit 2, copy deleted" '[[ $rc == 2 && $(copies) == 0 ]]'
 "$BC" --port 9222 -- true 2>/dev/null; rc=$?
 ok "port 9222 (his Brave) refused" '[[ $rc == 2 && $(copies) == 0 ]]'
+"$BC" --port 09222 -- true 2>/dev/null; rc=$?
+ok "a zero-padded 09222 refused too" '[[ $rc == 2 ]]'
+"$BC" --port abc -- true 2>/dev/null; rc=$?
+ok "a non-numeric port refused" '[[ $rc == 2 ]]'
+python3 -m http.server 9875 --bind 127.0.0.1 >/dev/null 2>&1 & sp=$!; for _ in $(seq 1 30); do curl -s -m1 127.0.0.1:9875/ >/dev/null && break; sleep 0.1; done
+"$BC" --port 9875 -- touch "$T/ran" 2>/dev/null; rc=$?; kill $sp
+ok "an occupied port refused, CMD not run" '[[ $rc == 2 && ! -e "$T/ran" && $(copies) == 0 ]]'
+BRAVE_COPY_BIN=/bin/false "$BC" --port 9876 -- touch "$T/ran2" 2>/dev/null; rc=$?
+ok "a browser that exits at once: CMD not run, exit 2" '[[ $rc == 2 && ! -e "$T/ran2" && $(copies) == 0 ]]'
+"$BC" --port 9877 -- sleep 20 & bp=$!; for _ in $(seq 1 50); do curl -s -m1 127.0.0.1:9877/json/version >/dev/null && break; sleep 0.1; done
+kill -INT $bp; wait $bp 2>/dev/null; sleep 0.5
+ok "SIGINT: copy deleted, its browser stopped" '[[ $(copies) == 0 ]] && ! curl -s -m1 127.0.0.1:9877/json/version >/dev/null'
 ok "the source profile was never written" '[[ "$(cd "$SRC" && find . -type f -exec sha256sum {} + | sort | sha256sum)" == "$SUM" ]]'
 echo "$pass passed, $fail failed"; exit $(( fail > 0 ))
