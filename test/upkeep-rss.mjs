@@ -1,19 +1,20 @@
 #!/usr/bin/env node
-// J691 proof (Angus: "85MB x 20 agents is a lot of memory, lets do 1c"): upkeep also refreshes an idle agent whose
-// pi process uses more memory (RSS) than upkeep.refresh.rssMB.
-//   node test/run.mjs test/upkeep-rss.mjs   (exit 0 = pass; runs inside the test guard)
-// An isolated daemon (temp socket + state, no Hyprland, Thoughts' pi = /bin/cat, upkeep pass every 300 ms) and three
-// fake agents, each backed by a child process THIS test spawns with that agent's HYPRPI_AGENT_ID:
-//   Big   - its child holds ~260 MB                       -> asked for a handoff once rssMB (150) is on
-//   Small - its child is a plain idle node (~50 MB)        -> never asked
-//   Liar  - says Big's child is its pid (wrong agent id)   -> never asked (the pid must really be the agent's)
-// 1. rssMB 0 (off): nobody is asked, even Big.
-// 2. rssMB 150: Big is asked (the reason names its MB and the setting), Small and Liar aren't; the list (refresh_due) and
-//    thoughts.upkeep status show Big as due; the Stream's upkeep line says why.
-// 3. Big writes its handoff and calls upkeep.ready, gets the restart, says agent.restartReady; its old "pi" exits and a
-//    new one (a small child, same agent id) connects in a new "window" (a fake hyprctl lists it): the refresh completes
-//    (the 🔄 note with RSS before -> after, lower), and the new session's first prompt is the handoff text naming the memory
-//    reason. (The daemon's own `hyprpi new` is refused in an isolated daemon, J333, so no real window ever opens.)
+// J708 proof (Angus, mem1a + mem2b: "mem1a yes. mem2b 500MB"): an idle agent whose pi uses more memory (RSS) than
+// upkeep.refresh.rssMB (default 500) is RESTARTED ON ITS SAME SESSION: no handoff turn, full context kept, once per cooldown.
+//   node test/run.mjs test/upkeep-rss.mjs   (exit 0 = pass; runs only inside the test guard)
+// An isolated daemon (temp socket + state + config, no Hyprland, upkeep pass every 300 ms) and fake agents, each backed by a
+// child process THIS test spawns with that agent's HYPRPI_AGENT_ID (Big's and the others' hold ~260 MB):
+//   Big    idle, over the limit                        -> restarted on its session (W1)
+//   Small  idle, ~50 MB                                 -> never
+//   Liar   says Big's child is its pid (foreign pid)    -> never
+//   Busy   over the limit but working                   -> never
+//   Paused over the limit, in upkeep.paused             -> never
+//   Boxed  over the limit, in a container               -> never (its pid isn't a local agent's to judge)
+// 0. the default limit is 500. 1. rssMB 0 (off): nobody. 2. rssMB 150: only Big gets a restart (compact: false), no handoff prompt;
+// 3. restartReady -> the daemon relaunches it with --session <its same file> (HYPRPI_NEW_ARGV_LOG: isolated hyprpi only, no window)
+//    -> the new pi connects -> its 🔄 note says "restarted on its same session for memory" with RSS before -> after (lower);
+// 4. Big grows again at once: no second restart within the cooldown (one per cooldownHours).
+// 5. an agent whose world is bound to a remote machine (cfg/hyprpi/remote/d.json): never restarted from here.
 // Only processes this test spawned are signalled, by their own pid.
 import fs from "node:fs";
 import os from "node:os";
@@ -27,11 +28,11 @@ let fails = 0; const ok = (n, c, x = "") => { if (!c) fails++; console.log(`${c 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rssMb = (pid) => { try { return Math.round(Number(fs.readFileSync(`/proc/${pid}/status`, "utf8").match(/VmRSS:\s+(\d+)/)[1]) / 1024); } catch { return 0; } };
 
-const S = fs.mkdtempSync(path.join(os.tmpdir(), "j691-")), cfg = path.join(S, "cfg"), sock = path.join(S, "d.sock");
+const S = fs.mkdtempSync(path.join(os.tmpdir(), "j708-")), cfg = path.join(S, "cfg"), sock = path.join(S, "d.sock"), argvLog = path.join(S, "new-argv.jsonl");
 fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
-fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10 }));
-const policy = (rssMB) => fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: true, idleMinutes: 0, cooldownHours: 3, rssMB }, autoReload: { enabled: false } } }));
-policy(0);
+fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10, cwd: S }));
+const policy = (rssMB) => fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: true, idleMinutes: 0, cooldownHours: 3, ...(rssMB === undefined ? {} : { rssMB }) }, autoReload: { enabled: false }, paused: ["Paused"] } }));
+policy(undefined);
 
 const kids = [];
 const child = (id, holdMb) => {
@@ -39,84 +40,97 @@ const child = (id, holdMb) => {
   const code = `const keep = []; for (let i = 0; i < ${holdMb}; i++) keep.push(Buffer.alloc(1 << 20, 1)); globalThis.k = keep; setInterval(() => {}, 1e6);`;
   const k = spawn(process.execPath, ["-e", code], { env, stdio: "ignore" }); kids.push(k); return k;
 };
-const big = child("hp-big", 260), small = child("hp-small", 0);
-
+const P = { big: child("hp-big", 260), small: child("hp-small", 0), busy: child("hp-busy", 260), paused: child("hp-paused", 260), boxed: child("hp-boxed", 260) };
 const fakeBin = path.join(S, "bin"), clientsFile = path.join(S, "clients.json"); fs.mkdirSync(fakeBin); fs.writeFileSync(clientsFile, "[]");
 fs.writeFileSync(path.join(fakeBin, "hyprctl"), `#!/bin/sh\ncase "$*" in *clients*) cat "${clientsFile}";; *activewindow*|*activeworkspace*) echo '{}';; *) echo '[]';; esac\n`, { mode: 0o755 });
-const env = { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j691-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "300" };
+const env = { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j708-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "300", HYPRPI_NEW_ARGV_LOG: argvLog };
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
 const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(S, "d.log"), "w"), "inherit"] });
 kids.push(d);
 try {
+  // 0. the default
+  process.env.XDG_CONFIG_HOME = cfg; process.env.HYPRPI_STATE = S;
+  const { loadUpkeep } = await import(path.join(ROOT, "lib/upkeep.mjs"));
+  ok("0 upkeep.refresh.rssMB defaults to 500 (Angus mem2b)", loadUpkeep().refresh.rssMB === 500, String(loadUpkeep().refresh.rssMB));
+  policy(0);
   for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await sleep(200);
-  for (let i = 0; i < 50 && rssMb(big.pid) < 240; i++) await sleep(100);
-  ok("setup: Big's child holds > 200 MB, Small's < 120 MB", rssMb(big.pid) > 200 && rssMb(small.pid) < 120, `${rssMb(big.pid)} / ${rssMb(small.pid)} MB`);
+  for (let i = 0; i < 50 && Object.values(P).some((k, j) => j !== 1 && rssMb(k.pid) < 240); i++) await sleep(100);
+  ok("setup: the big children hold > 200 MB, Small's < 120 MB", rssMb(P.big.pid) > 200 && rssMb(P.busy.pid) > 200 && rssMb(P.small.pid) < 120, `${rssMb(P.big.pid)} / ${rssMb(P.small.pid)} MB`);
   const { connect } = await import(path.join(ROOT, "lib/client.mjs"));
-  const api = await connect({ path: sock, onEvent: () => {} });
-  const got = { "hp-big": [], "hp-small": [], "hp-liar": [] };
-  const conns = {};
-  const hello = async (id, name, pid, ws) => {
+  const got = {}, conns = {}, sess = {};
+  const hello = async (id, name, pid, ws, extra = {}) => {
+    got[id] = []; sess[id] ||= path.join(S, `${id}.jsonl`); if (!fs.existsSync(sess[id])) fs.writeFileSync(sess[id], '{"type":"session"}\n');
     conns[id] = await connect({ path: sock, onEvent: (ev, data) => got[id].push({ ev, data }) });
-    await conns[id].call("agent.hello", { agent_id: id, pid, name, want_workspace: ws, cwd: S });
+    await conns[id].call("agent.hello", { agent_id: id, pid, name, want_workspace: ws, cwd: S, session: sess[id], ...extra });
   };
-  await hello("hp-big", "Big", big.pid, 32); await hello("hp-small", "Small", small.pid, 33); await hello("hp-liar", "Liar", big.pid, 34);
-  const asks = (id) => got[id].filter((e) => e.ev === "prompt" && e.data?.via === "upkeep");
+  await hello("hp-big", "Big", P.big.pid, 32); await hello("hp-small", "Small", P.small.pid, 33); await hello("hp-liar", "Liar", P.big.pid, 34);
+  await hello("hp-busy", "Busy", P.busy.pid, 35); await hello("hp-paused", "Paused", P.paused.pid, 36); await hello("hp-boxed", "Boxed", P.boxed.pid, 37, { container: "docker:test" });
+  await conns["hp-busy"].call("agent.update", { status: "working" });
+  const restartsOf = (id) => got[id].filter((e) => e.ev === "restart");
+  const asksOf = (id) => got[id].filter((e) => e.ev === "prompt" && e.data?.via === "upkeep");
 
   // 1. off
-  await sleep(2500);
-  ok("1 rssMB 0: Big isn't asked", asks("hp-big").length === 0, JSON.stringify(asks("hp-big")).slice(0, 200));
+  await sleep(2000);
+  ok("1 rssMB 0: Big isn't restarted", restartsOf("hp-big").length === 0);
 
   // 2. on
   policy(150);
-  for (let i = 0; i < 40 && !asks("hp-big").length; i++) await sleep(200);
-  const ask = asks("hp-big")[0]?.data?.text || "";
-  ok("2 rssMB 150: Big is asked for a handoff", /handoff/.test(ask), ask.slice(0, 160));
-  ok("2 the ask names its memory and the setting", /its pi uses \d+ MB of memory, over upkeep\.refresh\.rssMB 150/.test(ask), ask.slice(0, 200));
+  for (let i = 0; i < 40 && !restartsOf("hp-big").length; i++) await sleep(200);
   await sleep(1500);
-  ok("2 Big is asked once (it's waiting for the note)", asks("hp-big").length === 1, String(asks("hp-big").length));
-  ok("2 Small (under the limit) isn't asked", asks("hp-small").length === 0);
-  ok("2 Liar (pid isn't really its own) isn't asked", asks("hp-liar").length === 0);
-  const list = await api.call("list", {}).catch(() => null), row = (id) => (list?.agents || []).find((a) => a.id === id);
-  ok("2 list shows Big refresh_due, Small and Liar not", row("hp-big")?.refresh_due === true && row("hp-small")?.refresh_due === false && row("hp-liar")?.refresh_due === false, JSON.stringify([row("hp-big")?.refresh_due, row("hp-small")?.refresh_due, row("hp-liar")?.refresh_due]));
-  const status = await api.call("thoughts.upkeep", { room: "D", action: "status" }).catch((e) => ({ text: "ERR " + e.message }));
-  ok("2 thoughts.upkeep status shows Big due with its MB", /Big: [^\n]*due \(pi \d+ MB\)/.test(status?.text || ""), (status?.text || "").slice(0, 300));
+  ok("2 rssMB 150: Big gets a restart", restartsOf("hp-big").length === 1, String(restartsOf("hp-big").length));
+  ok("2 …without compacting (context kept)", restartsOf("hp-big")[0]?.data?.compact === false, JSON.stringify(restartsOf("hp-big")[0]?.data));
+  ok("2 …and no handoff prompt", asksOf("hp-big").length === 0);
+  for (const [id, why] of [["hp-small", "under the limit"], ["hp-liar", "a foreign pid"], ["hp-busy", "working"], ["hp-paused", "paused"], ["hp-boxed", "in a container"]])
+    ok(`2 ${id.slice(3)} (${why}) is never restarted or asked`, restartsOf(id).length === 0 && asksOf(id).length === 0);
+  let stream = ""; try { stream = fs.readFileSync(path.join(S, "activity", "D.jsonl"), "utf8"); } catch { /* none */ }
+  ok("2 the Stream's upkeep line says why", /restarting Big on its same session: its pi uses \d+ MB of memory, over upkeep\.refresh\.rssMB 150 \(context kept, no handoff\)/.test(stream));
 
-  // 3. the refresh itself
-  const file = ask.match(/to (\S+\.md):/)?.[1] || "";
-  ok("3 the ask gives a handoff path", !!file, file);
-  fs.writeFileSync(file, "# handoff\nI'm Big; nothing open; this note is long enough to count.\n");
-  const r = await conns["hp-big"].call("upkeep.ready", { file }).catch((e) => ({ error: e.message }));
-  ok("3 upkeep.ready starts the refresh", r?.refreshing === true, JSON.stringify(r));
-  for (let i = 0; i < 20 && !got["hp-big"].some((e) => e.ev === "restart"); i++) await sleep(100);
-  ok("3 Big gets the restart onto a fresh session", got["hp-big"].some((e) => e.ev === "restart"));
+  // 3. the restart itself
   const rr = await conns["hp-big"].call("agent.restartReady", {}).catch((e) => ({ error: e.message }));
   ok("3 agent.restartReady is accepted", rr?.ok === true, JSON.stringify(rr));
-  const beforeMb = rssMb(big.pid);
-  big.kill("SIGTERM"); conns["hp-big"].close?.(); // its old pi exits and its connection drops
-  for (let i = 0; i < 40 && rssMb(big.pid); i++) await sleep(100);
-  await sleep(1500); // the daemon sees the old connection gone and readies the welcome before the new window connects
+  const beforeMb = rssMb(P.big.pid);
+  P.big.kill("SIGTERM"); conns["hp-big"].close();
+  const logged = () => { try { return fs.readFileSync(argvLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.id === "hp-big"); } catch { return []; } };
+  for (let i = 0; i < 100 && !logged().length; i++) await sleep(200);
+  const argv = logged()[0]?.piArgv || [];
+  ok("3 the daemon relaunches it on its SAME session (--session <its file>)", argv[argv.indexOf("--session") + 1] === sess["hp-big"], JSON.stringify(argv));
   const fresh = child("hp-big", 0);
   for (let i = 0; i < 30 && !rssMb(fresh.pid); i++) await sleep(100);
   fs.writeFileSync(clientsFile, JSON.stringify([{ address: "0xf00d", pid: fresh.pid, class: "kitty", title: "Big", workspace: { id: 32, name: "32" }, mapped: true }]));
-  got["hp-big"] = [];
   await hello("hp-big", "Big", fresh.pid, 32);
-  const note = () => got["hp-big"].find((e) => e.ev === "note" && /refreshed on a fresh session/.test(e.data?.text || ""));
+  const note = () => got["hp-big"].find((e) => e.ev === "note" && /restarted on its same session for memory/.test(e.data?.text || ""));
   for (let i = 0; i < 300 && !note(); i++) await sleep(100);
   const m = (note()?.data?.text || "").match(/RSS (\d+) \u2192 (\d+) MB/);
-  ok("3 the refresh completes (the new window's 🔄 note)", !!note(), JSON.stringify(got["hp-big"].map((e) => e.ev)));
-  ok("3 its RSS went down (old pi -> fresh pi)", !!m && Number(m[1]) > 150 && Number(m[2]) < Number(m[1]), `${note()?.data?.text || ""} (before kill: ${beforeMb} MB)`);
-  const welcome = () => got["hp-big"].find((e) => e.ev === "prompt" && /You're on a FRESH session/.test(e.data?.text || ""));
-  for (let i = 0; i < 60 && !welcome(); i++) await sleep(100);
-  ok("3 the fresh session starts from its handoff, naming the memory reason", /your previous one \(its pi uses \d+ MB of memory, over upkeep\.refresh\.rssMB 150\) was refreshed/.test(welcome()?.data?.text || "") && /I'm Big; nothing open/.test(welcome()?.data?.text || ""), (welcome()?.data?.text || "").slice(0, 200));
-  let stream = ""; try { stream = fs.readFileSync(path.join(S, "activity", "D.jsonl"), "utf8"); } catch { /* none */ }
-  ok("3 the Stream's upkeep line names the memory reason", /asked Big for a handoff \(its pi uses \d+ MB of memory/.test(stream));
+  ok("3 the restart completes: 🔄 note 'restarted on its same session for memory'", !!note(), JSON.stringify(got["hp-big"].map((e) => e.ev)));
+  ok("3 RSS before -> after, lower", !!m && Number(m[1]) > 150 && Number(m[2]) < Number(m[1]), `${note()?.data?.text || ""} (before kill: ${beforeMb} MB)`);
+  ok("3 no fresh-session welcome (it's not a refresh)", !got["hp-big"].some((e) => e.ev === "prompt" && /FRESH session/.test(e.data?.text || "")));
+
+  // 4. one per cooldown: it grows again at once
+  await sleep(3500); // the restart entry clears 3 s after the relaunch
+  conns["hp-big"].close(); fresh.kill("SIGTERM");
+  const regrown = child("hp-big", 260);
+  for (let i = 0; i < 50 && rssMb(regrown.pid) < 240; i++) await sleep(100);
+  await hello("hp-big", "Big", regrown.pid, 32);
+  await sleep(3000);
+  ok("4 over the limit again within the cooldown: no second restart", !restartsOf("hp-big").length, `${rssMb(regrown.pid)} MB, ${restartsOf("hp-big").length} restart(s)`);
+  const st = await (await connect({ path: sock, onEvent: () => {} })).call("thoughts.upkeep", { room: "D", action: "status" }).catch((e) => ({ text: "ERR " + e.message }));
+  ok("4 Thoughts' upkeep status still shows it over the limit", /Big: [^\n]*due \(pi \d+ MB\)/.test(st?.text || ""), (st?.text || "").slice(0, 300));
+  // 5. a remote world's agent (its room bound to a remote machine): never restarted from here
+  policy(0);
+  const far = child("hp-far", 260); for (let i = 0; i < 50 && rssMb(far.pid) < 240; i++) await sleep(100);
+  await hello("hp-far", "Far", far.pid, 38);
+  fs.mkdirSync(path.join(cfg, "hyprpi", "remote"), { recursive: true }); fs.writeFileSync(path.join(cfg, "hyprpi", "remote", "d.json"), "{}");
+  await sleep(6000); // remote-world bindings are re-read every 5 s
+  policy(150); await sleep(3000);
+  const farRow = ((await (await connect({ path: sock, onEvent: () => {} })).call("list", {})).agents || []).find((a) => a.id === "hp-far");
+  ok("5 Far is in world D, now bound to a remote machine", farRow?.room === "D", JSON.stringify(farRow?.room));
+  ok("5 a remote world's agent over the limit is never restarted", restartsOf("hp-far").length === 0 && asksOf("hp-far").length === 0);
 } catch (e) {
   ok("no exception", false, e.stack);
 } finally {
   for (const k of kids) { try { k.kill("SIGTERM"); } catch { /* gone */ } }
   await sleep(300);
-  if (fails) console.log("daemon log:", path.join(S, "d.log"));
-  else fs.rmSync(S, { recursive: true, force: true });
+  if (fails) console.log("state:", S); else fs.rmSync(S, { recursive: true, force: true });
 }
 console.log(fails ? `${fails} FAILED` : "all ok");
 process.exit(fails ? 1 : 0);
