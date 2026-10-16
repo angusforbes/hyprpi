@@ -53,7 +53,9 @@ cleanup() {
   [[ -e "$COPY" ]] && echo "brave-copy: WARNING could not delete the copy $COPY (it holds his cookies)" >&2
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
+CP=""
+on_signal() { [[ -n "$CP" ]] && kill -TERM "$CP" 2>/dev/null; exit "$1"; }
+trap 'on_signal 130' INT; trap 'on_signal 143' TERM; trap 'on_signal 129' HUP # (set before the slow steps, too)
 # The login state only (not caches or service workers: 600+ MB): Local State, and from Default the cookies, prefs,
 # site storage. Copying from a running Brave is fine for SQLite/LevelDB files that are flushed (a few seconds' lag).
 mkdir -p "$COPY/Default"
@@ -84,4 +86,11 @@ BP=$!
 ready() { kill -0 "$BP" 2>/dev/null && ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -q "pid=$BP," && curl -s -m 1 "127.0.0.1:$PORT/json/version" >/dev/null 2>&1; }
 for _ in $(seq 1 100); do ready && break; kill -0 "$BP" 2>/dev/null || break; sleep 0.1; done
 ready || { echo "brave-copy: the headless copy didn't start on port $PORT" >&2; exit 2; }
-BRAVE_COPY_PORT=$PORT "$@"
+# CMD runs as a child we wait for, so a signal to brave-copy runs the cleanup at once (bash defers traps while a
+# foreground child runs) and stops CMD too. (A brave-copy started as `&` from a non-interactive shell inherits an
+# ignored SIGINT, which bash can't un-ignore: stop such a run with SIGTERM.)
+BRAVE_COPY_PORT=$PORT "$@" &
+CP=$!
+wait "$CP"; rc=$?
+CP=""
+exit "$rc"

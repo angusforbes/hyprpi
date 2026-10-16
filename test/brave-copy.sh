@@ -32,9 +32,9 @@ ok "headless, keyring, DevTools on 127.0.0.1 only, the copy as profile" '[[ "$ou
 ok "copy deleted after success" '[[ $(copies) == 0 ]]'
 "$BC" --port 9872 -- false; rc=$?
 ok "CMD failure: its exit code passed through, copy deleted" '[[ $rc == 1 && $(copies) == 0 ]]'
-"$BC" --port 9873 -- sleep 20 & bp=$!; for _ in $(seq 1 50); do [[ $(copies) == 1 ]] && curl -s -m1 127.0.0.1:9873/json/version >/dev/null && break; sleep 0.1; done
-kill -TERM $bp; wait $bp 2>/dev/null; sleep 0.5
-ok "SIGTERM to brave-copy: copy deleted, its browser stopped" '[[ $(copies) == 0 ]] && ! curl -s -m1 127.0.0.1:9873/json/version >/dev/null'
+"$BC" --port 9873 -- bash -c 'sleep 20; touch "$0"' "$T/term-done" & bp=$!; for _ in $(seq 1 50); do curl -s -m1 127.0.0.1:9873/json/version >/dev/null && break; sleep 0.1; done
+t0=$SECONDS; kill -TERM $bp; wait $bp; rc=$?; took=$((SECONDS-t0)); sleep 0.5
+ok "SIGTERM: brave-copy exits at once (143), CMD stopped, copy deleted, its browser stopped" '[[ $rc == 143 && $took -le 3 && ! -e "$T/term-done" && $(copies) == 0 ]] && ! curl -s -m1 127.0.0.1:9873/json/version >/dev/null'
 touch "$T/nostart"; timeout 30 "$BC" --port 9874 -- true 2>/dev/null; rc=$?; rm -f "$T/nostart"
 ok "browser never starts: exit 2, copy deleted" '[[ $rc == 2 && $(copies) == 0 ]]'
 "$BC" --port 9222 -- true 2>/dev/null; rc=$?
@@ -48,8 +48,10 @@ python3 -m http.server 9875 --bind 127.0.0.1 >/dev/null 2>&1 & sp=$!; for _ in $
 ok "an occupied port refused, CMD not run" '[[ $rc == 2 && ! -e "$T/ran" && $(copies) == 0 ]]'
 BRAVE_COPY_BIN=/bin/false "$BC" --port 9876 -- touch "$T/ran2" 2>/dev/null; rc=$?
 ok "a browser that exits at once: CMD not run, exit 2" '[[ $rc == 2 && ! -e "$T/ran2" && $(copies) == 0 ]]'
-"$BC" --port 9877 -- sleep 20 & bp=$!; for _ in $(seq 1 50); do curl -s -m1 127.0.0.1:9877/json/version >/dev/null && break; sleep 0.1; done
-kill -INT $bp; wait $bp 2>/dev/null; sleep 0.5
-ok "SIGINT: copy deleted, its browser stopped" '[[ $(copies) == 0 ]] && ! curl -s -m1 127.0.0.1:9877/json/version >/dev/null'
+# SIGINT as from a terminal Ctrl-C: started with SIGINT at its default (a `&` job of this script would inherit it ignored)
+python3 -c 'import signal,subprocess,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); sys.exit(subprocess.call(sys.argv[1:]))' "$BC" --port 9877 -- bash -c 'sleep 20; touch "$0"' "$T/int-done" & pp=$!
+for _ in $(seq 1 50); do curl -s -m1 127.0.0.1:9877/json/version >/dev/null && break; sleep 0.1; done
+bcpid=$(pgrep -P $pp | head -1); t0=$SECONDS; kill -INT "$bcpid"; wait $pp; rc=$?; took=$((SECONDS-t0)); sleep 0.5
+ok "SIGINT: brave-copy exits at once (130), CMD stopped, copy deleted, its browser stopped" '[[ $rc == 130 && $took -le 3 && ! -e "$T/int-done" && $(copies) == 0 ]] && ! curl -s -m1 127.0.0.1:9877/json/version >/dev/null'
 ok "the source profile was never written" '[[ "$(cd "$SRC" && find . -type f -exec sha256sum {} + | sort | sha256sum)" == "$SUM" ]]'
 echo "$pass passed, $fail failed"; exit $(( fail > 0 ))
