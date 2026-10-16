@@ -138,9 +138,14 @@ export default function hyprpi(pi: ExtensionAPI) {
   }
   // Thoughts' work that landed in this session (ever) and in the current run (@hyprpi N57 cancel_work).
   const landed = new Set<string>(), inRun = new Set<string>();
+  const userPending = new Map<string, string>(); // J722: prompt key -> its text, handed to pi.sendUserMessage, until its message_end
   // Delivery receipt (J64): the daemon keeps the request until this says it is in the session.
   const ack = (k: string) => { conn?.call("agent.delivered", { id: k }).catch(() => { /* re-sent and acked later */ }); };
-  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); if (k) { landed.add(k); inRun.add(k); ack(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
+  pi.on("message_end", async (e: any) => { const m = e?.message; if (m?.role === "user" && userPending.size) { // J722: a tracked prompt landed as a user message
+      const t = typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((x: any) => x?.text || "").join("") : "";
+      for (const [k, v] of userPending) if (t.trim() === v.trim() || t.includes(v.trim())) { userPending.delete(k); landed.add(k); ack(k); break; }
+    }
+    if (m?.role === "custom") { const k = keyOf(m); steered.delete(k); if (k) { landed.add(k); inRun.add(k); ack(k); if (landed.size > 200) landed.delete(landed.values().next().value as string); } } });
   pi.on("agent_start", async () => { if (starting) { clearTimeout(starting); starting = null; } });
   // Sent when a run that cancel_work aborted has settled (the stop / the replacement starts a turn).
   let afterAbort: any = null, afterAbortTimer: ReturnType<typeof setTimeout> | null = null;
@@ -232,15 +237,20 @@ export default function hyprpi(pi: ExtensionAPI) {
       // A prompt sent from a room panel is labelled so the agent can tell it apart from
       // typing in its own window. No auto-post: the agent decides whether to room_post.
       let text = String(d.text ?? "");
+      // J722 (nss7a): a prompt the daemon tracks (prompt_id) is confirmed once it is in the session (agent.delivered "p:<id>"), and a
+      // re-send of one already here (landed, held, steered, or just handed to pi) is only confirmed again, never run twice.
+      const pk = d?.prompt_id ? `p:${d.prompt_id}` : "";
+      if (pk && (landed.has(pk) || userPending.has(pk) || held.some((m) => keyOf(m) === pk) || steered.has(pk))) { if (landed.has(pk)) ack(pk); return; }
+      const handled = () => { if (pk) { landed.add(pk); ack(pk); } }; // handled here without a session message (an /ignore note, a phone slash command)
       // An /ignore line sent from elsewhere (the phone's session page, J161 fix): a signpost note, as if
       // typed here; no turn (held until the run settles if it's working).
-      if (IGNORE.test(text.trim())) { ignoreNote(text.trim(), idle() && !starting); return; }
+      if (IGNORE.test(text.trim())) { ignoreNote(text.trim(), idle() && !starting); handled(); return; }
       // J163: a slash command from the phone's session page runs as if typed here (unlabelled), and waits
       // for the end of a running turn.
-      if (d.via === "phone" && text.trim().startsWith("/")) { phoneSlash(text.trim()); return; }
+      if (d.via === "phone" && text.trim().startsWith("/")) { phoneSlash(text.trim()); handled(); return; }
       // "A /step B" from the phone splits as in the window (steps.ts skips extension input, so it's handed
       // to its /step command instead: "/step A /step B").
-      if (d.via === "phone" && /(^|\s)\/step(\s|$)/.test(text)) { phoneSlash("/step " + text.trim()); return; }
+      if (d.via === "phone" && /(^|\s)\/step(\s|$)/.test(text)) { phoneSlash("/step " + text.trim()); handled(); return; }
       if (d.via === "room-tui") text = `[hyprpi · Angus → you]\n${text}`;
       // J133: a busy agent's prompt waits in OUR held queue (a custom message, started as its own turn when the
       // run ends), not in pi's followUp queue: an abort (Esc, an interrupt_agent) returns pi's queued messages
@@ -249,10 +259,11 @@ export default function hyprpi(pi: ExtensionAPI) {
       // J663: `starting` (as send() sets it) until the turn has begun: a second prompt in that moment used to find the agent still
       // idle, and pi refused it asynchronously (only an extension error in this window; Angus's prompt was gone). Now it is held.
       if (idle() && !held.length && !starting) {
-        starting = setTimeout(() => { starting = null; releaseHeld(); }, 5000);
-        try { pi.sendUserMessage(text); } catch (e) { clearTimeout(starting); starting = null; safeNotify(`hyprpi: could not start that prompt (${(e as Error).message}); it is held and tried again`, "warning"); inject({ customType: "hyprpi-prompt", display: true, content: text, details: { delivery_id: `prompt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, via: String(d.via || "") } }); }
+        starting = setTimeout(() => { starting = null; if (pk && !landed.has(pk)) userPending.delete(pk); releaseHeld(); }, 5000); // J722: no turn began (pi refused it): a re-send is taken again
+        if (pk) userPending.set(pk, text); // confirmed at its message_end (a user message carries no id of its own)
+        try { pi.sendUserMessage(text); } catch (e) { if (pk) userPending.delete(pk); clearTimeout(starting); starting = null; safeNotify(`hyprpi: could not start that prompt (${(e as Error).message}); it is held and tried again`, "warning"); inject({ customType: "hyprpi-prompt", display: true, content: text, details: { delivery_id: pk || `prompt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, via: String(d.via || "") } }); }
       }
-      else inject({ customType: "hyprpi-prompt", display: true, content: text, details: { delivery_id: `prompt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, via: String(d.via || "") } });
+      else inject({ customType: "hyprpi-prompt", display: true, content: text, details: { delivery_id: pk || `prompt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, via: String(d.via || "") } });
     } else if (event === "set_model") {
       // Thoughts switches this agent's model (Angus's standing permission, @hyprpi N47).
       (async () => {
@@ -341,6 +352,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     const ws = Number(process.env.HYPRPI_WORKSPACE);
     return conn!.call("agent.hello", {
       agent_id: AGENT_ID, pid: process.pid, session, cwd: ctx?.cwd || process.cwd(), acks: true, // J64 delivery receipts
+      prompt_acks: true, // J722: prompts too ("p:<prompt_id>")
       reply_acks: true, // J663: answers to this agent's requests are confirmed too ("re:<request>:<replier>")
       code: LOADED_CODE, // J135: the code this window loaded (lib/codever.mjs); the daemon reloads it when stale
       model: ctx?.model?.id || "", thinking: safe(() => pi.getThinkingLevel()) || "",
