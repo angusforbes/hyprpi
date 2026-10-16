@@ -293,8 +293,12 @@ function refreshAll() {
   const ws = new Set([world, ...worlds.filter((x) => x.shown).map((x) => x.id)].filter(Boolean));
   for (const w of ws) prefetched.add(w), fetchWorld(w).catch((e) => { if (w === world) fetchNote(e); }), fetchBoard(w).catch(() => {}), fetchAgents(w).catch(() => {}), fetchStream(w).catch(() => {});
 }
+// Angus: "I wanna make sure we remember the agent window when I leave and come back": the session open in each
+// world, reopened when he comes back to that world's Agnt tab; cleared when he leaves it with ‹ or Agnt.
+const sessByWorld = new Map(); // world -> agent id
 function setWorld(w) {
   if (!w || w === world) return;
+  if (world && view === "session" && sess.agent) sessByWorld.set(world, sess.agent);
   if (world && view === "stream") keepStreamPlace(world);
   world = w;
   const c = cached(w);
@@ -307,8 +311,10 @@ function setWorld(w) {
   if (filsWin) filsPost({ world: w });
   renderTop(); // at once, from the cache; only the view on screen (the others draw when shown)
   newestBtn.hidden = true;
+  const back = sessByWorld.get(w);
   if (view === "session") { clearInterval(sess.timer); setView("agents"); } // J562 (PhoneCheck562): another world: its agent list, not the old world's open session (a jump to an agent elsewhere opens its session after this)
   else if (view === "thoughts") render(); else if (view === "projects") renderProjects(); else if (view === "agents") renderAgents(); else renderStream({ restore: true });
+  if (back && view === "agents") openSession(back); // this world's agent window, as he left it
   fetchWorld(w).catch(fetchNote); // then fresh, in the background
   fetchBoard(w).catch(() => {}); fetchAgents(w).catch(() => {}); fetchStream(w).catch(() => {});
 }
@@ -596,8 +602,9 @@ function renderProjects({ keepScroll = false } = {}) {
 }
 function setView(v) {
   if (v === "stream" && !showStrm) v = "thoughts"; // J448 v2 (StrmCheck): Strm is off: no way back into it (e.g. Fils' remembered return)
-  if (v === "agents" && view === "session") { view = "agents"; sessEl.hidden = true; $("#scomp").hidden = true; sess.agent = null; agentsEl.hidden = false; renderTop(); renderAgents(); return; } // J161: Agnt from a session → its summary
+  if (v === "agents" && view === "session") { sessByWorld.delete(world); view = "agents"; sessEl.hidden = true; $("#scomp").hidden = true; sess.agent = null; agentsEl.hidden = false; renderTop(); renderAgents(); return; } // J161: Agnt from a session → its summary
   if (v === view) { // Proj / Agnt again: back to the list
+    cameFrom = null;
     if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); }
     if (v === "agents" && openAgent.get(world)) { openAgent.delete(world); renderAgents(); }
     return;
@@ -649,9 +656,9 @@ projectsEl.addEventListener("click", (e) => {
   const op = e.target.closest(".opt, .ownans");
   if (op && !e.target.closest("a")) return decideSheet(op.dataset.p, op.dataset.h, op.dataset.k || "");
   const pa = e.target.closest(".pagent");
-  if (pa) { e.preventDefault(); const a = agentByName(pa.dataset.name); if (a) { if (a.room && a.room !== world) setWorld(a.room); openSession(a.id); } return; }
-  const pr = e.target.closest(".proj"); if (pr) { openProject.set(world, pr.dataset.p); return renderProjects(); }
-  if (e.target.closest(".phead")) { openProject.delete(world); return renderProjects(); } // the header: back to the list
+  if (pa) { e.preventDefault(); const a = agentByName(pa.dataset.name); if (a) { cameFrom = { kind: "agent", id: a.id, view: "projects", world, project: openProject.get(world) || null, scroll: projectsEl.scrollTop }; if (a.room && a.room !== world) setWorld(a.room); openSession(a.id); } return; }
+  const pr = e.target.closest(".proj"); if (pr) { cameFrom = null; openProject.set(world, pr.dataset.p); return renderProjects(); }
+  if (e.target.closest(".phead")) { if (cameFrom?.kind === "project" && cameFrom.id === openProject.get(world) && goBack()) return; openProject.delete(world); return renderProjects(); } // the header: back where he came from, else the list
   const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open");
 });
 projectsEl.addEventListener("toggle", (e) => {
@@ -767,11 +774,12 @@ function heldWire(l) {
 agentsEl.addEventListener("change", (e) => { if (e.target.id === "optstrm") setShowStrm(e.target.checked); }); // J448 v2
 agentsEl.addEventListener("click", (e) => {
   const hs = e.target.closest(".phead .aopen"); if (hs) return openSession(hs.closest(".agent").dataset.a); // J236: › at the top right → its session
-  if (e.target.closest(".phead")) { openAgent.delete(world); return renderAgents(); } // the header: back to the list (J48)
+  if (e.target.closest(".phead")) { if (cameFrom?.kind === "agent" && cameFrom.id === openAgent.get(world) && goBack()) return; openAgent.delete(world); return renderAgents(); } // the header: back where he came from, else the list (J48)
   const ts = e.target.closest(".tostream"); if (ts) { streamOnly(ts.dataset.name); return setView("stream"); } // its lines in Strm
   const so = e.target.closest(".tosession"); if (so) return openSession(so.dataset.a); // J161
   if (e.target.closest("a")) return;
   const t = e.target.closest(".agent");
+  if (t && !t.classList.contains("open")) cameFrom = null; // opened from the list: ‹ goes back to the list (a stale jump doesn't apply)
   if (t && e.target.closest(".aopen") && !t.classList.contains("gone")) return openSession(t.dataset.a); // J161: the arrow opens its session
   if (t) { openAgent.set(world, t.dataset.a); return renderAgents(); }
   const c = e.target.closest(".clip"); if (c) c.classList.toggle("open");
@@ -827,8 +835,22 @@ function linkNames(root) {
     if (changed) n.replaceWith(frag);
   }
 }
-// Tap a name: open it where it lives. No history stack: the tabs work as before.
+// Tap a name: open it where it lives. Angus: "the back button should be back to where I just came from, not back to
+// my parent": a jump remembers where it came from (tab, world, open project, scroll), and that item's ‹ goes back there.
+let cameFrom = null; // { kind, id, view, world, project, scroll }
+function goBack() {
+  const c = cameFrom; cameFrom = null; if (!c) return false;
+  if (c.world !== world) setWorld(c.world);
+  if (c.kind === "agent") openAgent.delete(world); else openProject.delete(world);
+  if (c.project) openProject.set(world, c.project);
+  setView(c.view);
+  if (c.view === "projects") { renderProjects(); projectsEl.scrollTop = c.scroll; } else if (c.view === "agents") { renderAgents(); agentsEl.scrollTop = c.scroll; }
+  else if (c.view === "thoughts") thread.scrollTop = c.scroll;
+  return true;
+}
 function jumpTo(kind, id, room) {
+  const src = view === "session" ? "agents" : view;
+  cameFrom = { kind, id, view: src, world, project: openProject.get(world) || null, scroll: (src === "projects" ? projectsEl : src === "agents" ? agentsEl : src === "thoughts" ? thread : streamEl).scrollTop };
   if (room && room !== world) setWorld(room);
   if (kind === "thoughts") return setView("thoughts");
   const target = kind === "project" ? "projects" : "agents";

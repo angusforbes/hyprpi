@@ -99,6 +99,8 @@ finally { d.kill("SIGTERM"); await sleep(300); try { d.kill("SIGKILL"); } catch 
 // W7
 const { PROJECT_AGENT_SECTION } = await import(path.join(ROOT, "lib/project-agent.mjs"));
 const th = fs.readFileSync(path.join(ROOT, "lib/thoughts.mjs"), "utf8");
-ok("W7 owners' section: one line with the exact one-line format", PROJECT_AGENT_SECTION.split("\n").filter((l) => l.includes("`rc1: question? (y/n)` or `rc1: question? a. one, b. two`") && /short lowercase code plus a number/.test(l)).length === 1);
-ok("W7 Thoughts' prompt: one line with the format, its number as the label, and a relayed question keeps the agent's label", th.split("\n").filter((l) => l.includes("`81: question? (y/n)` or `81: question? a. one, b. two`") && /relay a project agent's question, keep its own label/.test(l)).length === 1);
+ok("W7 owners' section: one line with the stacked layout and the project-code label", PROJECT_AGENT_SECTION.split("\n").filter((l) => l.includes("`rc1: Ship it now?` / `  - a. Yes (recommended)` / `  - b. No`") && /short lowercase code plus a number/.test(l) && /never inline/.test(l)).length === 1);
+ok("W7 Thoughts' prompt: one line with the stacked layout, plain numbers, and relays keep the agent's label", th.split("\n").filter((l) => l.includes("`81: Ship it now?` / `  - a. Yes (recommended)` / `  - b. No`") && /relay a project agent's question, keep its own label/.test(l)).length === 1);
+const idx = fs.readFileSync(path.join(ROOT, "pi-extension/index.ts"), "utf8");
+ok("W7 no old formats left (inline y/n or a/b, numbered options 1a/8a) in the owners' section, Thoughts' prompt or the agents' guideline", !/\(y\/n\)`|a\. one, b\. two`|options 1a, 1b|sub-points 1a, 1b|\(8a, 8b|"8b\. Ship|\\"8a\. …|16a\. 2a|\\"16a\. …/.test(PROJECT_AGENT_SECTION + th + idx));
 console.log(fails ? `project-handoff: ${fails} FAILED (state ${T})` : "project-handoff: all pass"); process.exit(fails ? 1 : 0);

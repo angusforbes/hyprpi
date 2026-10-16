@@ -14,6 +14,7 @@
 //     installed", kept in the scrollback (they are the transcript's own entries, only drawn differently);
 //   - the agent's own replies, and Angus's room posts and prompts, are unchanged (prominent).
 // Only the drawing changes: the model still receives every message and tool result in full.
+import { scriptLabel } from "./script-label.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -201,10 +202,10 @@ export function toolKind(tool: string, args: any): "change" | "lookup" | "traffi
 }
 
 const base = (p: unknown) => String(p ?? "").split("/").filter(Boolean).pop() || String(p ?? "");
-function changeLine(tool: string, a: any): string {
+export function changeLine(tool: string, a: any): string {
   if (tool === "edit") return `edited ${base(a?.path ?? a?.file_path)}`;
   if (tool === "write") return `wrote ${base(a?.path ?? a?.file_path)}`;
-  if (tool === "bash") return `ran ${String(a?.command ?? "").split("\n")[0].replace(/\s+/g, " ")}`;
+  if (tool === "bash") return scriptLabel(String(a?.command ?? "")) ?? `ran ${String(a?.command ?? "").split("\n")[0].replace(/\s+/g, " ")}`; // J660: an inline script says what it changed
   const what = a?.project || a?.action || a?.path || a?.name || a?.target || "";
   return `${tool.replace(/^mcp__([^_]+)__/, "$1/")}${what ? ` ${String(what)}` : ""}`;
 }
