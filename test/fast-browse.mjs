@@ -44,6 +44,11 @@ check("Enter offered only on a field with a value", keys.includes("enter e5") &&
   const acts2 = m.buildActions(f, { inputs: { x: "1" }, files: {} });
   check("buildActions offers no fill for a flagged field", Object.keys(acts2).join() === "fill e2 x");
 }
+{ // J674: no sign-out / account-switch / clear-data controls are ever offered
+  const els2 = m.parseSnapshot('- link "Sign out" [ref=e1]\n- button "Log out" [ref=e2]\n- menuitem "Switch account" [ref=e3]\n- button "Clear browsing data" [ref=e4]\n- link "Settings" [ref=e5]\n- button "Logo" [ref=e6]');
+  const k2 = Object.keys(m.buildActions(els2, { inputs: {}, files: {} }));
+  check("J674 never offers Sign out / Log out / Switch account / Clear browsing data", k2.join() === "click e5,click e6");
+}
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fb-")), rc = path.join(dir, "bashrc");
 fs.writeFileSync(rc, '[[ $- != *i* ]] && return\nexport TYPESAFE_API_KEY="ts_fake_123"\n');
 check("key: environment first", m.readKey({ TYPESAFE_API_KEY: "env_key" }, rc) === "env_key");

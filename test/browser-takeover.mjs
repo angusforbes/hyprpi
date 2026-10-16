@@ -26,6 +26,7 @@ for (const [label, t] of [["preamble", line], ["AGENTS.md", sec]]) {
   check(`${label}: J668 one replaced step toast, not spammy, no sound`, /ONE step toast/.test(t) && /step_id=\$\(notify-send -p -r \\?"\$step_id\\?"/.test(t) && /few and short/i.test(t) && /no sound|never a sound/.test(t));
   check(`${label}: J668 the J667 done signal still ends it`, /done toast and (the )?line to/.test(t));
   check(`${label}: J668 one-line status outside computer use`, /one-line status/.test(t));
+  check(`${label}: J674 his words, and never restart/close, sign out, clear cookies/storage or switch profile unless he asked`, t.includes("stop logging me out of websites when i haven't asked you to") && /Never restart or close his Brave, sign him out, clear its cookies or storage, or switch its profile unless he asked/.test(t) && /browser-guard/.test(t));
   check(`${label}: never on the phone`, /phone/.test(t));
   check(`${label}: never types passwords, MFA codes or payment details`, /never type a password, MFA code or payment details/i.test(t));
   check(`${label}: sending on his behalf still needs his OK`, /exact text/.test(t));
