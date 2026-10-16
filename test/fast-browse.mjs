@@ -48,6 +48,10 @@ check("Enter offered only on a field with a value", keys.includes("enter e5") &&
   const els2 = m.parseSnapshot('- link "Sign out" [ref=e1]\n- button "Log out" [ref=e2]\n- menuitem "Switch account" [ref=e3]\n- button "Clear browsing data" [ref=e4]\n- link "Settings" [ref=e5]\n- button "Logo" [ref=e6]');
   const k2 = Object.keys(m.buildActions(els2, { inputs: {}, files: {} }));
   check("J674 never offers Sign out / Log out / Switch account / Clear browsing data", k2.join() === "click e5,click e6");
+  const els3 = m.parseSnapshot('- button "Clear data" [ref=e1]\n- button "Sign-out" [ref=e2]\n- combobox "Account" [expanded=false, ref=e3]\n  - option "Profile" [selected, ref=e4]\n  - option "Sign out" [ref=e5]\n  - option "Settings" [ref=e6]');
+  const k3 = Object.keys(m.buildActions(els3, { inputs: {}, files: {} }));
+  check("J674 (GuardCheck674): no Clear data / Sign-out buttons, no Sign out option", k3.join() === "select e3 e6");
+  check("J674 logout URL with a query is refused", m.LOGOUT_URL.test("https://x.invalid/?action=logout") && m.LOGOUT_URL.test("https://x/logout") && !m.LOGOUT_URL.test("https://x/blog/outing"));
 }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fb-")), rc = path.join(dir, "bashrc");
 fs.writeFileSync(rc, '[[ $- != *i* ]] && return\nexport TYPESAFE_API_KEY="ts_fake_123"\n');

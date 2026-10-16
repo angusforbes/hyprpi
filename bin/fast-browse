@@ -70,7 +70,8 @@ export function parseSnapshot(text) {
 }
 
 // Never offered: anything that signs him out or clears his session (J674, Angus: "ok make sure you stop logging me out of websites when i haven't asked you to").
-export const SIGNOUT = /\b(?:log ?out|log ?off|sign ?out|sign ?off|switch (?:account|profile|user)|remove (?:this )?account|forget (?:this )?(?:device|browser)|clear (?:cookies|browsing data|site data|history))\b/i;
+export const SIGNOUT = /\b(?:log[- ]?out|log[- ]?off|sign[- ]?out|sign[- ]?off|switch (?:account|profile|user)|remove (?:this )?account|forget (?:this )?(?:device|browser)|clear (?:all )?(?:data|cookies|browsing data|site data|history|storage))\b/i;
+export const LOGOUT_URL = /\/(?:log-?out|log-?off|sign-?out|signoff|logoff|end-?session|oauth2?\/logout)\b|[?&](?:action|cmd)=(?:log-?out|sign-?out)\b/i;
 const SECRET = /password|passcode|\bpin\b|one-time|otp|2fa|mfa|security code|verification code|card number|cvv|cvc|expiry/i;
 
 // The legal actions on this page: each a key JEV can choose, with a plain description.
@@ -86,7 +87,7 @@ export function buildActions(els, o) {
       for (const k of Object.keys(o.inputs)) if (e.value !== String(o.inputs[k])) add(`fill ${e.ref} ${k}`, `Fill the ${label} with the input \`${k}\``, ["fill", `@${e.ref}`, o.inputs[k]]);
       if (e.value) add(`enter ${e.ref}`, `Press Enter in the ${label} to submit it`, [["focus", `@${e.ref}`], ["press", "Enter"]]);
     } else if (e.role === "combobox" || e.role === "listbox") {
-      for (const op of e.options || []) if (!op.selected) add(`select ${e.ref} ${op.ref}`, `In the ${label}, choose the option "${op.name}"`, ["select", `@${e.ref}`, op.name]);
+      for (const op of e.options || []) if (!op.selected && !SIGNOUT.test(op.name)) add(`select ${e.ref} ${op.ref}`, `In the ${label}, choose the option "${op.name}"`, ["select", `@${e.ref}`, op.name]);
     } else if (e.role === "checkbox" || e.role === "switch") {
       add(`${e.checked ? "uncheck" : "check"} ${e.ref}`, `${e.checked ? "Untick" : "Tick"} the ${label}`, [e.checked ? "uncheck" : "check", `@${e.ref}`]);
     } else if (e.role === "radio") {
@@ -154,7 +155,7 @@ async function main() {
     }
     process.exit(status === "DONE" ? 0 : status === "NEEDS_AGENT" ? 3 : 2);
   };
-  if (/\/(?:log-?out|log-?off|sign-?out|signoff|logoff|end-?session)\b/i.test(o.url)) { console.error("fast-browse: refusing a sign-out URL (J674)"); process.exit(2); }
+  if (LOGOUT_URL.test(o.url)) { console.error("fast-browse: refusing a sign-out URL (J674)"); process.exit(2); }
   if (o.url) { const r = await ab("tab", "new", o.url); if (r.code) await finish("ERROR", { reason: `could not open a tab: ${r.err.trim() || r.out.trim()}` }); opened = true; }
   else { const r = await ab("tab", o.tab); if (r.code) await finish("ERROR", { reason: `no tab ${o.tab}: ${r.err.trim()}` }); }
   await narrate(`working on: ${o.goal.slice(0, 80)}`);
