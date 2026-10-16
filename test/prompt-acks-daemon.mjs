@@ -34,7 +34,7 @@ try {
   await start();
   const { connect } = await import(path.join(ROOT, "lib/client.mjs"));
   const got = {}, conns = {};
-  const hello = async (id, name, ws, acks = true) => { got[id] ||= []; try { conns[id]?.close(); } catch { /* none */ } conns[id] = await connect({ path: sock, onEvent: (ev, data) => got[id].push({ ev, data }) }); await conns[id].call("agent.hello", { agent_id: id, pid: process.pid, name, want_workspace: ws, cwd: S, ...(acks ? { prompt_acks: true, acks: true, reply_acks: true } : {}) }); };
+  const hello = async (id, name, ws, acks = true) => { got[id] ||= []; if (conns[id]) { try { conns[id].close(); } catch { /* none */ } await sleep(400); } conns[id] = await connect({ path: sock, onEvent: (ev, data) => got[id].push({ ev, data }) }); await conns[id].call("agent.hello", { agent_id: id, pid: process.pid, name, want_workspace: ws, cwd: S, ...(acks ? { prompt_acks: true, acks: true, reply_acks: true } : {}) }); };
   const prompts = (id, re) => got[id].filter((e) => e.ev === "prompt" && (!re || re.test(e.data?.text || "")));
   const api = await connect({ path: sock, onEvent: () => {} });
   await hello("hp-new", "Newer", 32); await hello("hp-old", "Older", 33, false);
@@ -46,16 +46,18 @@ try {
   ok("D1 the prompt carries a prompt_id", !!p1?.prompt_id, JSON.stringify(p1));
   ok("D1 it's kept until confirmed", !!out()[p1?.prompt_id] && out()[p1.prompt_id].aid === "hp-new");
   // D2 reconnect + finished run
-  await hello("hp-new", "Newer", 32); await sleep(3000);
-  ok("D2 re-sent with the same prompt_id on reconnect", prompts("hp-new", /PANEL-PROMPT/).filter((e) => e.data.prompt_id === p1.prompt_id).length >= 2);
+  await hello("hp-new", "Newer", 32);
+  for (let i = 0; i < 80 && prompts("hp-new", /PANEL-PROMPT/).filter((e) => e.data.prompt_id === p1.prompt_id).length < 2; i++) await sleep(250); // (an isolated daemon's hello can take seconds: its hyprctl look-ups time out)
+  ok("D2 re-sent with the same prompt_id on reconnect", prompts("hp-new", /PANEL-PROMPT/).filter((e) => e.data.prompt_id === p1.prompt_id).length >= 2, JSON.stringify(got["hp-new"].map((e) => [e.ev, e.data?.prompt_id?.slice(0, 6)])) + " out " + JSON.stringify(out()));
   const n2 = prompts("hp-new", /PANEL-PROMPT/).length;
-  await conns["hp-new"].call("agent.update", { status: "working" }); await conns["hp-new"].call("agent.update", { status: "idle" }); await sleep(2200);
+  await conns["hp-new"].call("agent.update", { status: "working" }); await conns["hp-new"].call("agent.update", { status: "idle" });
+  for (let i = 0; i < 60 && prompts("hp-new", /PANEL-PROMPT/).length <= n2; i++) await sleep(250);
   ok("D2 … and when it finishes a run", prompts("hp-new", /PANEL-PROMPT/).length > n2);
   // D3
   await conns["hp-new"].call("agent.delivered", { id: `p:${p1.prompt_id}` }); await sleep(200);
   ok("D3 confirmed: gone from prompts-out.json", !out()[p1.prompt_id]);
   const n3 = prompts("hp-new", /PANEL-PROMPT/).length;
-  await hello("hp-new", "Newer", 32); await sleep(3000);
+  await hello("hp-new", "Newer", 32); await sleep(12000); // past the reconnect re-send, however slow the hello
   ok("D3 … and not re-sent any more", prompts("hp-new", /PANEL-PROMPT/).length === n3);
   // D4 never confirmed
   await api.call("agent.prompt", { agent: "Newer", text: "NEVER-CONFIRMED", via: "room-tui" });
@@ -84,7 +86,8 @@ try {
   for (const c of [...Object.values(conns), api, parent]) { try { c.close(); } catch { /* gone */ } }
   await stop(); await start();
   ok("D7 unconfirmed prompts survive a daemon restart", keep > 0 && Object.keys(out()).length === keep, `${keep} -> ${Object.keys(out()).length}`);
-  got[sp.id] = []; await hello(sp.id, "Kid", 35); await sleep(3200);
+  got[sp.id] = []; await hello(sp.id, "Kid", 35);
+  for (let i = 0; i < 80 && !prompts(sp.id, /WELCOME-BRIEF/).some((e) => e.data.prompt_id === w.prompt_id); i++) await sleep(250);
   ok("D7 … and are re-sent when the agent reconnects", prompts(sp.id, /WELCOME-BRIEF/).some((e) => e.data.prompt_id === w.prompt_id));
 } catch (e) { ok("no exception", false, e.stack); }
 finally { try { d?.kill("SIGTERM"); } catch { /* gone */ } await sleep(300); if (fails) console.log("state:", S); else fs.rmSync(S, { recursive: true, force: true }); }
