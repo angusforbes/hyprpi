@@ -181,6 +181,13 @@ try {
   await w1.connect();
   const wp = await waitFor(() => w1.got.find((g) => g.ev === "prompt" && /WELCOME-BRIEF/.test(g.data.text || "")), 6000);
   ok("W1 the welcome is kept and given at the next hello", !!wp);
+  const ac = await agent("hp-noteask", "NoteAsk"), rc = await agent("hp-noteclosed", "NoteClosed", {pid: deadPid});
+  const tc = await talk(ac, "NoteClosed", "CLOSE-NOTE-QUESTION");
+  await waitFor(() => rc.talks(/CLOSE-NOTE-QUESTION/)[0]);
+  await rc.c.call("talk.reply", {request_id: tc.request_id, text:"CLOSE-NOTE-ANSWER"});
+  rc.drop();
+  const fallback = await waitFor(async () => (await api.call("thoughts.get",{room:"A"})).entries?.find(e => /for NoteClosed \(closed\)/.test(e.text || "") && /hasn't landed/.test(e.text || "")), 10000);
+  ok("C a closed replier's delayed failure note reaches its world's Thoughts", !!fallback);
 } finally {
   d.kill("SIGTERM"); await sleep(400);
   if (!fails) fs.rmSync(T, { recursive: true, force: true }); else console.log(`kept ${T}`);
