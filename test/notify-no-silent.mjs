@@ -89,6 +89,9 @@ try {
     const PL = createPhonePush({ stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "j663l-")), policy: () => ({ phone: { ntfy: { ...conf2, maxPerHour: 0 } } }), env: { HYPRPI_PHONE_PUSH_LOG: path.join(T, "nope", "x.jsonl") } });
     c = await PL.push("bonk", { key: "l1" }).confirmed;
     ok("A9 a push log that can't be written is a failure, not a success", c.ok === false, JSON.stringify(c));
+    // J722 nss3a: a key marked before ntfy answers is "already queued or sent", never "already sent"; a failed push isn't retried
+    { const hb = hits.length; const again = P.push("bonk", { key: "k-fail" });
+      ok("A10 a repeat of a failed key: not sent again, worded as queued-or-sent, no retry", again.sent === false && /already queued or sent/.test(again.why) && !/^already sent/.test(again.why) && !again.queued && hits.length === hb, JSON.stringify(again)); }
   }
 
   // ---- B) desktop notifications through fake notifiers

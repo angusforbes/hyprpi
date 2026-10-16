@@ -162,6 +162,20 @@ sync_pair() { # LOCAL BOX REMOTE OPTS
   return 0
 }
 
-LS="$(timeout 60 brev ls 2>/dev/null)"
+# J722 nss1b (Angus: "b"): `brev ls` itself failing (no answer, non-zero exit) used to be only a "paused: unknown" line per pair.
+# Now: ONE alert once it has failed for BREV_SYNC_LS_ALERT_MIN (30) minutes in a row, and one "working again" when it next works.
+# State in $ST: ls-failing-since (epoch s), ls-alerted. BREV_SYNC_NOW (epoch s) overrides the clock for tests.
+LS_ALERT_S=$(( ${BREV_SYNC_LS_ALERT_MIN:-30} * 60 )); NOW_S="${BREV_SYNC_NOW:-$(date +%s)}"
+LS="$(timeout 60 brev ls 2>/dev/null)"; LS_RC=$?
+if (( LS_RC != 0 )); then
+  [[ -f "$ST/ls-failing-since" ]] || { echo "$NOW_S" > "$ST/ls-failing-since"; log "brev ls failed (exit $LS_RC); will alert if it keeps failing for $((LS_ALERT_S / 60)) min"; }
+  since="$(cat "$ST/ls-failing-since" 2>/dev/null)"; [[ "$since" =~ ^[0-9]+$ ]] || since="$NOW_S"
+  if (( NOW_S - since >= LS_ALERT_S )) && [[ ! -f "$ST/ls-alerted" ]]; then
+    alert "brev-sync: \`brev ls\` has been failing for $(( (NOW_S - since) / 60 )) min (exit $LS_RC): box states are unknown, so no pair is syncing. Check brev login / network; brev-sync status." && touch "$ST/ls-alerted"
+  fi
+else
+  if [[ -f "$ST/ls-alerted" ]]; then rm -f "$ST/ls-alerted"; alert "brev-sync: \`brev ls\` works again." normal; fi
+  rm -f "$ST/ls-failing-since"
+fi
 while IFS=$'\t' read -r -u 4 L B R O; do sync_pair "$L" "$B" "$R" "$O" </dev/null; done 4< <(pairs) # (ssh and unison never see the list)
 exit $any_failed

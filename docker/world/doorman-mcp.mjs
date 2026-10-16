@@ -121,7 +121,7 @@ export function take(s, me, j, { named = false } = {}) {
   if (type === "decision") {
     const id = field(j.id, 64), h = s.held[id]; if (!h) return false;
     const approved = j.decision === "approved", note = field(j.note, 500), delivered = Array.isArray(j.delivered) ? j.delivered.slice(0, 10).map((x) => field(x, 64)) : [];
-    notice(s, "decision", j.text ? field(j.text, 2400) : `Angus ${approved ? "approved" : "denied"} your message to ${h.to.join(", ")} (id ${id})${approved ? (delivered.length ? `; delivered to ${delivered.join(", ")}` : "; but it reached nobody") : ""}.${note ? ` Note from Angus: "${note}"` : ""}`, { ref: id });
+    notice(s, "decision", j.text ? field(j.text, 2400) : `Angus ${approved ? "approved" : "denied"} your message to ${h.to.join(", ")} (id ${id})${approved ? (delivered.length ? `; sent to ${delivered.join(", ")}` : "; but it reached nobody") : ""}.${note ? ` Note from Angus: "${note}"` : ""}`, { ref: id });
     delete s.held[id]; if (approved && j.request_id) s.hostReq[String(j.request_id)] = { to: h.to, ref: id, at: Date.now() };
     return true;
   }

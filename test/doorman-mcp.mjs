@@ -56,7 +56,7 @@ item({ type: "reply", request_id: "req-h-2", from: "Harbor", text: "hi Alpha" })
 item({ type: "reply", request_id: "someone-elses", from: "X", text: "not for Alpha" });
 r = await M.call("inbox", {});
 const texts = r.notices.map((x) => x.text).join("\n");
-assert.match(texts, /reply from Doorman-G[^\n]*\nDrafted a share request/); assert.match(texts, /Angus approved your message to Harbor, Thoughts-B \(id world-g--bb22\); delivered to Harbor/); assert.match(texts, /reply from Harbor[^\n]*\nhi Alpha/);
+assert.match(texts, /reply from Doorman-G[^\n]*\nDrafted a share request/); assert.match(texts, /Angus approved your message to Harbor, Thoughts-B \(id world-g--bb22\); sent to Harbor/); assert.match(texts, /reply from Harbor[^\n]*\nhi Alpha/);
 assert.doesNotMatch(texts, /not for Alpha/);
 assert.equal((await M.call("inbox", {})).text, "nothing new", "read notices aren't shown twice");
 ok("ask_doorman / message write the gate's talk files ([Alpha, in world G] stamp, demand mode); the Doorman's answer, Angus's decision and the host reply come back; other agents' items don't");

@@ -8,7 +8,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; T="$(mktemp -d)"; fails=0
 ok() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails+1)); fi; }
 mkdir -p "$T/bin" "$T/outputs" "$T/cfg/hyprpi" "$T/Brev"
-printf '#!/bin/sh\necho "NAME STATUS"\necho "j497-box $(cat %s/boxstate)"\n' "$T" > "$T/bin/brev"
+printf '#!/bin/sh\n[ -e %s/brevfail ] && { echo "brev: not logged in" >&2; exit 1; }\necho "NAME STATUS"\necho "j497-box $(cat %s/boxstate)"\n' "$T" "$T" > "$T/bin/brev"
 printf '#!/bin/sh\n[ -e %s/stopmid ] && echo STOPPING > %s/boxstate\n[ -e %s/broken ] && { echo "ssh: connect to host j497-box: Connection refused" >&2; echo "Fatal error: Lost connection with the server" >&2; exit 3; }\necho "Synchronization complete at 00:00:00  (0 items transferred, 0 skipped, 0 failed)"; exit 0\n' "$T" "$T" "$T" > "$T/bin/unison"
 printf '#!/bin/bash\n[ -e %s/broken ] && { echo "ssh: Connection refused" >&2; exit 255; }\ncmd="${@: -1}"; cmd="${cmd//\\~\\/workspace\\/outputs/%s/outputs}"; exec bash -c "$cmd"\n' "$T" "$T" > "$T/bin/fakessh"
 printf '#!/bin/sh\n[ -e %s/nochannel ] && exit 1\necho "$*" >> %s/notify.log\n' "$T" "$T" > "$T/bin/notify-send"
@@ -53,6 +53,17 @@ rm "$T/nochannel"; run
 ok "W6 next failed run delivers it (one more alert), then marks alerted" "[[ \$(alerts) -eq 3 && -e $T/xs/brev-sync/alerted ]]"
 run; ok "W6 and doesn't repeat" "[[ \$(alerts) -eq 3 ]]"
 rm "$T/broken"; run; ok "recovery after that: one 'working again'" "[[ \$(alerts) -eq 4 && ! -e $T/xs/brev-sync/alerted ]]"
+# J722 nss1b: `brev ls` itself failing (fake clock BREV_SYNC_NOW): ONE alert after 30 min in a row, none before, none repeated, one "working again"
+echo RUNNING > "$T/boxstate"; touch "$T/brevfail"; B0=$(alerts); N0=$(wc -l < "$T/notify.log"); C=1000000
+export BREV_SYNC_NOW=$C; run; ok "L1 brev ls failing, first run: exit 0, no alert" "[[ $? -eq 0 && \$(alerts) -eq $B0 ]]"
+export BREV_SYNC_NOW=$((C + 29*60)); run; ok "L1 29 min in: still no alert" "[[ \$(alerts) -eq $B0 && \$(wc -l < $T/notify.log) -eq $N0 ]]"
+export BREV_SYNC_NOW=$((C + 31*60)); run; ok "L2 31 min in: ONE alert (Thoughts + desktop)" "[[ \$(alerts) -eq $((B0+1)) && \$(wc -l < $T/notify.log) -eq $((N0+1)) ]] && tail -1 $T/notify.log | grep -q 'brev ls'"
+export BREV_SYNC_NOW=$((C + 60*60)); run; run; ok "L2 later failures: no repeat" "[[ \$(alerts) -eq $((B0+1)) && \$(wc -l < $T/notify.log) -eq $((N0+1)) ]]"
+rm "$T/brevfail"; export BREV_SYNC_NOW=$((C + 61*60)); run; ok "L3 brev ls works again: one 'working again' note" "[[ \$(alerts) -eq $((B0+2)) ]] && tail -1 $T/notify.log | grep -q 'works again'"
+run; ok "L3 no repeat of it" "[[ \$(alerts) -eq $((B0+2)) ]]"
+touch "$T/brevfail"; export BREV_SYNC_NOW=$((C + 70*60)); run; export BREV_SYNC_NOW=$((C + 80*60)); run
+ok "L4 a new outage restarts the 30 min count (no alert at 10 min)" "[[ \$(alerts) -eq $((B0+2)) ]]"
+rm "$T/brevfail"; unset BREV_SYNC_NOW
 echo "--- sync.log"; cat "$T/xs/brev-sync/sync.log"
 [[ $fails -eq 0 ]] && echo "all passed" || echo "$fails FAILED (state $T)"
 exit $fails

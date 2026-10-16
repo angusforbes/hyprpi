@@ -1223,7 +1223,7 @@ class Relay {
     // J308: a Doorman's draft is approved once, never as a rule; its denials feed the circuit breaker.
     if (msg.draft) this.breakerNote(sb, deny);
     // (review J368 #2) a free-form draft held before the host went agent-free can't be carried out any more: denied, with the reason
-    if (!msg.typed && !msg.taskChange && !msg.gpu && !msg.research && !msg.gatewayChange && !deny && this.agentFree(sb)) { log({ sb: sb.name, op: "talk", decision: "denied", id, reason: "agent-free host" }); heldNote(sb, msg, via, "Not delivered", "this host has no agents now"); this.askerReceipt(sb, msg, id, { ...who, verdict: "approve", note, outcome: "but this host has no agents now, so nothing was delivered" }); return; }
+    if (!msg.typed && !msg.taskChange && !msg.gpu && !msg.research && !msg.gatewayChange && !deny && this.agentFree(sb)) { log({ sb: sb.name, op: "talk", decision: "denied", id, reason: "agent-free host" }); heldNote(sb, msg, via, "Not sent", "this host has no agents now"); this.askerReceipt(sb, msg, id, { ...who, verdict: "approve", note, outcome: "but this host has no agents now, so nothing was sent" }); return; }
     if (msg.gatewayChange) { // J372: a proposed change of the research gateway's settings (from a host agent, through the bridge): applied by code, exactly as shown, once
       const gc = msg.gatewayChange, what = { ...msg, text: `gateway settings for ${gc.sandbox}: ${Object.entries(gc.changes || {}).map(([k, v]) => `${k}=${v}`).join(", ")}` };
       let outcome = "nothing changed";
@@ -1327,7 +1327,7 @@ class Relay {
         const name = this.deliverResearch(sb, msg, { note });
         log({ sb: sb.name, op: "research", decision: "approved", id, delivered: [sb.name], file: name });
         try { researchLog({ ev: "approved", ...ev }); } catch { /* */ }
-        heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `delivered to ${sb.name} as ${name}`);
+        heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `sent to ${sb.name} as ${name}`);
       } catch (e) { log({ sb: sb.name, op: "research", decision: "approved", id, rid: rs.rid, error: e.message }); heldNote(sb, { ...msg, text: `research: ${rs.want}` }, via, "Approved", `but the relay couldn't deliver it: ${e.message}`); }
       return;
     }
@@ -1399,7 +1399,7 @@ class Relay {
       }
       log({ sb: sb.name, op: "talk", decision: "approved", id, delivered: r.delivered, request_id: r.request_id });
       watchReply(r.request_id, { sandbox: sb.name, id, rooms: msg.rooms, to: (msg.shown || msg.to || []).map((s) => String(s).replace(/ \(.*\)$/, "")) }); // J290
-      heldNote(sb, msg, via, verdict.startsWith("allow-") ? "Approved and allowed similar" : "Approved", r.delivered.length ? `delivered to ${r.delivered.join(", ")}` : `it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((s) => s.name || s).join(", ")})` : ""}`);
+      heldNote(sb, msg, via, verdict.startsWith("allow-") ? "Approved and allowed similar" : "Approved", r.delivered.length ? `sent to ${r.delivered.join(", ")}` : `it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((s) => s.name || s).join(", ")})` : ""}`);
       const got = r.delivered.length ? `it went to ${r.delivered.join(", ")}` : `but it reached nobody${r.skipped.length ? ` (skipped: ${r.skipped.map((x) => x.name || x).join(", ")})` : ""}`;
       this.askerReceipt(sb, msg, id, { ...who, verdict, note, outcome: got, extra: { delivered: r.delivered, request_id: r.request_id, skipped: r.skipped } }); // (NoteReview #3: the receipt failing is not the delivery failing)
     } catch (e) {
