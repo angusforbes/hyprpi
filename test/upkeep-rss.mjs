@@ -14,6 +14,8 @@
 // 3. restartReady -> the daemon relaunches it with --session <its same file> (HYPRPI_NEW_ARGV_LOG: isolated hyprpi only, no window)
 //    -> the new pi connects -> its 🔄 note says "restarted on its same session for memory" with RSS before -> after (lower);
 // 4. Big grows again at once: no second restart within the cooldown (one per cooldownHours).
+// 7. Stuck: over the limit but its handoff refresh was under way ("refreshing" in upkeep.json from before a daemon restart): never.
+// One memory restart per upkeep pass, so a wave after an upgrade is staggered.
 // 6. a memory restart whose relaunch never comes back: a ⚠ alert to its world's Thoughts (not only the log).
 // 5. an agent whose world is bound to a remote machine (cfg/hyprpi/remote/d.json): never restarted from here.
 // Only processes this test spawned are signalled, by their own pid.
@@ -35,13 +37,15 @@ fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomT
 const policy = (rssMB) => fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: true, idleMinutes: 0, cooldownHours: 3, ...(rssMB === undefined ? {} : { rssMB }) }, autoReload: { enabled: false }, paused: ["Paused"] } }));
 policy(undefined);
 
+// 7. (RestartCheck B2) an agent whose handoff refresh was under way when the daemon restarted ("refreshing" kept in upkeep.json)
+fs.writeFileSync(path.join(S, "upkeep.json"), JSON.stringify({ agents: { "hp-stuck": { phase: "refreshing", askedAt: Date.now(), history: [] } }, thoughts: {}, paused: [] }));
 const kids = [];
 const child = (id, holdMb) => {
   const env = { ...process.env, HYPRPI_AGENT_ID: id }; delete env.HYPRPI_WORKSPACE;
   const code = `const keep = []; for (let i = 0; i < ${holdMb}; i++) keep.push(Buffer.alloc(1 << 20, 1)); globalThis.k = keep; setInterval(() => {}, 1e6);`;
   const k = spawn(process.execPath, ["-e", code], { env, stdio: "ignore" }); kids.push(k); return k;
 };
-const P = { big: child("hp-big", 260), small: child("hp-small", 0), busy: child("hp-busy", 260), paused: child("hp-paused", 260), boxed: child("hp-boxed", 260) };
+const P = { stuck: child("hp-stuck", 260), big: child("hp-big", 260), small: child("hp-small", 0), busy: child("hp-busy", 260), paused: child("hp-paused", 260), boxed: child("hp-boxed", 260) };
 const fakeBin = path.join(S, "bin"), clientsFile = path.join(S, "clients.json"); fs.mkdirSync(fakeBin); fs.writeFileSync(clientsFile, "[]");
 fs.writeFileSync(path.join(fakeBin, "hyprctl"), `#!/bin/sh\ncase "$*" in *clients*) cat "${clientsFile}";; *activewindow*|*activeworkspace*) echo '{}';; *) echo '[]';; esac\n`, { mode: 0o755 });
 const env = { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j708-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "300", HYPRPI_NEW_ARGV_LOG: argvLog };
@@ -66,6 +70,7 @@ try {
   };
   await hello("hp-big", "Big", P.big.pid, 32); await hello("hp-small", "Small", P.small.pid, 33); await hello("hp-liar", "Liar", P.big.pid, 34);
   await hello("hp-busy", "Busy", P.busy.pid, 35); await hello("hp-paused", "Paused", P.paused.pid, 36); await hello("hp-boxed", "Boxed", P.boxed.pid, 37, { container: "docker:test" });
+  await hello("hp-stuck", "Stuck", P.stuck.pid, 31);
   await conns["hp-busy"].call("agent.update", { status: "working" });
   const restartsOf = (id) => got[id].filter((e) => e.ev === "restart");
   const asksOf = (id) => got[id].filter((e) => e.ev === "prompt" && e.data?.via === "upkeep");
@@ -81,7 +86,7 @@ try {
   ok("2 rssMB 150: Big gets a restart", restartsOf("hp-big").length === 1, String(restartsOf("hp-big").length));
   ok("2 …without compacting (context kept)", restartsOf("hp-big")[0]?.data?.compact === false, JSON.stringify(restartsOf("hp-big")[0]?.data));
   ok("2 …and no handoff prompt", asksOf("hp-big").length === 0);
-  for (const [id, why] of [["hp-small", "under the limit"], ["hp-liar", "a foreign pid"], ["hp-busy", "working"], ["hp-paused", "paused"], ["hp-boxed", "in a container"]])
+  for (const [id, why] of [["hp-stuck", "mid-refresh, kept across a daemon restart"], ["hp-small", "under the limit"], ["hp-liar", "a foreign pid"], ["hp-busy", "working"], ["hp-paused", "paused"], ["hp-boxed", "in a container"]])
     ok(`2 ${id.slice(3)} (${why}) is never restarted or asked`, restartsOf(id).length === 0 && asksOf(id).length === 0);
   let stream = ""; try { stream = fs.readFileSync(path.join(S, "activity", "D.jsonl"), "utf8"); } catch { /* none */ }
   ok("2 the Stream's upkeep line says why", /restarting Big on its same session: its pi uses \d+ MB of memory, over upkeep\.refresh\.rssMB 150 \(context kept, no handoff\)/.test(stream));
