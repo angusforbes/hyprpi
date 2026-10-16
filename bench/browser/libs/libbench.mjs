@@ -13,7 +13,7 @@ const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor
 async function timed(name, fn) {
   const rows = [];
   for (let i = 0; i < N; i++) rows.push(await fn());
-  const ok = rows.every((r) => r.result === WANT);
+  const ok = rows.every((r) => r.result === WANT); if (!ok) process.exitCode = 1;
   const keys = Object.keys(rows[0]).filter((k) => k !== "result");
   console.log(`${name.padEnd(16)} ${keys.map((k) => `${k} ${med(rows.map((r) => r[k])).toFixed(0)} ms`).join(", ")}  ${ok ? "all correct" : "WRONG: " + rows.map((r) => r.result).join(" | ")}`);
 }
@@ -23,7 +23,8 @@ await timed("raw CDP (ws)", async () => {
   const ws = new WebSocket(list.webSocketDebuggerUrl); await new Promise((r) => (ws.onopen = r));
   let id = 0; const send = (method, params = {}) => new Promise((r) => { const i = ++id; const h = (m) => { const d = JSON.parse(m.data); if (d.id === i) { ws.removeEventListener("message", h); r(d.result); } }; ws.addEventListener("message", h); ws.send(JSON.stringify({ id: i, method, params })); });
   const ev = async (e) => (await send("Runtime.evaluate", { expression: e, awaitPromise: true, returnByValue: true })).result.value;
-  while ((await ev("document.readyState")) !== "complete") await new Promise((r) => setTimeout(r, 20));
+  // (a new target starts on about:blank: wait for OUR page and its form, not just any complete document)
+  while ((await ev(`location.href === ${JSON.stringify(URL)} && document.readyState === "complete" && !!document.getElementById("name")`)) !== true) await new Promise((r) => setTimeout(r, 20));
   const t1 = now();
   await ev(`JSON.stringify([document.title, [...document.querySelectorAll("input,select,button")].map(e => e.id || e.textContent)])`);
   const t2 = now();
@@ -38,7 +39,8 @@ await timed("raw CDP (ws)", async () => {
 await timed("chrome-remote-if", async () => {
   const t0 = now();
   const tgt = await CDP.New({ port: +PORT, url: URL }); const c = await CDP({ port: +PORT, target: tgt });
-  await c.Page.enable(); await c.Runtime.evaluate({ expression: `new Promise(r => document.readyState === "complete" ? r() : addEventListener("load", r))`, awaitPromise: true });
+  await c.Page.enable();
+  while ((await c.Runtime.evaluate({ expression: `location.href === ${JSON.stringify(URL)} && document.readyState === "complete" && !!document.getElementById("name")`, returnByValue: true })).result.value !== true) await new Promise((r) => setTimeout(r, 20));
   const t1 = now();
   await c.Runtime.evaluate({ expression: `JSON.stringify([...document.querySelectorAll("input,select,button")].map(e => e.id))`, returnByValue: true });
   const t2 = now();
@@ -49,6 +51,14 @@ await timed("chrome-remote-if", async () => {
   const result = (await c.Runtime.evaluate({ expression: `document.getElementById("out").textContent`, returnByValue: true })).result.value;
   const t3 = now(); await c.close(); await CDP.Close({ port: +PORT, id: tgt.id });
   return { open: t1 - t0, read: t2 - t1, act: t3 - t2, total: now() - t0, result };
+});
+await timed("agent-browser", async () => {
+  const ab = (...a) => execFileSync("agent-browser", ["--cdp", PORT, "--session", "libbench", ...a], { encoding: "utf8" });
+  const t0 = now(); ab("tab", "new", URL); const t1 = now();
+  ab("snapshot", "-i", "-c"); const t2 = now();
+  const out = ab("batch", "--bail", "fill #name Angus", "fill #email angus@example.com", "select #plan Pro", "check #agree", `upload #file ${FILE}`, "click button[type=submit]", "get text #out");
+  const t3 = now(); ab("tab", "close");
+  return { open: t1 - t0, read: t2 - t1, act: t3 - t2, total: now() - t0, result: out.trim().split("\n").pop() };
 });
 { // puppeteer-core: connect once (agents would keep it), then per run
   const b = await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: null });
@@ -76,12 +86,4 @@ await timed("chrome-remote-if", async () => {
   console.log(`  (playwright connectOverCDP itself: ${connectMs.toFixed(0)} ms, once per process)`);
   await b.close().catch(() => {}); // for a CDP-connected browser this only disconnects
 }
-await timed("agent-browser", async () => {
-  const ab = (...a) => execFileSync("agent-browser", ["--cdp", PORT, "--session", "libbench", ...a], { encoding: "utf8" });
-  const t0 = now(); ab("tab", "new", URL); const t1 = now();
-  ab("snapshot", "-i", "-c"); const t2 = now();
-  const out = ab("batch", "--bail", "fill #name Angus", "fill #email angus@example.com", "select #plan Pro", "check #agree", `upload #file ${FILE}`, "click button[type=submit]", "get text #out");
-  const t3 = now(); ab("tab", "close");
-  return { open: t1 - t0, read: t2 - t1, act: t3 - t2, total: now() - t0, result: out.trim().split("\n").pop() };
-});
-process.exit(0);
+process.exit(process.exitCode || 0);
