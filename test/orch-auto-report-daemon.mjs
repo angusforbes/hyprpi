@@ -20,8 +20,8 @@ fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
 fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10, cwd: S, turnLines: false, topics: false }));
 fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false, rssMB: 0 }, autoReload: { enabled: false } } }));
 const kid = (id, name) => ({ id, name, parent: "hp-mom", parentName: "Mom", room: "A", prompt: "play", model: "m", thinking: "", budget: { tokens: 0, minutes: 0 }, used: { tokens: 0 }, startedAt: Date.now() - 60000, status: "running", reports: [], escalations: 0, depth: 1 });
-fs.writeFileSync(path.join(S, "orch.json"), JSON.stringify({ children: { "hp-kid": kid("hp-kid", "Kid"), "hp-rep": kid("hp-rep", "Rep"), "hp-ans": kid("hp-ans", "Ans") } }));
-const T0 = Date.now();
+fs.writeFileSync(path.join(S, "orch.json"), JSON.stringify({ children: { "hp-kid": kid("hp-kid", "Kid"), "hp-rep": kid("hp-rep", "Rep"), "hp-ans": kid("hp-ans", "Ans"), "hp-fast": kid("hp-fast", "Fast") } }));
+const T0 = Date.now() - 60000; // the turn happened before its end (real sessions are stamped as they go)
 const iso = (k) => new Date(T0 + k * 1000).toISOString();
 const sess = (name, says) => {
   const f = path.join(S, name + ".jsonl");
@@ -58,6 +58,21 @@ try {
   // the same child flips idle again (a status update with no new turn): still one
   await kidC.call("agent.update", { status: "working" }); await kidC.call("agent.update", { status: "idle" }); await sleep(2000);
   ok("a second status flip on the same turn: no duplicate", reportsFor("hp-kid").length === 1, JSON.stringify(reportsFor("hp-kid")));
+  // the race: Fast's first turn ends, its second starts 100 ms later (before the 800 ms check) and ends after 1 s
+  {
+    const f = path.join(S, "Fast.jsonl"), now = Date.now();
+    const L = (k, o) => JSON.stringify({ ...o, timestamp: new Date(now + k).toISOString() });
+    fs.writeFileSync(f, [L(-5000, { type: "session", id: "Fast" }), L(-4000, { type: "message", message: { role: "user", content: [{ type: "text", text: "go" }] } }), L(-3000, { type: "message", message: { role: "assistant", content: [{ type: "text", text: "FIRST ANSWER" }] } })].join("\n") + "\n");
+    const c = await connect({ path: sock, onEvent: () => {} });
+    await c.call("agent.hello", { agent_id: "hp-fast", pid: process.pid, name: "Fast", want_workspace: 2, cwd: S, session: f });
+    await c.call("agent.update", { status: "working" }); await c.call("agent.update", { status: "done" });
+    await sleep(100);
+    fs.appendFileSync(f, [L(200, { type: "message", message: { role: "user", content: [{ type: "text", text: "next" }] } }), L(300, { type: "message", message: { role: "assistant", content: [{ type: "text", text: "SECOND ANSWER" }] } })].join("\n") + "\n");
+    await c.call("agent.update", { status: "working" }); await sleep(1000); await c.call("agent.update", { status: "done" }); await sleep(2500);
+    const fr = reportsFor("hp-fast").map((e) => e.data.text);
+    ok("a quick next turn doesn't hide the first: FIRST then SECOND, one each", fr.length === 2 && /FIRST ANSWER/.test(fr[0]) && /SECOND ANSWER/.test(fr[1]), JSON.stringify(fr));
+    c.close();
+  }
   const log = fs.readFileSync(path.join(S, "d.log"), "utf8");
   ok("the daemon log says it forwarded Kid's text", /Kid ended a turn without report_to_parent: its last text went to its parent/.test(log));
   for (const c of [kidC, repC, ansC, mom]) c.close();
