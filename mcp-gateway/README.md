@@ -31,6 +31,8 @@ Then point pi at the gateway in `~/.pi/agent/mcp.json`, one entry per server, in
 "hyprcu": { "url": "http://127.0.0.1:8790/hyprcu", "exposure": "direct" }
 ```
 
+Only stdio servers go through the gateway. Remote HTTPS MCP servers (e.g. NVIDIA MaaS, deepwiki) stay as direct `url` entries in `mcp.json`: pi connects to them itself, with its own OAuth sign-in. The gateway never proxies them or handles their tokens.
+
 ## Install (systemd --user)
 
 `hyprpi mcp-gateway install` (or `hyprpi integration install gateway`) writes `mcp-gateway.service`

@@ -140,6 +140,7 @@ The MCP gateway keeps one shared, lazily started copy of each stdio MCP server f
 
 - Point pi at `http://127.0.0.1:8790/<name>` instead of the server's `command`; connecting and listing tools are answered from a cache and start nothing.
 - The real server starts on the first call that needs it and stops after `idleMin` minutes without calls (default 10).
+- Only stdio servers go through it; remote HTTPS servers (e.g. NVIDIA MaaS) stay direct in pi's `mcp.json`, with pi's own sign-in.
 - Give a server `"perSession": true` when it keeps per-client state: each agent then gets its own copy, still lazy and stopped when idle.
 - List your servers in `~/.config/mcp-gateway/servers.json` (see `mcp-gateway/servers.example.json`).
 - Check it with `hyprpi mcp-gateway status`, which shows the unit, the service and which servers are running.
