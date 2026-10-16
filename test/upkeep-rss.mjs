@@ -8,7 +8,7 @@
 //   Small - its child is a plain idle node (~50 MB)        -> never asked
 //   Liar  - says Big's child is its pid (wrong agent id)   -> never asked (the pid must really be the agent's)
 // 1. rssMB 0 (off): nobody is asked, even Big.
-// 2. rssMB 150: Big is asked (the reason names its MB and the setting), Small and Liar aren't; the world view and
+// 2. rssMB 150: Big is asked (the reason names its MB and the setting), Small and Liar aren't; the list (refresh_due) and
 //    thoughts.upkeep status show Big as due; the Stream's upkeep line says why.
 // 3. Big writes its handoff and calls upkeep.ready, gets the restart, says agent.restartReady; its old "pi" exits and a
 //    new one (a small child, same agent id) connects in a new "window" (a fake hyprctl lists it): the refresh completes
