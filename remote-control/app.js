@@ -657,7 +657,7 @@ projectsEl.addEventListener("click", (e) => {
   const pa = e.target.closest(".pagent");
   if (pa) { e.preventDefault(); const a = agentByName(pa.dataset.name); if (a) { if (a.room && a.room !== world) setWorld(a.room); openSession(a.id); } return; }
   const pr = e.target.closest(".proj"); if (pr) { openProject.set(world, pr.dataset.p); return renderProjects(); }
-  if (e.target.closest(".phead")) { openProject.delete(world); return renderProjects(); } // the header: back to the list
+  if (e.target.closest(".phead")) { if (cameFrom?.kind === "project" && cameFrom.id === openProject.get(world) && goBack()) return; openProject.delete(world); return renderProjects(); } // the header: back where he came from, else the list
   const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open");
 });
 projectsEl.addEventListener("toggle", (e) => {
@@ -773,7 +773,7 @@ function heldWire(l) {
 agentsEl.addEventListener("change", (e) => { if (e.target.id === "optstrm") setShowStrm(e.target.checked); }); // J448 v2
 agentsEl.addEventListener("click", (e) => {
   const hs = e.target.closest(".phead .aopen"); if (hs) return openSession(hs.closest(".agent").dataset.a); // J236: › at the top right → its session
-  if (e.target.closest(".phead")) { openAgent.delete(world); return renderAgents(); } // the header: back to the list (J48)
+  if (e.target.closest(".phead")) { if (cameFrom?.kind === "agent" && cameFrom.id === openAgent.get(world) && goBack()) return; openAgent.delete(world); return renderAgents(); } // the header: back where he came from, else the list (J48)
   const ts = e.target.closest(".tostream"); if (ts) { streamOnly(ts.dataset.name); return setView("stream"); } // its lines in Strm
   const so = e.target.closest(".tosession"); if (so) return openSession(so.dataset.a); // J161
   if (e.target.closest("a")) return;
@@ -833,8 +833,22 @@ function linkNames(root) {
     if (changed) n.replaceWith(frag);
   }
 }
-// Tap a name: open it where it lives. No history stack: the tabs work as before.
+// Tap a name: open it where it lives. Angus: "the back button should be back to where I just came from, not back to
+// my parent": a jump remembers where it came from (tab, world, open project, scroll), and that item's ‹ goes back there.
+let cameFrom = null; // { kind, id, view, world, project, scroll }
+function goBack() {
+  const c = cameFrom; cameFrom = null; if (!c) return false;
+  if (c.world !== world) setWorld(c.world);
+  if (c.kind === "agent") openAgent.delete(world); else openProject.delete(world);
+  if (c.project) openProject.set(world, c.project);
+  setView(c.view);
+  if (c.view === "projects") { renderProjects(); projectsEl.scrollTop = c.scroll; } else if (c.view === "agents") { renderAgents(); agentsEl.scrollTop = c.scroll; }
+  else if (c.view === "thoughts") thread.scrollTop = c.scroll;
+  return true;
+}
 function jumpTo(kind, id, room) {
+  const src = view === "session" ? "agents" : view;
+  cameFrom = { kind, id, view: src, world, project: openProject.get(world) || null, scroll: (src === "projects" ? projectsEl : src === "agents" ? agentsEl : src === "thoughts" ? thread : streamEl).scrollTop };
   if (room && room !== world) setWorld(room);
   if (kind === "thoughts") return setView("thoughts");
   const target = kind === "project" ? "projects" : "agents";
