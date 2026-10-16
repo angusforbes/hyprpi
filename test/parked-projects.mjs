@@ -27,8 +27,9 @@ ok("A … whose writer isn't connected: parked", projectParked({ writer: "hp-gon
 ok("A … with no writer: parked", projectParked({ writer: "", status: "active" }, "D", live));
 ok("A … archived: not parked (it's archived)", !projectParked({ writer: "hp-gone", status: "archived" }, "D", live));
 ok("A … written by Thoughts (inbox cards): never parked", !projectParked({ writer: "thoughts:D", status: "active" }, "D", live));
-ok("A … in another world (C): unchanged, never parked in this step", !projectParked({ writer: "hp-gone", status: "active" }, "C", live));
-ok("A only world D for now; the mark is ⏸", [...PARKED_WORLDS].join() === "D" && PARKED_MARK === "⏸");
+ok("A J701: every world A–G parks a project with no live owner", ["A", "B", "C", "D", "E", "F", "G"].every((w) => projectParked({ writer: "hp-gone", status: "active" }, w, live)));
+ok("A … but not H or I (old code there; they join at their next deploy)", !projectParked({ writer: "hp-gone", status: "active" }, "H", live) && !projectParked({ writer: "hp-gone", status: "active" }, "I", live));
+ok("A worlds A–G; the mark is ⏸", [...PARKED_WORLDS].sort().join() === "A,B,C,D,E,F,G" && PARKED_MARK === "⏸");
 
 // ---- B) isolated daemon
 const S = fs.mkdtempSync(path.join(os.tmpdir(), "j645-")), cfg = path.join(S, "cfg"), sock = path.join(S, "d.sock"), B = path.join(S, "bin");
@@ -54,7 +55,7 @@ try {
   ok("B board.get D: @alive (live owner) not parked", pk(bd, "alive") === false);
   ok("B board.get D: @sleepy (owner not connected) and @orphan (no owner) parked", pk(bd, "sleepy") === true && pk(bd, "orphan") === true);
   ok("B board.get D: inbox-d (Thoughts' card) not parked", pk(bd, "inbox-d") === false);
-  ok("B W3 board.get C: @cproj (owner not connected) NOT parked: other worlds unchanged", pk(bc, "cproj") === false);
+  ok("B J701 board.get C: @cproj (owner not connected) is parked too now", pk(bc, "cproj") === true);
   ok("B display only: the board file has no parked field written", !fs.readFileSync(path.join(S, "boards", "D.json"), "utf8").includes("parked"));
 
   // finder
@@ -62,7 +63,7 @@ try {
   const fline = (n) => { const ls = fl.split("\n"), i = ls.findIndex((l) => l.includes("@" + n + " ")); return i < 0 ? "" : ls[i] + "\n" + (ls[i + 1] || ""); };
   ok("B finder: @sleepy shows ⏸ parked, grey (dim), no world colour", /⏸\t📦 @sleepy · ⏸ parked/.test(fline("sleepy")) && /<font color="dim">@sleepy · ⏸ parked<\/font>/.test(fline("sleepy")), fline("sleepy"));
   ok("B finder: @alive keeps its place in the world colour, no parked mark", !/parked/.test(fline("alive")) && /<font color="#[0-9a-f]{6}">/.test(fline("alive")), fline("alive"));
-  ok("B W3 finder: world C's @cproj unchanged (no parked mark)", fline("cproj") && !/parked/.test(fline("cproj")), fline("cproj"));
+  ok("B J701 finder: world C's @cproj shows ⏸ parked in grey", /<font color="dim">@cproj · ⏸ parked<\/font>/.test(fline("cproj")), fline("cproj"));
   if (SHOTS) fs.writeFileSync(path.join(SHOTS, "finder.txt"), fl);
 
   // the panels, real, in a pty (script); raw output kept for the colour checks
@@ -85,7 +86,7 @@ try {
   ok("B board panel D: @sleepy's name is grey (a neutral 24-bit colour)", greyish(bt, "sleepy") === true);
   ok("B board panel D: @alive has no parked mark, in a non-grey (world) colour", !/@alive[^\n]{0,40}⏸/.test(bt.replace(/\x1b\[[0-9;]*m/g, "")) && greyish(bt, "alive") === false);
   const bc2 = await panel("board-tui.mjs", "C");
-  ok("B W3 board panel C: @cproj has no parked mark", /@cproj/.test(bc2.replace(/\x1b\[[0-9;]*m/g, "")) && !/⏸/.test(bc2.replace(/\x1b\[[0-9;]*m/g, "")));
+  ok("B J701 board panel C: @cproj shows ⏸ parked, grey", /@cproj[^\n]{0,40}⏸ parked/.test(bc2.replace(/\x1b\[[0-9;]*m/g, "")) && greyish(bc2, "cproj") === true);
   const at = await panel("agents-tui.mjs", "D");
   const atp = at.replace(/\x1b\[[0-9;]*m/g, "");
   ok("B agents panel D: @sleepy's row starts with ⏸", /⏸ +📦 +@sleepy/.test(atp), (atp.match(/.{0,10}@sleepy.{0,10}/) || [""])[0]);
