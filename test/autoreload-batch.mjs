@@ -11,6 +11,7 @@
 // 2. A reconnects on the new code (its window reloaded). The code changes twice within minHours: no reload yet; after minHours,
 //    exactly one reload, carrying the LATEST code version.
 // 3. a daemon restart doesn't reset the clock: codeAt is kept in upkeep.json.
+// 4. an agent first seen already on the current code starts its clock then (no reload right after a change).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -84,7 +85,14 @@ try {
   for (let i = 0; i < 60 && !reloads("hp-b").length; i++) await sleep(200);
   ok("3 …and one once it has passed", reloads("hp-b").length === 1, String(reloads("hp-b").length));
   let stream = ""; try { stream = fs.readdirSync(path.join(S, "activity")).map((f) => fs.readFileSync(path.join(S, "activity", f), "utf8")).join(""); } catch { /* none */ }
-  ok("the Stream line says it's batched", /reloaded Bee \(its window had older hyprpi\/pi code: [0-9a-f]+ → [0-9a-f]+; batched, at most every 0\.002 h\)/.test(stream));
+  ok("the Stream confirms A's reload once its window reported the new code", /Ay reloaded onto [0-9a-f]+ \(its window confirmed the new code\)/.test(stream));
+  ok("the Stream line says it's batched", /asked Bee to reload \(its window has older hyprpi\/pi code: [0-9a-f]+ → [0-9a-f]+; batched, at most every 0\.002 h\)/.test(stream));
+  // 4. (ReloadCheck B1) an agent first seen ALREADY on the current code: its clock starts now, so a code change right after
+  //    doesn't reload it inside minHours
+  const nowCode = codeVersion("agent", [watched]);
+  await hello("hp-e", "Eee", 36, nowCode); await sleep(1000);
+  fs.writeFileSync(watched, "v5-right-after"); await sleep(2500);
+  ok("4 first seen on the current code, then a change: no reload inside minHours", reloads("hp-e").length === 0, String(reloads("hp-e").length));
 } catch (e) {
   ok("no exception", false, e.stack);
 } finally {
