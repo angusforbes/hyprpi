@@ -21,7 +21,7 @@ for (const [label, t] of [["preamble", line], ["AGENTS.md", sec]]) {
   check(`${label}: J667 an overrun toast`, t.includes("still needs your browser"));
   check(`${label}: J668 Angus's words`, t.includes("please narrate what you're doing"));
   check(`${label}: J668 narrates each step at least every ~30 s`, /each step briefly as (it|you) go/.test(t) && /every ~30 s/.test(t));
-  check(`${label}: J668 one replaced step toast, not spammy, no sound`, /ONE step toast/.test(t) && /-r <id>/.test(t) && /few and short/i.test(t) && /no sound|never a sound/.test(t));
+  check(`${label}: J668 one replaced step toast, not spammy, no sound`, /ONE step toast/.test(t) && /step_id=\$\(notify-send -p -r \\?"\$step_id\\?"/.test(t) && /few and short/i.test(t) && /no sound|never a sound/.test(t));
   check(`${label}: J668 the J667 done signal still ends it`, /done toast and (the )?line to/.test(t));
   check(`${label}: J668 one-line status outside computer use`, /one-line status/.test(t));
   check(`${label}: never on the phone`, /phone/.test(t));
