@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// J645 (P11 step 69a; Angus D8/D9, 65a, 70a): in world D a project with no live owner shows as parked: grey name and ⏸ on the
+// J645 (P11 step 69a; Angus D8/D9, 65a, 70a; J701: worlds A–G): a project with no live owner shows as parked: grey name and ⏸ on the
 // project board, in the agents panel and in the finder. Display only, from today's data. Other worlds unchanged.
 //   A) lib/parked.mjs: the rule (archived no; Thoughts-written no; no writer or a writer not connected yes; only PARKED_WORLDS).
 //   B) an isolated daemon (own socket/state/config, no Hyprland signature; only a fake hyprctl on PATH, so HYPRPI_ALLOW_HYPR is safe), boards D and C, one live fake agent in D:
