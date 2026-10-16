@@ -604,6 +604,7 @@ function setView(v) {
   if (v === "stream" && !showStrm) v = "thoughts"; // J448 v2 (StrmCheck): Strm is off: no way back into it (e.g. Fils' remembered return)
   if (v === "agents" && view === "session") { sessByWorld.delete(world); view = "agents"; sessEl.hidden = true; $("#scomp").hidden = true; sess.agent = null; agentsEl.hidden = false; renderTop(); renderAgents(); return; } // J161: Agnt from a session → its summary
   if (v === view) { // Proj / Agnt again: back to the list
+    cameFrom = null;
     if (v === "projects" && openProject.get(world)) { openProject.delete(world); renderProjects(); }
     if (v === "agents" && openAgent.get(world)) { openAgent.delete(world); renderAgents(); }
     return;
@@ -655,8 +656,8 @@ projectsEl.addEventListener("click", (e) => {
   const op = e.target.closest(".opt, .ownans");
   if (op && !e.target.closest("a")) return decideSheet(op.dataset.p, op.dataset.h, op.dataset.k || "");
   const pa = e.target.closest(".pagent");
-  if (pa) { e.preventDefault(); const a = agentByName(pa.dataset.name); if (a) { if (a.room && a.room !== world) setWorld(a.room); openSession(a.id); } return; }
-  const pr = e.target.closest(".proj"); if (pr) { openProject.set(world, pr.dataset.p); return renderProjects(); }
+  if (pa) { e.preventDefault(); const a = agentByName(pa.dataset.name); if (a) { cameFrom = { kind: "agent", id: a.id, view: "projects", world, project: openProject.get(world) || null, scroll: projectsEl.scrollTop }; if (a.room && a.room !== world) setWorld(a.room); openSession(a.id); } return; }
+  const pr = e.target.closest(".proj"); if (pr) { cameFrom = null; openProject.set(world, pr.dataset.p); return renderProjects(); }
   if (e.target.closest(".phead")) { if (cameFrom?.kind === "project" && cameFrom.id === openProject.get(world) && goBack()) return; openProject.delete(world); return renderProjects(); } // the header: back where he came from, else the list
   const c = e.target.closest(".clip"); if (c && !e.target.closest("a")) c.classList.toggle("open");
 });
@@ -778,6 +779,7 @@ agentsEl.addEventListener("click", (e) => {
   const so = e.target.closest(".tosession"); if (so) return openSession(so.dataset.a); // J161
   if (e.target.closest("a")) return;
   const t = e.target.closest(".agent");
+  if (t && !t.classList.contains("open")) cameFrom = null; // opened from the list: ‹ goes back to the list (a stale jump doesn't apply)
   if (t && e.target.closest(".aopen") && !t.classList.contains("gone")) return openSession(t.dataset.a); // J161: the arrow opens its session
   if (t) { openAgent.set(world, t.dataset.a); return renderAgents(); }
   const c = e.target.closest(".clip"); if (c) c.classList.toggle("open");
