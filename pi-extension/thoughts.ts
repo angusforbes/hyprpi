@@ -398,7 +398,9 @@ export default function thoughts(pi: ExtensionAPI) {
     parameters: Type.Object({ request_id: Type.String(), text: Type.String() }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r: any = await call("thoughts.answer", p);
-      return out(`Answered ${r.agent}.`, { action: `answered @${r.agent}: ${((t) => t.length > 2000 ? t.slice(0, 1999) + "…" : t)(String(p.text).replace(/\s+/g, " "))}` }); // whole answer: the Thoughts window clips it to 2 rows with … and Shift-click copies all (N53, pi·wpzt's test)
+      // J663: say what is true when the agent's window didn't take it (not connected): kept until it reconnects, or not delivered
+      const how = r.sent === false ? (r.kept ? ` (${r.agent} isn't connected: the answer is kept and handed over when it reconnects)` : ` (NOT delivered: ${r.agent} isn't connected and its window can't take a late answer)`) : "";
+      return out(`Answered ${r.agent}${how}.`, { action: `answered @${r.agent}${how}: ${((t) => t.length > 2000 ? t.slice(0, 1999) + "…" : t)(String(p.text).replace(/\s+/g, " "))}` }); // whole answer: the Thoughts window clips it to 2 rows with … and Shift-click copies all (N53, pi·wpzt's test)
     },
   });
 

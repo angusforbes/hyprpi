@@ -30,7 +30,7 @@ t = trackHeld("d--111111"); assert.equal(t.done, false); assert.match(t.text, /r
 log({ sb: "d", op: "gpu_lease", lease: "g1", status: "ok", exit: 0, ranSeconds: 1.2, peakVramMib: 0, delivered: "gpu-g1.md" });
 t = trackHeld("d--111111"); assert.ok(t.done); assert.match(t.text, /finished: ok, exit 0, ran 1\.2 s.*gpu-g1\.md/);
 log({ sb: "w", op: "talk", decision: "approved", id: "w--222222", delivered: ["Lenswatch (B6)"] });
-t = trackHeld("w--222222"); assert.ok(t.done); assert.match(t.text, /delivered to Lenswatch/);
+t = trackHeld("w--222222"); assert.ok(t.done); assert.match(t.text, /sent to Lenswatch/);
 log({ sb: "w", op: "talk", decision: "approved", id: "w--333333", error: "inbox full" });
 assert.match(trackHeld("w--333333").text, /couldn't carry it out: inbox full/);
 log({ sb: "d", op: "task_change", decision: "approved", id: "d--666666", sandbox: "w", applied: true, outcome: "the task is now X" });

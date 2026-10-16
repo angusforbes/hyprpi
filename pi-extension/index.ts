@@ -102,7 +102,10 @@ export default function hyprpi(pi: ExtensionAPI) {
   // and drops queued custom messages without a trace (pi·wpzt's diagnosis), so whatever didn't land
   // is held again when the run ends.
   const steered = new Map<string, any>(); // key (request_id / delivery_id) -> message
-  const keyOf = (m: any) => String(m?.details?.request_id || m?.details?.delivery_id || "");
+  // J663: an ANSWER shares its request's id with the request and with every other answer to it, so its key is per replier
+  // ("re:<request>:<replier>"); with the request's own key a second answer (talk to two agents, both reply) was taken for a
+  // re-send of the first and dropped without a trace. The same key is its delivery receipt (agent.delivered).
+  const keyOf = (m: any) => m?.customType === "hyprpi-talk-reply" && m?.details?.request_id ? `re:${m.details.request_id}:${m.details.from?.id || m.details.from?.name || ""}` : String(m?.details?.request_id || m?.details?.delivery_id || "");
   const inject = (message: any, steer = false) => {
     const k = keyOf(message);
     // A re-send from the daemon (J64 receipts) of something already here: just confirm it again.
@@ -241,7 +244,12 @@ export default function hyprpi(pi: ExtensionAPI) {
       // run ends), not in pi's followUp queue: an abort (Esc, an interrupt_agent) returns pi's queued messages
       // to the editor as unsent draft text (Blink's input box after a /move, 2026-10-06). After an Esc it goes
       // into the context without starting a turn, like every held message (J36); after an interrupt it waits its turn.
-      if (idle() && !held.length && !starting) { try { pi.sendUserMessage(text); } catch { /* best effort */ } }
+      // J663: `starting` (as send() sets it) until the turn has begun: a second prompt in that moment used to find the agent still
+      // idle, and pi refused it asynchronously (only an extension error in this window; Angus's prompt was gone). Now it is held.
+      if (idle() && !held.length && !starting) {
+        starting = setTimeout(() => { starting = null; releaseHeld(); }, 5000);
+        try { pi.sendUserMessage(text); } catch (e) { clearTimeout(starting); starting = null; safeNotify(`hyprpi: could not start that prompt (${(e as Error).message}); it is held and tried again`, "warning"); inject({ customType: "hyprpi-prompt", display: true, content: text, details: { delivery_id: `prompt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, via: String(d.via || "") } }); }
+      }
       else inject({ customType: "hyprpi-prompt", display: true, content: text, details: { delivery_id: `prompt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, via: String(d.via || "") } });
     } else if (event === "set_model") {
       // Thoughts switches this agent's model (Angus's standing permission, @hyprpi N47).
@@ -309,7 +317,9 @@ export default function hyprpi(pi: ExtensionAPI) {
     } else if (event === "talk.reply") {
       const w = demands.get(d.request_id);
       if (w) {
-        w.replies.push({ name: d.from.name, text: d.text });
+        const fk = String(d.from?.id || d.from?.name || "");
+        if (w.replies.some((x: any) => x.key === fk)) return; // J663: a re-send (the daemon keeps answers until they're confirmed)
+        w.replies.push({ name: d.from.name, text: d.text, key: fk });
         if (w.replies.length >= w.expect) w.done();
         return;
       }
@@ -329,6 +339,7 @@ export default function hyprpi(pi: ExtensionAPI) {
     const ws = Number(process.env.HYPRPI_WORKSPACE);
     return conn!.call("agent.hello", {
       agent_id: AGENT_ID, pid: process.pid, session, cwd: ctx?.cwd || process.cwd(), acks: true, // J64 delivery receipts
+      reply_acks: true, // J663: answers to this agent's requests are confirmed too ("re:<request>:<replier>")
       code: LOADED_CODE, // J135: the code this window loaded (lib/codever.mjs); the daemon reloads it when stale
       model: ctx?.model?.id || "", thinking: safe(() => pi.getThinkingLevel()) || "",
       name: safe(() => pi.getSessionName()) || process.env.HYPRPI_NAME || "",
@@ -1105,16 +1116,18 @@ export default function hyprpi(pi: ExtensionAPI) {
     execute: async (_id: string, p: any, signal: AbortSignal) => {
       const r = await call("talk", { to: p.recipients, text: p.message, mode: "demand", timeout_seconds: p.timeout_seconds ?? 120 });
       if (!r.delivered.length) return text(`Nobody received it: ${r.skipped.map((s: any) => `${s.name} (${s.reason})`).join(", ")}`, r);
-      const w = { expect: r.delivered.length, replies: [] as { name: string; text: string }[], done: () => {} };
+      const w = { expect: r.delivered.length, replies: [] as { name: string; text: string; key?: string }[], done: () => {} };
       await new Promise<void>((resolve) => {
         const t = setTimeout(() => w.done(), 1000 * (p.timeout_seconds ?? 120));
         w.done = () => { clearTimeout(t); signal?.removeEventListener?.("abort", w.done); demands.delete(r.request_id); resolve(); };
         signal?.addEventListener?.("abort", w.done);
         demands.set(r.request_id, w);
       });
+      for (const x of w.replies) if (x.key) ack(`re:${r.request_id}:${x.key}`); // J663: they're in this result: confirmed
       const missing = r.delivered.filter((n: string) => !w.replies.some((x) => x.name === n));
       const body = w.replies.map((x) => `--- ${x.name} ---\n${x.text}`).join("\n\n").slice(0, 32768);
-      return text(`${w.replies.length}/${r.delivered.length} answered${missing.length ? ` (no answer: ${missing.join(", ")})` : ""}.\n\n${body}`, { request_id: r.request_id, replies: w.replies, missing });
+      // J663 (rule 4): a wait that ends without every answer says what happens after
+      return text(`${w.replies.length}/${r.delivered.length} answered${missing.length ? ` (no answer: ${missing.join(", ")}; the request stays open 12 h, so a later answer still reaches you as a [hyprpi reply] message)` : ""}.\n\n${body}`, { request_id: r.request_id, replies: w.replies.map(({ name, text }) => ({ name, text })), missing });
     },
   });
 
@@ -1125,7 +1138,16 @@ export default function hyprpi(pi: ExtensionAPI) {
     parameters: Type.Object({ request_id: Type.String({ minLength: 1 }), text: Type.String({ minLength: 1, maxLength: 32768 }) }, { additionalProperties: false }),
     execute: async (_id: string, p: any) => {
       const r = await call("talk.reply", { request_id: p.request_id, text: p.text });
-      return text(r.delivered ? "Reply delivered." : "Reply saved, but the sender is not connected right now.", r);
+      // J663 (no silent success): "delivered" only from the receiver; a socket write is "sent", and each case says what happens next
+      const to = r.to || "the sender";
+      const msg = r.thoughts ? `Reply given to ${to} (it is in ${to}'s thread; if its model can't take it you get a [hyprpi delivery note]).`
+        : r.via ? `Reply handed to ${r.via} (not confirmed yet).`
+        : r.gone ? (to === "hyprpi" ? "Nothing was sent: that message came from hyprpi itself, which takes no replies." : `NOT delivered: ${to} has closed. Your reply is recorded with the request but nobody will read it; tell ${to}'s world's Thoughts if it matters.`)
+        : r.sent === undefined ? (r.delivered ? "Reply sent (handed to the sender's window; not confirmed)." : "Reply NOT delivered: the sender is not connected right now.") // an older daemon
+        : r.sent ? `Reply sent to ${to} (handed to its window, not confirmed yet${r.kept ? "; it is re-sent until its window confirms, and you get a [hyprpi delivery note] if it hasn't landed in 10 min" : ""}).`
+        : r.kept ? `${to} isn't connected: your reply is kept and handed over when it reconnects (you get a [hyprpi delivery note] if it hasn't landed in 10 min).`
+        : `Reply NOT delivered: ${to} isn't connected right now and its window can't take a late reply (an older hyprpi extension).`;
+      return text(msg, r);
     },
   });
 }
