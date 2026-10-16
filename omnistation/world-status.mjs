@@ -25,7 +25,7 @@ const { loadConfig } = await import(path.join(HERE, "../lib/paths.mjs"));
 const { REMOTE_MARK } = await import(path.join(HERE, "../lib/sandbox-icon.mjs"));
 const { validateStatus } = await import(path.join(HERE, "../docker/world/g-status.mjs"));
 const rworld = await import(path.join(HERE, "../remote-control/rworld.mjs"));
-const { pickAutoOpens, pickNotices } = await import(path.join(HERE, "auto-open.mjs")); // J543
+const { pickAutoOpens, pickNotices, noticeSpell } = await import(path.join(HERE, "auto-open.mjs")); // J543
 const SIZE = Number(loadConfig().worldSize) || 10, idx = WL.charCodeAt(0) - 64, LO = (idx - 1) * SIZE + 1, HI = idx * SIZE;
 const DIR = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "hyprpi", "worlds", `world-${wl}`);
 fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
@@ -103,9 +103,14 @@ async function tick() {
 // and "Agent X 📡 needs you" toast; a click runs `hyprpi focus <x>-NAME`, which the laptop daemon hands to `world X focus NAME`), the
 // done chime and the "request" knock = hyprpi's own sounds (assets/sounds), as the shell plays them. Never an old one (pickNotices).
 const noticeSt = {};
+// J722 (nss5): too-old or failed bonks/dings give one toast per spell (noticeSpell); chimes are routine and not counted
+const { desktopNote } = await import(path.join(HERE, "../lib/desktop-note.mjs"));
+const spellCtx = { world: WL, log: (l) => console.error(`world-status ${WL}: ${l}`), toast: (title, body) => { desktopNote(["--app-name", "hyprpi", "-u", "normal", title, body], { what: `world ${WL} unplayed bonks`, log: spellCtx.log }); } };
 function playNotices(list) {
   let cfg = {}; try { cfg = loadConfig(); } catch { /* defaults */ }
-  for (const n of pickNotices(list, noticeSt, Date.now())) {
+  const picked = pickNotices(list, noticeSt, Date.now());
+  noticeSpell(noticeSt, {}, spellCtx);
+  for (const n of picked) {
     if (n.kind === "closed") { // J543: an agent closed on purpose there (spawn_agent's close_agent, /quit): its window goes, as locally
       const launch = n.id ? n.id.slice(2) : "", w = launch && lastMine.find((x) => x.name === launch);
       if (w && /^0x[0-9a-f]+$/.test(w.address)) execFile("hyprctl", ["dispatch", `hl.dsp.window.close({ window = "address:${w.address}" })`], { timeout: 5000 }, () => {});
@@ -119,7 +124,7 @@ function playNotices(list) {
     const env = { ...process.env, BONK_NAME: `${n.icon ? n.icon + " " : ""}${n.name || n.id || "an agent"} ${REMOTE_MARK}` };
     delete env.HYPRPI_AGENT_ID; if (n.id) env.BONK_FOCUS_AGENT = n.id; else delete env.BONK_FOCUS_AGENT;
     const bonk = process.env.HYPRPI_BONK || path.join(os.homedir(), ".local", "bin", "bonk");
-    execFile(bonk, [...(n.kind === "ding" ? ["--ding"] : []), n.text || (n.kind === "ding" ? "a decision is waiting" : "needs you")], { env, timeout: 30000 }, () => {});
+    execFile(bonk, [...(n.kind === "ding" ? ["--ding"] : []), n.text || (n.kind === "ding" ? "a decision is waiting" : "needs you")], { env, timeout: 30000 }, (err) => noticeSpell(noticeSt, err ? { failed: 1, why: String(err.message || err).split("\n")[0].slice(0, 120) } : { played: 1 }, spellCtx));
   }
 }
 for (;;) {
