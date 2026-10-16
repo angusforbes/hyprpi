@@ -10,8 +10,8 @@ put() {
     scp) scp -q -o BatchMode=yes "$F" "godaddy:public_html/portfolio/$NAME" 2>/dev/null;;
     rsync) rsync -q -e "ssh -o BatchMode=yes $SSHX" "$F" "godaddy:public_html/portfolio/$NAME" 2>/dev/null;;
     sshcat) ssh -o BatchMode=yes godaddy "cat > public_html/portfolio/$NAME" < "$F" 2>/dev/null;;
-    uapi) curl -s -m 30 -H "Authorization: cpanel $U:$(cat ~/.config/site-put/cpanel-token)" -F "dir=$DIR" -F "overwrite=1" -F "file-1=@$F" "https://$H:2083/execute/Fileman/upload_files" | grep -q '"status":1';;
-    ftps) curl -s -m 30 --ssl-reqd -u "j680bench@angusforbes.com:$(cat ~/.config/site-put/ftp-pass)" -T "$F" "ftp://$H/$NAME";;
+    uapi) curl -s -m 30 -H @<(printf 'Authorization: cpanel %s:%s\n' "$U" "$(cat ~/.config/site-put/cpanel-token)") -F "dir=$DIR" -F "overwrite=1" -F "file-1=@$F" "https://$H:2083/execute/Fileman/upload_files" | grep -q '"status":1';;
+    ftps) curl -s -m 30 --ssl-reqd --netrc-file <(printf 'machine %s login j680bench@angusforbes.com password %s\n' "$H" "$(cat ~/.config/site-put/ftp-pass)") -T "$F" "ftp://$H/$NAME";;
   esac
 }
 for i in $(seq 1 "$N"); do

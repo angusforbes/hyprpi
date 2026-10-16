@@ -20,7 +20,8 @@ via=ssh verify=1
 while [[ $# -gt 0 ]]; do case "$1" in --via) via=$2; shift 2;; --no-verify) verify=0; shift;; -h|--help) sed -n 2,13p "$0"; exit 0;; --) shift; break;; -*) echo "site-put: unknown option $1" >&2; exit 2;; *) break;; esac; done
 [[ $# -ge 2 ]] || { echo "usage: site-put [--via ssh|uapi] LOCAL_FILE... REMOTE_DIR_OR_PATH" >&2; exit 2; }
 REMOTE=${!#}; FILES=("${@:1:$#-1}")
-REMOTE=${REMOTE#/}; REMOTE=${REMOTE#public_html/}
+[[ "$REMOTE" == /* ]] && { echo "site-put: REMOTE is relative to public_html (e.g. portfolio/), not an absolute path" >&2; exit 2; }
+REMOTE=${REMOTE#public_html/}
 [[ "/$REMOTE/" == *"/../"* || "/$REMOTE/" == *"/./"* || "$REMOTE" == *$'\n'* ]] && { echo "site-put: REMOTE must stay inside public_html (no . or ..)" >&2; exit 2; }
 [[ "$REMOTE" =~ ^[A-Za-z0-9._/@+-]*$ ]] || { echo "site-put: REMOTE has unusual characters; use letters, digits, . _ - / only" >&2; exit 2; }
 (( ${#FILES[@]} > 1 )) && [[ -n "$REMOTE" && "$REMOTE" != */ ]] && { echo "site-put: several files need a REMOTE directory ending in /" >&2; exit 2; }
