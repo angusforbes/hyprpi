@@ -7,6 +7,7 @@
 //  P4 a tracked prompt to a busy agent is held, starts when the turn ends, and is confirmed when it lands; a re-send while held isn't doubled
 //  P5 an /ignore line or a phone slash command (handled without a session message) is confirmed at once
 //  P6 a prompt pi refused (no turn began in 5 s) is taken again when the daemon re-sends it
+//  P8 a held prompt released to pi but not landed yet: a re-send isn't run twice
 //  P7 an untracked prompt (an older daemon: no prompt_id) still works and sends no receipt
 //   node test/run.mjs test/prompt-acks-ext.mjs   (exit 0 = pass)
 import fs from "node:fs"; import os from "node:os"; import path from "node:path"; import net from "node:net";
@@ -42,7 +43,7 @@ const STUB = "data:text/javascript," + encodeURIComponent("export class UserMess
 const { register } = await import("node:module");
 register("data:text/javascript," + encodeURIComponent(`export async function resolve(s, c, n) { if (s === "@earendil-works/pi-coding-agent" || s === "@earendil-works/pi-tui" || s === "typebox") return { url: ${JSON.stringify(STUB)}, shortCircuit: true }; return n(s, c); }`));
 const handlers = {}, tools = {}, sent = [], userSent = [];
-let idleNow = true, refuse = false;
+let idleNow = true, refuse = false, landDelay = 10;
 const emit = async (ev, e = {}) => { for (const h of handlers[ev] || []) { try { await h(e, ctx); } catch { /* a handler's own trouble */ } } };
 const ctx = { mode: "rpc", isIdle: () => idleNow, cwd: T, model: { id: "stub" }, ui: { notify: () => {}, setStatus: () => {}, setFooter: () => {}, setTitle: () => {} }, sessionManager: { getSessionFile: () => "" }, abort: () => {} };
 const pi = new Proxy({}, { get: (_, k) => {
@@ -53,7 +54,7 @@ const pi = new Proxy({}, { get: (_, k) => {
     sent.push({ m, o });
     const turn = o?.triggerTurn && !o?.deliverAs && idleNow;
     if (turn) idleNow = false;
-    setTimeout(async () => { if (turn) await emit("agent_start", {}); await emit("message_end", { message: { role: "custom", ...m } }); if (turn) setTimeout(() => { idleNow = true; emit("agent_settled", {}); }, 40); }, 10);
+    setTimeout(async () => { if (turn) await emit("agent_start", {}); await emit("message_end", { message: { role: "custom", ...m } }); if (turn) setTimeout(() => { idleNow = true; emit("agent_settled", {}); }, 40); }, landDelay);
   };
   if (k === "sendUserMessage") return (t) => { userSent.push(t); if (refuse) return; setTimeout(async () => { idleNow = false; await emit("agent_start", {}); await emit("message_end", { message: { role: "user", content: [{ type: "text", text: t }] } }); setTimeout(() => { idleNow = true; emit("agent_settled", {}); }, 40); }, 60); }; // pi starts the turn a moment later; `refuse`: pi refuses it (no turn)
   if (k === "getThinkingLevel" || k === "getSessionName") return () => "";
@@ -103,6 +104,16 @@ try {
   push("prompt", { text: "PROMPT-REFUSED", via: "room-tui", prompt_id: "x4" }); // the daemon re-sends it (it was never confirmed)
   await waitFor(() => acks().includes("p:x4"), 3000);
   ok("P6 after no turn began, the re-send is taken again and confirmed", userSent.filter((t) => /PROMPT-REFUSED/.test(t)).length + sent.filter((s) => /PROMPT-REFUSED/.test(s.m.content)).length >= 2 && acks().includes("p:x4"), JSON.stringify({ userSent, acks: acks() }));
+  // P8 (NssAnswersCheck) a held prompt that was just handed to pi (released, not landed yet) isn't run again by a re-send
+  await waitFor(() => idleNow, 2000); await sleep(100);
+  idleNow = false; await emit("agent_start", {});
+  push("prompt", { text: "PROMPT-INFLIGHT", via: "upkeep", prompt_id: "x5" });
+  await sleep(150);
+  landDelay = 800; idleNow = true; await emit("agent_settled", {}); // released now; lands 800 ms later
+  await sleep(100);
+  push("prompt", { text: "PROMPT-INFLIGHT", via: "upkeep", prompt_id: "x5" }); // the daemon re-sends it meanwhile
+  await sleep(1500); landDelay = 10;
+  ok("P8 a re-send while it's handed to pi but not landed isn't run twice", sent.filter((s) => /PROMPT-INFLIGHT/.test(s.m.content)).length === 1 && acks().includes("p:x5"), String(sent.filter((s) => /PROMPT-INFLIGHT/.test(s.m.content)).length));
   // P7 untracked
   await waitFor(() => idleNow, 2000); await sleep(100);
   const before = acks().length;
