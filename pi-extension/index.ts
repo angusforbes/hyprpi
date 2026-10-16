@@ -24,6 +24,7 @@ import { loadPolicy } from "../lib/policy.mjs";
 import { orchAgent } from "./orch.ts";
 import { quietMode, quietIncoming, quietOrch } from "./quiet.ts";
 import { mcpCalm } from "./mcp-calm.ts";
+import { sendClaim } from "./send-claim.ts";
 import { draftStore, clipboardPaste } from "../lib/tui/input-box.mjs";
 import { statusPrompt } from "../lib/status.mjs";
 import { sectionFor } from "../lib/project-agent.mjs";
@@ -31,6 +32,7 @@ import { sectionFor } from "../lib/project-agent.mjs";
 type Conn = Awaited<ReturnType<typeof connect>>;
 
 export default function hyprpi(pi: ExtensionAPI) {
+  sendClaim(pi); // J704: "sent"/"posted"/"emailed" only when a send tool ran (send-claim.ts)
   mcpCalm(pi); // J653: a network blip at MCP startup is one dim line, not the amber warning (mcp-calm.ts)
   const quiet = quietMode(pi); // J637: this agent's transcript is quiet (only when switched on for it; quiet.ts)
   const ignoreNote = ignoreNotes(pi); // /ignore works in any window that loads this extension
