@@ -247,7 +247,7 @@ async function cmdNew() {
       { const why = hypr.hyprBlocked(); if (why) die(`hypr actions disabled (isolated daemon: ${why}): no remote agent started`); } // (review) J333 holds here too
       // (review) only a plain new (SUPER+A, or with --name) goes remote; pi arguments, a cwd, an icon or a session have no remote
       // meaning yet, so they are refused rather than silently dropped
-      if (piArgs.length || process.argv.includes("--cwd") || wantIcon) die(`world ${wl.toUpperCase()} is a remote world: its new agents take a name only (omnistation/world ${wl.toUpperCase()} new NAME)`);
+      if (piArgs.length || process.argv.includes("--cwd") || wantIcon || wantExtras !== undefined) die(`world ${wl.toUpperCase()} is a remote world: its new agents take a name only (omnistation/world ${wl.toUpperCase()} new NAME)`);
       const nm = /^[a-z][a-z0-9-]{0,30}$/.test(String(wantName).toLowerCase()) ? String(wantName).toLowerCase() : "";
       // J532 (Angus: "SUPER+A doesn't seem to work in world H, I tried on workspace 2 and 3"): the window opens on the workspace it was
       // pressed on (it always went to the world's first one)
@@ -260,6 +260,7 @@ async function cmdNew() {
     // agent's resume / twin / --beside there is refused (lib/sandbox-gate.mjs)
     const { gate, carryOut } = await import("../lib/sandbox-gate.mjs");
     const g = gate({ workspace, wantId, twinOf, beside, noFocus: args.includes("--no-focus"), silent, name: wantName, icon: wantIcon }); // J456: the name / icon go in too // includes, not flag(): flag() removes it, and line ~271 still needs it
+    if (g && wantExtras !== undefined) die(`--extra isn't supported for an agent opened inside a sandboxed world yet (J698): nothing opened; open it without --extra, or on another world`); // never silently dropped
     if (g) { if (process.env.HYPRPI_GATE_DRYRUN) { console.log(JSON.stringify(g)); process.exit(0); } process.exit(carryOut(g)); }
   }
 
