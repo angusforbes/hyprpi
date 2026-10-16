@@ -10,6 +10,8 @@ const sec = agents.split(/^## /m).find((s) => s.includes("(J666")) || "";
 for (const [label, t] of [["preamble", line], ["AGENTS.md", sec]]) {
   check(`${label}: present`, t.length > 0);
   check(`${label}: Angus's 40a words`, t.includes("asking before it takes focus") && t.includes("click-by-click steps only if you ask"));
+  check(`${label}: J669 the fast path first: agent-browser over CDP on 127.0.0.1:9222 in its own tab, the fast-browser skill, his words`, t.includes("agent-browser") && t.includes("127.0.0.1:9222") && /own tab/.test(t) && t.includes("skills/fast-browser/SKILL.md") && t.includes("restart brev so you can browse fast"));
+  check(`${label}: J669 hyprcu only for what is outside the page`, /hyprcu[\s\S]{0,160}only for what is outside the page/.test(t));
   check(`${label}: points at hyprcu and the browser notes`, /hyprcu/.test(t) && t.includes("notes/apps/_general.md") && t.includes("chromium.md"));
   check(`${label}: v2 Angus's words`, t.includes("just toast me before you take over"));
   check(`${label}: W3 toast before taking focus/windows, naming who and how long, then ~10 s wait`, /notify-send -a "<your name>" "<your name> is taking over your browser" "for about <N> min/.test(t.replace(/\\"/g, '"')) && /wait ~10 s/.test(t) && /focus/.test(t));
