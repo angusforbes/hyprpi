@@ -10,12 +10,17 @@
 // 1. rssMB 0 (off): nobody is asked, even Big.
 // 2. rssMB 150: Big is asked (the reason names its MB and the setting), Small and Liar aren't; the world view and
 //    thoughts.upkeep status show Big as due; the Stream's upkeep line says why.
-// 3. Big writes its handoff and calls upkeep.ready: it gets the restart whose fresh-session text names the memory reason.
+// 3. Big writes its handoff and calls upkeep.ready, gets the restart, says agent.restartReady; its old "pi" exits and a
+//    new one (a small child, same agent id) connects in a new "window" (a fake hyprctl lists it): the refresh completes
+//    (the 🔄 note with RSS before -> after, lower), and the new session's first prompt is the handoff text naming the memory
+//    reason. (The daemon's own `hyprpi new` is refused in an isolated daemon, J333, so no real window ever opens.)
 // Only processes this test spawned are signalled, by their own pid.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { requireSandbox } from "./guard/sandbox.mjs";
+await requireSandbox(import.meta.url); // it ends processes (its own children only): only inside the test guard
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 let fails = 0; const ok = (n, c, x = "") => { if (!c) fails++; console.log(`${c ? "ok  " : "FAIL"} ${n}${x ? ": " + x : ""}`); };
@@ -36,7 +41,9 @@ const child = (id, holdMb) => {
 };
 const big = child("hp-big", 260), small = child("hp-small", 0);
 
-const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j691-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "300" };
+const fakeBin = path.join(S, "bin"), clientsFile = path.join(S, "clients.json"); fs.mkdirSync(fakeBin); fs.writeFileSync(clientsFile, "[]");
+fs.writeFileSync(path.join(fakeBin, "hyprctl"), `#!/bin/sh\ncase "$*" in *clients*) cat "${clientsFile}";; *activewindow*|*activeworkspace*) echo '{}';; *) echo '[]';; esac\n`, { mode: 0o755 });
+const env = { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j691-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "300" };
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
 const d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(S, "d.log"), "w"), "inherit"] });
 kids.push(d);
@@ -82,6 +89,25 @@ try {
   ok("3 upkeep.ready starts the refresh", r?.refreshing === true, JSON.stringify(r));
   for (let i = 0; i < 20 && !got["hp-big"].some((e) => e.ev === "restart"); i++) await sleep(100);
   ok("3 Big gets the restart onto a fresh session", got["hp-big"].some((e) => e.ev === "restart"));
+  const rr = await conns["hp-big"].call("agent.restartReady", {}).catch((e) => ({ error: e.message }));
+  ok("3 agent.restartReady is accepted", rr?.ok === true, JSON.stringify(rr));
+  const beforeMb = rssMb(big.pid);
+  big.kill("SIGTERM"); conns["hp-big"].close?.(); // its old pi exits and its connection drops
+  for (let i = 0; i < 40 && rssMb(big.pid); i++) await sleep(100);
+  await sleep(1500); // the daemon sees the old connection gone and readies the welcome before the new window connects
+  const fresh = child("hp-big", 0);
+  for (let i = 0; i < 30 && !rssMb(fresh.pid); i++) await sleep(100);
+  fs.writeFileSync(clientsFile, JSON.stringify([{ address: "0xf00d", pid: fresh.pid, class: "kitty", title: "Big", workspace: { id: 32, name: "32" }, mapped: true }]));
+  got["hp-big"] = [];
+  await hello("hp-big", "Big", fresh.pid, 32);
+  const note = () => got["hp-big"].find((e) => e.ev === "note" && /refreshed on a fresh session/.test(e.data?.text || ""));
+  for (let i = 0; i < 300 && !note(); i++) await sleep(100);
+  const m = (note()?.data?.text || "").match(/RSS (\d+) \u2192 (\d+) MB/);
+  ok("3 the refresh completes (the new window's 🔄 note)", !!note(), JSON.stringify(got["hp-big"].map((e) => e.ev)));
+  ok("3 its RSS went down (old pi -> fresh pi)", !!m && Number(m[1]) > 150 && Number(m[2]) < Number(m[1]), `${note()?.data?.text || ""} (before kill: ${beforeMb} MB)`);
+  const welcome = () => got["hp-big"].find((e) => e.ev === "prompt" && /You're on a FRESH session/.test(e.data?.text || ""));
+  for (let i = 0; i < 60 && !welcome(); i++) await sleep(100);
+  ok("3 the fresh session starts from its handoff, naming the memory reason", /your previous one \(its pi uses \d+ MB of memory, over upkeep\.refresh\.rssMB 150\) was refreshed/.test(welcome()?.data?.text || "") && /I'm Big; nothing open/.test(welcome()?.data?.text || ""), (welcome()?.data?.text || "").slice(0, 200));
   let stream = ""; try { stream = fs.readFileSync(path.join(S, "activity", "D.jsonl"), "utf8"); } catch { /* none */ }
   ok("3 the Stream's upkeep line names the memory reason", /asked Big for a handoff \(its pi uses \d+ MB of memory/.test(stream));
 } catch (e) {
