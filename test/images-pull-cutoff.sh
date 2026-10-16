@@ -39,7 +39,12 @@ for code in 255 0; do
   ok "W … no file:// link printed for an image that didn't arrive whole" "! grep -q '^file://' $T/w.out"
   ok "W … no staging folder left behind" "[[ -z \"\$(ls -A $T/dest)\" ]]"
 done
-rm -f "$T/cut"; wimages; rc=$?
+rm -f "$T/cut"
+printf '#!/bin/sh\necho "simulated mv I/O failure" >&2\nexit 1\n' > "$T/bin/mv"; chmod +x "$T/bin/mv"
+wimages; rc=$?
+ok "C failed final install must fail the world command, not discard stage and exit 0" "[[ $rc -ne 0 ]]"
+rm "$T/bin/mv"
+wimages; rc=$?
 ok "W next run (link healthy): exit 0, both images whole, both linked" "[[ $rc -eq 0 ]] && cmp -s $T/outputs/big-1.png $T/dest/big-1.png && cmp -s $T/outputs/big-2.png $T/dest/big-2.png && [[ \$(grep -c '^file://' $T/w.out) -eq 2 ]]"
 head -c 1000 /dev/urandom > "$T/outputs/fresh.png"; wimages
 ok "W a PNG written in the last 10 s waits (not copied yet)" "[[ ! -e $T/dest/fresh.png ]] && grep -q 'no new images' $T/w.out"
@@ -58,7 +63,12 @@ ok "B … counted as a failure (toward the alert)" "[[ \$(cat $PS/fails) == 1 ]]
 ok "B … no partial PNG and no staging folder left in the synced folder" "[[ -z \"\$(ls -A $T/Brev)\" ]]"
 echo 0 > "$T/cut"; bsync
 ok "B a stream that just ends (ssh exit 0): still no partial PNG, second failure" "[[ -z \"\$(ls -A $T/Brev)\" && \$(cat $PS/fails) == 2 ]]"
-rm -f "$T/cut"; bsync; rc=$?
+rm -f "$T/cut"
+printf '#!/bin/sh\necho "simulated mv I/O failure" >&2\nexit 1\n' > "$T/bin/mv"; chmod +x "$T/bin/mv"
+bsync; rc=$?
+ok "C failed final install must mark brev-sync pull failed" "[[ $rc -ne 0 && $(cat $PS/state) == pull-failed ]]"
+rm "$T/bin/mv"
+bsync; rc=$?
 ok "B next run: exit 0, both images whole, failures back to 0" "[[ $rc -eq 0 ]] && cmp -s $T/outputs/big-1.png $T/Brev/big-1.png && cmp -s $T/outputs/big-2.png $T/Brev/big-2.png && [[ \$(cat $PS/fails) == 0 ]]"
 ok "B … and the log counts 2 pulled" "grep -q 'pulled from outputs: 2 image' $T/xs/brev-sync/sync.log"
 

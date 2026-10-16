@@ -87,7 +87,14 @@ pull_ssh() {
   if ! timeout 300 ssh $SSHARGS "$box" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$stage"; then
     rm -rf "$stage"; echo "copying ${#new[@]} new image(s) was cut off: none kept, the next run copies them again"; return 4
   fi
-  for n in "${new[@]}"; do [[ -f "$stage/$n" && ! -e "$dest/$n" ]] && mv -n "$stage/$n" "$dest/$n" && moved=$((moved + 1)); done
+  # (NssCheck) each image must really be in place, same size as staged; a failure is reported (pull failed) and its staged copy kept
+  local bad=() sz
+  for n in "${new[@]}"; do
+    if [[ ! -f "$stage/$n" ]]; then bad+=("$n"); continue; fi
+    [[ -e "$dest/$n" ]] && { rm -f "$stage/$n"; continue; }
+    sz=$(stat -c %s -- "$stage/$n"); if mv -n -- "$stage/$n" "$dest/$n" 2>/dev/null && [[ -f "$dest/$n" && "$(stat -c %s -- "$dest/$n")" == "$sz" ]]; then moved=$((moved + 1)); else bad+=("$n"); fi
+  done
+  if (( ${#bad[@]} )); then echo "${#bad[@]} image(s) not put in place: ${bad[*]} (kept in $stage)"; return 4; fi
   rm -rf "$stage"
   echo "$moved"
 }

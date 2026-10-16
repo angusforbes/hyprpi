@@ -241,7 +241,13 @@ case "$cmd" in
     if ! "${SSH[@]}" "cd ~/workspace/outputs && tar -cf - -- ${new[*]}" | tar -xf - -C "$stage"; then
       rm -rf "$stage"; echo "world: copying ${#new[@]} new image(s) from world $WL's machine failed (cut off?): none kept; the next run copies them again" >&2; exit 3
     fi
-    for n in "${new[@]}"; do [[ -f "$stage/$n" && ! -e "$dest/$n" ]] && mv -n "$stage/$n" "$dest/$n" && [[ -f "$dest/$n" ]] && echo "file://$dest/$n"; done
+    # (NssCheck) each image must really be in place, same size as staged; one that isn't is named and its staged copy kept
+    bad=(); for n in "${new[@]}"; do
+      if [[ ! -f "$stage/$n" ]]; then bad+=("$n (missing from the copy)"); continue; fi
+      [[ -e "$dest/$n" ]] && { rm -f "$stage/$n"; continue; } # arrived meanwhile (another run): already there
+      sz=$(stat -c %s -- "$stage/$n"); if mv -n -- "$stage/$n" "$dest/$n" 2>/dev/null && [[ -f "$dest/$n" && "$(stat -c %s -- "$dest/$n")" == "$sz" ]]; then echo "file://$dest/$n"; else bad+=("$n"); fi
+    done
+    if (( ${#bad[@]} )); then echo "world: ${#bad[@]} image(s) not put in place: ${bad[*]} (kept in $stage)" >&2; exit 3; fi
     rm -rf "$stage" ;;
   restart-daemon) "${SSH[@]}" "$R restart-daemon" ;; # J530: by its lock file's pid only (remote.sh), the agents keep running
   thoughts-relay)
