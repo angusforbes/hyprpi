@@ -8,6 +8,8 @@
 //   D4 never confirmed: after talkUndeliveredMs ONE ⚠ alert in its world's Thoughts thread (not one per sweep)
 //   D5 a welcome (spawn_agent's first prompt) and an upkeep ask are tracked the same way
 //   D6 a window without prompt_acks (an older extension) gets plain prompts, nothing kept
+//   D4b an unconfirmed prompt to an idle, connected agent is re-sent by itself (every 2 min live)
+//   D8 one unconfirmed for 7 days is dropped with a log line and a ⚠ alert (never silently)
 //   D7 kept across a daemon restart
 //   node test/run.mjs test/prompt-acks-daemon.mjs   (exit 0 = pass)
 import fs from "node:fs";
@@ -23,7 +25,7 @@ const S = fs.mkdtempSync(path.join(os.tmpdir(), "j722d-")), cfg = path.join(S, "
 fs.mkdirSync(path.join(cfg, "hyprpi"), { recursive: true });
 fs.writeFileSync(path.join(cfg, "hyprpi", "config.json"), JSON.stringify({ roomToThoughts: false, pi: "/bin/cat", worldSize: 10, cwd: S, talkUndeliveredMs: 4000 }));
 fs.writeFileSync(path.join(cfg, "hyprpi", "hyprpi.jsonc"), JSON.stringify({ auth: { enabled: false }, upkeep: { refresh: { enabled: false, rssMB: 0 }, autoReload: { enabled: false } } }));
-const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j722d-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_UNDELIVERED_SWEEP_MS: "500", HYPRPI_ORCH_LAUNCH: "/bin/true" };
+const env = { ...process.env, HYPRPI_SOCKET: sock, HYPRPI_STATE: S, XDG_CONFIG_HOME: cfg, HYPRLAND_INSTANCE_SIGNATURE: "j722d-bogus", HYPRPI_NO_ENSURE: "1", HYPRPI_UPKEEP_MS: "3600000", HYPRPI_UNDELIVERED_SWEEP_MS: "500", HYPRPI_ORCH_LAUNCH: "/bin/true", HYPRPI_PROMPT_RESEND_MS: "3000" };
 delete env.HYPRPI_AGENT_ID; delete env.HYPRPI_WORKSPACE;
 let d = null;
 const start = async () => { d = spawn(process.execPath, [path.join(ROOT, "bin/hyprpi"), "daemon"], { env, stdio: ["ignore", fs.openSync(path.join(S, "d.log"), "a"), "inherit"] }); for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await sleep(200); await sleep(300); };
@@ -65,6 +67,10 @@ try {
   await sleep(2000); // several more sweeps
   const alerts = (thread().match(/prompt to Newer hasn.t landed in its session[^\n]*NEVER-CONFIRMED/g) || []).length;
   ok("D4 one ⚠ alert in Thoughts-D's thread, not one per sweep", alerts === 1, `${alerts}: ${thread().slice(-600)} | out: ${JSON.stringify(Object.values(out()).map((x) => [x.aid, x.told, x.data?.text?.slice(0, 20)]))}`);
+  // D4b (NssAnswersCheck B2) an unconfirmed prompt to a connected, idle agent is re-sent by itself (no reconnect, no run)
+  const nNever = prompts("hp-new", /NEVER-CONFIRMED/).length;
+  for (let i = 0; i < 40 && prompts("hp-new", /NEVER-CONFIRMED/).length <= nNever; i++) await sleep(250);
+  ok("D4b re-sent by itself while unconfirmed (HYPRPI_PROMPT_RESEND_MS 3 s here; 2 min live)", prompts("hp-new", /NEVER-CONFIRMED/).length > nNever);
   // D5 welcome + upkeep ask
   const parent = await connect({ path: sock, onEvent: () => {} });
   await parent.call("agent.hello", { agent_id: "hp-par", pid: process.pid, name: "Parent", want_workspace: 34, cwd: S });
@@ -81,9 +87,16 @@ try {
   await api.call("agent.prompt", { agent: "Older", text: "OLD-WINDOW", via: "room-tui" }); await sleep(200);
   const o = prompts("hp-old", /OLD-WINDOW/)[0]?.data;
   ok("D6 a window without prompt_acks gets a plain prompt, nothing kept", !!o && !o.prompt_id && !Object.values(out()).some((x) => x.aid === "hp-old"));
+  // D8 (NssAnswersCheck B3) one never confirmed for 7 days is dropped WITH a log line and a ⚠ alert, not silently
+  for (const c of [...Object.values(conns), api, parent]) { try { c.close(); } catch { /* gone */ } }
+  await stop();
+  const o8 = out(); o8["old-8d"] = { aid: "hp-new", data: { text: "EIGHT-DAYS-OLD", via: "room-tui", prompt_id: "old-8d" }, firstAt: Date.now() - 8 * 864e5, sentAt: Date.now() - 8 * 864e5, told: true };
+  fs.writeFileSync(path.join(S, "prompts-out.json"), JSON.stringify(o8));
+  await start();
+  for (let i = 0; i < 40 && !/EIGHT-DAYS-OLD/.test(thread()); i++) await sleep(250);
+  ok("D8 a 7-day-old unconfirmed prompt is dropped with a ⚠ alert", !out()["old-8d"] && /never confirmed in 7 days and is dropped: \\"EIGHT-DAYS-OLD/.test(thread()));
   // D7 restart
   const keep = Object.keys(out()).length;
-  for (const c of [...Object.values(conns), api, parent]) { try { c.close(); } catch { /* gone */ } }
   await stop(); await start();
   ok("D7 unconfirmed prompts survive a daemon restart", keep > 0 && Object.keys(out()).length === keep, `${keep} -> ${Object.keys(out()).length}`);
   got[sp.id] = []; await hello(sp.id, "Kid", 35);
