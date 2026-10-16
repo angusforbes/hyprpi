@@ -31,14 +31,16 @@ export function isSendCall(tool: string, args: any): boolean {
 const VERB = "sent|posted|emailed|e-mailed|mailed|messaged|published|replied|forwarded|slacked|dm'?d";
 // First-person ("I sent", "I've posted", "we emailed"), a leading "Sent …"/"Posted in room", or passive ("the email was sent",
 // "has been posted") — not "Pocket sent me", "when it's sent", "not sent", "will send", "draft to be sent".
-const FIRST = new RegExp(`\\b(?:I|I've|I have|I'd|we|we've|we have|just|now|already|then|and)\\s+(?:(?:also|just|now|already|have|successfully|then)\\s+)*(?:${VERB})\\b`, "i");
-const LEAD = new RegExp(`(?:^|[.!?:]\\s+|\\n\\s*(?:[-*•]\\s*)?)(?:\\*\\*)?(?:${VERB})(?:\\*\\*)?(?=\\s+(?:to|in|on|via|it|the|your|an?|that|this|them|him|her|\\(|#|[—–-]|:|\\.|$)|[.!:]|$)`, "i");
-const PASSIVE = new RegExp(`\\b(?:email|e-mail|message|reply|comment|post|note|dm|report|review|issue|pr|it|that|they|both|all|everything)\\s+(?:was|were|has been|have been|is now|are now|got)\\s+(?:successfully\\s+)?(?:${VERB})\\b`, "i");
+const FIRST = new RegExp(`\\b(?:I|I[’']ve|I have|I[’']d|we|we[’']ve|we have|just|now|already|then|and)\\s+(?:(?:also|just|now|already|have|successfully|then)\\s+)*(?:${VERB})\\b`, "i");
+const LEAD = new RegExp(`(?:^|[.!?:]\\s+|[—–]\\s*|\\n\\s*(?:[-*•]\\s*)?)(?:\\*\\*)?(?:${VERB})(?:\\*\\*)?(?=\\s+(?:to|in|on|via|it|the|your|an?|that|this|them|him|her|\\(|#|[—–-]|:|\\.|$)|[.!:]|$)`, "i");
+const PASSIVE = new RegExp(`\\b(?:email|e-mail|message|reply|comment|post|note|dm|report|review|issue|pr|it|that|they|both|all|everything)\\s+(?:was|were|has been|have been|is now|are now|got)\\s+(?:successfully\\s+)?(?:${VERB})\\b|\\b\\w+\\s+(?:has|have)\\s+been\\s+(?:emailed|e-mailed|messaged|slacked)\\b`, "i");
 const NEGATED = /\b(?:not|n't|never|no|nothing|none|without|unable to|couldn't|can't|cannot|didn't|haven't|hasn't|wasn't|isn't|yet to|if|whether|unless|once|when|until|before|should be|to be|will be|would be|can be|could be|must be|needs? to be|ready to be|not yet|drafted?)\s+(?:\w+\s+){0,2}$/i;
+const NOT_A_SEND = /\b(?:sent|send)\s+(?:a\s+|an\s+|the\s+)?(?:SIG\w+|signals?|requests?|packets?|bytes|events?|keystrokes?|sigterm)\b/i;
+const COND = /^(?:when|if|whether|unless|once|until|before|after|while)\b/i;
 const EARLIER = /\b(already|earlier|previously|before|yesterday|last (?:turn|time|week|night)|ago|had been)\b/i;
 
 function stripCode(t: string): string {
-  return t.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ").replace(/^\s*>.*$/gm, " ").replace(/"[^"\n]{0,300}"/g, " ").replace(/“[^”\n]{0,300}”/g, " ");
+  return t.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ").replace(/^\s*>.*$/gm, " ").replace(/"[^"\n]{0,300}"/g, " ").replace(/“[^”\n]{0,300}”/g, " ").replace(/‘[^’\n]{0,300}’/g, " ");
 }
 
 // the claims in a text: [{sentence, earlier}]
@@ -47,7 +49,7 @@ export function findClaims(text: string): Array<{ sentence: string; earlier: boo
   const clean = stripCode(String(text ?? ""));
   for (const sentence of clean.split(/(?<=[.!?])\s+|\n+/)) {
     const s = sentence.trim();
-    if (!s || /\?\s*$/.test(s)) continue;
+    if (!s || /\?\s*$/.test(s) || COND.test(s) || NOT_A_SEND.test(s)) continue;
     for (const re of [FIRST, LEAD, PASSIVE]) {
       const g = new RegExp(re.source, "gi");
       let m: RegExpExecArray | null;

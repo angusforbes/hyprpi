@@ -50,3 +50,7 @@ for (const t of ["Pocket sent me a screenshot of the error.", "I drafted the ema
 assert.ok(isSendCall("report_to_parent", {}) && !isSendCall("read", {}) && !isSendCall("bash", { command: "git status" }));
 assert.equal(assess(["I sent it"], false, false).flagged, true);
 console.log("send-claim: ok");
+// J704 review fixes (SendClaimCheck)
+for (const t of ["I’ve sent the attachment to Maya.", "Done — sent to the maintainer.", "Maya has been emailed the itinerary."]) assert.ok(findClaims(t).length, t);
+for (const t of ["The worker exited and sent SIGTERM to its own subprocess.", "I sent a signal to the subprocess, not a message to anyone.", "Her exact words were ‘I sent the reply.’", "When the message was sent is still unknown."]) assert.equal(findClaims(t).length, 0, t);
+console.log("send-claim review fixes: ok");
