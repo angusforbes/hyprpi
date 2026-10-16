@@ -13,9 +13,10 @@ import { terminalCommand } from "../lib/terminal.mjs";
 
 const HELP = `hyprpi — Pi agents in their own windows, with a room per hyprwrld
 
-  hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [--here] [--no-focus] [-- PI_ARGS...]
+  hyprpi new [--cwd DIR] [--beside AGENT] [--workspace N] [--id ID] [--twin-of ID] [--extra NAME[,NAME]] [--here] [--no-focus] [-- PI_ARGS...]
                               open a Pi agent in its own terminal window (SUPER+A);
-                              starts in the focused terminal's/agent's folder unless --cwd
+                              starts in the focused terminal's/agent's folder unless --cwd;
+                              --extra subagents: it also loads pi-subagents (in-process Agent tools; J698), kept across restarts
   hyprpi room [ROOM] [--toggle]  --toggle: jump to the current world's agents panel, or open it here (the bar's click); with ROOM: the retired room widget
   hyprpi search [ROOM] [--toggle]  open the search window for a room (default: current world)
   hyprpi find [--room R] [--ai] QUERY  search from the terminal (keyword, or AI with --ai)
@@ -196,6 +197,9 @@ async function cmdNew() {
   // --name / --icon (open_agent, J15): the agent says them in its hello, so it is named even if the
   // daemon that opened it restarted before it came up.
   const wantName = String(opt("--name") || "").slice(0, 60), wantIcon = String(opt("--icon") || "").slice(0, 16);
+  // J698: --extra NAME[,NAME] = extra pi extensions this agent starts with (hyprpi.jsonc orchestration.extras, e.g. subagents),
+  // remembered for its id so restarts, refreshes and reopens keep them (lib/agent-extras.mjs).
+  const wantExtras = opt("--extra");
   if (wantId && !/^[A-Za-z0-9_.-]{3,64}$/.test(wantId)) die("bad --id");
   // --silent (restore-all): open the window straight on --workspace via Hyprland's exec_cmd
   // 'N silent', so Angus's focus and workspace never change. Implies --no-focus.
@@ -282,12 +286,22 @@ async function cmdNew() {
     catch (e) { process.stderr.write(`hyprpi: routing.newAgentModel ${m}: ${e.message}; starting on pi's default\n`); return []; }
     return ["--model", m];
   })();
-  const piArgv = ["-e", ext, ...newModel, ...(cfg.piArgs || []), ...piArgs];
+  const X = await import("../lib/agent-extras.mjs");
+  if (wantExtras !== undefined && wantExtras !== null && wantExtras !== false) { try { X.setExtras(id, X.checkExtras(String(wantExtras).split(","))); } catch (e) { die(e.message); } }
+  const extras = X.extrasArgs(id);
+  if (extras.missing.length) process.stderr.write(`hyprpi: ${id} starts WITHOUT its extra extension(s) ${extras.missing.join(", ")}: not configured or not installed any more (hyprpi.jsonc orchestration.extras)\n`);
+  const piArgv = ["-e", ext, ...extras.args, ...newModel, ...(cfg.piArgs || []), ...piArgs];
   { // J397: the host's scoped model list is the only list: a --model that isn't on it is refused here too
     const opts = piArgv.slice(0, piArgv.indexOf("--") < 0 ? piArgv.length : piArgv.indexOf("--")); // pi stops reading options at its first "--"
     const last = (flagName) => { let v = ""; opts.forEach((a, i) => { if (a === flagName) v = String(opts[i + 1] || ""); else if (a.startsWith(flagName + "=")) v = a.slice(flagName.length + 1); }); return v; }; // pi uses the LAST one
     let wanted = last("--model"); const prov = last("--provider"); if (wanted && prov && !wanted.startsWith(prov + "/")) wanted = `${prov}/${wanted}`;
     if (wanted) { const { allowedBy } = await import("../lib/modellist.mjs"); let ok; try { ok = allowedBy(wanted); } catch (e) { die(`the model ${wanted} wasn't used: ${e.message}`); } if (!ok) die(`the model ${wanted} is not on the host's scoped model list (enabledModels in ~/.pi/agent/settings.json), so no agent was opened`); }
+  }
+  // J698 tests: print what pi would be started with, and open nothing (an isolated hyprpi only)
+  if ((process.env.HYPRPI_NEW_PRINT_ARGV === "1" || process.env.HYPRPI_NEW_ARGV_LOG) && hypr.hyprBlocked(env)) {
+    const line = JSON.stringify({ id, piArgv, extras: extras.names, missing: extras.missing });
+    if (process.env.HYPRPI_NEW_ARGV_LOG) fs.appendFileSync(process.env.HYPRPI_NEW_ARGV_LOG, line + "\n"); else console.log(line);
+    process.exit(0);
   }
   if (directTerminal) {
     process.stdout.write(`\x1b]2;pi\x07`);

@@ -99,13 +99,14 @@ export function orchAgent(pi: ExtensionAPI, { call, inject, idle, ctx, flushHeld
       fork: Type.Optional(Type.Boolean({ description: "start from your own conversation (a twin) instead of empty" })),
       cwd: Type.Optional(Type.String()),
       project: Type.Optional(Type.String({ description: "@project it joins" })),
+      subagents: Type.Optional(Type.Boolean({ description: "J698: start it WITH pi-subagents (the in-process Agent tool), which agents don't load by default: only when its task clearly gains from parallel in-process helpers, e.g. reading a big file or many sources in parallel; kept across its restarts" })),
     }, { additionalProperties: true }), // (J647: a stray "budget" from an older habit is ignored, not refused)
     execute: async (_id: string, p: any) => {
       // (NoBudgetCheck F2) only the declared fields go on: a stray "budget" (ignored) or anything else (e.g. "thoughts") is dropped
-      const KEYS = ["prompt", "name", "icon", "complexity", "model", "thinking", "fork", "cwd", "project"];
+      const KEYS = ["prompt", "name", "icon", "complexity", "model", "thinking", "fork", "cwd", "project", "subagents"];
       const _ignored = p?.budget; p = Object.fromEntries(Object.entries(p || {}).filter(([k]) => KEYS.includes(k)));
       const r = await call("orch.spawn", p, p.model ? { timeoutMs: 120000 } : undefined); // J383: an explicit model is test-called first
-      return text(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model || "default model"}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}. It reports back to you; wait_report blocks until it does.`, r);
+      return text(`Spawned ${r.name} (${r.id}) on ${r.workspace}, ${r.model || "default model"}${r.thinking ? "/" + r.thinking : ""}${r.routed ? ` (routed: ${r.why})` : ""}${r.extras?.length ? `, with ${r.extras.join(", ")}` : ""}. It reports back to you; wait_report blocks until it does.`, r);
     },
   });
   pi.registerTool({
