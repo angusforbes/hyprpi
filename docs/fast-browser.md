@@ -9,7 +9,7 @@ arc-cua is two tools in one package (read from its code, commit in /tmp clone of
 - arc-driver, the fast part. It never looks at pixels to act. For macOS apps it reads the accessibility tree (pyobjc ApplicationServices) and acts on elements by id. For Chrome (src/arc_cua/backends/chrome.py, cdp.py, chrome_page.js) it uses the Chrome DevTools Protocol: a small script injected with Runtime.evaluate lists the visible elements with stable ids, and actions go in with Input.dispatchMouseEvent / Input.dispatchKeyEvent, so the window can stay in the background and the user's pointer is untouched. It also waits for the page to settle (a MutationObserver plus tracked network requests) instead of fixed sleeps, and refuses an action if the page changed since it looked.
 - arc-cua, the decision loop. A planner hands it a bounded subtask; a fast decision model picks each next action from the list of actions the page actually offers.
 
-Its own benchmark (BENCHMARKS.md): a click 217 ms vs 1.1 s, a 2-field form 1.85 s vs 15 s, against a screenshot-first driver.
+Its own benchmark (BENCHMARKS.md): a click 217 ms vs 1.1 s, a 2-field form 1.85 s vs 15 s, against cua-driver, which goes element first, then a fresh look, then pixels (BENCHMARKS.md).
 
 ## What "Jev" is (W5)
 
@@ -52,5 +52,7 @@ Same task both ways: open the local test form (bench/browser/index.html), fill n
 | CDP, his real Brave         | 0.66 s    | correct |
 
 - hyprcu run (2026-10-15 20:18, throwaway Brave on workspace 99): 4 screenshots, 2 sequences, a GTK file chooser (one wrong path cost a retry), one click; timed from the start to the result read back. The wall time includes the model's turns, as it would for any agent.
+- What the comparison measures: the hyprcu time is a whole agent workflow (the model's turns, screenshots, the file chooser and a retry); the CDP times are the scripted calls only (one snapshot, one batch), without the model's turn to decide them. So it isn't a controlled driver-against-driver test: it shows the workflow difference, one read and one batched call against a screenshot and a click per step. An agent's real CDP turn adds its own model time (seconds), still far below a minute.
+- Checker FastCheck669 re-ran fast.sh on its own throwaway Brave: 0.27 / 0.36 / 0.20 / 0.31 / 0.25 s, all correct.
 - CDP runs: bench/browser/fast.sh PORT 5; first run 0.54 s (cold), then 0.13-0.21 s. Upload goes straight into the file input (no file chooser).
 - The real-Brave run opened its own tab and closed it; his 17 tabs were identical before and after (diff of /json/list).
