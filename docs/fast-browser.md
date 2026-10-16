@@ -56,3 +56,26 @@ Same task both ways: open the local test form (bench/browser/index.html), fill n
 - Checker FastCheck669 re-ran fast.sh on its own throwaway Brave: 0.27 / 0.36 / 0.20 / 0.31 / 0.25 s, all correct.
 - CDP runs: bench/browser/fast.sh PORT 5; first run 0.54 s (cold), then 0.13-0.21 s. Upload goes straight into the file input (no file chooser).
 - The real-Brave run opened its own tab and closed it; his 17 tabs were identical before and after (diff of /json/list).
+
+# J670: JEV as the step picker (fast-browse)
+
+Angus: "45 - i have a jev key but lets do b first … nm youve convinced me the jev key is in my basrc i think".
+
+bin/fast-browse runs a page task like arc-cua's loop: read the page's interactive elements (agent-browser snapshot) → build the legal actions (fill a field with a given input, pick an option, tick, click, upload a given file, press Enter) → one JEV request with two questions in parallel (a choice: which action next, including DONE and BLOCKED; a noul: does the page meet the verification) → run the action → repeat. Below the confidence threshold, or when JEV says BLOCKED, it stops with exit 3 and the top candidates, so the calling agent takes that step. Literal text only comes from --input; password, PIN, MFA and card fields are never offered.
+
+## Benchmark (W2)
+
+Throwaway headless Brave, local pages (bench/browser: the upload form; shop/: list → product → cart → checkout → confirmation). Each result checked on the page itself (bench/browser/jev-bench.sh), 3 runs each.
+
+| Task, method          | Time      | Steps   | Cost       |
+|-----------------------|-----------|---------|------------|
+| form, JEV picker      | 4.4-6.0 s | 7       | $0.00034   |
+| form, agent-driven    | 10.3 s    | 2 turns | agent's    |
+| shop, JEV picker      | 5.4-5.9 s | 9       | $0.00034   |
+| shop, agent-driven    | 26.2 s    | 5 turns | agent's    |
+
+- JEV picker: all 6 runs DONE and the page showed the exact expected result. About 0.5-0.9 s per step (snapshot + page text + one JEV call + the action); the first call of a run can be slower (one cold call took 9 s).
+- Agent-driven: the plain fast path with the calling agent (Claude) deciding: snapshot, then a batch, per page; timed from the first command to the result, including the agent's own model turns. The agent already knew both tasks, so this is a best case for it. Its cost is its model's: each turn re-sends the agent's whole context (for this agent, on the order of 100k tokens, mostly cache reads), so cents per turn against hundredths of a cent for JEV.
+- So the picker is about 2× faster on the one-page form and about 4.5× on the 4-page shop, and it takes no turns of the calling agent; the agent's batch is still the better choice for one page it already understands.
+- Fallback checked: on checkout without an address input, JEV chose BLOCKED (0.58) and fast-browse stopped with NEEDS_AGENT and the candidates.
+- Real Brave (read-only, his OK'd fast path): a new tab, "open the Wikipedia article about Kurt Gödel with the search box": 4 steps, 6.2 s, 49k tokens ≈ $0.002, DONE; tab closed, his 13 tabs identical before and after. Toast before, step toasts, done toast.
