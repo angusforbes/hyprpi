@@ -13,7 +13,11 @@
 # Credentials: SSH key ~/.ssh/godaddy_portfolio (Host godaddy in ~/.ssh/config); cPanel API token in
 # ~/.config/site-put/cpanel-token (600, never printed). Never deletes anything on the server.
 set -u
-HOST=p3plzcpnl457110.prod.phx3.secureserver.net; CPUSER=zuxabmjqiwhz; SITE=https://angusforbes.com
+# The hosting server, cPanel user and site live in ~/.config/site-put/env (600; HOST=, CPUSER=, SITE=), not in the repo.
+ENV_FILE=${SITE_PUT_ENV:-$HOME/.config/site-put/env}
+[[ -r "$ENV_FILE" ]] || { echo "site-put: no $ENV_FILE (HOST=, CPUSER=, SITE=)" >&2; exit 2; }
+# shellcheck disable=SC1090
+source "$ENV_FILE"; : "${HOST:?site-put: HOST missing in $ENV_FILE}" "${CPUSER:?site-put: CPUSER missing}" "${SITE:?site-put: SITE missing}"
 TOKEN_FILE=${SITE_PUT_TOKEN:-$HOME/.config/site-put/cpanel-token}
 SSHOPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=auto -o "ControlPath=$HOME/.ssh/cm/%r@%h:%p" -o ControlPersist=10m)
 via=ssh verify=1

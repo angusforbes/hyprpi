@@ -3,7 +3,8 @@
 # Usage: bench.sh ROUTE RUNS     routes: scp rsync sshcat uapi ftps   (credentials are read from ~/.config/site-put, never printed)
 set -u
 SSHX=${SSHX:-}; R=$1; N=${2:-5}; F=$HOME/.cache/j680/j680-throwaway.txt; NAME=j680-throwaway.txt
-H=p3plzcpnl457110.prod.phx3.secureserver.net; U=zuxabmjqiwhz; DIR=/home/$U/public_html/portfolio; URL=https://angusforbes.com/portfolio/$NAME
+source ~/.config/site-put/env   # HOST=, CPUSER=, SITE=, FTPUSER= (600, not in the repo)
+H=$HOST; U=$CPUSER; DIR=/home/$U/public_html/portfolio; URL=$SITE/portfolio/$NAME
 WANT=$(sha256sum "$F" | cut -c1-64)
 put() {
   case $R in
@@ -11,7 +12,7 @@ put() {
     rsync) rsync -q -e "ssh -o BatchMode=yes $SSHX" "$F" "godaddy:public_html/portfolio/$NAME" 2>/dev/null;;
     sshcat) ssh -o BatchMode=yes godaddy "cat > public_html/portfolio/$NAME" < "$F" 2>/dev/null;;
     uapi) curl -s -m 30 -H @<(printf 'Authorization: cpanel %s:%s\n' "$U" "$(cat ~/.config/site-put/cpanel-token)") -F "dir=$DIR" -F "overwrite=1" -F "file-1=@$F" "https://$H:2083/execute/Fileman/upload_files" | grep -q '"status":1';;
-    ftps) curl -s -m 30 --ssl-reqd --netrc-file <(printf 'machine %s login j680bench@angusforbes.com password %s\n' "$H" "$(cat ~/.config/site-put/ftp-pass)") -T "$F" "ftp://$H/$NAME";;
+    ftps) curl -s -m 30 --ssl-reqd --netrc-file <(printf 'machine %s login %s password %s\n' "$H" "$FTPUSER" "$(cat ~/.config/site-put/ftp-pass)") -T "$F" "ftp://$H/$NAME";;
   esac
 }
 for i in $(seq 1 "$N"); do
