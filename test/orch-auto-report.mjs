@@ -19,7 +19,7 @@ import { turnInput } from "../lib/topics.mjs";
 let fails = 0; const ok = (n, c, x = "") => { if (!c) fails++; console.log(`${c ? "ok  " : "FAIL"} ${n}${x && !c ? ": " + x : ""}`); };
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "j728-"));
 const kid = (id, parent = "hp-mom", status = "running") => ({ id, name: id, parent, parentName: parent.startsWith("thoughts:") ? "Thoughts-C" : "Mom", room: "C", prompt: "play", model: "m", thinking: "", budget: {}, used: { tokens: 0 }, startedAt: Date.now() - 60000, status, reports: [], escalations: 0, depth: 1 });
-fs.writeFileSync(path.join(T, "orch.json"), JSON.stringify({ children: { kestrel: kid("kestrel"), osprey: kid("osprey"), marlin: kid("marlin"), quiet: kid("quiet"), gone: kid("gone", "hp-mom", "closing"), tk: kid("tk", "thoughts:C"), fast: kid("fast"), early: kid("early"), fin: kid("fin"), failed: kid("failed"), tfail: kid("tfail"), waited: kid("waited"), unread: kid("unread") } }));
+fs.writeFileSync(path.join(T, "orch.json"), JSON.stringify({ children: { kestrel: kid("kestrel"), osprey: kid("osprey"), marlin: kid("marlin"), quiet: kid("quiet"), gone: kid("gone", "hp-mom", "closing"), tk: kid("tk", "thoughts:C"), fast: kid("fast"), early: kid("early"), fin: kid("fin"), failed: kid("failed"), tfail: kid("tfail"), waited: kid("waited"), unread: kid("unread"), race: kid("race"), many: kid("many") } }));
 const sent = [], toThoughts = [];
 const orch = createOrch({ stateDir: T, deps: { send: (to, ev, d) => { sent.push({ to, ev, d }); return true; }, note: () => {}, liveAgent: () => null, agentName: () => "Mom", thoughtsReport: (room, r) => { toThoughts.push({ room, r }); }, roomOf: () => "C", agentInfo: () => ({ status: "done", since: Date.now() - 120000 }) } });
 
@@ -123,9 +123,22 @@ orch.turnEnded("waited", turnInput(session("waited", [{ ask: "go", says: [{ text
 const wres = await pend;
 ok("C6 a waiting parent sees the auto label too", wres.reports.some((r) => r.id === "waited" && /\[auto: its turn ended without report_to_parent/.test(r.text) && /WAITED ANSWER/.test(r.text)), JSON.stringify(wres).slice(0, 300));
 // C7 an unreadable session: the parent is told, once
-const rc7 = orch.turnEnded("unread", { unreadable: true, startedAt: Date.now() - 2000, final: "", toolNames: [] });
-const rc7b = orch.turnEnded("unread", { unreadable: true, startedAt: Date.now() - 2000 + 0, final: "", toolNames: [] });
+const st7 = Date.now() - 2000;
+const rc7 = orch.turnEnded("unread", { unreadable: true, startedAt: st7, final: "", toolNames: [] });
+const rc7b = orch.turnEnded("unread", { unreadable: true, startedAt: st7, final: "", toolNames: [] });
 ok("C7 an unreadable session: the parent gets one notice saying so", rc7.sent && reportsTo("unread").length === 1 && /couldn't read its session/.test(reportsTo("unread")[0].d.text), JSON.stringify(reportsTo("unread")));
+
+// C8 (F6) turn 1 plain, turn 2 (begun within 800 ms) reports: turn 1 is still forwarded
+clock = Date.now() - 4000;
+const rf = session("race", [{ ask: "go", says: [{ text: "RACE FIRST" }] }]);
+const end8 = Date.now() - 1500;
+orch.report("race", { text: "second turn's real report" }); // made after turn 1 ended
+const rc8 = orch.turnEnded("race", { ...turnInput(rf, { before: end8 }), endedAt: end8 });
+ok("C8 a newer turn's report doesn't hide the earlier unreported turn", rc8.sent && reportsTo("race").some((e) => /RACE FIRST/.test(e.d.text)), JSON.stringify(rc8));
+// C9 (F7) a final child stays final after 21+ auto reports
+orch.report("many", { text: "the result", final: true });
+for (let i = 0; i < 22; i++) orch.turnEnded("many", { final: "follow-up " + i, toolNames: [], startedAt: Date.now() + i, endedAt: Date.now() + i + 1 });
+ok("C9 a final child stays final after 22 auto reports (buffer of 20)", orch.get("many").final === true && orch.get("many").reports === 20, JSON.stringify(orch.get("many")));
 
 // A7: the welcome (F3)
 const src = fs.readFileSync(new URL("../lib/orch.mjs", import.meta.url), "utf8");
