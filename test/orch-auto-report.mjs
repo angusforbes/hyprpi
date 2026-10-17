@@ -140,6 +140,14 @@ orch.report("many", { text: "the result", final: true });
 for (let i = 0; i < 22; i++) orch.turnEnded("many", { final: "follow-up " + i, toolNames: [], startedAt: Date.now() + i, endedAt: Date.now() + i + 1 });
 ok("C9 a final child stays final after 22 auto reports (buffer of 20)", orch.get("many").final === true && orch.get("many").reports === 20, JSON.stringify(orch.get("many")));
 
+// C10 an OLD record (final report, no lastRealFinal) loaded from disk stays final after 22 auto reports
+{ const T2 = fs.mkdtempSync(path.join(os.tmpdir(), "j728b-")); const old = { ...kid("old"), reports: [{ text: "done", final: true, at: Date.now() - 9000, seq: 1 }] };
+  fs.writeFileSync(path.join(T2, "orch.json"), JSON.stringify({ children: { old } }));
+  const o2 = createOrch({ stateDir: T2, deps: { send: () => true, note: () => {}, liveAgent: () => null, agentName: () => "Mom", thoughtsReport: () => {}, roomOf: () => "C" } });
+  for (let i = 0; i < 22; i++) o2.turnEnded("old", { final: "f" + i, toolNames: [], startedAt: Date.now() + i, endedAt: Date.now() + i + 1 });
+  ok("C10 an old record stays final after 22 auto reports", o2.get("old").final === true && o2.get("old").reports === 20, JSON.stringify(o2.get("old")));
+  fs.rmSync(T2, { recursive: true, force: true }); }
+
 // A7: the welcome (F3)
 const src = fs.readFileSync(new URL("../lib/orch.mjs", import.meta.url), "utf8");
 ok("A7 the welcome says window text doesn't reach the parent", /your parent does NOT see what you write in your own window/.test(src));
