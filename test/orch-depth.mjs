@@ -51,5 +51,13 @@ ok("the split line is kept and shown", f.split === "A and B independent; C needs
 const none = B.render({ id: "J2", version: 1, from: "Thoughts-Z", state: "running", fields: B.fieldsFrom({ angus: "x", goal: "g", done_when: ["W"] }) });
 ok("no split line when the work isn't split", !/Split:/.test(none));
 
+// J753 (Angus: "no just no limit"): no cap on the number of children; even with an old maxChildren left in hyprpi.jsonc
+{ fs.writeFileSync(path.join(T, "cfg", "hyprpi", "hyprpi.jsonc"), '{ "orchestration": { "maxChildren": 4, "maxDepth": 1 } }\n');
+  live.set("hp-many", { id: "hp-many", name: "Many", room: "Z", model: "m" });
+  const om = mk(); const r = [];
+  for (let i = 1; i <= 8; i++) r.push(spawnOk(om, { prompt: `explore idea ${i}`, name: `Idea${i}` }, "hp-many"));
+  ok("J753 one agent spawns 8 live children: none refused for a count", r.every((x) => !x.err && idOf(x)), r.map((x) => x.err).filter(Boolean).join(" | "));
+  const deep = spawnOk(om, { prompt: "deeper", name: "Deep8" }, idOf(r[7]));
+  ok("J753 … and the one-level rule still holds for those children", !!deep.err && /helpers don't spawn helpers/.test(deep.err), deep.err || "it spawned"); }
 fs.rmSync(T, { recursive: true, force: true });
 console.log(fails ? `FAIL (${fails})` : "all passed"); process.exit(fails ? 1 : 0);
